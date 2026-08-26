@@ -698,6 +698,7 @@
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding PageCount, StringFormat='Pages: {0}'}" Margin="0,0,16,0" />
                     <TextBlock Text="{Binding ZoomPercentageText, StringFormat='Zoom: {0}'}" Margin="0,0,16,0" />
+                    <TextBlock Text="{Binding ApplicationVersion, StringFormat='v{0}'}" Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="SemiBold" />
                     <Border Background="{DynamicResource AccentLightBrush}" CornerRadius="3" Padding="6,1">
                         <TextBlock Text="{Binding Metadata.LicenseStatus, FallbackValue='Aspose.Total'}"
                                    Foreground="{DynamicResource AccentBrush}"

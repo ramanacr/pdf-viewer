@@ -30,6 +30,7 @@ public class DocumentMetadata
     public string PageDimensionsFormatted => $"{DefaultPageWidthPt:F1} x {DefaultPageHeightPt:F1} pt ({(DefaultPageWidthPt / 72.0):F2}\" x {(DefaultPageHeightPt / 72.0):F2}\")";
 
     public string LicenseStatus { get; set; } = string.Empty;
+    public string ApplicationVersion => typeof(DocumentMetadata).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
 
     private static string FormatFileSize(long bytes)
     {

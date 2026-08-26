@@ -137,19 +137,23 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="PDF Version:" Style="{StaticResource LabelStyle}" />
-                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PdfFormatVersion, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="App Version:" Style="{StaticResource LabelStyle}" />
+                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding ApplicationVersion, Mode=OneWay, StringFormat='v{0}'}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Style="{StaticResource ValueStyle}" />
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Encrypted:" Style="{StaticResource LabelStyle}" />
-                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding IsEncrypted, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="PDF Version:" Style="{StaticResource LabelStyle}" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PdfFormatVersion, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Fast Web View:" Style="{StaticResource LabelStyle}" />
-                    <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding IsLinearized, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Encrypted:" Style="{StaticResource LabelStyle}" />
+                    <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding IsEncrypted, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
 
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Aspose License:" Style="{StaticResource LabelStyle}" />
-                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding LicenseStatus, Mode=OneWay}" FontWeight="SemiBold" Style="{StaticResource ValueStyle}" />
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Fast Web View:" Style="{StaticResource LabelStyle}" />
+                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding IsLinearized, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Aspose License:" Style="{StaticResource LabelStyle}" />
+                    <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding LicenseStatus, Mode=OneWay}" FontWeight="SemiBold" Style="{StaticResource ValueStyle}" />
                 </Grid>
             </StackPanel>
         </ScrollViewer>

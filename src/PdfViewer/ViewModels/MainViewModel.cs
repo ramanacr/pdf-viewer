@@ -106,6 +106,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<string> RecentFiles { get; } = new();
 
     public string ZoomPercentageText => $"{(int)Math.Round(ZoomLevel * 100)}%";
+    public string ApplicationVersion => typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
 
     // Dialog & UI callback delegates
     public Func<string, Task<string?>>? RequestPasswordFunc { get; set; }

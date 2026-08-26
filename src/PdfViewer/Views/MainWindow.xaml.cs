@@ -370,15 +370,11 @@ public partial class MainWindow : Window
 
     private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        string licInfo = LicenseService.IsLicensed
-            ? $"Licensed - {LicenseService.LicenseStatusMessage}\nLicense file: {LicenseService.LicenseFilePath}"
-            : $"Evaluation Mode\n{LicenseService.LicenseStatusMessage}";
-
-        MessageBox.Show(
-            $"PDF Viewer Desktop Native\nPowered by .NET 9 & Aspose.Pdf\n\nAspose License Status:\n{licInfo}\n\nFeatures:\n• Continuous & Single Page views\n• Smooth zooming (Ctrl+Wheel) & Pan tool\n• In-document text search with TextFragmentAbsorber\n• Bookmark outline tree\n• High-DPI Image export & Printing\n• Light and Dark theme",
-            "About PDF Viewer",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        var aboutDialog = new AboutDialog
+        {
+            Owner = this
+        };
+        aboutDialog.ShowDialog();
     }
 
     #endregion

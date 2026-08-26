@@ -309,4 +309,16 @@ public class PdfServiceTests : IDisposable
         Assert.True(version.Major >= 1);
         Assert.True(version.Build >= 0);
     }
+
+    [Fact]
+    public void TestApplicationVersionProperties()
+    {
+        var meta = new DocumentMetadata();
+        Assert.NotNull(meta.ApplicationVersion);
+        Assert.StartsWith("1.0.", meta.ApplicationVersion);
+
+        var vm = new MainViewModel();
+        Assert.NotNull(vm.ApplicationVersion);
+        Assert.StartsWith("1.0.", vm.ApplicationVersion);
+    }
 }
