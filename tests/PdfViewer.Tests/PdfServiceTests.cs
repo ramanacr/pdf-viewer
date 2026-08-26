@@ -41,6 +41,19 @@ public class PdfServiceTests : IDisposable
         Assert.True(LicenseService.IsLicensed, $"License failed to initialize. Message: {LicenseService.LicenseStatusMessage}");
     }
 
+    [Fact]
+    public void TestEmbeddedLicenseResource()
+    {
+        var assembly = typeof(LicenseService).Assembly;
+        var resourceNames = assembly.GetManifestResourceNames();
+
+        Assert.Contains(resourceNames, name => name.EndsWith("Aspose.Total.lic", StringComparison.OrdinalIgnoreCase));
+
+        using var stream = assembly.GetManifestResourceStream(resourceNames.First(n => n.EndsWith("Aspose.Total.lic", StringComparison.OrdinalIgnoreCase)));
+        Assert.NotNull(stream);
+        Assert.True(stream.Length > 0);
+    }
+
     private string CreateSamplePdf(string name = "sample.pdf", int pageCount = 3)
     {
         string filePath = Path.Combine(_testDir, name);

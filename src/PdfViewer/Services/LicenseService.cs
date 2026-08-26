@@ -19,7 +19,30 @@ public static class LicenseService
         {
             var license = new Aspose.Pdf.License();
 
-            // 1. Try finding Aspose.Total.lic directly in base / working directory or parent directories
+            // 1. Try loading from Embedded Inbuilt Resource in assembly first
+            var assemblies = new[] { Assembly.GetExecutingAssembly(), Assembly.GetEntryAssembly(), typeof(LicenseService).Assembly };
+            foreach (var assembly in assemblies)
+            {
+                if (assembly == null) continue;
+                var resourceNames = assembly.GetManifestResourceNames();
+                foreach (var resName in resourceNames)
+                {
+                    if (resName.EndsWith("Aspose.Total.lic", StringComparison.OrdinalIgnoreCase))
+                    {
+                        using var stream = assembly.GetManifestResourceStream(resName);
+                        if (stream != null)
+                        {
+                            license.SetLicense(stream);
+                            IsLicensed = true;
+                            LicenseFilePath = $"[Inbuilt Resource: {resName}]";
+                            LicenseStatusMessage = "Aspose.Total license active (Inbuilt Resource)";
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // 2. Fallback: Try finding Aspose.Total.lic directly on filesystem
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             string[] searchPaths = 
             {
@@ -39,25 +62,6 @@ public static class LicenseService
                     LicenseFilePath = fullPath;
                     LicenseStatusMessage = $"Aspose.Total license active (Loaded from {Path.GetFileName(fullPath)})";
                     return;
-                }
-            }
-
-            // 2. Try loading from Embedded Resource in assembly
-            var assembly = Assembly.GetExecutingAssembly();
-            var resourceNames = assembly.GetManifestResourceNames();
-            foreach (var resName in resourceNames)
-            {
-                if (resName.EndsWith("Aspose.Total.lic", StringComparison.OrdinalIgnoreCase))
-                {
-                    using var stream = assembly.GetManifestResourceStream(resName);
-                    if (stream != null)
-                    {
-                        license.SetLicense(stream);
-                        IsLicensed = true;
-                        LicenseFilePath = $"[Embedded: {resName}]";
-                        LicenseStatusMessage = "Aspose.Total license active (Embedded Resource)";
-                        return;
-                    }
                 }
             }
 

@@ -179,10 +179,24 @@ d:\Practice\pdf-viewer\
 ├── PdfViewer.slnx                 # Modern XML-based Solution file (.NET 9+)
 ├── README.md                      # Complete documentation and usage guide
 │
+├── publish/                       # Output folder for distribution
+│   ├── PdfViewerSetup.exe         # Windows Installable Setup Executable (with inbuilt license)
+│   ├── PdfViewer.exe              # Standalone Portable Single-File Executable (with inbuilt license)
+│   └── SampleDocument.pdf         # Demo Test Document
+│
 ├── samples/
 │   └── SampleDocument.pdf         # Multi-page test document with bookmarks and tables
 │
+├── scripts/
+│   └── build_publish.ps1          # Automated 1-click build, package & publish script
+│
 ├── src/
+│   ├── Installer/                 # Windows Graphical Setup Installer & Uninstaller
+│   │   ├── PdfViewerInstaller.csproj # Setup project packaging Payload.zip
+│   │   ├── App.xaml / App.xaml.cs   # Silent / GUI / Uninstall CLI dispatcher
+│   │   ├── InstallService.cs        # Extraction, Shortcuts, Registry & File associations
+│   │   └── InstallerWindow.xaml (.cs) # Modern WPF installer interface
+│   │
 │   └── PdfViewer/
 │       ├── PdfViewer.csproj       # WPF Application project file (net9.0-windows)
 │       ├── App.xaml               # Application entry point & resource definitions
@@ -228,60 +242,46 @@ d:\Practice\pdf-viewer\
 └── tests/
     └── PdfViewer.Tests/
         ├── PdfViewer.Tests.csproj # xUnit test project
-        └── PdfServiceTests.cs     # 9 comprehensive unit & integration tests
+        └── PdfServiceTests.cs     # 10 comprehensive unit & integration tests
 ```
 
 ---
 
-## Building & Running
+## Building & Publishing
 
-### Build Solution
+### 1-Click Automated Build & Package Script
 
-To build the entire solution using the modern `.slnx` format:
+To build the entire solution, bundle the inbuilt Aspose license, and generate both the **Setup Installer** and **Standalone Executable** into the `publish/` folder:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\build_publish.ps1
+```
+
+This generates:
+- `publish\PdfViewerSetup.exe`: Native Windows Installable Setup wizard with Desktop shortcut, Start Menu shortcut, and Windows Add/Remove Programs uninstaller.
+- `publish\PdfViewer.exe`: Portable single-file standalone executable with all binaries and inbuilt Aspose license.
+- `publish\SampleDocument.pdf`: Pre-packaged demo document.
+
+### Manual Build
 
 ```powershell
 dotnet build PdfViewer.slnx -c Release
 ```
 
-For Debug builds:
-```powershell
-dotnet build PdfViewer.slnx
-```
-
-### Run Application
-
-To launch the native desktop application:
+### Run from Source
 
 ```powershell
 dotnet run --project src\PdfViewer\PdfViewer.csproj
 ```
 
-### Command-Line Arguments
-
-You can pass a PDF file path directly to open it on startup:
-
+Or pass a PDF file directly:
 ```powershell
 dotnet run --project src\PdfViewer\PdfViewer.csproj -- "samples\SampleDocument.pdf"
 ```
 
-Or pass any external PDF path:
-```powershell
-dotnet run --project src\PdfViewer\PdfViewer.csproj -- "C:\Users\Username\Documents\MyDocument.pdf"
-```
-
-### Publish Single-File Executable
-
-To produce a standalone, self-contained or framework-dependent Windows executable:
-
-```powershell
-dotnet publish src\PdfViewer\PdfViewer.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o dist/
-```
-
-The output executable `dist\PdfViewer.exe` can be distributed directly to Windows users.
-
 ### Run Automated Tests
 
-To execute the automated xUnit test suite covering Aspose licensing, rendering, bookmarks, search, LRU caching, image export, and password protection:
+To execute the automated xUnit test suite covering Aspose licensing (including embedded resource verification), page rendering, bookmarks, search, LRU caching, image export, and encrypted PDFs:
 
 ```powershell
 dotnet test PdfViewer.slnx
