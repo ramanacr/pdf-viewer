@@ -1,0 +1,305 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using PdfViewer.Models;
+using PdfViewer.Services;
+using PdfViewer.ViewModels;
+using PdfViewer.Views.Dialogs;
+
+namespace PdfViewer.Views;
+
+public partial class MainWindow : Window
+{
+    private readonly MainViewModel _vm;
+    private Point _panStartPoint;
+    private double _panStartHOffset;
+    private double _panStartVOffset;
+    private bool _isMousePanning;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+
+        _vm = (MainViewModel)DataContext;
+        _vm.RequestPasswordFunc = PromptForPasswordAsync;
+        _vm.ShowPropertiesAction = ShowPropertiesDialog;
+        _vm.ShowExportDialogFunc = ShowExportImagesDialog;
+        _vm.ScrollToPageAction = ScrollToPage;
+        _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+
+        Loaded += MainWindow_Loaded;
+        SizeChanged += (s, e) =>
+        {
+            if (_vm.FitMode != PageFitMode.Custom)
+            {
+                _vm.ApplyFitMode();
+            }
+        };
+    }
+
+    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(App.StartupPdfPath) && File.Exists(App.StartupPdfPath))
+        {
+            await _vm.LoadDocumentAsync(App.StartupPdfPath);
+        }
+    }
+
+    #region Dialog Helpers
+
+    private Task<string?> PromptForPasswordAsync(string fileName)
+    {
+        var tcs = new TaskCompletionSource<string?>();
+        var dialog = new PasswordDialog(fileName)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            tcs.SetResult(dialog.Password);
+        }
+        else
+        {
+            tcs.SetResult(null);
+        }
+
+        return tcs.Task;
+    }
+
+    private void ShowPropertiesDialog(DocumentMetadata metadata)
+    {
+        var dialog = new PropertiesDialog(metadata)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
+
+    private (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi) ShowExportImagesDialog(DocumentMetadata metadata)
+    {
+        var dialog = new ExportImagesDialog(metadata, _vm.CurrentPageNumber)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            return (true, dialog.OutputDirectory, dialog.FileNamePrefix, dialog.StartPage, dialog.EndPage, dialog.SelectedFormat, dialog.SelectedDpi);
+        }
+
+        return (false, string.Empty, string.Empty, 1, 1, "PNG", 300);
+    }
+
+    #endregion
+
+    #region Viewport & Page Scrolling
+
+    private void ScrollToPage(int pageNumber)
+    {
+        if (_vm.ViewMode == ViewLayoutMode.SinglePage) return;
+
+        // In continuous mode, find container and scroll into view
+        if (pageNumber < 1 || pageNumber > _vm.Pages.Count) return;
+
+        double accumulatedHeight = 0;
+        for (int i = 0; i < pageNumber - 1; i++)
+        {
+            accumulatedHeight += _vm.Pages[i].DisplayHeight + 20; // 20 is bottom margin
+        }
+
+        DocumentScrollViewer.ScrollToVerticalOffset(accumulatedHeight);
+    }
+
+    private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (_vm.ViewMode == ViewLayoutMode.SinglePage || !_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+
+        // Determine current visible page from vertical scroll offset
+        double currentOffset = DocumentScrollViewer.VerticalOffset;
+        double accumulated = 0;
+        int activePage = 1;
+
+        for (int i = 0; i < _vm.Pages.Count; i++)
+        {
+            double pageH = _vm.Pages[i].DisplayHeight + 20;
+            if (currentOffset >= accumulated && currentOffset < accumulated + pageH)
+            {
+                activePage = i + 1;
+                break;
+            }
+            accumulated += pageH;
+        }
+
+        if (_vm.CurrentPageNumber != activePage)
+        {
+            _vm.CurrentPageNumber = activePage;
+        }
+    }
+
+    #endregion
+
+    #region Mouse Pan & Dynamic Zoom
+
+    private void DocumentScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            e.Handled = true;
+            if (e.Delta > 0)
+            {
+                _vm.ZoomIn();
+            }
+            else if (e.Delta < 0)
+            {
+                _vm.ZoomOut();
+            }
+        }
+    }
+
+    private void DocumentScrollViewer_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.MiddleButton == MouseButtonState.Pressed || (_vm.IsPanningEnabled && e.LeftButton == MouseButtonState.Pressed))
+        {
+            _isMousePanning = true;
+            _panStartPoint = e.GetPosition(DocumentScrollViewer);
+            _panStartHOffset = DocumentScrollViewer.HorizontalOffset;
+            _panStartVOffset = DocumentScrollViewer.VerticalOffset;
+            DocumentScrollViewer.Cursor = Cursors.SizeAll;
+            DocumentScrollViewer.CaptureMouse();
+            e.Handled = true;
+        }
+    }
+
+    private void DocumentScrollViewer_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_isMousePanning)
+        {
+            var currentPoint = e.GetPosition(DocumentScrollViewer);
+            var delta = currentPoint - _panStartPoint;
+
+            DocumentScrollViewer.ScrollToHorizontalOffset(_panStartHOffset - delta.X);
+            DocumentScrollViewer.ScrollToVerticalOffset(_panStartVOffset - delta.Y);
+            e.Handled = true;
+        }
+    }
+
+    private void DocumentScrollViewer_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isMousePanning)
+        {
+            _isMousePanning = false;
+            DocumentScrollViewer.ReleaseMouseCapture();
+            DocumentScrollViewer.Cursor = _vm.IsPanningEnabled ? Cursors.Hand : Cursors.Arrow;
+            e.Handled = true;
+        }
+    }
+
+    #endregion
+
+    #region Drag & Drop
+
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            string[]? files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+            if (files != null && files.Length > 0 && files[0].EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                e.Effects = DragDropEffects.Copy;
+                e.Handled = true;
+                return;
+            }
+        }
+        e.Effects = DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            string[]? files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+            if (files != null && files.Length > 0)
+            {
+                string firstPdf = files.FirstOrDefault(f => f.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) ?? files[0];
+                if (File.Exists(firstPdf))
+                {
+                    await _vm.LoadDocumentAsync(firstPdf);
+                }
+            }
+        }
+    }
+
+    #endregion
+
+    #region Navigation Event Handlers
+
+    private void Thumbnail_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement elem && elem.DataContext is ThumbnailViewModel thumb)
+        {
+            _vm.CurrentPageNumber = thumb.PageNumber;
+        }
+    }
+
+    private void BookmarkTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (e.NewValue is BookmarkItem bookmark)
+        {
+            _vm.NavigateBookmark(bookmark);
+        }
+    }
+
+    private void SearchMatch_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBox lb && lb.SelectedItem is SearchMatch match)
+        {
+            _vm.SelectSearchMatch(match);
+        }
+    }
+
+    private void PageInputBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            if (sender is TextBox tb && int.TryParse(tb.Text, out int page))
+            {
+                _vm.GoToPage(page);
+            }
+        }
+    }
+
+    private async void SearchInputBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            await _vm.ExecuteSearchAsync();
+        }
+    }
+
+    private void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        Application.Current.Shutdown();
+    }
+
+    private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        string licInfo = LicenseService.IsLicensed
+            ? $"Licensed - {LicenseService.LicenseStatusMessage}\nLicense file: {LicenseService.LicenseFilePath}"
+            : $"Evaluation Mode\n{LicenseService.LicenseStatusMessage}";
+
+        MessageBox.Show(
+            $"PDF Viewer Desktop Native\nPowered by .NET 9 & Aspose.Pdf\n\nAspose License Status:\n{licInfo}\n\nFeatures:\n• Continuous & Single Page views\n• Smooth zooming (Ctrl+Wheel) & Pan tool\n• In-document text search with TextFragmentAbsorber\n• Bookmark outline tree\n• High-DPI Image export & Printing\n• Light and Dark theme",
+            "About PDF Viewer",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    #endregion
+}

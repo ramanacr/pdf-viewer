@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>PdfViewer</RootNamespace>
+    <AssemblyName>PdfViewer</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspose.PDF" Version="24.12.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Include Aspose.Total.lic as EmbeddedResource and copy to output directory if present -->
+    <None Include="..\..\Aspose.Total.lic" Link="Aspose.Total.lic" Condition="Exists('..\..\Aspose.Total.lic')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <EmbeddedResource Include="..\..\Aspose.Total.lic" Link="Aspose.Total.lic" Condition="Exists('..\..\Aspose.Total.lic')" />
+  </ItemGroup>
+
+</Project>

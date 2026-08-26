@@ -1,0 +1,36 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Color x:Key="AppBgColor">#1E1E1E</Color>
+    <Color x:Key="SurfaceBgColor">#252526</Color>
+    <Color x:Key="SurfaceAltBgColor">#2D2D30</Color>
+    <Color x:Key="BorderColor">#3E3E42</Color>
+    <Color x:Key="TextPrimaryColor">#F1F1F1</Color>
+    <Color x:Key="TextSecondaryColor">#AAAAAA</Color>
+    <Color x:Key="AccentColor">#3794FF</Color>
+    <Color x:Key="AccentHoverColor">#1E7CE6</Color>
+    <Color x:Key="AccentLightColor">#1A3B5C</Color>
+    <Color x:Key="ToolbarBgColor">#252526</Color>
+    <Color x:Key="SidebarBgColor">#1E1E1E</Color>
+    <Color x:Key="DocumentViewportBgColor">#181818</Color>
+    <Color x:Key="PageBgColor">#FFFFFF</Color>
+    <Color x:Key="HighlightMatchColor">#FFE57F</Color>
+    <Color x:Key="ActiveMatchColor">#FF9100</Color>
+
+    <SolidColorBrush x:Key="AppBgBrush" Color="{StaticResource AppBgColor}" />
+    <SolidColorBrush x:Key="SurfaceBgBrush" Color="{StaticResource SurfaceBgColor}" />
+    <SolidColorBrush x:Key="SurfaceAltBgBrush" Color="{StaticResource SurfaceAltBgColor}" />
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="AccentLightBrush" Color="{StaticResource AccentLightColor}" />
+    <SolidColorBrush x:Key="ToolbarBgBrush" Color="{StaticResource ToolbarBgColor}" />
+    <SolidColorBrush x:Key="SidebarBgBrush" Color="{StaticResource SidebarBgColor}" />
+    <SolidColorBrush x:Key="DocumentViewportBgBrush" Color="{StaticResource DocumentViewportBgColor}" />
+    <SolidColorBrush x:Key="PageBgBrush" Color="{StaticResource PageBgColor}" />
+    <SolidColorBrush x:Key="HighlightMatchBrush" Color="{StaticResource HighlightMatchColor}" />
+    <SolidColorBrush x:Key="ActiveMatchBrush" Color="{StaticResource ActiveMatchColor}" />
+
+</ResourceDictionary>
