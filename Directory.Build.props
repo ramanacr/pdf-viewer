@@ -1,0 +1,26 @@
+<Project>
+  <PropertyGroup>
+    <Company>PDF Viewer Native</Company>
+    <Product>PDF Viewer Native Desktop</Product>
+    <Copyright>Copyright © 2026</Copyright>
+    <VersionPrefix>1.0</VersionPrefix>
+  </PropertyGroup>
+
+  <!-- Auto-calculate build number based on total number of Git changes/commits -->
+  <Target Name="AutoSetGitVersion" BeforeTargets="BeforeBuild;BeforeCompile;GetAssemblyVersion;GenerateNuspec;CoreCompile">
+    <Exec Command="git rev-list --count HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitCount" />
+    </Exec>
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitHash" />
+    </Exec>
+    <PropertyGroup>
+      <GitCommitCount Condition="'$(GitCommitCount)' == ''">0</GitCommitCount>
+      <Version>$(VersionPrefix).$(GitCommitCount)</Version>
+      <AssemblyVersion>$(VersionPrefix).$(GitCommitCount).0</AssemblyVersion>
+      <FileVersion>$(VersionPrefix).$(GitCommitCount).0</FileVersion>
+      <InformationalVersion Condition="'$(GitCommitHash)' != ''">$(VersionPrefix).$(GitCommitCount)+$(GitCommitHash)</InformationalVersion>
+      <InformationalVersion Condition="'$(GitCommitHash)' == ''">$(VersionPrefix).$(GitCommitCount)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+</Project>

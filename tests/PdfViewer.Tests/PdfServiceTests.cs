@@ -291,4 +291,15 @@ public class PdfServiceTests : IDisposable
         Assert.True(File.Exists(outPng));
         Assert.True(new FileInfo(outIco).Length > 1000);
     }
+
+    [Fact]
+    public void TestAutoIncrementedVersion()
+    {
+        var asm = typeof(LicenseService).Assembly;
+        var version = asm.GetName().Version;
+
+        Assert.NotNull(version);
+        Assert.True(version.Major >= 1);
+        Assert.True(version.Build >= 0);
+    }
 }

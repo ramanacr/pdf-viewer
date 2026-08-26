@@ -15,7 +15,23 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host " Building & Packaging PDF Viewer Native (.NET 9)  " -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
-# 1. Clean previous publish folder
+# 1. Determine Auto-Incremented Build Number based on number of changes/commits
+$CommitCount = "1"
+try {
+    $count = (git rev-list --count HEAD).Trim()
+    if (![string]::IsNullOrEmpty($count)) {
+        $CommitCount = $count
+    }
+} catch {
+    $CommitCount = "1"
+}
+
+$AppVersion = "1.0.$CommitCount"
+$AssemblyVersion = "1.0.$CommitCount.0"
+
+Write-Host "`n>> Product Version: $AppVersion (Total Changes/Commits: $CommitCount)" -ForegroundColor Green
+
+# 2. Clean previous publish folder
 $PublishDir = Join-Path $RootDir "publish"
 $AppStagingDir = Join-Path $PublishDir "app"
 $InstallerDir = Join-Path $RootDir "src\Installer"
@@ -39,26 +55,29 @@ if (Test-Path "$RootDir\assets\app_icon.ico") {
     Copy-Item -Path "$RootDir\assets\app_icon.png" -Destination "$RootDir\src\Installer\assets\app_icon.png" -Force
 }
 
-# 2. Publish the main WPF application
-Write-Host "`n[1/4] Publishing main PDF Viewer application (including inbuilt Aspose license and icons)..." -ForegroundColor Yellow
+# 3. Publish the main WPF application
+Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (including inbuilt Aspose license and icons)..." -ForegroundColor Yellow
 dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
     -c Release `
     -r win-x64 `
     --self-contained false `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:Version="$AppVersion" `
+    -p:AssemblyVersion="$AssemblyVersion" `
+    -p:FileVersion="$AssemblyVersion" `
     -o "$AppStagingDir"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to publish PdfViewer application."
 }
 
-# 3. Create Payload.zip for the installer
+# 4. Create Payload.zip for the installer
 Write-Host "`n[2/4] Creating installer payload archive..." -ForegroundColor Yellow
 Compress-Archive -Path "$AppStagingDir\*" -DestinationPath "$PayloadZip" -Force
 
-# 4. Build and publish the Windows Setup Installer
-Write-Host "`n[3/4] Building Windows Setup Installer (PdfViewerSetup.exe)..." -ForegroundColor Yellow
+# 5. Build and publish the Windows Setup Installer
+Write-Host "`n[3/4] Building Windows Setup Installer v$AppVersion (PdfViewerSetup.exe)..." -ForegroundColor Yellow
 $InstallerStaging = Join-Path $PublishDir "installer_staging"
 New-Item -ItemType Directory -Path $InstallerStaging -Force | Out-Null
 
@@ -68,6 +87,9 @@ dotnet publish "$RootDir\src\Installer\PdfViewerInstaller.csproj" `
     --self-contained false `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:Version="$AppVersion" `
+    -p:AssemblyVersion="$AssemblyVersion" `
+    -p:FileVersion="$AssemblyVersion" `
     -o "$InstallerStaging"
 
 if ($LASTEXITCODE -ne 0) {

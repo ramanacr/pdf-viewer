@@ -182,11 +182,12 @@ public static class InstallService
     {
         try
         {
+            string version = typeof(InstallService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
             using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PdfViewer");
             if (key != null)
             {
                 key.SetValue("DisplayName", "PDF Viewer Native");
-                key.SetValue("DisplayVersion", "1.0.0");
+                key.SetValue("DisplayVersion", version);
                 key.SetValue("Publisher", "PDF Viewer Native Desktop");
                 key.SetValue("InstallLocation", installDir);
                 key.SetValue("DisplayIcon", mainExePath);
