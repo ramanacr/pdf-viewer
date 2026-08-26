@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private double _panStartHOffset;
     private double _panStartVOffset;
     private bool _isMousePanning;
+    private GridLength _savedSidebarWidth = new GridLength(280);
 
     public MainWindow()
     {
@@ -35,11 +36,55 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         SizeChanged += (s, e) =>
         {
-            if (_vm.FitMode != PageFitMode.Custom)
+            if (_vm.IsDocumentLoaded && _vm.FitMode != PageFitMode.Custom)
             {
                 _vm.ApplyFitMode();
             }
         };
+
+        DocumentScrollViewer.SizeChanged += (s, e) =>
+        {
+            if (_vm.IsDocumentLoaded && _vm.FitMode != PageFitMode.Custom)
+            {
+                _vm.ApplyFitMode();
+            }
+        };
+
+        _vm.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.IsSidebarOpen))
+            {
+                UpdateSidebarColumnVisibility(_vm.IsSidebarOpen);
+            }
+        };
+    }
+
+    private void UpdateSidebarColumnVisibility(bool isOpen)
+    {
+        if (isOpen)
+        {
+            SidebarColumn.MinWidth = 180;
+            SidebarColumn.Width = _savedSidebarWidth.Value >= 180 ? _savedSidebarWidth : new GridLength(280);
+            SidebarSplitterColumn.Width = GridLength.Auto;
+        }
+        else
+        {
+            if (SidebarColumn.ActualWidth >= 100)
+            {
+                _savedSidebarWidth = new GridLength(SidebarColumn.ActualWidth);
+            }
+            SidebarColumn.MinWidth = 0;
+            SidebarColumn.Width = new GridLength(0);
+            SidebarSplitterColumn.Width = new GridLength(0);
+        }
+
+        if (_vm.IsDocumentLoaded && _vm.FitMode != PageFitMode.Custom)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                _vm.ApplyFitMode();
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)

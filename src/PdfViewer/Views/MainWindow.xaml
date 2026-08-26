@@ -380,11 +380,13 @@
         <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <!-- Sidebar Column -->
-                <ColumnDefinition Width="280"
+                <ColumnDefinition x:Name="SidebarColumn"
+                                  Width="280"
                                   MinWidth="180"
                                   MaxWidth="450" />
                 <!-- Splitter Column -->
-                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="SidebarSplitterColumn"
+                                  Width="Auto" />
                 <!-- Viewport Column -->
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>

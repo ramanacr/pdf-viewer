@@ -502,6 +502,17 @@ public partial class MainViewModel : ObservableObject
         IsSidebarOpen = !IsSidebarOpen;
     }
 
+    partial void OnIsSidebarOpenChanged(bool value)
+    {
+        if (IsDocumentLoaded && FitMode != PageFitMode.Custom)
+        {
+            Application.Current?.Dispatcher.InvokeAsync(() =>
+            {
+                ApplyFitMode();
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+    }
+
     [RelayCommand]
     public void TogglePanTool()
     {
