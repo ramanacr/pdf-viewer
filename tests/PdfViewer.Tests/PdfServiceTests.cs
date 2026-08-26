@@ -7,6 +7,7 @@ using Aspose.Pdf.Annotations;
 using Aspose.Pdf.Text;
 using PdfViewer.Models;
 using PdfViewer.Services;
+using PdfViewer.ViewModels;
 using Xunit;
 
 namespace PdfViewer.Tests;

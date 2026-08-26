@@ -260,6 +260,7 @@ public partial class MainViewModel : ObservableObject
                 Thumbnails.Add(thumbVm);
             }
 
+            CurrentPageNumber = 1;
             UpdateSingleCurrentPage();
 
             // Calculate initial fit if requested
@@ -267,6 +268,8 @@ public partial class MainViewModel : ObservableObject
             {
                 ApplyFitMode();
             }
+
+            ScrollToPageAction?.Invoke(1);
 
             // Trigger asynchronous render
             await RenderVisiblePagesAsync();

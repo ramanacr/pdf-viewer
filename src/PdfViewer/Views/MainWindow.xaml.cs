@@ -177,6 +177,7 @@ public partial class MainWindow : Window
 
             double accumulated = 0;
             int centerPage = 1;
+            bool found = false;
 
             for (int i = 0; i < _vm.Pages.Count; i++)
             {
@@ -184,14 +185,22 @@ public partial class MainWindow : Window
                 if (centerOffset >= accumulated && centerOffset < accumulated + pageH)
                 {
                     centerPage = i + 1;
+                    found = true;
                     break;
                 }
                 accumulated += pageH;
             }
 
-            if (centerOffset >= accumulated && _vm.Pages.Count > 0)
+            if (!found)
             {
-                centerPage = _vm.Pages.Count;
+                if (centerOffset < 0)
+                {
+                    centerPage = 1;
+                }
+                else if (centerOffset >= accumulated && _vm.Pages.Count > 0)
+                {
+                    centerPage = _vm.Pages.Count;
+                }
             }
 
             _vm.SetCurrentPageFromScroll(centerPage);

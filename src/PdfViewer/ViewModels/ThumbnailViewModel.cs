@@ -44,10 +44,10 @@ public partial class ThumbnailViewModel : ObservableObject
             }
         }
         catch (OperationCanceledException) { }
+        catch (Exception) { }
         finally
         {
-            if (!ct.IsCancellationRequested)
-                IsLoading = false;
+            IsLoading = false;
         }
     }
 }

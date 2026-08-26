@@ -183,6 +183,15 @@ public static class InstallService
         try
         {
             string version = typeof(InstallService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+            if (File.Exists(mainExePath))
+            {
+                var fvi = System.Diagnostics.FileVersionInfo.GetVersionInfo(mainExePath);
+                if (!string.IsNullOrEmpty(fvi.ProductVersion))
+                {
+                    version = fvi.ProductVersion.Split('+')[0];
+                }
+            }
+
             using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PdfViewer");
             if (key != null)
             {
