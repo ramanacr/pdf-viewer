@@ -30,6 +30,17 @@ public static class InstallService
         IProgress<int>? progress = null)
     {
         progress?.Report(10);
+
+        // Close any running PdfViewer instances to prevent file lock conflicts
+        try
+        {
+            foreach (var proc in Process.GetProcessesByName("PdfViewer"))
+            {
+                try { proc.Kill(); proc.WaitForExit(2000); } catch { }
+            }
+        }
+        catch { }
+
         Directory.CreateDirectory(targetDirectory);
 
         // 1. Extract embedded payload
