@@ -176,23 +176,31 @@ When a valid license is detected:
 d:\Practice\pdf-viewer\
 │
 ├── Aspose.Total.lic               # Aspose.Total license file
+├── Directory.Build.props          # Dynamic auto-incremented build numbering (1.0.{git-commits})
 ├── PdfViewer.slnx                 # Modern XML-based Solution file (.NET 9+)
 ├── README.md                      # Complete documentation and usage guide
 │
-├── publish/                       # Output folder for distribution
-│   ├── PdfViewerSetup.exe         # Windows Installable Setup Executable (with inbuilt license)
+├── assets/                        # Multi-resolution application & file icons
+│   ├── app_icon.ico / .png        # Flaticon 4649604 (Main Application Icon)
+│   └── pdf_file.ico / .png        # Flaticon 9159117 (PDF File Association Icon)
+│
+├── publish/                       # Output folder for distribution (v1.0.X)
+│   ├── PdfViewerSetup.exe         # Windows Installable Setup Executable (with inbuilt license & icons)
 │   ├── PdfViewer.exe              # Standalone Portable Single-File Executable (with inbuilt license)
-│   └── SampleDocument.pdf         # Demo Test Document
+│   ├── assets/                    # Packaged application & file icon assets
+│   └── SampleDocument.pdf         # Demo 8-page test document with bookmarks & tables
 │
 ├── samples/
 │   └── SampleDocument.pdf         # Multi-page test document with bookmarks and tables
 │
 ├── scripts/
-│   └── build_publish.ps1          # Automated 1-click build, package & publish script
+│   ├── build_publish.ps1          # Automated 1-click build, package & publish script
+│   ├── convert_icons.ps1          # Icon conversion pipeline script
+│   └── CreateIcon.cs              # Multi-resolution ICO builder utility
 │
 ├── src/
 │   ├── Installer/                 # Windows Graphical Setup Installer & Uninstaller
-│   │   ├── PdfViewerInstaller.csproj # Setup project packaging Payload.zip
+│   │   ├── PdfViewerInstaller.csproj # Setup project packaging Payload.zip & resources
 │   │   ├── App.xaml / App.xaml.cs   # Silent / GUI / Uninstall CLI dispatcher
 │   │   ├── InstallService.cs        # Extraction, Shortcuts, Registry & File associations
 │   │   └── InstallerWindow.xaml (.cs) # Modern WPF installer interface
@@ -233,8 +241,9 @@ d:\Practice\pdf-viewer\
 │       │
 │       └── Views/                 # WPF User Interface Views & Dialogs
 │           ├── MainWindow.xaml    # Main window with ribbon, sidebar, and viewport
-│           ├── MainWindow.xaml.cs # View interactions (panning, zoom, drag-drop)
+│           ├── MainWindow.xaml.cs # View interactions (panning, zoom, drag-drop, scroll sync)
 │           └── Dialogs/
+│               ├── AboutDialog.xaml (.cs)        # Dedicated About & Version window
 │               ├── ExportImagesDialog.xaml (.cs) # Image export configuration
 │               ├── PasswordDialog.xaml (.cs)     # Password prompt dialog
 │               └── PropertiesDialog.xaml (.cs)   # Document metadata dialog
@@ -242,7 +251,7 @@ d:\Practice\pdf-viewer\
 └── tests/
     └── PdfViewer.Tests/
         ├── PdfViewer.Tests.csproj # xUnit test project
-        └── PdfServiceTests.cs     # 10 comprehensive unit & integration tests
+        └── PdfServiceTests.cs     # 14 comprehensive unit & integration tests
 ```
 
 ---
