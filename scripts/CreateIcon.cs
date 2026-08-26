@@ -7,67 +7,84 @@ using System.Windows.Media.Imaging;
 
 public static class IconBuilder
 {
-    public static void BuildIcon(string[] args)
+    public static void BuildIcon(string[]? args = null)
     {
-        string inputPath = args.Length > 0 ? args[0] : @"C:\Users\ramanareddy\.gemini\antigravity\brain\9f87780e-135d-4888-9e66-56fa588be862\pdf_viewer_icon_1787752279772.jpg";
-        string outputIco = args.Length > 1 ? args[1] : @"d:\Practice\pdf-viewer\assets\app_icon.ico";
-        string outputPng = args.Length > 2 ? args[2] : @"d:\Practice\pdf-viewer\assets\app_icon.png";
-
-        Console.WriteLine($"Loading source image: {inputPath}");
-
-        var srcUri = new Uri(inputPath, UriKind.Absolute);
-        var originalBmp = new BitmapImage(srcUri);
-        var writeableBmp = new FormatConvertedBitmap(originalBmp, PixelFormats.Bgra32, null, 0);
-
-        int width = writeableBmp.PixelWidth;
-        int height = writeableBmp.PixelHeight;
-        int stride = width * 4;
-        byte[] pixels = new byte[height * stride];
-        writeableBmp.CopyPixels(pixels, stride, 0);
-
-        // Make pure white background transparent (flood fill from borders or color key threshold)
-        // Background in the rendered image is near white (>245 in R,G,B)
-        // Let's make outside white pixels transparent while preserving smooth edges
-        for (int y = 0; y < height; y++)
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        var dir = new DirectoryInfo(baseDir);
+        string rootDir = baseDir;
+        while (dir != null)
         {
-            for (int x = 0; x < width; x++)
+            if (File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx")))
             {
-                int idx = y * stride + x * 4;
-                byte b = pixels[idx];
-                byte g = pixels[idx + 1];
-                byte r = pixels[idx + 2];
+                rootDir = dir.FullName;
+                break;
+            }
+            dir = dir.Parent;
+        }
 
-                // If close to white background
-                if (r > 240 && g > 240 && b > 240)
+        string assetsDir = Path.Combine(rootDir, "assets");
+        Directory.CreateDirectory(assetsDir);
+
+        string appRaw = Path.Combine(assetsDir, "app_icon_raw.png");
+        string pdfRaw = Path.Combine(assetsDir, "pdf_file_raw.png");
+
+        if (File.Exists(appRaw))
+        {
+            ConvertPngToMultiResIco(appRaw, Path.Combine(assetsDir, "app_icon.ico"), Path.Combine(assetsDir, "app_icon.png"));
+        }
+
+        if (File.Exists(pdfRaw))
+        {
+            ConvertPngToMultiResIco(pdfRaw, Path.Combine(assetsDir, "pdf_file.ico"), Path.Combine(assetsDir, "pdf_file.png"));
+        }
+
+        // Copy to project asset directories
+        string[] targetDirs =
+        {
+            Path.Combine(rootDir, "src", "PdfViewer", "assets"),
+            Path.Combine(rootDir, "src", "Installer", "assets")
+        };
+
+        foreach (var tDir in targetDirs)
+        {
+            Directory.CreateDirectory(tDir);
+            foreach (var file in new[] { "app_icon.ico", "app_icon.png", "pdf_file.ico", "pdf_file.png", "app_icon_raw.png", "pdf_file_raw.png" })
+            {
+                string src = Path.Combine(assetsDir, file);
+                if (File.Exists(src))
                 {
-                    // Compute distance from pure white for smooth anti-aliased edge
-                    int minVal = Math.Min(r, Math.Min(g, b));
-                    if (minVal >= 250)
-                    {
-                        pixels[idx + 3] = 0; // completely transparent
-                    }
-                    else
-                    {
-                        // Semi-transparent fade
-                        double factor = (255 - minVal) / 15.0;
-                        pixels[idx + 3] = (byte)(Math.Clamp(factor, 0.0, 1.0) * 255);
-                    }
+                    File.Copy(src, Path.Combine(tDir, file), overwrite: true);
                 }
             }
         }
+    }
 
-        var transparentBmp = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
-        transparentBmp.Freeze();
+    public static void ConvertPngToMultiResIco(string inputPng, string outputIco, string outputPng)
+    {
+        Console.WriteLine($"Converting {inputPng} to multi-resolution ICO -> {outputIco}");
 
-        // Save high-res PNG
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPng)!);
-        using (var pngStream = new FileStream(outputPng, FileMode.Create))
+        var srcUri = new Uri(inputPng, UriKind.Absolute);
+        var originalBmp = new BitmapImage();
+        originalBmp.BeginInit();
+        originalBmp.UriSource = srcUri;
+        originalBmp.CacheOption = BitmapCacheOption.OnLoad;
+        originalBmp.EndInit();
+        originalBmp.Freeze();
+
+        var writeableBmp = new FormatConvertedBitmap(originalBmp, PixelFormats.Bgra32, null, 0);
+        writeableBmp.Freeze();
+
+        int width = writeableBmp.PixelWidth;
+        int height = writeableBmp.PixelHeight;
+
+        // Save master PNG if path is different
+        if (!string.Equals(Path.GetFullPath(inputPng), Path.GetFullPath(outputPng), StringComparison.OrdinalIgnoreCase))
         {
+            using var pngStream = new FileStream(outputPng, FileMode.Create);
             var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(transparentBmp));
+            encoder.Frames.Add(BitmapFrame.Create(writeableBmp));
             encoder.Save(pngStream);
         }
-        Console.WriteLine($"Saved transparent PNG to {outputPng}");
 
         // Build multi-resolution ICO: 256, 128, 64, 48, 32, 16
         int[] sizes = { 256, 128, 64, 48, 32, 16 };
@@ -75,7 +92,7 @@ public static class IconBuilder
 
         foreach (var size in sizes)
         {
-            var resized = new TransformedBitmap(transparentBmp, new ScaleTransform((double)size / width, (double)size / height));
+            var resized = new TransformedBitmap(writeableBmp, new ScaleTransform((double)size / width, (double)size / height));
             resized.Freeze();
 
             using var ms = new MemoryStream();
@@ -122,6 +139,6 @@ public static class IconBuilder
             }
         }
 
-        Console.WriteLine($"Saved multi-res ICO to {outputIco}");
+        Console.WriteLine($"Generated ICO successfully: {outputIco}");
     }
 }

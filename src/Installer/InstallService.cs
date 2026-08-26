@@ -203,12 +203,22 @@ public static class InstallService
     {
         try
         {
+            string installDir = Path.GetDirectoryName(mainExePath) ?? string.Empty;
+            string fileIconPath = Path.Combine(installDir, "assets", "pdf_file.ico");
+
             using var progKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\PdfViewer.Document");
             if (progKey != null)
             {
                 progKey.SetValue("", "PDF Document");
                 using var iconKey = progKey.CreateSubKey("DefaultIcon");
-                iconKey?.SetValue("", $"{mainExePath},0");
+                if (File.Exists(fileIconPath))
+                {
+                    iconKey?.SetValue("", $"{fileIconPath},0");
+                }
+                else
+                {
+                    iconKey?.SetValue("", $"{mainExePath},0");
+                }
 
                 using var cmdKey = progKey.CreateSubKey(@"shell\open\command");
                 cmdKey?.SetValue("", $"\"{mainExePath}\" \"%1\"");

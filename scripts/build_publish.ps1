@@ -47,12 +47,10 @@ if (Test-Path $PayloadZip) {
 
 New-Item -ItemType Directory -Path $AppStagingDir -Force | Out-Null
 
-# Ensure asset directories have the latest icons
-if (Test-Path "$RootDir\assets\app_icon.ico") {
-    Copy-Item -Path "$RootDir\assets\app_icon.ico" -Destination "$RootDir\src\PdfViewer\assets\app_icon.ico" -Force
-    Copy-Item -Path "$RootDir\assets\app_icon.ico" -Destination "$RootDir\src\Installer\assets\app_icon.ico" -Force
-    Copy-Item -Path "$RootDir\assets\app_icon.png" -Destination "$RootDir\src\PdfViewer\assets\app_icon.png" -Force
-    Copy-Item -Path "$RootDir\assets\app_icon.png" -Destination "$RootDir\src\Installer\assets\app_icon.png" -Force
+# Ensure asset directories have all the latest icons
+if (Test-Path "$RootDir\assets") {
+    Copy-Item -Path "$RootDir\assets\*" -Destination "$RootDir\src\PdfViewer\assets" -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$RootDir\assets\*" -Destination "$RootDir\src\Installer\assets" -Force -ErrorAction SilentlyContinue
 }
 
 # 3. Publish the main WPF application
@@ -70,6 +68,11 @@ dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to publish PdfViewer application."
+}
+
+# Copy assets folder into AppStagingDir so the installer delivers them to the user directory
+if (Test-Path "$RootDir\assets") {
+    Copy-Item -Path "$RootDir\assets" -Destination "$AppStagingDir\assets" -Recurse -Force
 }
 
 # 4. Create Payload.zip for the installer
