@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="PDF Viewer Setup"
+        Icon="pack://application:,,,/assets/app_icon.png"
         Width="540"
         Height="420"
         WindowStartupLocation="CenterScreen"
@@ -11,17 +12,20 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="85" />
+            <RowDefinition Height="90" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Header Banner -->
-        <Border Grid.Row="0" Background="#0066CC" Padding="24,16">
+        <Border Grid.Row="0" Background="#0066CC" Padding="20,12">
             <Grid>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="PDF Viewer Native Setup" FontSize="18" FontWeight="Bold" Foreground="White" />
-                    <TextBlock Text="Installs PDF Viewer with Inbuilt Aspose.Pdf Engine &amp; License" FontSize="12" Foreground="#D0E4FF" Margin="0,4,0,0" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="pack://application:,,,/assets/app_icon.png" Width="54" Height="54" Margin="0,0,16,0" RenderOptions.BitmapScalingMode="HighQuality" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="PDF Viewer Native Setup" FontSize="18" FontWeight="Bold" Foreground="White" />
+                        <TextBlock Text="Installs PDF Viewer with Inbuilt Aspose.Pdf Engine &amp; License" FontSize="12" Foreground="#D0E4FF" Margin="0,3,0,0" />
+                    </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>

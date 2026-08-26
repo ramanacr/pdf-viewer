@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PdfViewer\PdfViewer.csproj" />
+    <Compile Include="..\..\scripts\CreateIcon.cs" Link="CreateIcon.cs" />
   </ItemGroup>
 
 </Project>

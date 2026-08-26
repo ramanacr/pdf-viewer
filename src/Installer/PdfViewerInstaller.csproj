@@ -8,8 +8,13 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>PdfViewer.Installer</RootNamespace>
     <AssemblyName>PdfViewerSetup</AssemblyName>
-    <ApplicationIcon></ApplicationIcon>
+    <ApplicationIcon>assets\app_icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="assets\app_icon.ico" />
+    <Resource Include="assets\app_icon.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Payload.zip" />

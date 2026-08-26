@@ -169,6 +169,7 @@ public static class InstallService
                 dynamic shell = Activator.CreateInstance(shellType)!;
                 dynamic shortcut = shell.CreateShortcut(shortcutPath);
                 shortcut.TargetPath = targetExePath;
+                shortcut.IconLocation = $"{targetExePath},0";
                 shortcut.WorkingDirectory = Path.GetDirectoryName(targetExePath);
                 shortcut.Description = description;
                 shortcut.Save();

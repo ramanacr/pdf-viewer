@@ -31,8 +31,16 @@ if (Test-Path $PayloadZip) {
 
 New-Item -ItemType Directory -Path $AppStagingDir -Force | Out-Null
 
+# Ensure asset directories have the latest icons
+if (Test-Path "$RootDir\assets\app_icon.ico") {
+    Copy-Item -Path "$RootDir\assets\app_icon.ico" -Destination "$RootDir\src\PdfViewer\assets\app_icon.ico" -Force
+    Copy-Item -Path "$RootDir\assets\app_icon.ico" -Destination "$RootDir\src\Installer\assets\app_icon.ico" -Force
+    Copy-Item -Path "$RootDir\assets\app_icon.png" -Destination "$RootDir\src\PdfViewer\assets\app_icon.png" -Force
+    Copy-Item -Path "$RootDir\assets\app_icon.png" -Destination "$RootDir\src\Installer\assets\app_icon.png" -Force
+}
+
 # 2. Publish the main WPF application
-Write-Host "`n[1/4] Publishing main PDF Viewer application (including inbuilt Aspose license)..." -ForegroundColor Yellow
+Write-Host "`n[1/4] Publishing main PDF Viewer application (including inbuilt Aspose license and icons)..." -ForegroundColor Yellow
 dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
     -c Release `
     -r win-x64 `
@@ -73,6 +81,11 @@ Copy-Item -Path "$AppStagingDir\PdfViewer.exe" -Destination "$PublishDir\PdfView
 # Copy sample test document
 if (Test-Path "$RootDir\samples\SampleDocument.pdf") {
     Copy-Item -Path "$RootDir\samples\SampleDocument.pdf" -Destination "$PublishDir\SampleDocument.pdf" -Force
+}
+
+# Copy icons to publish directory
+if (Test-Path "$RootDir\assets") {
+    Copy-Item -Path "$RootDir\assets" -Destination "$PublishDir\assets" -Recurse -Force
 }
 
 # Clean up staging folders & temporary zip

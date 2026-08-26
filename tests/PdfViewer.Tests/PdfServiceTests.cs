@@ -249,4 +249,46 @@ public class PdfServiceTests : IDisposable
         Assert.True(File.Exists(createdPath));
         Assert.True(new FileInfo(createdPath).Length > 0);
     }
+
+    [Fact]
+    public void TestGenerateApplicationIcons()
+    {
+        string srcJpg = @"C:\Users\ramanareddy\.gemini\antigravity\brain\9f87780e-135d-4888-9e66-56fa588be862\pdf_viewer_icon_1787752279772.jpg";
+        if (!File.Exists(srcJpg)) return;
+
+        var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        string rootDir = AppDomain.CurrentDomain.BaseDirectory;
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx")))
+            {
+                rootDir = dir.FullName;
+                break;
+            }
+            dir = dir.Parent;
+        }
+
+        string outIco = Path.Combine(rootDir, "assets", "app_icon.ico");
+        string outPng = Path.Combine(rootDir, "assets", "app_icon.png");
+
+        IconBuilder.BuildIcon(new[] { srcJpg, outIco, outPng });
+
+        // Copy to project asset directories
+        string[] targetDirs =
+        {
+            Path.Combine(rootDir, "src", "PdfViewer", "assets"),
+            Path.Combine(rootDir, "src", "Installer", "assets")
+        };
+
+        foreach (var tDir in targetDirs)
+        {
+            Directory.CreateDirectory(tDir);
+            File.Copy(outIco, Path.Combine(tDir, "app_icon.ico"), overwrite: true);
+            File.Copy(outPng, Path.Combine(tDir, "app_icon.png"), overwrite: true);
+        }
+
+        Assert.True(File.Exists(outIco));
+        Assert.True(File.Exists(outPng));
+        Assert.True(new FileInfo(outIco).Length > 1000);
+    }
 }

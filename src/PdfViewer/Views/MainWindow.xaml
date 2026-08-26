@@ -7,6 +7,7 @@
         xmlns:models="clr-namespace:PdfViewer.Models"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}"
+        Icon="pack://application:,,,/assets/app_icon.png"
         Height="800"
         Width="1200"
         MinHeight="600"
@@ -538,13 +539,11 @@
                             Padding="36"
                             MaxWidth="500">
                         <StackPanel HorizontalAlignment="Center">
-                            <Path Data="{StaticResource IconOpen}"
-                                  Fill="{DynamicResource AccentBrush}"
-                                  Width="48"
-                                  Height="48"
-                                  Stretch="Uniform"
-                                  HorizontalAlignment="Center"
-                                  Margin="0,0,0,16" />
+                            <Image Source="pack://application:,,,/assets/app_icon.png"
+                                   Width="96"
+                                   Height="96"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,16" />
 
                             <TextBlock Text="PDF Viewer Native"
                                        FontSize="20"
