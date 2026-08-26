@@ -144,6 +144,24 @@ public class PdfServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TestMultiPageRenderingBeyondFourPages()
+    {
+        string pdfPath = CreateSamplePdf("multipage_test.pdf", 10);
+
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(pdfPath);
+
+        Assert.Equal(10, service.PageCount);
+        for (int i = 1; i <= 10; i++)
+        {
+            var bitmap = await service.RenderPageAsync(i, dpi: 100, rotationAngle: 0);
+            Assert.NotNull(bitmap);
+            Assert.True(bitmap.PixelWidth > 0, $"Page {i} bitmap width is 0");
+            Assert.True(bitmap.PixelHeight > 0, $"Page {i} bitmap height is 0");
+        }
+    }
+
+    [Fact]
     public async Task TestLruPageCache()
     {
         var cache = new LruPageCache(capacity: 3);

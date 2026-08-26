@@ -147,44 +147,79 @@ public partial class MainWindow : Window
 
     private void ScrollToPage(int pageNumber)
     {
-        if (_vm.ViewMode == ViewLayoutMode.SinglePage) return;
-
-        // In continuous mode, find container and scroll into view
         if (pageNumber < 1 || pageNumber > _vm.Pages.Count) return;
 
-        double accumulatedHeight = 0;
-        for (int i = 0; i < pageNumber - 1; i++)
+        if (_vm.ViewMode == ViewLayoutMode.Continuous)
         {
-            accumulatedHeight += _vm.Pages[i].DisplayHeight + 20; // 20 is bottom margin
+            double accumulatedHeight = 0;
+            for (int i = 0; i < pageNumber - 1; i++)
+            {
+                accumulatedHeight += _vm.Pages[i].DisplayHeight + 20; // 20 is bottom margin
+            }
+
+            DocumentScrollViewer.ScrollToVerticalOffset(accumulatedHeight);
+            _vm.RenderPagesInViewport(accumulatedHeight, DocumentScrollViewer.ViewportHeight);
         }
 
-        DocumentScrollViewer.ScrollToVerticalOffset(accumulatedHeight);
+        ScrollThumbnailIntoView(pageNumber);
     }
 
     private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (_vm.ViewMode == ViewLayoutMode.SinglePage || !_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+        if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
 
-        // Determine current visible page from vertical scroll offset
-        double currentOffset = DocumentScrollViewer.VerticalOffset;
-        double accumulated = 0;
-        int activePage = 1;
-
-        for (int i = 0; i < _vm.Pages.Count; i++)
+        if (_vm.ViewMode == ViewLayoutMode.Continuous)
         {
-            double pageH = _vm.Pages[i].DisplayHeight + 20;
-            if (currentOffset >= accumulated && currentOffset < accumulated + pageH)
+            // Determine current visible page from the center of the viewport
+            double viewportTop = DocumentScrollViewer.VerticalOffset;
+            double viewportHeight = DocumentScrollViewer.ViewportHeight;
+            double centerOffset = viewportTop + (viewportHeight / 2.0);
+
+            double accumulated = 0;
+            int centerPage = 1;
+
+            for (int i = 0; i < _vm.Pages.Count; i++)
             {
-                activePage = i + 1;
-                break;
+                double pageH = _vm.Pages[i].DisplayHeight + 20;
+                if (centerOffset >= accumulated && centerOffset < accumulated + pageH)
+                {
+                    centerPage = i + 1;
+                    break;
+                }
+                accumulated += pageH;
             }
-            accumulated += pageH;
+
+            if (centerOffset >= accumulated && _vm.Pages.Count > 0)
+            {
+                centerPage = _vm.Pages.Count;
+            }
+
+            _vm.SetCurrentPageFromScroll(centerPage);
+            _vm.RenderPagesInViewport(viewportTop, viewportHeight);
+
+            ScrollThumbnailIntoView(centerPage);
+        }
+    }
+
+    private void ScrollThumbnailIntoView(int pageNumber)
+    {
+        if (pageNumber < 1 || pageNumber > _vm.Thumbnails.Count || ThumbnailsScrollViewer == null) return;
+
+        double total = _vm.Thumbnails.Count;
+        if (total == 0) return;
+
+        double extent = ThumbnailsScrollViewer.ExtentHeight;
+        if (extent <= 0)
+        {
+            extent = total * 190.0;
         }
 
-        if (_vm.CurrentPageNumber != activePage)
-        {
-            _vm.CurrentPageNumber = activePage;
-        }
+        double itemHeight = extent / total;
+        double targetTop = (pageNumber - 1) * itemHeight;
+        double viewportHeight = ThumbnailsScrollViewer.ViewportHeight;
+        double targetOffset = targetTop - (viewportHeight / 2.0) + (itemHeight / 2.0);
+
+        ThumbnailsScrollViewer.ScrollToVerticalOffset(Math.Max(0, targetOffset));
     }
 
     #endregion
@@ -289,7 +324,7 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement elem && elem.DataContext is ThumbnailViewModel thumb)
         {
-            _vm.CurrentPageNumber = thumb.PageNumber;
+            _vm.NavigateToPage(thumb.PageNumber);
         }
     }
 

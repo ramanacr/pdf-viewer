@@ -130,29 +130,115 @@ public static class SamplePdfGenerator
         };
         doc.Outlines.Add(sec2Bookmark);
 
-        // Section 3: Summary & Verification
+        // Section 3: Caching & Multi-Threading
         var page4 = doc.Pages.Add();
-        var sec3Header = new TextFragment("3. Summary & Verification Notes\n");
+        var sec3Header = new TextFragment("3. Caching & Background Threading\n");
         sec3Header.TextState.FontSize = 18;
         sec3Header.TextState.FontStyle = FontStyles.Bold;
         sec3Header.TextState.ForegroundColor = Aspose.Pdf.Color.FromRgb(0.0, 102.0 / 255.0, 204.0 / 255.0);
         page4.Paragraphs.Add(sec3Header);
 
         var sec3Body = new TextFragment(
-            "All core features have been automated and tested:\n" +
-            "• Unit tests passing with 100% success rate.\n" +
-            "• Aspose.Total license active without watermarks.\n" +
-            "• File drag-and-drop, zoom controls, and export dialogs operational.\n\n" +
-            "Keyword for text search testing: QuantumComputingX99");
+            "The rendering engine combines WPF dispatcher prioritization with background task workers. " +
+            "Rendered bitmaps are frozen (Freezable.Freeze()) to permit safe cross-thread sharing without UI deadlocks.\n\n" +
+            "An LRU memory cache ensures that navigating large documents with dozens or hundreds of pages operates with a constant memory footprint, automatically recycling bitmaps when memory capacity is reached.");
         sec3Body.TextState.FontSize = 12;
         page4.Paragraphs.Add(sec3Body);
 
         var sec3Bookmark = new OutlineItemCollection(doc.Outlines)
         {
-            Title = "3. Summary & Verification",
+            Title = "3. Caching & Background Threading",
             Destination = new FitExplicitDestination(page4)
         };
         doc.Outlines.Add(sec3Bookmark);
+
+        // Section 4: Bookmark & Outline Navigation
+        var page5 = doc.Pages.Add();
+        var sec4Header = new TextFragment("4. Outline Hierarchy & Bookmarks\n");
+        sec4Header.TextState.FontSize = 18;
+        sec4Header.TextState.FontStyle = FontStyles.Bold;
+        sec4Header.TextState.ForegroundColor = Aspose.Pdf.Color.FromRgb(0.0, 102.0 / 255.0, 204.0 / 255.0);
+        page5.Paragraphs.Add(sec4Header);
+
+        var sec4Body = new TextFragment(
+            "Document outlines provide direct hierarchical navigation through chapters, sections, and appendices. " +
+            "Selecting any item in the left sidebar instantly centers the viewport on the destination page and updates the active indicator.");
+        sec4Body.TextState.FontSize = 12;
+        page5.Paragraphs.Add(sec4Body);
+
+        var sec4Bookmark = new OutlineItemCollection(doc.Outlines)
+        {
+            Title = "4. Outline Hierarchy & Bookmarks",
+            Destination = new FitExplicitDestination(page5)
+        };
+        doc.Outlines.Add(sec4Bookmark);
+
+        // Section 5: Text Search & Absorber
+        var page6 = doc.Pages.Add();
+        var sec5Header = new TextFragment("5. High-Speed Text Search\n");
+        sec5Header.TextState.FontSize = 18;
+        sec5Header.TextState.FontStyle = FontStyles.Bold;
+        sec5Header.TextState.ForegroundColor = Aspose.Pdf.Color.FromRgb(0.0, 102.0 / 255.0, 204.0 / 255.0);
+        page6.Paragraphs.Add(sec5Header);
+
+        var sec5Body = new TextFragment(
+            "Keyword search across all pages executes asynchronously, returning snippets, page numbers, and hit counters. " +
+            "Users can double-click any search result to jump directly to that page.\n\n" +
+            "Keyword for search verification: QuantumComputingX99");
+        sec5Body.TextState.FontSize = 12;
+        page6.Paragraphs.Add(sec5Body);
+
+        var sec5Bookmark = new OutlineItemCollection(doc.Outlines)
+        {
+            Title = "5. High-Speed Text Search",
+            Destination = new FitExplicitDestination(page6)
+        };
+        doc.Outlines.Add(sec5Bookmark);
+
+        // Section 6: Image Export & Printing
+        var page7 = doc.Pages.Add();
+        var sec6Header = new TextFragment("6. Image Export & Printing\n");
+        sec6Header.TextState.FontSize = 18;
+        sec6Header.TextState.FontStyle = FontStyles.Bold;
+        sec6Header.TextState.ForegroundColor = Aspose.Pdf.Color.FromRgb(0.0, 102.0 / 255.0, 204.0 / 255.0);
+        page7.Paragraphs.Add(sec6Header);
+
+        var sec6Body = new TextFragment(
+            "Export pages to standalone PNG or JPEG files at customizable DPI resolutions (72 to 600 DPI). " +
+            "Standard Windows Print Dialog integration allows printing full documents or custom page ranges with native quality.");
+        sec6Body.TextState.FontSize = 12;
+        page7.Paragraphs.Add(sec6Body);
+
+        var sec6Bookmark = new OutlineItemCollection(doc.Outlines)
+        {
+            Title = "6. Image Export & Printing",
+            Destination = new FitExplicitDestination(page7)
+        };
+        doc.Outlines.Add(sec6Bookmark);
+
+        // Section 7: Summary & Verification
+        var page8 = doc.Pages.Add();
+        var sec7Header = new TextFragment("7. Summary & Verification Notes\n");
+        sec7Header.TextState.FontSize = 18;
+        sec7Header.TextState.FontStyle = FontStyles.Bold;
+        sec7Header.TextState.ForegroundColor = Aspose.Pdf.Color.FromRgb(0.0, 102.0 / 255.0, 204.0 / 255.0);
+        page8.Paragraphs.Add(sec7Header);
+
+        var sec7Body = new TextFragment(
+            "All core features have been automated and tested:\n" +
+            "• Unit tests passing with 100% success rate.\n" +
+            "• Aspose.Total license active without watermarks or page limits.\n" +
+            "• Smooth continuous scrolling across all pages.\n" +
+            "• Navigation sidebar with real-time center page synchronization and thumbnail scrolling.");
+        sec7Body.TextState.FontSize = 12;
+        page8.Paragraphs.Add(sec7Body);
+
+        var sec7Bookmark = new OutlineItemCollection(doc.Outlines)
+        {
+            Title = "7. Summary & Verification",
+            Destination = new FitExplicitDestination(page8)
+        };
+        doc.Outlines.Add(sec7Bookmark);
 
         doc.Save(outputPath);
         return Path.GetFullPath(outputPath);

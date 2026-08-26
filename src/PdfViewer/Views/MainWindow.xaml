@@ -402,7 +402,7 @@
                             BorderThickness="0">
                     <!-- Tab 1: Thumbnails -->
                     <TabItem Header="Pages" Style="{StaticResource SidebarTabItemStyle}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8">
+                        <ScrollViewer x:Name="ThumbnailsScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8">
                             <ItemsControl ItemsSource="{Binding Thumbnails}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type vm:ThumbnailViewModel}">

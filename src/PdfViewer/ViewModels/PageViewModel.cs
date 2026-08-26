@@ -65,7 +65,7 @@ public partial class PageViewModel : ObservableObject
         OnPropertyChanged(nameof(DisplayHeight));
     }
 
-    public async Task LoadImageAsync(AsyncPageRenderer renderer, int dpi, int rotation, CancellationToken ct)
+    public async Task LoadImageAsync(AsyncPageRenderer renderer, int dpi, int rotation, CancellationToken ct = default)
     {
         if (RenderedImage != null && RotationAngle == rotation) return;
 
@@ -79,10 +79,10 @@ public partial class PageViewModel : ObservableObject
             }
         }
         catch (OperationCanceledException) { }
+        catch (Exception) { }
         finally
         {
-            if (!ct.IsCancellationRequested)
-                IsLoading = false;
+            IsLoading = false;
         }
     }
 

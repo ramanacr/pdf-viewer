@@ -316,7 +316,27 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateSingleCurrentPage();
-        ScrollToPageAction?.Invoke(CurrentPageNumber);
+    }
+
+    public void SetCurrentPageFromScroll(int centerPage)
+    {
+        if (centerPage >= 1 && (PageCount == 0 || centerPage <= PageCount))
+        {
+            CurrentPageNumber = centerPage;
+        }
+    }
+
+    public void NavigateToPage(int targetPage)
+    {
+        if (targetPage < 1 || (PageCount > 0 && targetPage > PageCount)) return;
+
+        CurrentPageNumber = targetPage;
+        ScrollToPageAction?.Invoke(targetPage);
+
+        if (ViewMode == ViewLayoutMode.Continuous)
+        {
+            _ = RenderVisiblePagesAsync();
+        }
     }
 
     private void UpdateSingleCurrentPage()
@@ -336,46 +356,26 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public void NextPage()
-    {
-        if (CurrentPageNumber < PageCount)
-            CurrentPageNumber++;
-    }
+    public void NextPage() => NavigateToPage(CurrentPageNumber + 1);
 
     [RelayCommand]
-    public void PreviousPage()
-    {
-        if (CurrentPageNumber > 1)
-            CurrentPageNumber--;
-    }
+    public void PreviousPage() => NavigateToPage(CurrentPageNumber - 1);
 
     [RelayCommand]
-    public void FirstPage()
-    {
-        if (PageCount > 0)
-            CurrentPageNumber = 1;
-    }
+    public void FirstPage() => NavigateToPage(1);
 
     [RelayCommand]
-    public void LastPage()
-    {
-        if (PageCount > 0)
-            CurrentPageNumber = PageCount;
-    }
+    public void LastPage() => NavigateToPage(PageCount);
 
     [RelayCommand]
-    public void GoToPage(int pageNumber)
-    {
-        if (pageNumber >= 1 && pageNumber <= PageCount)
-            CurrentPageNumber = pageNumber;
-    }
+    public void GoToPage(int pageNumber) => NavigateToPage(pageNumber);
 
     [RelayCommand]
     public void NavigateBookmark(BookmarkItem bookmark)
     {
         if (bookmark != null && bookmark.TargetPageNumber >= 1 && bookmark.TargetPageNumber <= PageCount)
         {
-            CurrentPageNumber = bookmark.TargetPageNumber;
+            NavigateToPage(bookmark.TargetPageNumber);
         }
     }
 
@@ -537,13 +537,37 @@ public partial class MainViewModel : ObservableObject
         return 300;
     }
 
+    public void RenderPagesInViewport(double viewportTop, double viewportHeight)
+    {
+        if (!IsDocumentLoaded || Pages.Count == 0 || ViewMode == ViewLayoutMode.SinglePage) return;
+
+        double buffer = Math.Max(viewportHeight * 1.5, 1200); // 1.5 screens buffer ahead & behind
+        double minOffset = Math.Max(0, viewportTop - buffer);
+        double maxOffset = viewportTop + viewportHeight + buffer;
+
+        double accumulated = 0;
+        int dpi = GetCurrentDpi();
+
+        for (int i = 0; i < Pages.Count; i++)
+        {
+            var page = Pages[i];
+            double pageTop = accumulated;
+            double pageBottom = accumulated + page.DisplayHeight + 20;
+
+            if (pageBottom >= minOffset && pageTop <= maxOffset)
+            {
+                if (page.RenderedImage == null && !page.IsLoading)
+                {
+                    _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
+                }
+            }
+            accumulated = pageBottom;
+        }
+    }
+
     public async Task RenderVisiblePagesAsync()
     {
         if (!IsDocumentLoaded) return;
-
-        _renderCts?.Cancel();
-        _renderCts = new CancellationTokenSource();
-        var ct = _renderCts.Token;
 
         int dpi = GetCurrentDpi();
 
@@ -551,17 +575,17 @@ public partial class MainViewModel : ObservableObject
         {
             if (SingleCurrentPage != null)
             {
-                await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, ct);
+                await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
             }
             return;
         }
 
-        // For Continuous view, render current page and adjacent pages first
+        // For Continuous mode: Render current and nearby pages first
         int cur = CurrentPageNumber - 1;
         var priorityIndices = new List<int>();
 
         if (cur >= 0 && cur < Pages.Count) priorityIndices.Add(cur);
-        for (int offset = 1; offset <= 3; offset++)
+        for (int offset = 1; offset <= 5; offset++)
         {
             if (cur - offset >= 0) priorityIndices.Add(cur - offset);
             if (cur + offset < Pages.Count) priorityIndices.Add(cur + offset);
@@ -569,20 +593,43 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var idx in priorityIndices)
         {
-            if (ct.IsCancellationRequested) return;
-            _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, ct);
+            if (Pages[idx].RenderedImage == null && !Pages[idx].IsLoading)
+            {
+                _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
+            }
+        }
+
+        // Start gentle background prefetch for remaining pages
+        _ = PrefetchAllPagesAsync(dpi, RotationAngle);
+    }
+
+    private async Task PrefetchAllPagesAsync(int dpi, int rotation)
+    {
+        for (int i = 0; i < Pages.Count; i++)
+        {
+            if (!IsDocumentLoaded || ViewMode == ViewLayoutMode.SinglePage) break;
+            var page = Pages[i];
+            if (page.RenderedImage == null && !page.IsLoading)
+            {
+                await page.LoadImageAsync(_renderer, dpi, rotation, CancellationToken.None);
+                await Task.Delay(25); // Gentle yield to maintain smooth 60 FPS UI
+            }
         }
     }
 
     public async Task RenderThumbnailsAsync()
     {
         if (!IsDocumentLoaded) return;
-        var token = CancellationToken.None;
 
-        foreach (var thumb in Thumbnails)
+        for (int i = 0; i < Thumbnails.Count; i++)
         {
             if (!IsDocumentLoaded) break;
-            await thumb.LoadThumbnailAsync(_renderer, RotationAngle, token);
+            var thumb = Thumbnails[i];
+            if (thumb.ThumbnailImage == null)
+            {
+                await thumb.LoadThumbnailAsync(_renderer, RotationAngle, CancellationToken.None);
+                await Task.Delay(15);
+            }
         }
     }
 
@@ -606,7 +653,7 @@ public partial class MainViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(SearchQuery) || !IsDocumentLoaded)
         {
             SearchMatches.Clear();
-            SearchSummaryText = "Please enter text to search.";
+            SearchSummaryText = string.Empty;
             return;
         }
 
@@ -686,7 +733,7 @@ public partial class MainViewModel : ObservableObject
 
     private void NavigateToMatch(SearchMatch match)
     {
-        CurrentPageNumber = match.PageNumber;
+        NavigateToPage(match.PageNumber);
         SearchSummaryText = $"Match {CurrentSearchMatchIndex} of {SearchMatches.Count} (Page {match.PageNumber})";
     }
 
