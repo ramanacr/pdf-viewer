@@ -43,6 +43,15 @@ public partial class AboutDialog : Window
             : (LicenseService.IsLicensed ? "Inbuilt Embedded Resource" : "None");
     }
 
+    private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        var updateDialog = new UpdateDialog
+        {
+            Owner = this
+        };
+        updateDialog.ShowDialog();
+    }
+
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
         Close();

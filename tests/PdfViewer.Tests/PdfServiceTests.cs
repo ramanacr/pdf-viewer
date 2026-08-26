@@ -322,4 +322,68 @@ public class PdfServiceTests : IDisposable
         Assert.NotNull(vm.ApplicationVersion);
         Assert.StartsWith("1.0.", vm.ApplicationVersion);
     }
+
+    [Fact]
+    public void TestVersionComparison()
+    {
+        // ParseVersion
+        Assert.Equal(new Version(1, 0, 12), UpdateService.ParseVersion("v1.0.12"));
+        Assert.Equal(new Version(1, 0, 0), UpdateService.ParseVersion("v1.0.0"));
+        Assert.Equal(new Version(2, 5, 0), UpdateService.ParseVersion("v2.5"));
+        Assert.Equal(new Version(3, 0, 0), UpdateService.ParseVersion("3.0.0"));
+        Assert.Equal(new Version(1, 0, 12), UpdateService.ParseVersion("v1.0.12+abc123"));
+        Assert.Equal(new Version(0, 0, 0), UpdateService.ParseVersion(""));
+
+        // CompareVersions
+        Assert.True(UpdateService.CompareVersions(new Version(1, 0, 12), new Version(1, 0, 0)) > 0);
+        Assert.True(UpdateService.CompareVersions(new Version(1, 0, 0), new Version(1, 0, 12)) < 0);
+        Assert.Equal(0, UpdateService.CompareVersions(new Version(1, 0, 12), new Version(1, 0, 12)));
+        Assert.True(UpdateService.CompareVersions(new Version(2, 0, 0), new Version(1, 9, 99)) > 0);
+        Assert.True(UpdateService.CompareVersions(new Version(1, 1, 0), new Version(1, 0, 99)) > 0);
+    }
+
+    [Fact]
+    public void TestUpdateInfoParsing()
+    {
+        string sampleJson = @"{
+            ""tag_name"": ""v2.0.0"",
+            ""name"": ""v2.0.0 - Major Update"",
+            ""body"": ""This is a big release with many features."",
+            ""html_url"": ""https://github.com/ramanacr/pdf-viewer/releases/tag/v2.0.0"",
+            ""published_at"": ""2026-08-26T15:04:31Z"",
+            ""assets"": [
+                {
+                    ""name"": ""PdfViewerSetup.exe"",
+                    ""size"": 42519751,
+                    ""browser_download_url"": ""https://github.com/ramanacr/pdf-viewer/releases/download/v2.0.0/PdfViewerSetup.exe""
+                },
+                {
+                    ""name"": ""PdfViewer.exe"",
+                    ""size"": 59753193,
+                    ""browser_download_url"": ""https://github.com/ramanacr/pdf-viewer/releases/download/v2.0.0/PdfViewer.exe""
+                }
+            ]
+        }";
+
+        var info = UpdateService.ParseReleaseJson(sampleJson, new Version(1, 0, 12));
+
+        Assert.True(info.IsUpdateAvailable);
+        Assert.Equal("1.0.12", info.CurrentVersion);
+        Assert.Equal("2.0.0", info.LatestVersion);
+        Assert.Equal("v2.0.0 - Major Update", info.ReleaseTitle);
+        Assert.Contains("big release", info.ReleaseNotes);
+        Assert.NotNull(info.InstallerDownloadUrl);
+        Assert.Contains("PdfViewerSetup.exe", info.InstallerDownloadUrl);
+        Assert.Equal(42519751, info.InstallerSize);
+        Assert.NotNull(info.PublishedAt);
+        Assert.Equal("40.5 MB", info.FormattedInstallerSize);
+
+        // Test with same version — no update
+        var infoSame = UpdateService.ParseReleaseJson(sampleJson, new Version(2, 0, 0));
+        Assert.False(infoSame.IsUpdateAvailable);
+
+        // Test with newer local version — no update
+        var infoNewer = UpdateService.ParseReleaseJson(sampleJson, new Version(3, 0, 0));
+        Assert.False(infoNewer.IsUpdateAvailable);
+    }
 }

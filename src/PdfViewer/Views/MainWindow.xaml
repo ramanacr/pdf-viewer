@@ -107,6 +107,11 @@
             </MenuItem>
 
             <MenuItem Header="_Help">
+                <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click" />
+                <Separator />
+                <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click" />
+                <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click" />
+                <Separator />
                 <MenuItem Header="Aspose License &amp; _About..." Click="AboutMenuItem_Click" />
             </MenuItem>
         </Menu>
@@ -699,6 +704,21 @@
                     <TextBlock Text="{Binding PageCount, StringFormat='Pages: {0}'}" Margin="0,0,16,0" />
                     <TextBlock Text="{Binding ZoomPercentageText, StringFormat='Zoom: {0}'}" Margin="0,0,16,0" />
                     <TextBlock Text="{Binding ApplicationVersion, StringFormat='v{0}'}" Margin="0,0,16,0" Foreground="{DynamicResource TextSecondaryBrush}" FontWeight="SemiBold" />
+                    <Border Background="#10E8910B"
+                            BorderBrush="#E8910B"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="6,1"
+                            Margin="0,0,10,0"
+                            Cursor="Hand"
+                            MouseLeftButtonUp="UpdateBadge_Click"
+                            ToolTip="Click to update"
+                            Visibility="{Binding IsUpdateAvailable, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding AvailableUpdateVersion, StringFormat='⬆ v{0} available'}"
+                                   Foreground="#E8910B"
+                                   FontWeight="SemiBold"
+                                   FontSize="11" />
+                    </Border>
                     <Border Background="{DynamicResource AccentLightBrush}" CornerRadius="3" Padding="6,1">
                         <TextBlock Text="{Binding Metadata.LicenseStatus, FallbackValue='Aspose.Total'}"
                                    Foreground="{DynamicResource AccentBrush}"

@@ -93,6 +93,9 @@ public partial class MainWindow : Window
         {
             await _vm.LoadDocumentAsync(App.StartupPdfPath);
         }
+
+        // Non-blocking background update check
+        CheckForUpdatesOnStartup();
     }
 
     #region Dialog Helpers
@@ -384,6 +387,43 @@ public partial class MainWindow : Window
             Owner = this
         };
         aboutDialog.ShowDialog();
+    }
+
+    private void CheckForUpdatesMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var updateDialog = new UpdateDialog(_vm.LatestUpdateInfo)
+        {
+            Owner = this
+        };
+        updateDialog.ShowDialog();
+    }
+
+    private void GitHubRepoMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        Services.UpdateService.OpenBrowser(Services.UpdateService.GitHubRepoUrl);
+    }
+
+    private void ViewReleasesMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        Services.UpdateService.OpenBrowser(Services.UpdateService.GitHubReleasesUrl);
+    }
+
+    private void UpdateBadge_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var updateDialog = new UpdateDialog(_vm.LatestUpdateInfo)
+        {
+            Owner = this
+        };
+        updateDialog.ShowDialog();
+    }
+
+    /// <summary>
+    /// Runs a non-blocking background check for updates after the window is fully loaded.
+    /// </summary>
+    private async void CheckForUpdatesOnStartup()
+    {
+        await Task.Delay(3000); // Allow the UI to fully initialize first
+        await _vm.CheckForUpdatesInBackgroundAsync();
     }
 
     #endregion

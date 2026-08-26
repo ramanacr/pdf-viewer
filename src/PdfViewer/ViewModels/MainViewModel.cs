@@ -108,6 +108,33 @@ public partial class MainViewModel : ObservableObject
     public string ZoomPercentageText => $"{(int)Math.Round(ZoomLevel * 100)}%";
     public string ApplicationVersion => typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
 
+    [ObservableProperty]
+    private bool _isUpdateAvailable;
+
+    [ObservableProperty]
+    private string _availableUpdateVersion = string.Empty;
+
+    [ObservableProperty]
+    private UpdateInfo? _latestUpdateInfo;
+
+    public async Task CheckForUpdatesInBackgroundAsync()
+    {
+        try
+        {
+            var info = await UpdateService.CheckForUpdatesAsync();
+            if (info.IsUpdateAvailable)
+            {
+                LatestUpdateInfo = info;
+                AvailableUpdateVersion = info.LatestVersion;
+                IsUpdateAvailable = true;
+            }
+        }
+        catch
+        {
+            // Silent fallback on network failure or offline mode
+        }
+    }
+
     // Dialog & UI callback delegates
     public Func<string, Task<string?>>? RequestPasswordFunc { get; set; }
     public Action<DocumentMetadata>? ShowPropertiesAction { get; set; }

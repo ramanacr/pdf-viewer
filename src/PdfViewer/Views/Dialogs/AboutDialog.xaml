@@ -150,17 +150,29 @@
             </Grid>
         </StackPanel>
 
-        <!-- Close Button -->
-        <Button Grid.Row="3"
-                Content="OK"
-                Width="90"
-                Height="32"
-                HorizontalAlignment="Right"
-                IsDefault="True"
-                IsCancel="True"
-                Background="{DynamicResource AccentBrush}"
-                Foreground="White"
-                BorderThickness="0"
-                Click="CloseButton_Click" />
+        <!-- Footer Actions -->
+        <Grid Grid.Row="3">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button Content="Check for Updates..."
+                        Height="32"
+                        Padding="12,0"
+                        Style="{StaticResource {x:Static ToolBar.ButtonStyleKey}}"
+                        Foreground="{DynamicResource AccentBrush}"
+                        FontWeight="SemiBold"
+                        Click="CheckForUpdates_Click" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="OK"
+                        Width="90"
+                        Height="32"
+                        IsDefault="True"
+                        IsCancel="True"
+                        Background="{DynamicResource AccentBrush}"
+                        Foreground="White"
+                        BorderThickness="0"
+                        Click="CloseButton_Click" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

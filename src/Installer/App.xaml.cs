@@ -30,6 +30,19 @@ public partial class App : Application
             try
             {
                 InstallService.Install(InstallService.DefaultInstallPath, true, true, true);
+
+                if (args.Any(a => a.Equals("-launch", StringComparison.OrdinalIgnoreCase) || a.Equals("/launch", StringComparison.OrdinalIgnoreCase) || a.Equals("-run", StringComparison.OrdinalIgnoreCase)))
+                {
+                    string targetExe = Path.Combine(InstallService.DefaultInstallPath, "PdfViewer.exe");
+                    if (File.Exists(targetExe))
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = targetExe,
+                            UseShellExecute = true
+                        });
+                    }
+                }
             }
             catch (Exception ex)
             {
