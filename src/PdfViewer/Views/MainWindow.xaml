@@ -125,7 +125,7 @@
                 <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click" />
                 <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click" />
                 <Separator />
-                <MenuItem Header="Aspose License &amp; _About..." Click="AboutMenuItem_Click" />
+                <MenuItem Header="_About PDF Viewer..." Click="AboutMenuItem_Click" />
             </MenuItem>
         </Menu>
 
@@ -612,12 +612,23 @@
                                        VerticalAlignment="Center"
                                        Visibility="{Binding SearchMatches.Count, Converter={StaticResource InverseBoolToVis}}" />
 
-                            <ListBox ItemsSource="{Binding SearchMatches}"
-                                     SelectedItem="{Binding CurrentSearchMatch}"
+                            <ListBox x:Name="SearchResultsListBox"
+                                     ItemsSource="{Binding SearchMatches}"
+                                     SelectedItem="{Binding SelectedSearchMatch, Mode=TwoWay}"
                                      Background="Transparent"
                                      BorderThickness="0"
                                      Padding="4"
+                                     SelectionChanged="SearchResultsListBox_SelectionChanged"
                                      MouseDoubleClick="SearchMatch_MouseDoubleClick">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Padding" Value="0" />
+                                        <Setter Property="Margin" Value="0,0,0,4" />
+                                        <Setter Property="Cursor" Value="Hand" />
+                                        <EventSetter Event="PreviewMouseLeftButtonUp" Handler="SearchResultItem_PreviewMouseLeftButtonUp" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type models:SearchMatch}">
                                         <Border Padding="8,6"
@@ -812,15 +823,17 @@
                               PreviewMouseUp="DocumentScrollViewer_PreviewMouseUp"
                               ScrollChanged="DocumentScrollViewer_ScrollChanged">
 
-                    <Grid HorizontalAlignment="Center" Margin="24">
+                    <Grid MinWidth="{Binding ViewportWidth, ElementName=DocumentScrollViewer}" HorizontalAlignment="Left" Margin="24">
 
                         <!-- Mode 1: Continuous Scrolling Mode -->
                         <ItemsControl x:Name="ContinuousPagesItemsControl"
                                       ItemsSource="{Binding Pages}"
+                                      HorizontalAlignment="Stretch"
                                       Visibility="{Binding ViewMode, Converter={StaticResource EnumToVis}, ConverterParameter=Continuous}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:PageViewModel}">
-                                    <Border Margin="0,0,0,20"
+                                    <Border HorizontalAlignment="Center"
+                                            Margin="0,0,0,20"
                                             Background="{DynamicResource PageBgBrush}"
                                             CornerRadius="2">
                                         <Border.Effect>
@@ -1105,6 +1118,7 @@
                                 CornerRadius="2"
                                 Width="{Binding SingleCurrentPage.DisplayWidth}"
                                 Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
                             <Border.Effect>
                                 <DropShadowEffect Color="#20000000" BlurRadius="15" ShadowDepth="3" />
@@ -1414,7 +1428,7 @@
                                    FontSize="11" />
                     </Border>
                     <Border Background="{DynamicResource AccentLightBrush}" CornerRadius="3" Padding="6,1">
-                        <TextBlock Text="{Binding Metadata.LicenseStatus, FallbackValue='Aspose.Total'}"
+                        <TextBlock Text="{Binding Metadata.LicenseStatus, FallbackValue='Google PDFium'}"
                                    Foreground="{DynamicResource AccentBrush}"
                                    FontWeight="SemiBold"
                                    FontSize="11" />

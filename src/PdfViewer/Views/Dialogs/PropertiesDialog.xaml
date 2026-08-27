@@ -123,8 +123,8 @@
                     <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding CreationDate, Mode=OneWay, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Style="{StaticResource ValueStyle}" />
                 </Grid>
 
-                <!-- Section 3: Technical & Licensing -->
-                <TextBlock Text="Technical &amp; Aspose Engine" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,8" />
+                <!-- Section 3: Technical & Engine -->
+                <TextBlock Text="Technical &amp; Engine Details" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,8" />
                 <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Margin="0,0,0,10" />
 
                 <Grid Margin="0,0,0,16">
@@ -152,7 +152,7 @@
                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Fast Web View:" Style="{StaticResource LabelStyle}" />
                     <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding IsLinearized, Mode=OneWay}" Style="{StaticResource ValueStyle}" />
 
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Aspose License:" Style="{StaticResource LabelStyle}" />
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="PDF Engine:" Style="{StaticResource LabelStyle}" />
                     <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding LicenseStatus, Mode=OneWay}" FontWeight="SemiBold" Style="{StaticResource ValueStyle}" />
                 </Grid>
             </StackPanel>

@@ -108,7 +108,7 @@ public partial class PageViewModel : ObservableObject
     private Task? _extractTextTask;
     private readonly object _textExtractLock = new();
 
-    public Task LoadTextSegmentsAsync(PdfDocumentService docService, CancellationToken ct = default)
+    public Task LoadTextSegmentsAsync(IPdfDocumentService docService, CancellationToken ct = default)
     {
         if (IsTextExtracted) return Task.CompletedTask;
 
@@ -125,7 +125,7 @@ public partial class PageViewModel : ObservableObject
         }
     }
 
-    private async Task ExtractInternalAsync(PdfDocumentService docService, CancellationToken ct)
+    private async Task ExtractInternalAsync(IPdfDocumentService docService, CancellationToken ct)
     {
         IsExtractingText = true;
         try

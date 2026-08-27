@@ -24,7 +24,7 @@
                     <Image Source="pack://application:,,,/assets/app_icon.png" Width="54" Height="54" Margin="0,0,16,0" RenderOptions.BitmapScalingMode="HighQuality" />
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="PDF Viewer Native Setup" FontSize="18" FontWeight="Bold" Foreground="White" />
-                        <TextBlock Text="Installs PDF Viewer with Inbuilt Aspose.Pdf Engine &amp; License" FontSize="12" Foreground="#D0E4FF" Margin="0,3,0,0" />
+                        <TextBlock Text="Installs PDF Viewer with Google PDFium Native Engine" FontSize="12" Foreground="#D0E4FF" Margin="0,3,0,0" />
                     </StackPanel>
                 </StackPanel>
             </Grid>
@@ -61,9 +61,9 @@
                 </StackPanel>
             </GroupBox>
 
-            <!-- License Inbuilt Note -->
+            <!-- Engine Inbuilt Note -->
             <Border Grid.Row="2" Background="#E6F0FA" BorderBrush="#B8D5FA" BorderThickness="1" CornerRadius="4" Padding="10,8">
-                <TextBlock Text="&#x2714; Aspose.Total license is embedded directly within the application package."
+                <TextBlock Text="&#x2714; Google PDFium native x64 engine and high-performance renderer bundled."
                            Foreground="#0052A3" FontSize="12" FontWeight="SemiBold" />
             </Border>
         </Grid>

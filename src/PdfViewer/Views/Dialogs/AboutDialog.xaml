@@ -80,7 +80,7 @@
 
         <!-- Info Grid -->
         <StackPanel Grid.Row="2" Margin="0,0,0,20">
-            <!-- License Box -->
+            <!-- Engine Info Box -->
             <Border Background="{DynamicResource HeaderBgBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="1"
@@ -94,33 +94,31 @@
                                    FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Width="120" />
-                        <TextBlock Text="Aspose.PDF for .NET 24.12.0"
+                        <TextBlock Text="Google PDFium (Native x64)"
                                    FontWeight="SemiBold"
                                    FontSize="12"
                                    Foreground="{DynamicResource TextPrimaryBrush}" />
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="License Status:"
+                        <TextBlock Text="Engine Version:"
                                    FontWeight="SemiBold"
                                    FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Width="120" />
-                        <TextBlock x:Name="LicenseStatusTextBlock"
-                                   Text="Aspose.Total Active"
+                        <TextBlock Text="Chromium 8021 / 154.0"
                                    FontWeight="Bold"
                                    FontSize="12"
                                    Foreground="#0D8A3A" />
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="License Source:"
+                        <TextBlock Text="Engine License:"
                                    FontWeight="SemiBold"
                                    FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Width="120" />
-                        <TextBlock x:Name="LicenseLocationTextBlock"
-                                   Text="Inbuilt Embedded Resource"
+                        <TextBlock Text="Open Source (Apache 2.0 / BSD 3-Clause)"
                                    FontSize="11"
                                    Foreground="{DynamicResource TextSecondaryBrush}" />
                     </StackPanel>

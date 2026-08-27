@@ -32,6 +32,7 @@ public partial class MainWindow : Window
         _vm.ShowExportDialogFunc = ShowExportImagesDialog;
         _vm.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
         _vm.ScrollToPageAction = ScrollToPage;
+        _vm.ScrollToMatchAction = ScrollToMatch;
         _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
 
         Loaded += MainWindow_Loaded;
@@ -168,6 +169,47 @@ public partial class MainWindow : Window
 
             DocumentScrollViewer.ScrollToVerticalOffset(accumulatedHeight);
             _vm.RenderPagesInViewport(accumulatedHeight, DocumentScrollViewer.ViewportHeight);
+        }
+
+        ScrollThumbnailIntoView(pageNumber);
+    }
+
+    private void ScrollToMatch(int pageNumber, double normX, double normY)
+    {
+        if (pageNumber < 1 || pageNumber > _vm.Pages.Count) return;
+
+        if (_vm.ViewMode == ViewLayoutMode.Continuous)
+        {
+            double accumulatedHeight = 0;
+            for (int i = 0; i < pageNumber - 1; i++)
+            {
+                accumulatedHeight += _vm.Pages[i].DisplayHeight + 20;
+            }
+
+            var page = _vm.Pages[pageNumber - 1];
+            double matchTop = accumulatedHeight + (normY * page.DisplayHeight);
+            double targetVOffset = Math.Max(0, matchTop - (DocumentScrollViewer.ViewportHeight / 3.0));
+
+            double matchLeft = normX * page.DisplayWidth;
+            double targetHOffset = Math.Max(0, matchLeft - (DocumentScrollViewer.ViewportWidth / 4.0));
+
+            DocumentScrollViewer.ScrollToVerticalOffset(targetVOffset);
+            DocumentScrollViewer.ScrollToHorizontalOffset(targetHOffset);
+            _vm.RenderPagesInViewport(targetVOffset, DocumentScrollViewer.ViewportHeight);
+        }
+        else
+        {
+            if (_vm.SingleCurrentPage != null)
+            {
+                double matchTop = normY * _vm.SingleCurrentPage.DisplayHeight;
+                double targetVOffset = Math.Max(0, matchTop - (DocumentScrollViewer.ViewportHeight / 3.0));
+
+                double matchLeft = normX * _vm.SingleCurrentPage.DisplayWidth;
+                double targetHOffset = Math.Max(0, matchLeft - (DocumentScrollViewer.ViewportWidth / 4.0));
+
+                DocumentScrollViewer.ScrollToVerticalOffset(targetVOffset);
+                DocumentScrollViewer.ScrollToHorizontalOffset(targetHOffset);
+            }
         }
 
         ScrollThumbnailIntoView(pageNumber);
@@ -357,6 +399,22 @@ public partial class MainWindow : Window
     private void SearchMatch_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is ListBox lb && lb.SelectedItem is SearchMatch match)
+        {
+            _vm.SelectSearchMatch(match);
+        }
+    }
+
+    private void SearchResultsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ListBox lb && lb.SelectedItem is SearchMatch match)
+        {
+            _vm.SelectSearchMatch(match);
+        }
+    }
+
+    private void SearchResultItem_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem item && item.DataContext is SearchMatch match)
         {
             _vm.SelectSearchMatch(match);
         }

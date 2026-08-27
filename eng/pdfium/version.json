@@ -1,0 +1,13 @@
+{
+  "name": "pdfium",
+  "version": "154.0.8021.0",
+  "tag": "chromium/8021",
+  "target_cpu": "x64",
+  "target_os": "win",
+  "pdf_enable_v8": false,
+  "pdf_enable_xfa": false,
+  "is_debug": false,
+  "is_component_build": false,
+  "asset_url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8021/pdfium-win-x64.tgz",
+  "sha256": "ADAC8CE034015427B5DAA81F8EEDDFCC8E84BC2A9F036F007890FF18BD4388C4"
+}

@@ -43,6 +43,9 @@ ScaffoldingReadMe.txt
 # Others
 ~$*
 *~
+*.orig
+*.tgz
+*.tar.gz
 CodeCoverage/
 
 # MSBuild Binary and Structured Log
@@ -58,3 +61,9 @@ CodeCoverage/
 *.suo
 *.userosscache
 *.sln.docstates
+
+# Licenses & Secrets
+*.lic
+*.license
+Aspose.Total.lic
+

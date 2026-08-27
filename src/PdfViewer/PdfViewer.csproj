@@ -23,16 +23,21 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspose.PDF" Version="24.12.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Include Aspose.Total.lic as EmbeddedResource and copy to output directory if present -->
-    <None Include="..\..\Aspose.Total.lic" Link="Aspose.Total.lic" Condition="Exists('..\..\Aspose.Total.lic')">
+    <None Include="runtimes\win-x64\native\pdfium.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>runtimes\win-x64\native\pdfium.dll</TargetPath>
+    </None>
+    <None Include="runtimes\win-x64\native\pdfium.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>pdfium.dll</TargetPath>
+    </None>
+    <None Include="..\..\THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" Condition="Exists('..\..\THIRD_PARTY_NOTICES.md')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <EmbeddedResource Include="..\..\Aspose.Total.lic" Link="Aspose.Total.lic" Condition="Exists('..\..\Aspose.Total.lic')" />
   </ItemGroup>
 
 </Project>

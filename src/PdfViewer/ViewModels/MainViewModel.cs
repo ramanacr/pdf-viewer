@@ -30,8 +30,8 @@ public enum PageFitMode
 
 public partial class MainViewModel : ObservableObject
 {
-    private readonly PdfDocumentService _docService;
-    public PdfDocumentService DocumentService => _docService;
+    private readonly IPdfDocumentService _docService;
+    public IPdfDocumentService DocumentService => _docService;
     private readonly LruPageCache _cache;
     private readonly AsyncPageRenderer _renderer;
     private CancellationTokenSource? _renderCts;
@@ -90,6 +90,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private int _currentSearchMatchIndex = 0;
+
+    [ObservableProperty]
+    private SearchMatch? _selectedSearchMatch;
 
     [ObservableProperty]
     private string _searchSummaryText = string.Empty;
@@ -184,11 +187,12 @@ public partial class MainViewModel : ObservableObject
     public Func<DocumentMetadata, (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi)>? ShowExportDialogFunc { get; set; }
     public Func<DocumentMetadata, (bool Confirmed, string TargetPath, AnnotationSaveMode Mode)>? ShowSaveAnnotatedDialogFunc { get; set; }
     public Action<int>? ScrollToPageAction { get; set; }
+    public Action<int, double, double>? ScrollToMatchAction { get; set; }
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
 
     public MainViewModel()
     {
-        _docService = new PdfDocumentService();
+        _docService = PdfDocumentServiceFactory.CreateService();
         _cache = new LruPageCache(60);
         _renderer = new AsyncPageRenderer(_docService, _cache);
 
@@ -239,7 +243,7 @@ public partial class MainViewModel : ObservableObject
         var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
         while (dir != null)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx")) || File.Exists(Path.Combine(dir.FullName, "Aspose.Total.lic")))
+            if (File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx")))
             {
                 return Path.Combine(dir.FullName, "samples", "SampleDocument.pdf");
             }
@@ -988,6 +992,14 @@ public partial class MainViewModel : ObservableObject
         NavigateToMatch(SearchMatches[CurrentSearchMatchIndex - 1]);
     }
 
+    partial void OnSelectedSearchMatchChanged(SearchMatch? value)
+    {
+        if (value != null)
+        {
+            SelectSearchMatch(value);
+        }
+    }
+
     [RelayCommand]
     public void SelectSearchMatch(SearchMatch match)
     {
@@ -1011,7 +1023,13 @@ public partial class MainViewModel : ObservableObject
         }
         match.IsCurrentMatch = true;
 
+        if (SelectedSearchMatch != match)
+        {
+            SelectedSearchMatch = match;
+        }
+
         NavigateToPage(match.PageNumber);
+        ScrollToMatchAction?.Invoke(match.PageNumber, match.X, match.Y);
         SearchSummaryText = $"Match {CurrentSearchMatchIndex} of {SearchMatches.Count} (Page {match.PageNumber})";
     }
 

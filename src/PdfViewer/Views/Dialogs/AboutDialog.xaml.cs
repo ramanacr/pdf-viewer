@@ -29,18 +29,6 @@ public partial class AboutDialog : Window
                 CommitTextBlock.Text = $"({(hash.Length > 7 ? hash[..7] : hash)})";
             }
         }
-
-        LicenseStatusTextBlock.Text = LicenseService.IsLicensed
-            ? "Aspose.Total Active (Licensed)"
-            : "Evaluation Mode";
-
-        LicenseStatusTextBlock.Foreground = LicenseService.IsLicensed
-            ? (Brush)new BrushConverter().ConvertFrom("#0D8A3A")!
-            : (Brush)new BrushConverter().ConvertFrom("#D83B01")!;
-
-        LicenseLocationTextBlock.Text = !string.IsNullOrEmpty(LicenseService.LicenseFilePath)
-            ? LicenseService.LicenseFilePath
-            : (LicenseService.IsLicensed ? "Inbuilt Embedded Resource" : "None");
     }
 
     private void CheckForUpdates_Click(object sender, RoutedEventArgs e)

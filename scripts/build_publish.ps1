@@ -59,7 +59,7 @@ if (Test-Path "$RootDir\assets") {
 }
 
 # 3. Publish the main WPF application
-Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (including inbuilt Aspose license and icons)..." -ForegroundColor Yellow
+Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (with Google PDFium native engine and icons)..." -ForegroundColor Yellow
 dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
     -c Release `
     -r win-x64 `
@@ -116,6 +116,11 @@ if (Test-Path "$RootDir\samples\SampleDocument.pdf") {
 # Copy icons to publish directory
 if (Test-Path "$RootDir\assets") {
     Copy-Item -Path "$RootDir\assets" -Destination "$PublishDir\assets" -Recurse -Force
+}
+
+# Copy third party notices
+if (Test-Path "$RootDir\THIRD_PARTY_NOTICES.md") {
+    Copy-Item -Path "$RootDir\THIRD_PARTY_NOTICES.md" -Destination "$PublishDir\THIRD_PARTY_NOTICES.md" -Force
 }
 
 # Clean up staging folders & temporary zip

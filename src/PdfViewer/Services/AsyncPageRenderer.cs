@@ -10,10 +10,10 @@ namespace PdfViewer.Services;
 /// </summary>
 public class AsyncPageRenderer
 {
-    private readonly PdfDocumentService _documentService;
+    private readonly IPdfDocumentService _documentService;
     private readonly LruPageCache _cache;
 
-    public AsyncPageRenderer(PdfDocumentService documentService, LruPageCache cache)
+    public AsyncPageRenderer(IPdfDocumentService documentService, LruPageCache cache)
     {
         _documentService = documentService;
         _cache = cache;

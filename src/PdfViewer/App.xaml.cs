@@ -14,8 +14,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // Initialize Aspose.Total license
-        LicenseService.Initialize();
+        // Initialize PDFium engine
+        PdfiumNativeBridge.EnsureInitialized();
 
         // Process command line args for opening files directly (e.g. associating with .pdf or CLI)
         if (e.Args.Length > 0 && File.Exists(e.Args[0]))
