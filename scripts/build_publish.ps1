@@ -123,12 +123,16 @@ if (Test-Path "$RootDir\THIRD_PARTY_NOTICES.md") {
     Copy-Item -Path "$RootDir\THIRD_PARTY_NOTICES.md" -Destination "$PublishDir\THIRD_PARTY_NOTICES.md" -Force
 }
 
+# 6. Generate Software Bill of Materials (SBOM)
+Write-Host "`n[4/5] Generating Software Bill of Materials (SBOM)..." -ForegroundColor Yellow
+& "$ScriptDir\generate_sbom.ps1" -OutputDir "$PublishDir" -Version "$AppVersion"
+
 # Clean up staging folders & temporary zip
 Remove-Item -Path $AppStagingDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $InstallerStaging -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $PayloadZip -Force -ErrorAction SilentlyContinue
 
-Write-Host "`n[4/4] Package Verification:" -ForegroundColor Green
+Write-Host "`n[5/5] Package Verification:" -ForegroundColor Green
 Get-ChildItem -Path $PublishDir | Format-Table Name, Length, LastWriteTime
 
 Write-Host "`n==================================================" -ForegroundColor Cyan
@@ -136,4 +140,6 @@ Write-Host " PUBLISH COMPLETED SUCCESSFULLY!                 " -ForegroundColor 
 Write-Host " Output folder: $PublishDir" -ForegroundColor White
 Write-Host "   • Setup Installer:  $PublishDir\PdfViewerSetup.exe" -ForegroundColor White
 Write-Host "   • Standalone App:   $PublishDir\PdfViewer.exe" -ForegroundColor White
+Write-Host "   • CycloneDX SBOM:   $PublishDir\sbom.cyclonedx.json" -ForegroundColor White
+Write-Host "   • SPDX SBOM:        $PublishDir\sbom.spdx.json" -ForegroundColor White
 Write-Host "==================================================" -ForegroundColor Cyan

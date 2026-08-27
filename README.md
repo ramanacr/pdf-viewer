@@ -224,8 +224,13 @@ d:\Practice\pdf-viewer\
 ├── samples/
 │   └── SampleDocument.pdf         # Multi-page test document
 │
+├── sbom/                          # Machine-readable Software Bill of Materials
+│   ├── sbom.cyclonedx.json        # CycloneDX v1.6 SBOM
+│   └── sbom.spdx.json             # SPDX v2.3 SBOM
+│
 ├── scripts/
-│   ├── build_publish.ps1          # Automated 1-click build, package & publish script
+│   ├── build_publish.ps1          # Automated 1-click build, package, SBOM & publish script
+│   ├── generate_sbom.ps1          # CycloneDX and SPDX SBOM generation script
 │   ├── convert_icons.ps1          # Icon conversion pipeline script
 │   └── CreateIcon.cs              # Multi-resolution ICO builder utility
 │

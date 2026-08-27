@@ -1,0 +1,161 @@
+﻿{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "PdfViewer-2.0.1",
+  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/2.0.1/25471b0c-3ec8-4327-a712-c812e2d5bde0",
+  "creationInfo": {
+    "creators": [
+      "Tool: PDF-Viewer-SBOM-Generator-2.0.0",
+      "Organization: PDF Viewer Project"
+    ],
+    "created": "2026-08-27T12:56:09Z"
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-PdfViewer",
+      "name": "PdfViewer",
+      "versionInfo": "2.0.1",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/releases/tag/v2.0.1",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
+      "description": "Native Windows PDF Viewer powered by Google PDFium",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/ramanacr/pdf-viewer@2.0.1"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-CommunityToolkit-Mvvm",
+      "name": "CommunityToolkit.Mvvm",
+      "versionInfo": "8.4.0",
+      "downloadLocation": "https://www.nuget.org/packages/CommunityToolkit.Mvvm/8.4.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) .NET Foundation and Contributors",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Google-PDFium",
+      "name": "pdfium.dll",
+      "versionInfo": "154.0.8021.0",
+      "downloadLocation": "https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8021",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "Copyright 2014 PDFium Authors. All rights reserved.",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2A9031FA88F412147C3BC7115054550048C724DB6EA70298B6C6B0D13E513882"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:generic/google/pdfium@=x86_64&os=windows"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-FreeType",
+      "name": "FreeType",
+      "downloadLocation": "https://freetype.org/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "FTL",
+      "licenseDeclared": "FTL",
+      "copyrightText": "Copyright 1996-2024 by David Turner, Robert Wilhelm, and Werner Lemberg"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-LibJpegTurbo",
+      "name": "libjpeg-turbo",
+      "downloadLocation": "https://libjpeg-turbo.org/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "IJG AND BSD-3-Clause",
+      "licenseDeclared": "IJG AND BSD-3-Clause",
+      "copyrightText": "Copyright (C) 2009-2024 D. R. Commander. All Rights Reserved."
+    },
+    {
+      "SPDXID": "SPDXRef-Package-LibPng",
+      "name": "libpng",
+      "downloadLocation": "http://www.libpng.org/pub/png/libpng.html",
+      "filesAnalyzed": false,
+      "licenseConcluded": "libpng-2.0",
+      "licenseDeclared": "libpng-2.0",
+      "copyrightText": "Copyright (c) 1995-2024 The PNG Reference Library Authors"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Zlib",
+      "name": "zlib",
+      "downloadLocation": "https://zlib.net/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Zlib",
+      "licenseDeclared": "Zlib",
+      "copyrightText": "Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-LittleCMS",
+      "name": "Little-CMS",
+      "downloadLocation": "https://www.littlecms.com/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 1998-2024 Marti Maria Saguer"
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-PdfViewer"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-CommunityToolkit-Mvvm"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-Google-PDFium"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-Google-PDFium",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-FreeType"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-Google-PDFium",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-LibJpegTurbo"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-Google-PDFium",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-LibPng"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-Google-PDFium",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-Zlib"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-Google-PDFium",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-LittleCMS"
+    }
+  ]
+}
