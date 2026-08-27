@@ -1,0 +1,134 @@
+<Window x:Class="PdfViewer.Views.Dialogs.EditCommentDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Comment / Annotation"
+        Width="440"
+        Height="390"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{DynamicResource SurfaceBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        ShowInTaskbar="False">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <TextBlock Grid.Row="0"
+                   x:Name="DialogHeaderTextBlock"
+                   Text="Comment / Note"
+                   FontSize="16"
+                   FontWeight="Bold"
+                   Foreground="{DynamicResource TextPrimaryBrush}"
+                   Margin="0,0,0,12" />
+
+        <!-- Subject / Title -->
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="70" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Title:"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
+            <TextBox Grid.Column="1"
+                     x:Name="TitleTextBox"
+                     Height="28"
+                     Padding="6,4"
+                     Background="{DynamicResource SurfaceAltBgBrush}"
+                     Foreground="{DynamicResource TextPrimaryBrush}"
+                     BorderBrush="{DynamicResource BorderBrush}" />
+        </Grid>
+
+        <!-- Comment Textarea -->
+        <Grid Grid.Row="2" Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Comment Text:"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Margin="0,0,0,4" />
+            <TextBox Grid.Row="1"
+                     x:Name="CommentTextBox"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto"
+                     Padding="8"
+                     Background="{DynamicResource SurfaceAltBgBrush}"
+                     Foreground="{DynamicResource TextPrimaryBrush}"
+                     BorderBrush="{DynamicResource BorderBrush}"
+                     FontFamily="Segoe UI"
+                     FontSize="13" />
+        </Grid>
+
+        <!-- Author & Color Palette Row -->
+        <Grid Grid.Row="3" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Text="Author:"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Margin="0,0,8,0" />
+            <TextBox Grid.Column="1"
+                     x:Name="AuthorTextBox"
+                     Height="28"
+                     Padding="6,4"
+                     Background="{DynamicResource SurfaceAltBgBrush}"
+                     Foreground="{DynamicResource TextPrimaryBrush}"
+                     BorderBrush="{DynamicResource BorderBrush}"
+                     Margin="0,0,12,0" />
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Color:"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Margin="0,0,6,0" />
+                <ComboBox x:Name="ColorComboBox"
+                          Width="54"
+                          Height="28">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="16" Height="16" CornerRadius="8" Background="{Binding Converter={StaticResource HexToBrushConverter}}" BorderBrush="#888888" BorderThickness="1" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </StackPanel>
+        </Grid>
+
+        <!-- Action Buttons -->
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="Save Comment"
+                    Width="110"
+                    Height="32"
+                    IsDefault="True"
+                    Background="{DynamicResource AccentBrush}"
+                    Foreground="White"
+                    BorderThickness="0"
+                    FontWeight="SemiBold"
+                    Click="SaveButton_Click"
+                    Margin="0,0,8,0" />
+            <Button Content="Cancel"
+                    Width="80"
+                    Height="32"
+                    IsCancel="True"
+                    Background="{DynamicResource SurfaceAltBgBrush}"
+                    Foreground="{DynamicResource TextPrimaryBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    Click="CancelButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

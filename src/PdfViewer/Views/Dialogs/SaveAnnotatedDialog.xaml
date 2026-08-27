@@ -1,0 +1,173 @@
+<Window x:Class="PdfViewer.Views.Dialogs.SaveAnnotatedDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Save Annotated Document As"
+        Icon="pack://application:,,,/assets/app_icon.png"
+        Width="580"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{DynamicResource SurfaceBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="../../Themes/LightTheme.xaml" />
+                <ResourceDictionary Source="../../Themes/VectorIcons.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="Save Annotated Document"
+                       FontSize="18"
+                       FontWeight="Bold"
+                       Foreground="{DynamicResource TextPrimaryBrush}" />
+            <TextBlock Text="Choose how annotations are stored. The original source document will remain safe and untouched."
+                       FontSize="12"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Margin="0,2,0,0" />
+        </StackPanel>
+
+        <!-- Original Document Banner -->
+        <Border Grid.Row="1"
+                Background="{DynamicResource HeaderBgBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="12,8"
+                Margin="0,0,0,16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Source Document:" FontWeight="SemiBold" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0" />
+                <TextBlock Grid.Column="1" x:Name="OriginalPathTextBlock" Text="Original.pdf" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextPrimaryBrush}" />
+            </Grid>
+        </Border>
+
+        <!-- Save Modes -->
+        <GroupBox Grid.Row="2"
+                  Header="Select Annotation Storage Method"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  Foreground="{DynamicResource TextPrimaryBrush}"
+                  Padding="12"
+                  Margin="0,0,0,16">
+            <StackPanel>
+                <!-- Mode 1: Embedded -->
+                <RadioButton x:Name="EmbeddedRadio"
+                             IsChecked="True"
+                             GroupName="SaveModeGroup"
+                             Margin="0,0,0,10"
+                             Checked="SaveMode_Changed">
+                    <StackPanel Margin="6,0,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Embedded (Standard)" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                            <Border Background="#150D8A3A" CornerRadius="3" Padding="6,1" Margin="8,0,0,0">
+                                <TextBlock Text="Recommended" FontSize="10" FontWeight="SemiBold" Foreground="#0D8A3A" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock Text="Saves directly inside a new .pdf file. All standard PDF readers (Adobe Acrobat, Edge, Chrome, Apple Preview) can view, edit, and print annotations."
+                                   FontSize="11"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,0" />
+                    </StackPanel>
+                </RadioButton>
+
+                <!-- Mode 2: Flattened -->
+                <RadioButton x:Name="FlattenedRadio"
+                             GroupName="SaveModeGroup"
+                             Margin="0,0,0,10"
+                             Checked="SaveMode_Changed">
+                    <StackPanel Margin="6,0,0,0">
+                        <TextBlock Text="Flattened (Permanent Graphic Content)" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="Merges annotations permanently into the visual page stream. Markups become part of the PDF graphics and cannot be edited, moved, or removed as comments."
+                                   FontSize="11"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,0" />
+                    </StackPanel>
+                </RadioButton>
+
+                <!-- Mode 3: Export to XFDF -->
+                <RadioButton x:Name="ExportXfdfRadio"
+                             GroupName="SaveModeGroup"
+                             Checked="SaveMode_Changed">
+                    <StackPanel Margin="6,0,0,0">
+                        <TextBlock Text="Export to XFDF / FDF (External Comments File)" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="Extracts comments and markups into a lightweight XML-based .xfdf file. Keeps the base PDF completely clean and untouched."
+                                   FontSize="11"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,0" />
+                    </StackPanel>
+                </RadioButton>
+            </StackPanel>
+        </GroupBox>
+
+        <!-- Destination Path Selector -->
+        <StackPanel Grid.Row="3" Margin="0,0,0,20">
+            <TextBlock Text="Destination Output File:" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,6" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0"
+                         x:Name="TargetPathTextBox"
+                         Height="32"
+                         VerticalContentAlignment="Center"
+                         Padding="8,0"
+                         TextChanged="TargetPathTextBox_TextChanged" />
+                <Button Grid.Column="1"
+                        Content="Browse..."
+                        Width="85"
+                        Height="32"
+                        Margin="8,0,0,0"
+                        Click="BrowseButton_Click" />
+            </Grid>
+            <TextBlock x:Name="ValidationWarningTextBlock"
+                       Text="⚠ Destination path cannot be the same as the original source file."
+                       FontSize="11"
+                       Foreground="#D83B01"
+                       FontWeight="SemiBold"
+                       Margin="0,4,0,0"
+                       Visibility="Collapsed" />
+        </StackPanel>
+
+        <!-- Action Buttons -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel"
+                    Width="85"
+                    Height="32"
+                    Margin="0,0,8,0"
+                    IsCancel="True"
+                    Click="CancelButton_Click" />
+
+            <Button x:Name="SaveButton"
+                    Content="Save As..."
+                    Width="110"
+                    Height="32"
+                    IsDefault="True"
+                    Background="{DynamicResource AccentBrush}"
+                    Foreground="White"
+                    BorderThickness="0"
+                    FontWeight="SemiBold"
+                    Click="SaveButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

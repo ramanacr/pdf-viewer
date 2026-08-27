@@ -26,6 +26,7 @@
     <Window.InputBindings>
         <KeyBinding Modifiers="Ctrl" Key="O" Command="{Binding OpenFileDialogCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="P" Command="{Binding PrintCommand}" />
+        <KeyBinding Modifiers="Ctrl+Shift" Key="S" Command="{Binding SaveAnnotatedAsCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="F" Command="{Binding ToggleSearchCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="D" Command="{Binding ShowPropertiesCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="OemPlus" Command="{Binding ZoomInCommand}" />
@@ -77,6 +78,7 @@
                 </MenuItem>
                 <Separator />
                 <MenuItem Header="_Close Document" Command="{Binding CloseDocumentCommand}" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="Save _Annotated As..." Command="{Binding SaveAnnotatedAsCommand}" InputGestureText="Ctrl+Shift+S" IsEnabled="{Binding IsDocumentLoaded}" />
                 <MenuItem Header="_Export to Images..." Command="{Binding ExportImagesCommand}" IsEnabled="{Binding IsDocumentLoaded}" />
                 <MenuItem Header="_Print..." Command="{Binding PrintCommand}" InputGestureText="Ctrl+P" IsEnabled="{Binding IsDocumentLoaded}" />
                 <Separator />
@@ -281,6 +283,103 @@
                               ToolTip="Hand / Pan Tool">
                     <Path Data="{StaticResource IconPan}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
                 </ToggleButton>
+
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
+
+                <!-- Annotation Tools -->
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Highlight, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Highlight"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Highlight Tool">
+                    <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Underline, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Underline"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Underline Tool">
+                    <Path Data="{StaticResource IconUnderline}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Note, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Note"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Sticky Note / Comment Tool">
+                    <Path Data="{StaticResource IconNote}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=FreeText, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="FreeText"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="FreeText Box Tool">
+                    <Path Data="{StaticResource IconText}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Ink, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Ink"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Freehand Ink / Pen Tool">
+                    <Path Data="{StaticResource IconPen}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Rectangle, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Rectangle"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Rectangle Shape Tool">
+                    <Path Data="{StaticResource IconRectangle}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </ToggleButton>
+
+                <!-- Annotation Color Selector ComboBox with Color Swatches -->
+                <ComboBox Width="54"
+                          Height="28"
+                          Margin="4,2"
+                          ItemsSource="{Binding AnnotationColors}"
+                          SelectedItem="{Binding SelectedAnnotationColor}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Select Annotation Color">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Width="16" Height="16" CornerRadius="8" Background="{Binding Converter={StaticResource HexToBrushConverter}}" BorderBrush="#888888" BorderThickness="1" Margin="1,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <!-- Annotation Thickness Selector -->
+                <ComboBox Width="60"
+                          Height="28"
+                          Margin="2,2"
+                          SelectedValue="{Binding SelectedAnnotationThickness}"
+                          SelectedValuePath="Tag"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Annotation Stroke Thickness">
+                    <ComboBoxItem Tag="1.0" Content="1 pt" />
+                    <ComboBoxItem Tag="2.0" Content="2 pt" IsSelected="True" />
+                    <ComboBoxItem Tag="3.0" Content="3 pt" />
+                    <ComboBoxItem Tag="4.0" Content="4 pt" />
+                    <ComboBoxItem Tag="6.0" Content="6 pt" />
+                </ComboBox>
+
+                <!-- Save Annotated As Button -->
+                <Button Style="{StaticResource ToolbarIconButton}"
+                        Command="{Binding SaveAnnotatedAsCommand}"
+                        IsEnabled="{Binding IsDocumentLoaded}"
+                        ToolTip="Save Annotated PDF As... (Ctrl+Shift+S)">
+                    <Path Data="{StaticResource IconSaveAs}" Fill="{DynamicResource AccentBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
 
@@ -521,6 +620,76 @@
                             </ListBox>
                         </Grid>
                     </TabItem>
+
+                    <!-- Tab 4: Annotations -->
+                    <TabItem Header="Annotations" Style="{StaticResource SidebarTabItemStyle}">
+                        <Grid>
+                            <TextBlock Text="No annotations added yet."
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding AllAnnotations.Count, Converter={StaticResource InverseBoolToVis}}" />
+
+                            <ListBox ItemsSource="{Binding AllAnnotations}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Padding="4"
+                                     MouseDoubleClick="AnnotationItem_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:AnnotationModel}">
+                                        <Border Padding="8,6"
+                                                BorderThickness="0,0,0,1"
+                                                BorderBrush="{DynamicResource BorderBrush}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding PageNumber, StringFormat='Page {0}'}"
+                                                                   FontWeight="Bold"
+                                                                   FontSize="11"
+                                                                   Foreground="{DynamicResource AccentBrush}" />
+                                                        <TextBlock Text=" • " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                                                        <TextBlock Text="{Binding Type}"
+                                                                   FontWeight="SemiBold"
+                                                                   FontSize="11"
+                                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                        <Border Width="10" Height="10" CornerRadius="5" Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding Contents, FallbackValue='(No comment text)'}"
+                                                               TextWrapping="Wrap"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                                               Margin="0,2,0,0" />
+                                                    <TextBlock Text="{Binding CreationDate, StringFormat='{}{0:g}'}"
+                                                               FontSize="10"
+                                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                                               Margin="0,2,0,0" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Button Style="{StaticResource ToolbarIconButton}"
+                                                            Click="EditAnnotationButton_Click"
+                                                            Tag="{Binding}"
+                                                            ToolTip="Edit Comment"
+                                                            Margin="0,0,4,0">
+                                                        <Path Data="{StaticResource IconText}" Fill="{DynamicResource TextSecondaryBrush}" Width="12" Height="12" Stretch="Uniform" />
+                                                    </Button>
+                                                    <Button Style="{StaticResource ToolbarIconButton}"
+                                                            Command="{Binding DataContext.DeleteAnnotationCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip="Delete Annotation">
+                                                        <Path Data="{StaticResource IconDelete}" Fill="#D83B01" Width="12" Height="12" Stretch="Uniform" />
+                                                    </Button>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </TabItem>
                 </TabControl>
             </Border>
 
@@ -634,15 +803,13 @@
                                 <DataTemplate DataType="{x:Type vm:PageViewModel}">
                                     <Border Margin="0,0,0,20"
                                             Background="{DynamicResource PageBgBrush}"
-                                            CornerRadius="2"
-                                            Width="{Binding DisplayWidth}"
-                                            Height="{Binding DisplayHeight}">
+                                            CornerRadius="2">
                                         <Border.Effect>
                                             <DropShadowEffect Color="#20000000" BlurRadius="15" ShadowDepth="3" />
                                         </Border.Effect>
 
-                                        <Grid>
-                                            <!-- Loading indicator -->
+                                        <Grid Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}">
+                                            <!-- 1. Loading indicator -->
                                             <ProgressBar IsIndeterminate="True"
                                                          Width="120"
                                                          Height="4"
@@ -650,10 +817,184 @@
                                                          VerticalAlignment="Center"
                                                          Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
 
-                                            <!-- Rendered Page Image -->
+                                            <!-- 2. Rendered Page Image -->
                                             <Image Source="{Binding RenderedImage}"
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
+
+                                            <!-- 3. Vector Search Highlights Layer (Lime-Green / Active Gold) -->
+                                            <ItemsControl ItemsSource="{Binding MatchesOnPage}"
+                                                          Width="{Binding DisplayWidth}"
+                                                          Height="{Binding DisplayHeight}"
+                                                          IsHitTestVisible="False">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <Canvas Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="Canvas.Left">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="X" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Canvas.Top">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Y" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Width">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Width" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Height">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Height" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type models:SearchMatch}">
+                                                        <Border Background="{Binding IsCurrentMatch, Converter={StaticResource SearchHighlightBgConverter}}"
+                                                                BorderBrush="{Binding IsCurrentMatch, Converter={StaticResource SearchHighlightBorderConverter}}"
+                                                                BorderThickness="1.5"
+                                                                CornerRadius="2" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <!-- 4. Vector Annotations Layer -->
+                                            <ItemsControl ItemsSource="{Binding AnnotationsOnPage}"
+                                                          Width="{Binding DisplayWidth}"
+                                                          Height="{Binding DisplayHeight}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <Canvas Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="Canvas.Left">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="X" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Canvas.Top">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Y" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Width">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Width" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Height">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Height" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type models:AnnotationModel}">
+                                                        <Grid ToolTip="{Binding Contents}"
+                                                              Cursor="Hand"
+                                                              Background="Transparent"
+                                                              MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
+                                                            <!-- Highlight -->
+                                                            <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                    Opacity="{Binding Opacity}"
+                                                                    CornerRadius="2"
+                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" />
+
+                                                            <!-- Underline -->
+                                                            <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                    BorderThickness="0,0,0,2"
+                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}" />
+
+                                                            <!-- StrikeOut -->
+                                                            <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                                  Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                  StrokeThickness="2"
+                                                                  VerticalAlignment="Center"
+                                                                  Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}" />
+
+                                                            <!-- Note -->
+                                                            <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                    CornerRadius="4"
+                                                                    Padding="2"
+                                                                    Width="24"
+                                                                    Height="24"
+                                                                    HorizontalAlignment="Left"
+                                                                    VerticalAlignment="Top"
+                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Note}">
+                                                                <Path Data="{StaticResource IconNote}" Fill="White" Width="14" Height="14" Stretch="Uniform" />
+                                                            </Border>
+
+                                                            <!-- FreeText -->
+                                                            <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                    BorderThickness="1"
+                                                                    Background="#20FFFFFF"
+                                                                    Padding="4"
+                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=FreeText}">
+                                                                <TextBlock Text="{Binding Contents}"
+                                                                           Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                           FontSize="11"
+                                                                           TextWrapping="Wrap" />
+                                                            </Border>
+
+                                                            <!-- Rectangle Shape -->
+                                                            <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                    BorderThickness="{Binding StrokeThickness}"
+                                                                    Background="Transparent"
+                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}" />
+
+                                                            <!-- Ellipse Shape -->
+                                                            <Ellipse Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                     StrokeThickness="{Binding StrokeThickness}"
+                                                                     Fill="Transparent"
+                                                                     Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}" />
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <!-- 5. Interactive Canvas for Drawing Annotations -->
+                                            <Canvas Width="{Binding DisplayWidth}"
+                                                    Height="{Binding DisplayHeight}"
+                                                    Background="Transparent"
+                                                    Tag="{Binding}"
+                                                    MouseDown="PageCanvas_MouseDown"
+                                                    MouseMove="PageCanvas_MouseMove"
+                                                    MouseUp="PageCanvas_MouseUp" />
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -671,7 +1012,8 @@
                                 <DropShadowEffect Color="#20000000" BlurRadius="15" ShadowDepth="3" />
                             </Border.Effect>
 
-                            <Grid>
+                            <Grid Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}">
+                                <!-- Loading indicator -->
                                 <ProgressBar IsIndeterminate="True"
                                              Width="120"
                                              Height="4"
@@ -679,9 +1021,184 @@
                                              VerticalAlignment="Center"
                                              Visibility="{Binding SingleCurrentPage.IsLoading, Converter={StaticResource BoolToVis}}" />
 
+                                <!-- Rendered Page Image -->
                                 <Image Source="{Binding SingleCurrentPage.RenderedImage}"
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
+
+                                <!-- Vector Search Highlights Layer -->
+                                <ItemsControl ItemsSource="{Binding SingleCurrentPage.MatchesOnPage}"
+                                              Width="{Binding SingleCurrentPage.DisplayWidth}"
+                                              Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                              IsHitTestVisible="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="X" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Canvas.Top">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Y" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Width">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Width" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Height">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Height" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:SearchMatch}">
+                                            <Border Background="{Binding IsCurrentMatch, Converter={StaticResource SearchHighlightBgConverter}}"
+                                                    BorderBrush="{Binding IsCurrentMatch, Converter={StaticResource SearchHighlightBorderConverter}}"
+                                                    BorderThickness="1.5"
+                                                    CornerRadius="2" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- Vector Annotations Layer -->
+                                <ItemsControl ItemsSource="{Binding SingleCurrentPage.AnnotationsOnPage}"
+                                              Width="{Binding SingleCurrentPage.DisplayWidth}"
+                                              Height="{Binding SingleCurrentPage.DisplayHeight}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="X" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Canvas.Top">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Y" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Width">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Width" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Height">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Height" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:AnnotationModel}">
+                                            <Grid ToolTip="{Binding Contents}"
+                                                  Cursor="Hand"
+                                                  Background="Transparent"
+                                                  MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
+                                                <!-- Highlight -->
+                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                        Opacity="{Binding Opacity}"
+                                                        CornerRadius="2"
+                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" />
+
+                                                <!-- Underline -->
+                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                        BorderThickness="0,0,0,2"
+                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}" />
+
+                                                <!-- StrikeOut -->
+                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                      StrokeThickness="2"
+                                                      VerticalAlignment="Center"
+                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}" />
+
+                                                <!-- Note -->
+                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                        CornerRadius="4"
+                                                        Padding="2"
+                                                        Width="24"
+                                                        Height="24"
+                                                        HorizontalAlignment="Left"
+                                                        VerticalAlignment="Top"
+                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Note}">
+                                                    <Path Data="{StaticResource IconNote}" Fill="White" Width="14" Height="14" Stretch="Uniform" />
+                                                </Border>
+
+                                                <!-- FreeText -->
+                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                        BorderThickness="1"
+                                                        Background="#20FFFFFF"
+                                                        Padding="4"
+                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=FreeText}">
+                                                    <TextBlock Text="{Binding Contents}"
+                                                               Foreground="{DynamicResource TextPrimaryBrush}"
+                                                               FontSize="11"
+                                                               TextWrapping="Wrap" />
+                                                </Border>
+
+                                                <!-- Rectangle Shape -->
+                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                        BorderThickness="{Binding StrokeThickness}"
+                                                        Background="Transparent"
+                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}" />
+
+                                                <!-- Ellipse Shape -->
+                                                <Ellipse Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                         StrokeThickness="{Binding StrokeThickness}"
+                                                         Fill="Transparent"
+                                                         Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- Interactive Canvas for Drawing Annotations -->
+                                <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}"
+                                        Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                        Background="Transparent"
+                                        Tag="{Binding SingleCurrentPage}"
+                                        MouseDown="PageCanvas_MouseDown"
+                                        MouseMove="PageCanvas_MouseMove"
+                                        MouseUp="PageCanvas_MouseUp" />
                             </Grid>
                         </Border>
                     </Grid>

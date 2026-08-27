@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -13,6 +14,7 @@ using Aspose.Pdf.Annotations;
 using Aspose.Pdf.Devices;
 using Aspose.Pdf.Text;
 using PdfViewer.Models;
+using AnnotationType = PdfViewer.Models.AnnotationType;
 
 namespace PdfViewer.Services;
 
@@ -402,6 +404,318 @@ public class PdfDocumentService : IDisposable
             printDialog.PrintDocument(docPaginator, $"Printing {Path.GetFileName(_currentFilePath)}");
         }
     }
+
+    #region Annotations & Multi-Mode Saving
+
+    /// <summary>
+    /// Converts a Hex color code into an Aspose.Pdf.Color.
+    /// </summary>
+    public static Aspose.Pdf.Color AsposeColorFromHex(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return Aspose.Pdf.Color.FromRgb(System.Drawing.Color.LimeGreen);
+        try
+        {
+            hex = hex.Trim().TrimStart('#');
+            if (hex.Length == 6)
+            {
+                byte r = Convert.ToByte(hex.Substring(0, 2), 16);
+                byte g = Convert.ToByte(hex.Substring(2, 2), 16);
+                byte b = Convert.ToByte(hex.Substring(4, 2), 16);
+                return Aspose.Pdf.Color.FromRgb(r, g, b);
+            }
+            if (hex.Length == 8)
+            {
+                // Format: AARRGGBB -> extract RGB
+                byte r = Convert.ToByte(hex.Substring(2, 2), 16);
+                byte g = Convert.ToByte(hex.Substring(4, 2), 16);
+                byte b = Convert.ToByte(hex.Substring(6, 2), 16);
+                return Aspose.Pdf.Color.FromRgb(r, g, b);
+            }
+        }
+        catch { }
+        return Aspose.Pdf.Color.FromRgb(System.Drawing.Color.LimeGreen);
+    }
+
+    /// <summary>
+    /// Loads existing annotations from the current document.
+    /// </summary>
+    public List<AnnotationModel> LoadExistingAnnotations()
+    {
+        var list = new List<AnnotationModel>();
+        lock (_docLock)
+        {
+            if (_document == null) return list;
+
+            for (int p = 1; p <= _document.Pages.Count; p++)
+            {
+                var page = _document.Pages[p];
+                double pageWidth = page.Rect.Width;
+                double pageHeight = page.Rect.Height;
+
+                foreach (Annotation annot in page.Annotations)
+                {
+                    // Only process actual markup/content annotations, ignore LinkAnnotation, WidgetAnnotation, PopupAnnotation, etc.
+                    AnnotationType type;
+                    if (annot is HighlightAnnotation) type = AnnotationType.Highlight;
+                    else if (annot is UnderlineAnnotation) type = AnnotationType.Underline;
+                    else if (annot is StrikeOutAnnotation) type = AnnotationType.StrikeOut;
+                    else if (annot is TextAnnotation) type = AnnotationType.Note;
+                    else if (annot is FreeTextAnnotation) type = AnnotationType.FreeText;
+                    else if (annot is SquareAnnotation) type = AnnotationType.Rectangle;
+                    else if (annot is CircleAnnotation) type = AnnotationType.Ellipse;
+                    else if (annot is InkAnnotation) type = AnnotationType.Ink;
+                    else continue; // Skip links, widgets, forms, media, and other non-markup annotations
+
+                    var rect = annot.Rect;
+                    double normX = Math.Max(0, rect.LLX / pageWidth);
+                    double normY = Math.Max(0, 1.0 - (rect.URY / pageHeight));
+                    double normW = Math.Max(0.01, (rect.URX - rect.LLX) / pageWidth);
+                    double normH = Math.Max(0.01, (rect.URY - rect.LLY) / pageHeight);
+
+                    string colorHex = "#FF32CD32";
+                    if (annot.Color != null && annot.Color != Aspose.Pdf.Color.Empty && annot.Color != Aspose.Pdf.Color.Transparent)
+                    {
+                        var rgb = annot.Color.ToRgb();
+                        colorHex = $"#{rgb.R:X2}{rgb.G:X2}{rgb.B:X2}";
+                    }
+
+                    var markup = annot as MarkupAnnotation;
+                    double opacity = (markup != null && markup.Opacity > 0) ? markup.Opacity : (type == AnnotationType.Highlight ? 0.4 : 1.0);
+
+                    list.Add(new AnnotationModel
+                    {
+                        PageNumber = p,
+                        Type = type,
+                        X = normX,
+                        Y = normY,
+                        Width = normW,
+                        Height = normH,
+                        ColorHex = colorHex,
+                        Opacity = opacity,
+                        Contents = annot.Contents ?? string.Empty,
+                        Author = markup?.Title ?? "Author",
+                        Title = markup?.Subject ?? annot.GetType().Name
+                    });
+                }
+            }
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Saves the document with annotations applied, with strict prohibition against overwriting the original file.
+    /// </summary>
+    public async Task SaveAnnotatedDocumentAsync(
+        string targetPath,
+        AnnotationSaveMode mode,
+        IEnumerable<AnnotationModel> annotations,
+        string? originalPath = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(targetPath))
+            throw new ArgumentException("Target file path cannot be empty.", nameof(targetPath));
+
+        // CRITICAL: Strict check never to save to original file
+        if (!string.IsNullOrEmpty(originalPath))
+        {
+            string fullTarget = Path.GetFullPath(targetPath);
+            string fullOriginal = Path.GetFullPath(originalPath);
+            if (string.Equals(fullTarget, fullOriginal, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Saving directly over the original source file is prohibited. Please specify a new file name or directory.");
+            }
+        }
+
+        await Task.Run(() =>
+        {
+            lock (_docLock)
+            {
+                if (_document == null)
+                    throw new InvalidOperationException("No document is currently loaded.");
+
+                if (mode == AnnotationSaveMode.ExportXfdf)
+                {
+                    ExportAnnotationsToXfdf(targetPath, annotations);
+                    return;
+                }
+
+                // Create working clone stream to avoid mutating active in-memory document permanently
+                using var memStream = new MemoryStream();
+                _document.Save(memStream);
+                memStream.Position = 0;
+
+                using var saveDoc = new Document(memStream);
+
+                // Apply annotations to target document
+                foreach (var annot in annotations)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (annot.PageNumber < 1 || annot.PageNumber > saveDoc.Pages.Count) continue;
+
+                    var page = saveDoc.Pages[annot.PageNumber];
+                    double pageWidth = page.Rect.Width;
+                    double pageHeight = page.Rect.Height;
+
+                    double llx = Math.Max(0, annot.X * pageWidth);
+                    double lly = Math.Max(0, (1.0 - (annot.Y + annot.Height)) * pageHeight);
+                    double urx = Math.Min(pageWidth, (annot.X + annot.Width) * pageWidth);
+                    double ury = Math.Min(pageHeight, (1.0 - annot.Y) * pageHeight);
+
+                    var rect = new Aspose.Pdf.Rectangle(llx, lly, urx, ury);
+                    var asposeColor = AsposeColorFromHex(annot.ColorHex);
+
+                    switch (annot.Type)
+                    {
+                        case AnnotationType.Highlight:
+                            page.Annotations.Add(new HighlightAnnotation(page, rect)
+                            {
+                                Title = annot.Author,
+                                Subject = annot.Title,
+                                Contents = annot.Contents,
+                                Color = asposeColor,
+                                Opacity = annot.Opacity
+                            });
+                            break;
+
+                        case AnnotationType.Underline:
+                            page.Annotations.Add(new UnderlineAnnotation(page, rect)
+                            {
+                                Title = annot.Author,
+                                Contents = annot.Contents,
+                                Color = asposeColor
+                            });
+                            break;
+
+                        case AnnotationType.StrikeOut:
+                            page.Annotations.Add(new StrikeOutAnnotation(page, rect)
+                            {
+                                Title = annot.Author,
+                                Contents = annot.Contents,
+                                Color = asposeColor
+                            });
+                            break;
+
+                        case AnnotationType.Note:
+                            page.Annotations.Add(new TextAnnotation(page, rect)
+                            {
+                                Title = annot.Author,
+                                Subject = annot.Title,
+                                Contents = annot.Contents,
+                                Color = asposeColor,
+                                Open = false,
+                                Icon = TextIcon.Comment
+                            });
+                            break;
+
+                        case AnnotationType.FreeText:
+                            page.Annotations.Add(new FreeTextAnnotation(page, rect, new DefaultAppearance("Arial", 12, System.Drawing.Color.Black))
+                            {
+                                Title = annot.Author,
+                                Contents = annot.Contents,
+                                Color = asposeColor
+                            });
+                            break;
+
+                        case AnnotationType.Rectangle:
+                            page.Annotations.Add(new SquareAnnotation(page, rect)
+                            {
+                                Title = annot.Author,
+                                Contents = annot.Contents,
+                                Color = asposeColor,
+                                Opacity = annot.Opacity
+                            });
+                            break;
+
+                        case AnnotationType.Ellipse:
+                            page.Annotations.Add(new CircleAnnotation(page, rect)
+                            {
+                                Title = annot.Author,
+                                Contents = annot.Contents,
+                                Color = asposeColor,
+                                Opacity = annot.Opacity
+                            });
+                            break;
+
+                        case AnnotationType.Ink:
+                            var inkList = new List<Aspose.Pdf.Point[]>();
+                            if (annot.InkPoints != null && annot.InkPoints.Count > 1)
+                            {
+                                var pts = annot.InkPoints
+                                    .Select(p => new Aspose.Pdf.Point(p.X * pageWidth, (1.0 - p.Y) * pageHeight))
+                                    .ToArray();
+                                inkList.Add(pts);
+                            }
+                            else
+                            {
+                                inkList.Add(new[] { new Aspose.Pdf.Point(llx, lly), new Aspose.Pdf.Point(urx, ury) });
+                            }
+                            var inkAnnot = new InkAnnotation(page, rect, (System.Collections.Generic.IList<Aspose.Pdf.Point[]>)inkList)
+                            {
+                                Title = annot.Author,
+                                Contents = annot.Contents,
+                                Color = asposeColor,
+                                Opacity = annot.Opacity
+                            };
+                            page.Annotations.Add(inkAnnot);
+                            break;
+                    }
+                }
+
+                if (mode == AnnotationSaveMode.Flattened)
+                {
+                    saveDoc.Flatten();
+                }
+
+                string? outDir = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
+
+                saveDoc.Save(targetPath);
+            }
+        }, ct);
+    }
+
+    /// <summary>
+    /// Exports annotations to an XFDF XML comments file.
+    /// </summary>
+    public static void ExportAnnotationsToXfdf(string xfdfPath, IEnumerable<AnnotationModel> annotations)
+    {
+        string? outDir = Path.GetDirectoryName(xfdfPath);
+        if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
+
+        using var writer = new StreamWriter(xfdfPath, false, System.Text.Encoding.UTF8);
+        writer.WriteLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+        writer.WriteLine("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\" xml:space=\"preserve\">");
+        writer.WriteLine("  <annots>");
+
+        foreach (var a in annotations)
+        {
+            string dateStr = a.CreationDate.ToString("yyyyMMddHHmmss");
+            string annotTag = a.Type switch
+            {
+                AnnotationType.Highlight => "highlight",
+                AnnotationType.Underline => "underline",
+                AnnotationType.StrikeOut => "strikeout",
+                AnnotationType.Note => "text",
+                AnnotationType.FreeText => "freetext",
+                AnnotationType.Rectangle => "square",
+                AnnotationType.Ellipse => "circle",
+                AnnotationType.Ink => "ink",
+                _ => "highlight"
+            };
+
+            writer.WriteLine($"    <{annotTag} page=\"{a.PageNumber - 1}\" rect=\"{a.X:F4},{a.Y:F4},{a.X + a.Width:F4},{a.Y + a.Height:F4}\" color=\"{a.ColorHex}\" title=\"{System.Security.SecurityElement.Escape(a.Author)}\" date=\"D:{dateStr}\">");
+            if (!string.IsNullOrEmpty(a.Contents))
+            {
+                writer.WriteLine($"      <contents>{System.Security.SecurityElement.Escape(a.Contents)}</contents>");
+            }
+            writer.WriteLine($"    </{annotTag}>");
+        }
+
+        writer.WriteLine("  </annots>");
+        writer.WriteLine("</xfdf>");
+    }
+
+    #endregion
 
     public void Dispose()
     {

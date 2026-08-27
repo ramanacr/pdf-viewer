@@ -104,6 +104,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<BookmarkItem> Bookmarks { get; } = new();
     public ObservableCollection<SearchMatch> SearchMatches { get; } = new();
     public ObservableCollection<string> RecentFiles { get; } = new();
+    public ObservableCollection<AnnotationModel> AllAnnotations { get; } = new();
 
     public string ZoomPercentageText => $"{(int)Math.Round(ZoomLevel * 100)}%";
     public string ApplicationVersion => typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
@@ -116,6 +117,41 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private UpdateInfo? _latestUpdateInfo;
+
+    [ObservableProperty]
+    private AnnotationType? _activeAnnotationTool;
+
+    public ObservableCollection<string> AnnotationColors { get; } = new()
+    {
+        "#FFFF00", // Yellow (Standard Highlighter)
+        "#FFD700", // Gold
+        "#00E676", // Mint / Light Green
+        "#00E5FF", // Cyan
+        "#2979FF", // Blue
+        "#FF4081", // Pink / Magenta
+        "#FF5252", // Coral Red
+        "#FF9100", // Orange
+        "#AA00FF", // Purple
+        "#212121"  // Charcoal Black
+    };
+
+    [ObservableProperty]
+    private string _selectedAnnotationColor = "#FFFF00"; // Classic Yellow default
+
+    [ObservableProperty]
+    private double _selectedAnnotationThickness = 2.0;
+
+    [ObservableProperty]
+    private string _selectedAnnotationAuthor = Environment.UserName;
+
+    [RelayCommand]
+    public void SelectAnnotationColor(string colorHex)
+    {
+        if (!string.IsNullOrWhiteSpace(colorHex))
+        {
+            SelectedAnnotationColor = colorHex;
+        }
+    }
 
     public async Task CheckForUpdatesInBackgroundAsync()
     {
@@ -139,6 +175,7 @@ public partial class MainViewModel : ObservableObject
     public Func<string, Task<string?>>? RequestPasswordFunc { get; set; }
     public Action<DocumentMetadata>? ShowPropertiesAction { get; set; }
     public Func<DocumentMetadata, (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi)>? ShowExportDialogFunc { get; set; }
+    public Func<DocumentMetadata, (bool Confirmed, string TargetPath, AnnotationSaveMode Mode)>? ShowSaveAnnotatedDialogFunc { get; set; }
     public Action<int>? ScrollToPageAction { get; set; }
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
 
@@ -265,6 +302,7 @@ public partial class MainViewModel : ObservableObject
             Thumbnails.Clear();
             Bookmarks.Clear();
             SearchMatches.Clear();
+            AllAnnotations.Clear();
             SearchSummaryText = string.Empty;
 
             // Populate Bookmarks
@@ -274,12 +312,29 @@ public partial class MainViewModel : ObservableObject
                 Bookmarks.Add(b);
             }
 
+            // Load Existing Document Annotations
+            var existingAnnots = _docService.LoadExistingAnnotations();
+            foreach (var a in existingAnnots)
+            {
+                AllAnnotations.Add(a);
+            }
+
             // Build Page and Thumbnail ViewModels
             for (int i = 1; i <= meta.PageCount; i++)
             {
                 var (w, h) = _docService.GetPageDimensions(i);
                 var pageVm = new PageViewModel(i, w, h);
                 pageVm.UpdateScale(ZoomLevel);
+
+                // Attach annotations on this page
+                foreach (var a in existingAnnots)
+                {
+                    if (a.PageNumber == i)
+                    {
+                        pageVm.AnnotationsOnPage.Add(a);
+                    }
+                }
+
                 Pages.Add(pageVm);
 
                 var thumbVm = new ThumbnailViewModel(i);
@@ -321,6 +376,8 @@ public partial class MainViewModel : ObservableObject
         Thumbnails.Clear();
         Bookmarks.Clear();
         SearchMatches.Clear();
+        AllAnnotations.Clear();
+        ActiveAnnotationTool = null;
 
         IsDocumentLoaded = false;
         Metadata = null;
@@ -676,11 +733,27 @@ public partial class MainViewModel : ObservableObject
         {
             SelectedSidebarTab = 2; // Switch to Search tab
         }
+        else
+        {
+            // Clear highlights when closing search
+            foreach (var page in Pages)
+            {
+                page.MatchesOnPage.Clear();
+            }
+            SearchMatches.Clear();
+            SearchSummaryText = string.Empty;
+        }
     }
 
     [RelayCommand]
     public async Task ExecuteSearchAsync()
     {
+        // Clear previous highlights from all pages
+        foreach (var page in Pages)
+        {
+            page.MatchesOnPage.Clear();
+        }
+
         if (string.IsNullOrWhiteSpace(SearchQuery) || !IsDocumentLoaded)
         {
             SearchMatches.Clear();
@@ -704,11 +777,16 @@ public partial class MainViewModel : ObservableObject
                 foreach (var match in results)
                 {
                     SearchMatches.Add(match);
+                    if (match.PageNumber >= 1 && match.PageNumber <= Pages.Count)
+                    {
+                        Pages[match.PageNumber - 1].MatchesOnPage.Add(match);
+                    }
                 }
 
                 if (SearchMatches.Count > 0)
                 {
                     CurrentSearchMatchIndex = 1;
+                    SearchMatches[0].IsCurrentMatch = true;
                     SearchSummaryText = $"{SearchMatches.Count} matches found";
                     NavigateToMatch(SearchMatches[0]);
                 }
@@ -764,8 +842,111 @@ public partial class MainViewModel : ObservableObject
 
     private void NavigateToMatch(SearchMatch match)
     {
+        // Unmark previous matches
+        foreach (var m in SearchMatches)
+        {
+            m.IsCurrentMatch = false;
+        }
+        match.IsCurrentMatch = true;
+
         NavigateToPage(match.PageNumber);
         SearchSummaryText = $"Match {CurrentSearchMatchIndex} of {SearchMatches.Count} (Page {match.PageNumber})";
+    }
+
+    #endregion
+
+    #region Annotations & Multi-Mode Saving
+
+    [RelayCommand]
+    public void ToggleAnnotationTool(string toolName)
+    {
+        if (Enum.TryParse<AnnotationType>(toolName, true, out var tool))
+        {
+            if (ActiveAnnotationTool == tool)
+                ActiveAnnotationTool = null; // Toggle off
+            else
+            {
+                ActiveAnnotationTool = tool; // Toggle on
+                IsPanningEnabled = false; // Disable pan tool when annotating
+            }
+        }
+        else
+        {
+            ActiveAnnotationTool = null;
+        }
+    }
+
+    [RelayCommand]
+    public void AddAnnotation(AnnotationModel annot)
+    {
+        AllAnnotations.Add(annot);
+        if (annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count)
+        {
+            Pages[annot.PageNumber - 1].AnnotationsOnPage.Add(annot);
+        }
+        StatusText = $"Added {annot.Type} annotation on page {annot.PageNumber}";
+    }
+
+    [RelayCommand]
+    public void DeleteAnnotation(AnnotationModel annot)
+    {
+        if (annot == null) return;
+        AllAnnotations.Remove(annot);
+        if (annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count)
+        {
+            Pages[annot.PageNumber - 1].AnnotationsOnPage.Remove(annot);
+        }
+        StatusText = $"Removed annotation from page {annot.PageNumber}";
+    }
+
+    [RelayCommand]
+    public void ClearAllAnnotations()
+    {
+        AllAnnotations.Clear();
+        foreach (var page in Pages)
+        {
+            page.AnnotationsOnPage.Clear();
+        }
+        StatusText = "Cleared all annotations.";
+    }
+
+    [RelayCommand]
+    public async Task SaveAnnotatedAsAsync()
+    {
+        if (!IsDocumentLoaded || Metadata == null) return;
+
+        if (ShowSaveAnnotatedDialogFunc != null)
+        {
+            var result = ShowSaveAnnotatedDialogFunc(Metadata);
+            if (result.Confirmed && !string.IsNullOrWhiteSpace(result.TargetPath))
+            {
+                try
+                {
+                    StatusText = "Saving annotated document...";
+                    await _docService.SaveAnnotatedDocumentAsync(
+                        result.TargetPath,
+                        result.Mode,
+                        AllAnnotations,
+                        Metadata.FilePath);
+
+                    StatusText = $"Saved annotated document ({result.Mode}): {Path.GetFileName(result.TargetPath)}";
+                    MessageBox.Show(
+                        $"Annotated document successfully saved ({result.Mode}):\n{result.TargetPath}",
+                        "Save Successful",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    StatusText = $"Save error: {ex.Message}";
+                    MessageBox.Show(
+                        $"Failed to save annotated document:\n{ex.Message}",
+                        "Save Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+        }
     }
 
     #endregion

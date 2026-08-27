@@ -26,8 +26,8 @@ try {
     $CommitCount = "1"
 }
 
-$AppVersion = "1.0.$CommitCount"
-$AssemblyVersion = "1.0.$CommitCount.0"
+$AppVersion = "1.1.$CommitCount"
+$AssemblyVersion = "1.1.$CommitCount.0"
 
 Write-Host "`n>> Product Version: $AppVersion (Total Changes/Commits: $CommitCount)" -ForegroundColor Green
 

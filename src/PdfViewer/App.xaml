@@ -16,6 +16,10 @@
             <converters:NullToVisibilityConverter x:Key="NullToVis" />
             <converters:EnumToBoolConverter x:Key="EnumToBool" />
             <converters:EnumToVisibilityConverter x:Key="EnumToVis" />
+            <converters:NormalizedCoordinateConverter x:Key="NormalizedCoordConverter" />
+            <converters:SearchHighlightBackgroundConverter x:Key="SearchHighlightBgConverter" />
+            <converters:SearchHighlightBorderConverter x:Key="SearchHighlightBorderConverter" />
+            <converters:HexToBrushConverter x:Key="HexToBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

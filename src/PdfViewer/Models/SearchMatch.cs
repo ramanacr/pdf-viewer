@@ -16,6 +16,12 @@ public class SearchMatch
     public double Width { get; set; }
     public double Height { get; set; }
 
+    /// <summary>
+    /// Indicates whether this match is the active/currently selected search occurrence.
+    /// Active match is highlighted in Gold/Amber; others in Lime-Green.
+    /// </summary>
+    public bool IsCurrentMatch { get; set; }
+
     public string DisplayText => $"Page {PageNumber}: {ContextSnippet}";
 
     public override string ToString() => DisplayText;

@@ -30,6 +30,7 @@ public partial class MainWindow : Window
         _vm.RequestPasswordFunc = PromptForPasswordAsync;
         _vm.ShowPropertiesAction = ShowPropertiesDialog;
         _vm.ShowExportDialogFunc = ShowExportImagesDialog;
+        _vm.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
         _vm.ScrollToPageAction = ScrollToPage;
         _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
 
@@ -424,6 +425,253 @@ public partial class MainWindow : Window
     {
         await Task.Delay(3000); // Allow the UI to fully initialize first
         await _vm.CheckForUpdatesInBackgroundAsync();
+    }
+
+    private (bool Confirmed, string TargetPath, AnnotationSaveMode Mode) ShowSaveAnnotatedDialog(DocumentMetadata metadata)
+    {
+        var dialog = new SaveAnnotatedDialog(metadata.FilePath)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() == true && dialog.Confirmed)
+        {
+            return (true, dialog.TargetPath, dialog.SelectedMode);
+        }
+
+        return (false, string.Empty, AnnotationSaveMode.Embedded);
+    }
+
+    #endregion
+
+    #region Interactive Annotation Drawing
+
+    private Point _annotStartPoint;
+    private bool _isDrawingAnnotation;
+    private System.Windows.Shapes.Shape? _previewShape;
+    private readonly System.Collections.Generic.List<Point> _currentInkPoints = new();
+
+    private void PageCanvas_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed) return;
+        if (_vm.ActiveAnnotationTool == null) return;
+        if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
+
+        _annotStartPoint = e.GetPosition(canvas);
+        _isDrawingAnnotation = true;
+        _currentInkPoints.Clear();
+        _currentInkPoints.Add(_annotStartPoint);
+        canvas.CaptureMouse();
+
+        // If Sticky Note click: Open Comment Textarea Dialog immediately
+        if (_vm.ActiveAnnotationTool == AnnotationType.Note)
+        {
+            double normX = Math.Max(0, Math.Min(1, _annotStartPoint.X / page.DisplayWidth));
+            double normY = Math.Max(0, Math.Min(1, _annotStartPoint.Y / page.DisplayHeight));
+
+            var annot = new AnnotationModel
+            {
+                PageNumber = page.PageNumber,
+                Type = AnnotationType.Note,
+                X = normX,
+                Y = normY,
+                Width = 24.0 / page.DisplayWidth,
+                Height = 24.0 / page.DisplayHeight,
+                ColorHex = _vm.SelectedAnnotationColor,
+                Author = _vm.SelectedAnnotationAuthor,
+                Title = "Sticky Note",
+                Contents = string.Empty
+            };
+
+            _isDrawingAnnotation = false;
+            canvas.ReleaseMouseCapture();
+
+            var dialog = new EditCommentDialog(annot, isNew: true) { Owner = this };
+            if (dialog.ShowDialog() == true && dialog.IsConfirmed)
+            {
+                _vm.AddAnnotation(annot);
+            }
+            return;
+        }
+
+        // Create preview shape
+        if (_vm.ActiveAnnotationTool == AnnotationType.Highlight)
+        {
+            var brush = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!;
+            _previewShape = new System.Windows.Shapes.Rectangle
+            {
+                Fill = brush,
+                Stroke = brush,
+                Opacity = 0.45,
+                StrokeThickness = 1
+            };
+        }
+        else if (_vm.ActiveAnnotationTool == AnnotationType.Rectangle)
+        {
+            _previewShape = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!,
+                StrokeThickness = _vm.SelectedAnnotationThickness
+            };
+        }
+        else if (_vm.ActiveAnnotationTool == AnnotationType.Ellipse)
+        {
+            _previewShape = new System.Windows.Shapes.Ellipse
+            {
+                Stroke = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!,
+                StrokeThickness = _vm.SelectedAnnotationThickness
+            };
+        }
+        else if (_vm.ActiveAnnotationTool == AnnotationType.Underline)
+        {
+            _previewShape = new System.Windows.Shapes.Rectangle
+            {
+                Fill = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!,
+                Height = 3
+            };
+        }
+        else if (_vm.ActiveAnnotationTool == AnnotationType.FreeText)
+        {
+            _previewShape = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!,
+                StrokeDashArray = new DoubleCollection { 2, 2 },
+                StrokeThickness = 1
+            };
+        }
+
+        if (_previewShape != null)
+        {
+            Canvas.SetLeft(_previewShape, _annotStartPoint.X);
+            Canvas.SetTop(_previewShape, _annotStartPoint.Y);
+            _previewShape.Width = 0;
+            _previewShape.Height = 0;
+            canvas.Children.Add(_previewShape);
+        }
+    }
+
+    private void PageCanvas_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDrawingAnnotation) return;
+        if (sender is not Canvas canvas) return;
+
+        var currentPoint = e.GetPosition(canvas);
+        _currentInkPoints.Add(currentPoint);
+
+        if (_previewShape != null)
+        {
+            double left = Math.Min(_annotStartPoint.X, currentPoint.X);
+            double top = Math.Min(_annotStartPoint.Y, currentPoint.Y);
+            double width = Math.Abs(currentPoint.X - _annotStartPoint.X);
+            double height = Math.Abs(currentPoint.Y - _annotStartPoint.Y);
+
+            Canvas.SetLeft(_previewShape, left);
+            Canvas.SetTop(_previewShape, top);
+            _previewShape.Width = width;
+            _previewShape.Height = height;
+        }
+    }
+
+    private void PageCanvas_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isDrawingAnnotation) return;
+        _isDrawingAnnotation = false;
+
+        if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
+
+        canvas.ReleaseMouseCapture();
+
+        if (_previewShape != null)
+        {
+            canvas.Children.Remove(_previewShape);
+            _previewShape = null;
+        }
+
+        var endPoint = e.GetPosition(canvas);
+        double left = Math.Min(_annotStartPoint.X, endPoint.X);
+        double top = Math.Min(_annotStartPoint.Y, endPoint.Y);
+        double width = Math.Max(10, Math.Abs(endPoint.X - _annotStartPoint.X));
+        double height = Math.Max(10, Math.Abs(endPoint.Y - _annotStartPoint.Y));
+
+        double normX = Math.Max(0, left / page.DisplayWidth);
+        double normY = Math.Max(0, top / page.DisplayHeight);
+        double normW = Math.Min(1 - normX, width / page.DisplayWidth);
+        double normH = Math.Min(1 - normY, height / page.DisplayHeight);
+
+        if (_vm.ActiveAnnotationTool.HasValue && width > 4 && height > 4)
+        {
+            var annot = new AnnotationModel
+            {
+                PageNumber = page.PageNumber,
+                Type = _vm.ActiveAnnotationTool.Value,
+                X = normX,
+                Y = normY,
+                Width = normW,
+                Height = normH,
+                ColorHex = _vm.SelectedAnnotationColor,
+                StrokeThickness = _vm.SelectedAnnotationThickness,
+                Author = _vm.SelectedAnnotationAuthor,
+                Title = _vm.ActiveAnnotationTool.Value.ToString(),
+                Contents = string.Empty
+            };
+
+            if (_vm.ActiveAnnotationTool.Value == AnnotationType.Ink && _currentInkPoints.Count > 1)
+            {
+                annot.InkPoints = _currentInkPoints
+                    .Select(p => new Point(p.X / page.DisplayWidth, p.Y / page.DisplayHeight))
+                    .ToList();
+            }
+
+            if (_vm.ActiveAnnotationTool.Value == AnnotationType.FreeText)
+            {
+                var dialog = new EditCommentDialog(annot, isNew: true) { Owner = this };
+                if (dialog.ShowDialog() == true && dialog.IsConfirmed)
+                {
+                    _vm.AddAnnotation(annot);
+                }
+            }
+            else
+            {
+                _vm.AddAnnotation(annot);
+            }
+        }
+    }
+
+    private void Annotation_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement elem && elem.DataContext is AnnotationModel annot)
+        {
+            // If user is currently drawing with an active tool, let canvas handle it
+            if (_vm.ActiveAnnotationTool != null) return;
+
+            var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
+            dialog.ShowDialog();
+            e.Handled = true;
+        }
+    }
+
+    private void AnnotationItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBox listBox && listBox.SelectedItem is AnnotationModel annot)
+        {
+            _vm.CurrentPageNumber = annot.PageNumber;
+            ScrollToPage(annot.PageNumber);
+            var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
+            dialog.ShowDialog();
+            e.Handled = true;
+        }
+    }
+
+    private void EditAnnotationButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement elem && elem.Tag is AnnotationModel annot)
+        {
+            _vm.CurrentPageNumber = annot.PageNumber;
+            ScrollToPage(annot.PageNumber);
+            var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
+            dialog.ShowDialog();
+            e.Handled = true;
+        }
     }
 
     #endregion

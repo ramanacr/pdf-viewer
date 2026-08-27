@@ -40,6 +40,7 @@ public partial class PageViewModel : ObservableObject
     private bool _isSelected;
 
     public ObservableCollection<SearchMatch> MatchesOnPage { get; } = new();
+    public ObservableCollection<AnnotationModel> AnnotationsOnPage { get; } = new();
 
     public double DisplayWidth => (RotationAngle == 90 || RotationAngle == 270 ? HeightPt : WidthPt) * DisplayScale;
     public double DisplayHeight => (RotationAngle == 90 || RotationAngle == 270 ? WidthPt : HeightPt) * DisplayScale;

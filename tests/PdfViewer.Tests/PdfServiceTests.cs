@@ -9,6 +9,7 @@ using PdfViewer.Models;
 using PdfViewer.Services;
 using PdfViewer.ViewModels;
 using Xunit;
+using AnnotationType = PdfViewer.Models.AnnotationType;
 
 namespace PdfViewer.Tests;
 
@@ -316,11 +317,11 @@ public class PdfServiceTests : IDisposable
     {
         var meta = new DocumentMetadata();
         Assert.NotNull(meta.ApplicationVersion);
-        Assert.StartsWith("1.0.", meta.ApplicationVersion);
+        Assert.StartsWith("1.1.", meta.ApplicationVersion);
 
         var vm = new MainViewModel();
         Assert.NotNull(vm.ApplicationVersion);
-        Assert.StartsWith("1.0.", vm.ApplicationVersion);
+        Assert.StartsWith("1.1.", vm.ApplicationVersion);
     }
 
     [Fact]
@@ -386,4 +387,187 @@ public class PdfServiceTests : IDisposable
         var infoNewer = UpdateService.ParseReleaseJson(sampleJson, new Version(3, 0, 0));
         Assert.False(infoNewer.IsUpdateAvailable);
     }
+
+    [Fact]
+    public async Task TestSearchHighlightCoordinatesAndNormalization()
+    {
+        string samplePdf = CreateSamplePdf("Highlight Coordinates Test Doc");
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var matches = await service.SearchTextAsync("Keyword");
+        Assert.NotEmpty(matches);
+
+        foreach (var match in matches)
+        {
+            Assert.InRange(match.X, 0.0, 1.0);
+            Assert.InRange(match.Y, 0.0, 1.0);
+            Assert.InRange(match.Width, 0.001, 1.0);
+            Assert.InRange(match.Height, 0.001, 1.0);
+            Assert.Equal("Keyword", match.Text);
+        }
+    }
+
+    [Fact]
+    public async Task TestSaveAnnotatedEmbedded()
+    {
+        string samplePdf = CreateSamplePdf("Annotation Embedding Test Doc");
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var annotations = new List<AnnotationModel>
+        {
+            new AnnotationModel
+            {
+                PageNumber = 1,
+                Type = AnnotationType.Highlight,
+                X = 0.1,
+                Y = 0.2,
+                Width = 0.3,
+                Height = 0.05,
+                ColorHex = "#FF32CD32",
+                Contents = "Embedded highlight comment"
+            },
+            new AnnotationModel
+            {
+                PageNumber = 1,
+                Type = AnnotationType.Note,
+                X = 0.5,
+                Y = 0.5,
+                Width = 0.05,
+                Height = 0.05,
+                ColorHex = "#FFFFD700",
+                Contents = "Embedded sticky note test"
+            }
+        };
+
+        string targetPdf = Path.Combine(_testDir, "AnnotatedEmbedded.pdf");
+        await service.SaveAnnotatedDocumentAsync(targetPdf, AnnotationSaveMode.Embedded, annotations, samplePdf);
+
+        Assert.True(File.Exists(targetPdf));
+        Assert.True(new FileInfo(targetPdf).Length > 1000);
+
+        // Load the saved PDF and verify annotations are present
+        using var verifyService = new PdfDocumentService();
+        await verifyService.OpenDocumentAsync(targetPdf);
+        var loadedAnnots = verifyService.LoadExistingAnnotations();
+
+        Assert.NotEmpty(loadedAnnots);
+        Assert.Contains(loadedAnnots, a => a.Type == AnnotationType.Highlight || a.Type == AnnotationType.Note);
+    }
+
+    [Fact]
+    public async Task TestSaveAnnotatedFlattened()
+    {
+        string samplePdf = CreateSamplePdf("Annotation Flattening Test Doc");
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var annotations = new List<AnnotationModel>
+        {
+            new AnnotationModel
+            {
+                PageNumber = 1,
+                Type = AnnotationType.Highlight,
+                X = 0.1,
+                Y = 0.2,
+                Width = 0.3,
+                Height = 0.05,
+                ColorHex = "#FF32CD32",
+                Contents = "Flattened highlight"
+            }
+        };
+
+        string targetPdf = Path.Combine(_testDir, "AnnotatedFlattened.pdf");
+        await service.SaveAnnotatedDocumentAsync(targetPdf, AnnotationSaveMode.Flattened, annotations, samplePdf);
+
+        Assert.True(File.Exists(targetPdf));
+
+        // Load the flattened PDF — annotations should now be baked graphics (0 comment objects)
+        using var verifyService = new PdfDocumentService();
+        await verifyService.OpenDocumentAsync(targetPdf);
+        var loadedAnnots = verifyService.LoadExistingAnnotations();
+
+        Assert.Empty(loadedAnnots); // Flattened into graphics, no comment objects remaining
+    }
+
+    [Fact]
+    public async Task TestExportAnnotationsToXfdf()
+    {
+        string samplePdf = CreateSamplePdf("XFDF Export Test Doc");
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var annotations = new List<AnnotationModel>
+        {
+            new AnnotationModel
+            {
+                PageNumber = 1,
+                Type = AnnotationType.Highlight,
+                X = 0.15,
+                Y = 0.25,
+                Width = 0.4,
+                Height = 0.05,
+                ColorHex = "#FF32CD32",
+                Contents = "XFDF test comment",
+                Author = "TestReviewer"
+            }
+        };
+
+        string targetXfdf = Path.Combine(_testDir, "AnnotationsExport.xfdf");
+        await service.SaveAnnotatedDocumentAsync(targetXfdf, AnnotationSaveMode.ExportXfdf, annotations, samplePdf);
+
+        Assert.True(File.Exists(targetXfdf));
+        string xmlContent = await File.ReadAllTextAsync(targetXfdf);
+
+        Assert.Contains("<xfdf", xmlContent);
+        Assert.Contains("<annots>", xmlContent);
+        Assert.Contains("highlight", xmlContent);
+        Assert.Contains("XFDF test comment", xmlContent);
+        Assert.Contains("TestReviewer", xmlContent);
+    }
+
+    [Fact]
+    public async Task TestPreventOverwriteOriginalDocument()
+    {
+        string samplePdf = CreateSamplePdf("Overwrite Prevention Test Doc");
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var annotations = new List<AnnotationModel>();
+
+        // Attempting to save over the original source file must throw InvalidOperationException
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await service.SaveAnnotatedDocumentAsync(samplePdf, AnnotationSaveMode.Embedded, annotations, samplePdf);
+        });
+    }
+
+    [Fact]
+    public async Task TestDoNotTreatLinksOrWidgetsAsHighlights()
+    {
+        string samplePdf = Path.Combine(_testDir, "DocWithLinks.pdf");
+        using (var doc = new Document())
+        {
+            var page = doc.Pages.Add();
+            var text = new TextFragment("Click this link here");
+            page.Paragraphs.Add(text);
+
+            // Add a LinkAnnotation
+            var link = new LinkAnnotation(page, new Aspose.Pdf.Rectangle(100, 100, 300, 120))
+            {
+                Action = new Aspose.Pdf.Annotations.GoToURIAction("https://example.com")
+            };
+            page.Annotations.Add(link);
+            doc.Save(samplePdf);
+        }
+
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var loaded = service.LoadExistingAnnotations();
+        // The LinkAnnotation must NOT be converted to a highlight annotation
+        Assert.Empty(loaded);
+    }
 }
+
