@@ -3,24 +3,32 @@
     <Company>PDF Viewer Native</Company>
     <Product>PDF Viewer Native Desktop</Product>
     <Copyright>Copyright © 2026</Copyright>
-    <VersionPrefix>1.2</VersionPrefix>
   </PropertyGroup>
 
-  <!-- Auto-calculate build number based on total number of Git changes/commits -->
+  <!--
+    Derive the assembly version from the nearest git release tag (e.g. "v1.2.2" -> 1.2.2),
+    NOT from the total commit count. The self-update check (UpdateService.CompareVersions)
+    compares this assembly version directly against GitHub release tag names, and a
+    commit-count-based build number grows every commit while a tag's patch digit only
+    grows once per release, so the two schemes must match or update checks silently
+    stop detecting genuinely newer releases as newer.
+  -->
   <Target Name="AutoSetGitVersion" BeforeTargets="BeforeBuild;BeforeCompile;GetAssemblyVersion;GenerateNuspec;CoreCompile">
-    <Exec Command="git rev-list --count HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
-      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitCount" />
+    <Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitLatestTag" />
     </Exec>
     <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitHash" />
     </Exec>
     <PropertyGroup>
-      <GitCommitCount Condition="'$(GitCommitCount)' == ''">0</GitCommitCount>
-      <Version>$(VersionPrefix).$(GitCommitCount)</Version>
-      <AssemblyVersion>$(VersionPrefix).$(GitCommitCount).0</AssemblyVersion>
-      <FileVersion>$(VersionPrefix).$(GitCommitCount).0</FileVersion>
-      <InformationalVersion Condition="'$(GitCommitHash)' != ''">$(VersionPrefix).$(GitCommitCount)+$(GitCommitHash)</InformationalVersion>
-      <InformationalVersion Condition="'$(GitCommitHash)' == ''">$(VersionPrefix).$(GitCommitCount)</InformationalVersion>
+      <GitLatestTag Condition="'$(GitLatestTag)' == ''">v0.0.0</GitLatestTag>
+      <GitReleaseVersion Condition="$(GitLatestTag.StartsWith('v')) Or $(GitLatestTag.StartsWith('V'))">$(GitLatestTag.Substring(1))</GitReleaseVersion>
+      <GitReleaseVersion Condition="'$(GitReleaseVersion)' == ''">$(GitLatestTag)</GitReleaseVersion>
+      <Version>$(GitReleaseVersion)</Version>
+      <AssemblyVersion>$(GitReleaseVersion).0</AssemblyVersion>
+      <FileVersion>$(GitReleaseVersion).0</FileVersion>
+      <InformationalVersion Condition="'$(GitCommitHash)' != ''">$(GitReleaseVersion)+$(GitCommitHash)</InformationalVersion>
+      <InformationalVersion Condition="'$(GitCommitHash)' == ''">$(GitReleaseVersion)</InformationalVersion>
     </PropertyGroup>
   </Target>
 </Project>

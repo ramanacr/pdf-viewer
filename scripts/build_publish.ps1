@@ -15,21 +15,26 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host " Building & Packaging PDF Viewer Native (.NET 9)  " -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
-# 1. Determine Auto-Incremented Build Number based on number of changes/commits
-$CommitCount = "1"
+# 1. Determine the app version from the nearest git release tag (e.g. "v1.2.2" -> 1.2.2).
+#    This MUST match Directory.Build.props' AutoSetGitVersion target and MUST match the
+#    tag this build is published under: UpdateService.CompareVersions compares the
+#    installed assembly version directly against GitHub release tag names, so a build
+#    versioned from anything else (e.g. raw commit count) silently breaks self-update
+#    detection once the two numbering schemes drift apart.
+$LatestTag = "v0.0.0"
 try {
-    $count = (git rev-list --count HEAD).Trim()
-    if (![string]::IsNullOrEmpty($count)) {
-        $CommitCount = $count
+    $tag = (git describe --tags --abbrev=0 2>$null)
+    if (![string]::IsNullOrEmpty($tag)) {
+        $LatestTag = $tag.Trim()
     }
 } catch {
-    $CommitCount = "1"
+    $LatestTag = "v0.0.0"
 }
 
-$AppVersion = "1.2.$CommitCount"
-$AssemblyVersion = "1.2.$CommitCount.0"
+$AppVersion = $LatestTag.TrimStart("v", "V")
+$AssemblyVersion = "$AppVersion.0"
 
-Write-Host "`n>> Product Version: $AppVersion (Total Changes/Commits: $CommitCount)" -ForegroundColor Green
+Write-Host "`n>> Product Version: $AppVersion (from git tag $LatestTag)" -ForegroundColor Green
 
 # 2. Clean previous publish folder
 $PublishDir = Join-Path $RootDir "publish"

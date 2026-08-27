@@ -327,6 +327,42 @@ public class PdfServiceTests : IDisposable
     }
 
     [Fact]
+    public void TestAssemblyVersionMatchesLatestGitTagForSelfUpdate()
+    {
+        // Regression test: the assembly version used to be derived from the raw git
+        // commit count (Directory.Build.props), while UpdateService.ParseVersion parses
+        // GitHub release tags like "v1.2.2" as a literal Major.Minor.Patch version. Since
+        // the commit count grows every commit but a tag's patch digit only grows once per
+        // release, CompareVersions would almost always conclude the installed build was
+        // "newer" than the latest tagged release, permanently breaking update detection.
+        // The assembly version must therefore track the nearest release tag, not the
+        // commit count.
+        var psi = new System.Diagnostics.ProcessStartInfo("git", "describe --tags --abbrev=0")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = System.Diagnostics.Process.Start(psi);
+        string tag = process!.StandardOutput.ReadToEnd().Trim();
+        process.WaitForExit();
+
+        if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(tag))
+        {
+            return; // No tags reachable (e.g. a shallow CI checkout) — nothing to assert.
+        }
+
+        var expected = UpdateService.ParseVersion(tag);
+        var actual = typeof(LicenseService).Assembly.GetName().Version;
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected.Major, actual!.Major);
+        Assert.Equal(expected.Minor, actual.Minor);
+        Assert.Equal(expected.Build, actual.Build);
+    }
+
+    [Fact]
     public void TestVersionComparison()
     {
         // ParseVersion
