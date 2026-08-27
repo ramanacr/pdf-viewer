@@ -3,7 +3,7 @@
     <Company>PDF Viewer Native</Company>
     <Product>PDF Viewer Native Desktop</Product>
     <Copyright>Copyright © 2026</Copyright>
-    <VersionPrefix>1.1</VersionPrefix>
+    <VersionPrefix>1.2</VersionPrefix>
   </PropertyGroup>
 
   <!-- Auto-calculate build number based on total number of Git changes/commits -->

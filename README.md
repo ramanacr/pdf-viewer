@@ -110,6 +110,14 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - **Interactive Panning**: Hand/Pan tool toggle or Middle-Mouse drag to pan smoothly around zoomed pages.
 - **Page Rotation**:
   - Rotate current document view 90° Clockwise (`Ctrl+R`) or Counter-Clockwise (`Ctrl+Shift+R`).
+- **Interactive Text Selection & Clipboard Copying (v1.2.0)**:
+  - **Hybrid Invisible Text Layer**: Maps geometric bounding boxes (`TextFragmentAbsorber`) on top of the rasterized page.
+  - **I-Beam Cursor**: Dynamic cursor detection when hovering over selectable text.
+  - **Mouse Drag & Multi-Line Selection**: Click and drag across lines or paragraphs to highlight text in translucent blue accent.
+  - **Double-Click Word Selection**: Double-click any word to highlight it instantly.
+  - **Clipboard Copying (`Ctrl+C`)**: Copy formatted text with natural paragraph line breaks to the Windows clipboard.
+  - **Select All on Page (`Ctrl+A`)**: Instantly select all text across the current page.
+  - **Convert Selection to Highlight**: Right-click or use Edit menu to turn selected text into a permanent vector annotation.
 - **In-Document Text Search**:
   - Real-time searching powered by `Aspose.Pdf.Text.TextFragmentAbsorber`.
   - Case-sensitive / case-insensitive search toggle.

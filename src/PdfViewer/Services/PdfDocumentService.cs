@@ -341,6 +341,110 @@ public class PdfDocumentService : IDisposable
     }
 
     /// <summary>
+    /// Extracts all selectable text segments and their normalized bounding boxes from a given page.
+    /// </summary>
+    public List<PageTextSegment> ExtractPageTextSegments(int pageNumber)
+    {
+        lock (_docLock)
+        {
+            var list = new List<PageTextSegment>();
+            if (_document == null || pageNumber < 1 || pageNumber > _document.Pages.Count)
+                return list;
+
+            var page = _document.Pages[pageNumber];
+            var absorber = new TextFragmentAbsorber();
+            page.Accept(absorber);
+
+            double pageWidth = page.Rect.Width;
+            double pageHeight = page.Rect.Height;
+            if (pageWidth <= 0) pageWidth = 612;
+            if (pageHeight <= 0) pageHeight = 792;
+
+            foreach (TextFragment fragment in absorber.TextFragments)
+            {
+                if (fragment.Segments != null && fragment.Segments.Count > 0)
+                {
+                    foreach (TextSegment segment in fragment.Segments)
+                    {
+                        if (string.IsNullOrWhiteSpace(segment.Text)) continue;
+                        var rect = segment.Rectangle ?? fragment.Rectangle;
+                        if (rect == null) continue;
+
+                        double normX = Math.Max(0, rect.LLX / pageWidth);
+                        double normY = Math.Max(0, 1.0 - (rect.URY / pageHeight));
+                        double normW = Math.Max(0.001, (rect.URX - rect.LLX) / pageWidth);
+                        double normH = Math.Max(0.001, (rect.URY - rect.LLY) / pageHeight);
+
+                        list.Add(new PageTextSegment
+                        {
+                            PageNumber = pageNumber,
+                            Text = segment.Text,
+                            X = normX,
+                            Y = normY,
+                            Width = normW,
+                            Height = normH
+                        });
+                    }
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(fragment.Text)) continue;
+                    var rect = fragment.Rectangle;
+                    if (rect == null) continue;
+
+                    double normX = Math.Max(0, rect.LLX / pageWidth);
+                    double normY = Math.Max(0, 1.0 - (rect.URY / pageHeight));
+                    double normW = Math.Max(0.001, (rect.URX - rect.LLX) / pageWidth);
+                    double normH = Math.Max(0.001, (rect.URY - rect.LLY) / pageHeight);
+
+                    list.Add(new PageTextSegment
+                    {
+                        PageNumber = pageNumber,
+                        Text = fragment.Text,
+                        X = normX,
+                        Y = normY,
+                        Width = normW,
+                        Height = normH
+                    });
+                }
+            }
+
+            // Sort in reading order (top-to-bottom, left-to-right)
+            list.Sort((a, b) =>
+            {
+                double yDiff = a.Y - b.Y;
+                double threshold = Math.Min(a.Height, b.Height) * 0.5;
+                if (threshold <= 0) threshold = 0.008;
+
+                if (Math.Abs(yDiff) > threshold)
+                {
+                    return a.Y.CompareTo(b.Y);
+                }
+                return a.X.CompareTo(b.X);
+            });
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                list[i].SegmentIndex = i;
+            }
+
+            return list;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously extracts all text segments from a given page.
+    /// </summary>
+    public async Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return ExtractPageTextSegments(pageNumber);
+        }, ct);
+    }
+
+    /// <summary>
     /// Exports pages to image files (PNG/JPEG).
     /// </summary>
     public async Task ExportPagesToImagesAsync(

@@ -27,6 +27,9 @@
         <KeyBinding Modifiers="Ctrl" Key="O" Command="{Binding OpenFileDialogCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="P" Command="{Binding PrintCommand}" />
         <KeyBinding Modifiers="Ctrl+Shift" Key="S" Command="{Binding SaveAnnotatedAsCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="C" Command="{Binding CopySelectedTextCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="A" Command="{Binding SelectAllTextCommand}" />
+        <KeyBinding Key="Escape" Command="{Binding ClearSelectionCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="F" Command="{Binding ToggleSearchCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="D" Command="{Binding ShowPropertiesCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="OemPlus" Command="{Binding ZoomInCommand}" />
@@ -87,6 +90,14 @@
                 <MenuItem Header="E_xit" Click="ExitMenuItem_Click" InputGestureText="Alt+F4" />
             </MenuItem>
 
+            <MenuItem Header="_Edit">
+                <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}" />
+                <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}" />
+                <Separator />
+                <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}" />
+            </MenuItem>
+
             <MenuItem Header="_View">
                 <MenuItem Header="Continuous Scrolling" Command="{Binding ToggleViewModeCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
                 <MenuItem Header="Single Page View" Command="{Binding ToggleViewModeCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}" />
@@ -130,6 +141,14 @@
                         Command="{Binding OpenFileDialogCommand}"
                         ToolTip="Open PDF (Ctrl+O)">
                     <Path Data="{StaticResource IconOpen}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                </Button>
+
+                <!-- Copy Selected Text Button -->
+                <Button Style="{StaticResource ToolbarIconButton}"
+                        Command="{Binding CopySelectedTextCommand}"
+                        IsEnabled="{Binding HasTextSelection}"
+                        ToolTip="Copy Selected Text (Ctrl+C)">
+                    <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
                 </Button>
 
                 <!-- Print Button -->
@@ -822,7 +841,63 @@
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
 
-                                            <!-- 3. Vector Search Highlights Layer (Lime-Green / Active Gold) -->
+                                            <!-- 3. Text Selection Layer (Translucent Accent / Blue) -->
+                                            <ItemsControl ItemsSource="{Binding SelectedSegments}"
+                                                          Width="{Binding DisplayWidth}"
+                                                          Height="{Binding DisplayHeight}"
+                                                          IsHitTestVisible="False">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <Canvas Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="Canvas.Left">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="X" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Canvas.Top">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Y" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Width">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Width" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Setter Property="Height">
+                                                            <Setter.Value>
+                                                                <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                                    <Binding Path="Height" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                </MultiBinding>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type models:PageTextSegment}">
+                                                        <Border Background="#440078D7"
+                                                                BorderBrush="#880078D7"
+                                                                BorderThickness="1"
+                                                                CornerRadius="2" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <!-- 4. Vector Search Highlights Layer (Lime-Green / Active Gold) -->
                                             <ItemsControl ItemsSource="{Binding MatchesOnPage}"
                                                           Width="{Binding DisplayWidth}"
                                                           Height="{Binding DisplayHeight}"
@@ -878,7 +953,7 @@
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
 
-                                            <!-- 4. Vector Annotations Layer -->
+                                            <!-- 5. Vector Annotations Layer -->
                                             <ItemsControl ItemsSource="{Binding AnnotationsOnPage}"
                                                           Width="{Binding DisplayWidth}"
                                                           Height="{Binding DisplayHeight}">
@@ -987,14 +1062,36 @@
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
 
-                                            <!-- 5. Interactive Canvas for Drawing Annotations -->
+                                            <!-- 6. Interactive Canvas for Selection & Drawing Annotations -->
                                             <Canvas Width="{Binding DisplayWidth}"
                                                     Height="{Binding DisplayHeight}"
                                                     Background="Transparent"
                                                     Tag="{Binding}"
                                                     MouseDown="PageCanvas_MouseDown"
                                                     MouseMove="PageCanvas_MouseMove"
-                                                    MouseUp="PageCanvas_MouseUp" />
+                                                    MouseUp="PageCanvas_MouseUp">
+                                                <Canvas.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="_Copy Text" Command="{Binding DataContext.CopySelectedTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Ctrl+C" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                            <MenuItem.Icon>
+                                                                <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
+                                                        <MenuItem Header="_Highlight Selection" Command="{Binding DataContext.HighlightSelectedTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                            <MenuItem.Icon>
+                                                                <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
+                                                        <Separator />
+                                                        <MenuItem Header="Select _All Text on Page" Command="{Binding DataContext.SelectAllTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Ctrl+A">
+                                                            <MenuItem.Icon>
+                                                                <Path Data="{StaticResource IconSelectAll}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
+                                                        <MenuItem Header="_Deselect All" Command="{Binding DataContext.ClearSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Esc" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    </ContextMenu>
+                                                </Canvas.ContextMenu>
+                                            </Canvas>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -1025,6 +1122,62 @@
                                 <Image Source="{Binding SingleCurrentPage.RenderedImage}"
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
+
+                                <!-- Text Selection Layer (Translucent Accent / Blue) -->
+                                <ItemsControl ItemsSource="{Binding SingleCurrentPage.SelectedSegments}"
+                                              Width="{Binding SingleCurrentPage.DisplayWidth}"
+                                              Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                              IsHitTestVisible="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="X" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Canvas.Top">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Y" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Width">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Width" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Setter Property="Height">
+                                                <Setter.Value>
+                                                    <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
+                                                        <Binding Path="Height" />
+                                                        <Binding Path="DataContext.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                    </MultiBinding>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:PageTextSegment}">
+                                            <Border Background="#440078D7"
+                                                    BorderBrush="#880078D7"
+                                                    BorderThickness="1"
+                                                    CornerRadius="2" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
 
                                 <!-- Vector Search Highlights Layer -->
                                 <ItemsControl ItemsSource="{Binding SingleCurrentPage.MatchesOnPage}"
@@ -1191,14 +1344,36 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
 
-                                <!-- Interactive Canvas for Drawing Annotations -->
+                                <!-- Interactive Canvas for Selection & Drawing Annotations -->
                                 <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}"
                                         Height="{Binding SingleCurrentPage.DisplayHeight}"
                                         Background="Transparent"
                                         Tag="{Binding SingleCurrentPage}"
                                         MouseDown="PageCanvas_MouseDown"
                                         MouseMove="PageCanvas_MouseMove"
-                                        MouseUp="PageCanvas_MouseUp" />
+                                        MouseUp="PageCanvas_MouseUp">
+                                    <Canvas.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="_Copy Text" Command="{Binding DataContext.CopySelectedTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Ctrl+C" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                <MenuItem.Icon>
+                                                    <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="_Highlight Selection" Command="{Binding DataContext.HighlightSelectedTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                <MenuItem.Icon>
+                                                    <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="Select _All Text on Page" Command="{Binding DataContext.SelectAllTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Ctrl+A">
+                                                <MenuItem.Icon>
+                                                    <Path Data="{StaticResource IconSelectAll}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="_Deselect All" Command="{Binding DataContext.ClearSelectionCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Esc" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                        </ContextMenu>
+                                    </Canvas.ContextMenu>
+                                </Canvas>
                             </Grid>
                         </Border>
                     </Grid>

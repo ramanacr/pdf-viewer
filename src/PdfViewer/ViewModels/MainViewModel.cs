@@ -31,6 +31,7 @@ public enum PageFitMode
 public partial class MainViewModel : ObservableObject
 {
     private readonly PdfDocumentService _docService;
+    public PdfDocumentService DocumentService => _docService;
     private readonly LruPageCache _cache;
     private readonly AsyncPageRenderer _renderer;
     private CancellationTokenSource? _renderCts;
@@ -92,6 +93,12 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string _searchSummaryText = string.Empty;
+
+    [ObservableProperty]
+    private string _selectedText = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasTextSelection;
 
     [ObservableProperty]
     private PageViewModel? _singleCurrentPage;
@@ -372,6 +379,10 @@ public partial class MainViewModel : ObservableObject
         _docService.CloseDocument();
         _cache.Clear();
 
+        ClearSelection();
+        SelectedText = string.Empty;
+        HasTextSelection = false;
+
         Pages.Clear();
         Thumbnails.Clear();
         Bookmarks.Clear();
@@ -435,6 +446,7 @@ public partial class MainViewModel : ObservableObject
             if (ViewMode == ViewLayoutMode.SinglePage)
             {
                 _ = SingleCurrentPage.LoadImageAsync(_renderer, GetCurrentDpi(), RotationAngle, CancellationToken.None);
+                _ = SingleCurrentPage.LoadTextSegmentsAsync(_docService, CancellationToken.None);
             }
         }
         else
@@ -648,6 +660,10 @@ public partial class MainViewModel : ObservableObject
                 {
                     _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
                 }
+                if (!page.IsTextExtracted && !page.IsExtractingText)
+                {
+                    _ = page.LoadTextSegmentsAsync(_docService, CancellationToken.None);
+                }
             }
             accumulated = pageBottom;
         }
@@ -664,6 +680,7 @@ public partial class MainViewModel : ObservableObject
             if (SingleCurrentPage != null)
             {
                 await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
+                _ = SingleCurrentPage.LoadTextSegmentsAsync(_docService, CancellationToken.None);
             }
             return;
         }
@@ -685,6 +702,10 @@ public partial class MainViewModel : ObservableObject
             {
                 _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
             }
+            if (!Pages[idx].IsTextExtracted && !Pages[idx].IsExtractingText)
+            {
+                _ = Pages[idx].LoadTextSegmentsAsync(_docService, CancellationToken.None);
+            }
         }
 
         // Start gentle background prefetch for remaining pages
@@ -701,6 +722,10 @@ public partial class MainViewModel : ObservableObject
             {
                 await page.LoadImageAsync(_renderer, dpi, rotation, CancellationToken.None);
                 await Task.Delay(25); // Gentle yield to maintain smooth 60 FPS UI
+            }
+            if (!page.IsTextExtracted && !page.IsExtractingText)
+            {
+                _ = page.LoadTextSegmentsAsync(_docService, CancellationToken.None);
             }
         }
     }
@@ -719,6 +744,139 @@ public partial class MainViewModel : ObservableObject
                 await Task.Delay(15);
             }
         }
+    }
+
+    #endregion
+
+    #region Text Selection & Copy
+
+    public void UpdateSelectionFromPages()
+    {
+        var sb = new System.Text.StringBuilder();
+        bool hasAny = false;
+
+        foreach (var page in Pages)
+        {
+            if (page.SelectedSegments.Count > 0)
+            {
+                hasAny = true;
+                string pageTxt = page.GetSelectedText();
+                if (!string.IsNullOrEmpty(pageTxt))
+                {
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(pageTxt);
+                }
+            }
+        }
+
+        SelectedText = sb.ToString();
+        HasTextSelection = hasAny && !string.IsNullOrEmpty(SelectedText);
+
+        if (HasTextSelection)
+        {
+            StatusText = $"{SelectedText.Length} character(s) selected (Ctrl+C to copy)";
+        }
+    }
+
+    [RelayCommand]
+    public void CopySelectedText()
+    {
+        if (string.IsNullOrEmpty(SelectedText))
+        {
+            UpdateSelectionFromPages();
+        }
+
+        if (!string.IsNullOrEmpty(SelectedText))
+        {
+            try
+            {
+                Clipboard.SetText(SelectedText);
+                StatusText = $"Copied {SelectedText.Length} character(s) to clipboard";
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Clipboard copy error: {ex.Message}";
+            }
+        }
+    }
+
+    [RelayCommand]
+    public void SelectAllText()
+    {
+        if (!IsDocumentLoaded || Pages.Count == 0) return;
+
+        int targetPageNum = (ViewMode == ViewLayoutMode.SinglePage && SingleCurrentPage != null)
+            ? SingleCurrentPage.PageNumber
+            : CurrentPageNumber;
+
+        if (targetPageNum >= 1 && targetPageNum <= Pages.Count)
+        {
+            var page = Pages[targetPageNum - 1];
+            if (!page.IsTextExtracted)
+            {
+                page.LoadTextSegmentsAsync(_docService).ContinueWith(_ =>
+                {
+                    Application.Current?.Dispatcher.Invoke(() =>
+                    {
+                        page.SelectAllText();
+                        UpdateSelectionFromPages();
+                    });
+                });
+            }
+            else
+            {
+                page.SelectAllText();
+                UpdateSelectionFromPages();
+            }
+        }
+    }
+
+    [RelayCommand]
+    public void ClearSelection()
+    {
+        foreach (var page in Pages)
+        {
+            page.ClearTextSelection();
+        }
+        SelectedText = string.Empty;
+        HasTextSelection = false;
+    }
+
+    [RelayCommand]
+    public void HighlightSelectedText()
+    {
+        if (!HasTextSelection && Pages.All(p => p.SelectedSegments.Count == 0)) return;
+
+        foreach (var page in Pages)
+        {
+            if (page.SelectedSegments.Count > 0)
+            {
+                var sorted = page.SelectedSegments.OrderBy(s => s.SegmentIndex).ToList();
+                double minX = sorted.Min(s => s.X);
+                double minY = sorted.Min(s => s.Y);
+                double maxX = sorted.Max(s => s.X + s.Width);
+                double maxY = sorted.Max(s => s.Y + s.Height);
+
+                var annot = new AnnotationModel
+                {
+                    PageNumber = page.PageNumber,
+                    Type = AnnotationType.Highlight,
+                    X = minX,
+                    Y = minY,
+                    Width = Math.Max(0.01, maxX - minX),
+                    Height = Math.Max(0.01, maxY - minY),
+                    ColorHex = SelectedAnnotationColor,
+                    Opacity = 0.45,
+                    Author = SelectedAnnotationAuthor,
+                    Title = "Highlight",
+                    Contents = page.GetSelectedText()
+                };
+
+                AddAnnotation(annot);
+            }
+        }
+
+        ClearSelection();
     }
 
     #endregion

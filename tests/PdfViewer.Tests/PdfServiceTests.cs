@@ -317,11 +317,11 @@ public class PdfServiceTests : IDisposable
     {
         var meta = new DocumentMetadata();
         Assert.NotNull(meta.ApplicationVersion);
-        Assert.StartsWith("1.1.", meta.ApplicationVersion);
+        Assert.StartsWith("1.2.", meta.ApplicationVersion);
 
         var vm = new MainViewModel();
         Assert.NotNull(vm.ApplicationVersion);
-        Assert.StartsWith("1.1.", vm.ApplicationVersion);
+        Assert.StartsWith("1.2.", vm.ApplicationVersion);
     }
 
     [Fact]
@@ -569,5 +569,127 @@ public class PdfServiceTests : IDisposable
         // The LinkAnnotation must NOT be converted to a highlight annotation
         Assert.Empty(loaded);
     }
+
+    [Fact]
+    public async Task TestExtractPageTextSegmentsAsync()
+    {
+        string samplePdf = Path.Combine(_testDir, "TextSegmentsTest.pdf");
+        using (var doc = new Document())
+        {
+            var page = doc.Pages.Add();
+            page.Paragraphs.Add(new TextFragment("Hello World from Text Selection"));
+            page.Paragraphs.Add(new TextFragment("Second line with additional details and content"));
+            doc.Save(samplePdf);
+        }
+
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var segments = await service.ExtractPageTextSegmentsAsync(1);
+        Assert.NotEmpty(segments);
+
+        // Verify normalized coordinates are within [0.0, 1.0]
+        foreach (var seg in segments)
+        {
+            Assert.Equal(1, seg.PageNumber);
+            Assert.False(string.IsNullOrWhiteSpace(seg.Text));
+            Assert.InRange(seg.X, 0.0, 1.0);
+            Assert.InRange(seg.Y, 0.0, 1.0);
+            Assert.InRange(seg.Width, 0.0, 1.0);
+            Assert.InRange(seg.Height, 0.0, 1.0);
+        }
+
+        // Verify text content was captured
+        string combinedText = string.Join(" ", segments.Select(s => s.Text));
+        Assert.Contains("Hello", combinedText);
+        Assert.Contains("World", combinedText);
+        Assert.Contains("Selection", combinedText);
+    }
+
+    [Fact]
+    public async Task TestPageViewModelSelectionAndExtraction()
+    {
+        string samplePdf = Path.Combine(_testDir, "PageViewModelSelectionTest.pdf");
+        using (var doc = new Document())
+        {
+            var page = doc.Pages.Add();
+            page.Paragraphs.Add(new TextFragment("Alpha Beta Gamma Delta"));
+            doc.Save(samplePdf);
+        }
+
+        using var service = new PdfDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var pageVm = new PageViewModel(1, 612, 792);
+        await pageVm.LoadTextSegmentsAsync(service);
+
+        Assert.True(pageVm.IsTextExtracted);
+        Assert.NotEmpty(pageVm.TextSegments);
+
+        // Test Select All
+        pageVm.SelectAllText();
+        Assert.NotEmpty(pageVm.SelectedSegments);
+        Assert.Equal(pageVm.TextSegments.Count, pageVm.SelectedSegments.Count);
+        string selectedAllText = pageVm.GetSelectedText();
+        Assert.Contains("Alpha", selectedAllText);
+        Assert.Contains("Gamma", selectedAllText);
+
+        // Test Clear Selection
+        pageVm.ClearTextSelection();
+        Assert.Empty(pageVm.SelectedSegments);
+        Assert.Equal(string.Empty, pageVm.GetSelectedText());
+
+        // Test Select Word At
+        var firstSeg = pageVm.TextSegments[0];
+        pageVm.SelectWordAt(new System.Windows.Point(firstSeg.X + firstSeg.Width / 2, firstSeg.Y + firstSeg.Height / 2));
+        Assert.Single(pageVm.SelectedSegments);
+        Assert.Equal(firstSeg.Text, pageVm.GetSelectedText());
+
+        // Test Select Range
+        pageVm.SelectRange(new System.Windows.Point(0, 0), new System.Windows.Point(1, 1));
+        Assert.NotEmpty(pageVm.SelectedSegments);
+    }
+
+    [Fact]
+    public async Task TestMainViewModelSelectionAndHighlightCommand()
+    {
+        string samplePdf = Path.Combine(_testDir, "MainVmSelectionTest.pdf");
+        using (var doc = new Document())
+        {
+            var page = doc.Pages.Add();
+            page.Paragraphs.Add(new TextFragment("Important Highlightable Statement"));
+            doc.Save(samplePdf);
+        }
+
+        var mainVm = new MainViewModel();
+        await mainVm.LoadDocumentAsync(samplePdf);
+
+        var firstPage = mainVm.Pages[0];
+        await firstPage.LoadTextSegmentsAsync(mainVm.DocumentService);
+
+        // Select all text
+        firstPage.SelectAllText();
+        mainVm.UpdateSelectionFromPages();
+
+        Assert.True(mainVm.HasTextSelection);
+        Assert.Contains("Important", mainVm.SelectedText);
+        string expectedText = mainVm.SelectedText;
+
+        // Trigger HighlightSelectedTextCommand
+        Assert.True(mainVm.HighlightSelectedTextCommand.CanExecute(null));
+        mainVm.HighlightSelectedTextCommand.Execute(null);
+
+        // Verify highlight annotation was created
+        Assert.NotEmpty(mainVm.AllAnnotations);
+        var annot = mainVm.AllAnnotations.Last();
+        Assert.Equal(AnnotationType.Highlight, annot.Type);
+        Assert.Equal(1, annot.PageNumber);
+        Assert.Equal(expectedText, annot.Contents);
+
+        // Selection should be cleared after highlighting
+        Assert.False(mainVm.HasTextSelection);
+        Assert.Equal(string.Empty, mainVm.SelectedText);
+    }
 }
+
 
