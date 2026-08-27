@@ -1069,7 +1069,8 @@
                                                     Tag="{Binding}"
                                                     MouseDown="PageCanvas_MouseDown"
                                                     MouseMove="PageCanvas_MouseMove"
-                                                    MouseUp="PageCanvas_MouseUp">
+                                                    MouseUp="PageCanvas_MouseUp"
+                                                    MouseLeave="PageCanvas_MouseLeave">
                                                 <Canvas.ContextMenu>
                                                     <ContextMenu>
                                                         <MenuItem Header="_Copy Text" Command="{Binding DataContext.CopySelectedTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Ctrl+C" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}">
@@ -1351,7 +1352,8 @@
                                         Tag="{Binding SingleCurrentPage}"
                                         MouseDown="PageCanvas_MouseDown"
                                         MouseMove="PageCanvas_MouseMove"
-                                        MouseUp="PageCanvas_MouseUp">
+                                        MouseUp="PageCanvas_MouseUp"
+                                        MouseLeave="PageCanvas_MouseLeave">
                                     <Canvas.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="_Copy Text" Command="{Binding DataContext.CopySelectedTextCommand, RelativeSource={RelativeSource AncestorType=Window}}" InputGestureText="Ctrl+C" IsEnabled="{Binding DataContext.HasTextSelection, RelativeSource={RelativeSource AncestorType=Window}}">

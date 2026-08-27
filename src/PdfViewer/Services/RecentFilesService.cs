@@ -11,63 +11,82 @@ namespace PdfViewer.Services;
 /// </summary>
 public static class RecentFilesService
 {
-    private static readonly string SettingsDir = Path.Combine(
+    private static string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PdfViewerNative");
-    
-    private static readonly string SettingsFile = Path.Combine(SettingsDir, "recent_files.json");
+
+    private static string SettingsFile = Path.Combine(SettingsDir, "recent_files.json");
     private const int MaxRecentFiles = 10;
+    private static readonly object FileLock = new();
+
+    /// <summary>
+    /// Redirects the settings file to a test-owned directory. Test seam only.
+    /// </summary>
+    internal static void SetSettingsDirectoryForTests(string directory)
+    {
+        SettingsDir = directory;
+        SettingsFile = Path.Combine(directory, "recent_files.json");
+    }
 
     public static List<string> LoadRecentFiles()
     {
-        try
+        lock (FileLock)
         {
-            if (File.Exists(SettingsFile))
+            try
             {
-                string json = File.ReadAllText(SettingsFile);
-                var list = JsonSerializer.Deserialize<List<string>>(json);
-                if (list != null)
+                if (File.Exists(SettingsFile))
                 {
-                    return list.Where(File.Exists).Take(MaxRecentFiles).ToList();
+                    string json = File.ReadAllText(SettingsFile);
+                    var list = JsonSerializer.Deserialize<List<string>>(json);
+                    if (list != null)
+                    {
+                        return list.Where(File.Exists).Take(MaxRecentFiles).ToList();
+                    }
                 }
             }
-        }
-        catch { }
+            catch { }
 
-        return new List<string>();
+            return new List<string>();
+        }
     }
 
     public static void AddRecentFile(string filePath)
     {
-        try
+        lock (FileLock)
         {
-            if (string.IsNullOrWhiteSpace(filePath)) return;
-
-            var list = LoadRecentFiles();
-            list.RemoveAll(p => p.Equals(filePath, StringComparison.OrdinalIgnoreCase));
-            list.Insert(0, filePath);
-
-            if (list.Count > MaxRecentFiles)
+            try
             {
-                list = list.Take(MaxRecentFiles).ToList();
-            }
+                if (string.IsNullOrWhiteSpace(filePath)) return;
 
-            Directory.CreateDirectory(SettingsDir);
-            string json = JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsFile, json);
+                var list = LoadRecentFiles();
+                list.RemoveAll(p => p.Equals(filePath, StringComparison.OrdinalIgnoreCase));
+                list.Insert(0, filePath);
+
+                if (list.Count > MaxRecentFiles)
+                {
+                    list = list.Take(MaxRecentFiles).ToList();
+                }
+
+                Directory.CreateDirectory(SettingsDir);
+                string json = JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SettingsFile, json);
+            }
+            catch { }
         }
-        catch { }
     }
 
     public static void ClearRecentFiles()
     {
-        try
+        lock (FileLock)
         {
-            if (File.Exists(SettingsFile))
+            try
             {
-                File.Delete(SettingsFile);
+                if (File.Exists(SettingsFile))
+                {
+                    File.Delete(SettingsFile);
+                }
             }
+            catch { }
         }
-        catch { }
     }
 }

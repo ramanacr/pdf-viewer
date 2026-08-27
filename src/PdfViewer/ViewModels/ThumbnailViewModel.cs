@@ -50,4 +50,10 @@ public partial class ThumbnailViewModel : ObservableObject
             IsLoading = false;
         }
     }
+
+    public void UnloadThumbnail()
+    {
+        ThumbnailImage = null;
+        IsLoading = false;
+    }
 }

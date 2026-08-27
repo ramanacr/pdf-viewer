@@ -19,7 +19,6 @@ public static class ThemeManager
 
     public static void SetTheme(AppTheme theme)
     {
-        CurrentTheme = theme;
         var app = Application.Current;
         if (app == null) return;
 
@@ -53,9 +52,15 @@ public static class ThemeManager
                 merged.Add(dict);
             }
 
+            // Only commit the new theme once the resource swap actually succeeded,
+            // so CurrentTheme never reports a theme the UI didn't switch to.
+            CurrentTheme = theme;
             ThemeChanged?.Invoke(theme);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ThemeManager.SetTheme failed to load '{themeUri}': {ex}");
+        }
     }
 
     public static void ToggleTheme()

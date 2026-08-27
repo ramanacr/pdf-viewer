@@ -583,6 +583,10 @@ public partial class MainViewModel : ObservableObject
             page.UpdateRotation(RotationAngle);
             page.UnloadImage();
         }
+        foreach (var thumb in Thumbnails)
+        {
+            thumb.UnloadThumbnail();
+        }
         _cache.Clear();
         _ = RenderVisiblePagesAsync();
         _ = RenderThumbnailsAsync();
@@ -1146,7 +1150,7 @@ public partial class MainViewModel : ObservableObject
                     end = printDialog.PageRange.PageTo;
                 }
 
-                _docService.PrintDocument(printDialog, start, end);
+                _docService.PrintDocument(printDialog, start, end, RotationAngle);
                 StatusText = "Print job sent to printer.";
             }
         }

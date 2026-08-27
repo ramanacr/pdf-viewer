@@ -31,12 +31,31 @@ public static class InstallService
     {
         progress?.Report(10);
 
-        // Close any running PdfViewer instances to prevent file lock conflicts
+        // Close any running PdfViewer instances installed at this target directory,
+        // to prevent file lock conflicts. Only touch processes running from
+        // targetDirectory so an unrelated PdfViewer.exe elsewhere is left alone.
         try
         {
             foreach (var proc in Process.GetProcessesByName("PdfViewer"))
             {
-                try { proc.Kill(); proc.WaitForExit(2000); } catch { }
+                try
+                {
+                    string? procPath = proc.MainModule?.FileName;
+                    if (string.IsNullOrEmpty(procPath) ||
+                        !procPath.StartsWith(targetDirectory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // Prefer a graceful shutdown so any unsaved state can be handled
+                    // by the app's normal close path before falling back to a hard kill.
+                    if (!proc.CloseMainWindow() || !proc.WaitForExit(3000))
+                    {
+                        proc.Kill();
+                        proc.WaitForExit(2000);
+                    }
+                }
+                catch { }
             }
         }
         catch { }

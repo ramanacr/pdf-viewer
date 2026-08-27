@@ -494,7 +494,7 @@ public class PdfDocumentService : IDisposable
     /// <summary>
     /// Prints the document pages using standard WPF PrintDialog.
     /// </summary>
-    public void PrintDocument(PrintDialog printDialog, int fromPage = 1, int toPage = -1)
+    public void PrintDocument(PrintDialog printDialog, int fromPage = 1, int toPage = -1, int rotationAngle = 0)
     {
         lock (_docLock)
         {
@@ -504,7 +504,7 @@ public class PdfDocumentService : IDisposable
             int start = Math.Max(1, fromPage);
             int end = toPage < 1 ? totalPages : Math.Min(totalPages, toPage);
 
-            var docPaginator = new AsposePdfPaginator(this, start, end, printDialog.PrintableAreaWidth, printDialog.PrintableAreaHeight);
+            var docPaginator = new AsposePdfPaginator(this, start, end, printDialog.PrintableAreaWidth, printDialog.PrintableAreaHeight, rotationAngle);
             printDialog.PrintDocument(docPaginator, $"Printing {Path.GetFileName(_currentFilePath)}");
         }
     }
@@ -841,13 +841,15 @@ public class AsposePdfPaginator : System.Windows.Documents.DocumentPaginator
     private readonly int _startPage;
     private readonly int _endPage;
     private readonly Size _pageSize;
+    private readonly int _rotationAngle;
 
-    public AsposePdfPaginator(PdfDocumentService service, int startPage, int endPage, double pageWidth, double pageHeight)
+    public AsposePdfPaginator(PdfDocumentService service, int startPage, int endPage, double pageWidth, double pageHeight, int rotationAngle = 0)
     {
         _service = service;
         _startPage = startPage;
         _endPage = endPage;
         _pageSize = new Size(pageWidth, pageHeight);
+        _rotationAngle = rotationAngle;
     }
 
     public override bool IsPageCountValid => true;
@@ -862,7 +864,7 @@ public class AsposePdfPaginator : System.Windows.Documents.DocumentPaginator
     public override System.Windows.Documents.DocumentPage GetPage(int pageNumber)
     {
         int actualPageNum = _startPage + pageNumber;
-        var bitmap = _service.RenderPage(actualPageNum, dpi: 300);
+        var bitmap = _service.RenderPage(actualPageNum, dpi: 300, rotationAngle: _rotationAngle);
 
         var visual = new DrawingVisual();
         using (var dc = visual.RenderOpen())

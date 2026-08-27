@@ -29,6 +29,17 @@ public partial class UpdateDialog : Window
                 await RunCheckAsync();
             }
         };
+
+        Closing += (s, e) =>
+        {
+            // Closing via the title-bar X (or Alt+F4) while a download is in flight
+            // must cancel it, otherwise it silently finishes and force-shuts the app
+            // down to launch the installer even though the user dismissed the dialog.
+            if (_isDownloading)
+            {
+                _downloadCts?.Cancel();
+            }
+        };
     }
 
     private async Task RunCheckAsync()
@@ -156,6 +167,11 @@ public partial class UpdateDialog : Window
             PrimaryActionButton.IsEnabled = true;
             PrimaryActionButton.Content = "Retry";
             CancelActionButton.Content = "Close";
+        }
+        finally
+        {
+            _downloadCts?.Dispose();
+            _downloadCts = null;
         }
     }
 

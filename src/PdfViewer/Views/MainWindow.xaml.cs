@@ -57,6 +57,11 @@ public partial class MainWindow : Window
             {
                 UpdateSidebarColumnVisibility(_vm.IsSidebarOpen);
             }
+            else if (e.PropertyName == nameof(MainViewModel.ActiveAnnotationTool) ||
+                     e.PropertyName == nameof(MainViewModel.IsPanningEnabled))
+            {
+                ResetPageCanvasCursors();
+            }
         };
     }
 
@@ -563,15 +568,17 @@ public partial class MainWindow : Window
             double normClickX = clickPos.X / page.DisplayWidth;
             double normClickY = clickPos.Y / page.DisplayHeight;
 
-            // Check if user clicked an existing Note/Comment annotation to open editor
-            var hitNote = page.AnnotationsOnPage.FirstOrDefault(a =>
-                a.Type == AnnotationType.Note &&
+            // Check if user clicked an existing annotation to open its editor.
+            // (This interactive canvas sits above the annotation layer, so
+            // Annotation_MouseLeftButtonDown on the annotation Grid never fires;
+            // hit-test explicitly here for every annotation type instead.)
+            var hitAnnotation = page.AnnotationsOnPage.FirstOrDefault(a =>
                 normClickX >= a.X && normClickX <= a.X + a.Width &&
                 normClickY >= a.Y && normClickY <= a.Y + a.Height);
 
-            if (hitNote != null)
+            if (hitAnnotation != null)
             {
-                var dialog = new EditCommentDialog(hitNote, isNew: false) { Owner = this };
+                var dialog = new EditCommentDialog(hitAnnotation, isNew: false) { Owner = this };
                 dialog.ShowDialog();
                 e.Handled = true;
                 return;
@@ -650,15 +657,52 @@ public partial class MainWindow : Window
             double hoverNormY = hoverPt.Y / page.DisplayHeight;
             var hitSegment = page.FindClosestSegment(new Point(hoverNormX, hoverNormY), maxDistance: 0.025);
 
-            if (hitSegment != null)
+            canvas.Cursor = hitSegment != null ? Cursors.IBeam : null;
+        }
+        else
+        {
+            canvas.Cursor = null;
+        }
+    }
+
+    private void PageCanvas_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (sender is Canvas canvas && !_isSelectingText && !_isDrawingAnnotation)
+        {
+            canvas.Cursor = null;
+        }
+    }
+
+    private void ResetPageCanvasCursors()
+    {
+        foreach (var page in _vm.Pages)
+        {
+            var canvas = FindPageCanvas(this, page);
+            if (canvas != null)
             {
-                canvas.Cursor = Cursors.IBeam;
-            }
-            else
-            {
-                canvas.Cursor = Cursors.Arrow;
+                canvas.Cursor = null;
             }
         }
+    }
+
+    private static Canvas? FindPageCanvas(DependencyObject root, PageViewModel page)
+    {
+        int childCount = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < childCount; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is Canvas canvas && ReferenceEquals(canvas.Tag, page))
+            {
+                return canvas;
+            }
+
+            var found = FindPageCanvas(child, page);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
     }
 
     private void PageCanvas_MouseUp(object sender, MouseButtonEventArgs e)
@@ -745,7 +789,7 @@ public partial class MainWindow : Window
             double dy = Math.Abs(currentPoint.Y - _textSelectStartPoint.Y);
             if (dx < 4 && dy < 4)
             {
-                var hit = page.FindClosestSegment(new Point(startNormX, startNormY), maxDistance: 0.02);
+                var hit = page.FindClosestSegment(new Point(startNormX, startNormY));
                 if (hit == null)
                 {
                     page.ClearTextSelection();
