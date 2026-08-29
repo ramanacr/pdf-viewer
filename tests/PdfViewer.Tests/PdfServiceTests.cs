@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using PdfViewer.Models;
 using PdfViewer.Services;
 using PdfViewer.ViewModels;
@@ -1051,6 +1052,37 @@ public class PdfServiceTests : IDisposable
 
         vm.ColorMode = PrintColorMode.Grayscale;
         Assert.Equal(PrintColorMode.Grayscale, vm.ColorMode);
+    }
+
+    [Fact]
+    public void TestPrintPreviewDialogInstantiation()
+    {
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                if (Application.Current == null)
+                {
+                    new Application();
+                }
+                string samplePdf = CreateSamplePdf("print_dlg_test.pdf", 2);
+                using var service = new PdfiumDocumentService();
+                service.OpenDocumentAsync(samplePdf).Wait();
+
+                var dlg = new Views.Dialogs.PrintPreviewDialog(service, 1);
+                Assert.NotNull(dlg);
+                Assert.NotNull(dlg.ViewModel);
+                Assert.Equal(1, dlg.ViewModel.PreviewPageNumber);
+            }
+            catch (Exception ex)
+            {
+                Assert.Fail($"PrintPreviewDialog instantiation threw: {ex}");
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        bool completed = thread.Join(5000);
+        Assert.True(completed);
     }
 }
 
