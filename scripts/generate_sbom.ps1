@@ -73,6 +73,60 @@ $CycloneDx = [ordered]@{
         }
     }
     components   = @(
+        # First-Party: PdfEngine.Abstractions
+        [ordered]@{
+            type        = "library"
+            "bom-ref"   = "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@$Version"
+            name        = "PdfEngine.Abstractions"
+            version     = $Version
+            description = "UI-neutral domain contracts, geometry, exception hierarchy, and abstractions for PDF processing"
+            scope       = "required"
+            licenses    = @(
+                [ordered]@{
+                    license = [ordered]@{
+                        id  = "MIT"
+                        url = "https://opensource.org/licenses/MIT"
+                    }
+                }
+            )
+            purl        = "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@$Version"
+        },
+        # First-Party: PdfEngine.Pdfium
+        [ordered]@{
+            type        = "library"
+            "bom-ref"   = "pkg:github/ramanacr/pdf-viewer/PdfEngine.Pdfium@$Version"
+            name        = "PdfEngine.Pdfium"
+            version     = $Version
+            description = "Native Google PDFium safe interop engine and C ABI adapters"
+            scope       = "required"
+            licenses    = @(
+                [ordered]@{
+                    license = [ordered]@{
+                        id  = "MIT"
+                        url = "https://opensource.org/licenses/MIT"
+                    }
+                }
+            )
+            purl        = "pkg:github/ramanacr/pdf-viewer/PdfEngine.Pdfium@$Version"
+        },
+        # First-Party: PdfViewer.Core
+        [ordered]@{
+            type        = "library"
+            "bom-ref"   = "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@$Version"
+            name        = "PdfViewer.Core"
+            version     = $Version
+            description = "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure"
+            scope       = "required"
+            licenses    = @(
+                [ordered]@{
+                    license = [ordered]@{
+                        id  = "MIT"
+                        url = "https://opensource.org/licenses/MIT"
+                    }
+                }
+            )
+            purl        = "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@$Version"
+        },
         # Managed Dependency: CommunityToolkit.Mvvm
         [ordered]@{
             type        = "library"
@@ -428,6 +482,39 @@ $Spdx = [ordered]@{
                     referenceLocator  = "pkg:github/ramanacr/pdf-viewer@$Version"
                 }
             )
+        },
+        [ordered]@{
+            SPDXID           = "SPDXRef-Package-PdfEngine-Abstractions"
+            name             = "PdfEngine.Abstractions"
+            versionInfo      = $Version
+            downloadLocation = "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Abstractions"
+            filesAnalyzed    = $false
+            licenseConcluded = "MIT"
+            licenseDeclared  = "MIT"
+            copyrightText    = "Copyright (c) 2026 PDF Viewer Project"
+            description      = "UI-neutral domain contracts, geometry, exception hierarchy, and abstractions for PDF processing"
+        },
+        [ordered]@{
+            SPDXID           = "SPDXRef-Package-PdfEngine-Pdfium"
+            name             = "PdfEngine.Pdfium"
+            versionInfo      = $Version
+            downloadLocation = "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Pdfium"
+            filesAnalyzed    = $false
+            licenseConcluded = "MIT"
+            licenseDeclared  = "MIT"
+            copyrightText    = "Copyright (c) 2026 PDF Viewer Project"
+            description      = "Native Google PDFium safe interop engine and C ABI adapters"
+        },
+        [ordered]@{
+            SPDXID           = "SPDXRef-Package-PdfViewer-Core"
+            name             = "PdfViewer.Core"
+            versionInfo      = $Version
+            downloadLocation = "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfViewer.Core"
+            filesAnalyzed    = $false
+            licenseConcluded = "MIT"
+            licenseDeclared  = "MIT"
+            copyrightText    = "Copyright (c) 2026 PDF Viewer Project"
+            description      = "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure"
         },
         [ordered]@{
             SPDXID           = "SPDXRef-Package-CommunityToolkit-Mvvm"

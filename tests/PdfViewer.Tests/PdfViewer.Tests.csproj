@@ -23,6 +23,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
+    <ProjectReference Include="..\..\src\PdfViewer.Core\PdfViewer.Core.csproj" />
     <ProjectReference Include="..\..\src\PdfViewer\PdfViewer.csproj" />
     <Compile Include="..\..\scripts\CreateIcon.cs" Link="CreateIcon.cs" />
   </ItemGroup>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PdfViewer.Core</RootNamespace>
+    <AssemblyName>PdfViewer.Core</AssemblyName>
+    <Description>Core document session, priority rendering scheduler, caching, and state orchestration for PDF applications.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

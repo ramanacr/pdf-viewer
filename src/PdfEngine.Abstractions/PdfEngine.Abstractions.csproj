@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PdfEngine</RootNamespace>
+    <AssemblyName>PdfEngine.Abstractions</AssemblyName>
+    <Description>UI-neutral core abstractions and domain models for PDF processing and rendering.</Description>
+  </PropertyGroup>
+
+</Project>

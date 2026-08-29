@@ -27,6 +27,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
+    <ProjectReference Include="..\PdfViewer.Core\PdfViewer.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="runtimes\win-x64\native\pdfium.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>runtimes\win-x64\native\pdfium.dll</TargetPath>

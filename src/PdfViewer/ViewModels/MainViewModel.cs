@@ -10,6 +10,10 @@ using System.Windows.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using PdfViewer.Core.Commands;
+using PdfViewer.Core.Licensing;
+using PdfViewer.Core.Rendering;
+using PdfViewer.Core.Session;
 using PdfViewer.Models;
 using PdfViewer.Services;
 
@@ -189,6 +193,10 @@ public partial class MainViewModel : ObservableObject
     public Action<int>? ScrollToPageAction { get; set; }
     public Action<int, double, double>? ScrollToMatchAction { get; set; }
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
+
+    public DocumentSession Session { get; } = new();
+    public ICommandHistory CommandHistory { get; } = new CommandHistory();
+    public IFeatureGate FeatureGate { get; } = new DefaultFeatureGate();
 
     public MainViewModel()
     {

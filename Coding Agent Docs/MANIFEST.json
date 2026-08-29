@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/ramanacr/pdf-viewer",
+  "assessment_date": "2026-08-27",
+  "documents": [
+    "00_README_AGENT_BUNDLE.md",
+    "01_REPO_ASSESSMENT.md",
+    "02_CURRENT_GAPS.md",
+    "03_TARGET_ARCHITECTURE.md",
+    "04_PRODUCT_ROADMAP.md",
+    "05_COMMERCIALIZATION_STRATEGY.md",
+    "06_ENGINEERING_BACKLOG.md",
+    "07_SECURITY_QUALITY_COMPLIANCE.md",
+    "08_PERFORMANCE_SCALABILITY.md",
+    "09_AI_AGENT_IMPLEMENTATION_INSTRUCTIONS.md",
+    "10_ACCEPTANCE_CRITERIA.md",
+    "11_COMPETITIVE_POSITIONING.md",
+    "12_SOURCE_NOTES.md"
+  ],
+  "intent": "Coding-agent-readable commercialization and engineering roadmap"
+}

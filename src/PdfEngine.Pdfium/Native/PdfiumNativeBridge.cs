@@ -1,153 +1,10 @@
-using System;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Win32.SafeHandles;
 
-namespace PdfViewer.Services;
-
-#region Safe Handles
-
-public sealed class SafeDocumentHandle : SafeHandleZeroOrMinusOneIsInvalid
-{
-    public SafeDocumentHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDF_CloseDocument(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
-}
-
-public sealed class SafePageHandle : SafeHandleZeroOrMinusOneIsInvalid
-{
-    public SafePageHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDF_ClosePage(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
-}
-
-public sealed class SafeTextPageHandle : SafeHandleZeroOrMinusOneIsInvalid
-{
-    public SafeTextPageHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDFText_ClosePage(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
-}
-
-public sealed class SafeSearchHandle : SafeHandleZeroOrMinusOneIsInvalid
-{
-    public SafeSearchHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDFText_FindClose(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
-}
-
-public sealed class SafeAnnotHandle : SafeHandleZeroOrMinusOneIsInvalid
-{
-    public SafeAnnotHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDFPage_CloseAnnot(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
-}
-
-#endregion
-
-#region Native Structs
-
-[StructLayout(LayoutKind.Sequential)]
-public struct FPDF_LIBRARY_CONFIG
-{
-    public int version;
-    public IntPtr m_pUserFontPaths;
-    public IntPtr m_pIsolate;
-    public uint m_v8EmbedderSlot;
-    public IntPtr m_pPlatform;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct FS_SIZEF
-{
-    public float width;
-    public float height;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct FS_RECTF
-{
-    public float left;
-    public float top;
-    public float right;
-    public float bottom;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct FS_POINTF
-{
-    public float x;
-    public float y;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct FS_QUADPOINTSF
-{
-    public float x1;
-    public float y1;
-    public float x2;
-    public float y2;
-    public float x3;
-    public float y3;
-    public float x4;
-    public float y4;
-}
-
-[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-public delegate int FPDF_WriteBlockCallback(IntPtr pThis, IntPtr pData, uint size);
-
-[StructLayout(LayoutKind.Sequential)]
-public struct FPDF_FILEWRITE
-{
-    public int version;
-    [MarshalAs(UnmanagedType.FunctionPtr)]
-    public FPDF_WriteBlockCallback WriteBlock;
-}
-
-#endregion
+namespace PdfEngine.Pdfium.Native;
 
 /// <summary>
-/// Version-pinned C ABI / P/Invoke bridge for Google PDFium.
+/// Version-pinned C ABI / P/Invoke bridge for Google PDFium (Chromium 8021 / 154.0.8021.0).
 /// </summary>
 public static class PdfiumNativeBridge
 {
@@ -349,7 +206,10 @@ public static class PdfiumNativeBridge
     public static extern int FPDF_GetPageSizeByIndexF(IntPtr document, int page_index, out FS_SIZEF size);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDF_GetPageRotation(SafePageHandle page);
+    public static extern int FPDFPage_GetRotation(SafePageHandle page);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void FPDFPage_SetRotation(SafePageHandle page, int rotate);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern SafePageHandle FPDFPage_New(SafeDocumentHandle document, int page_index, double width, double height);
@@ -535,7 +395,6 @@ public static class PdfiumNativeBridge
     public static string Utf16BytesToString(byte[] buffer, int byteLength)
     {
         if (buffer == null || byteLength <= 0) return string.Empty;
-        // Trim trailing null characters
         int actualLen = byteLength;
         if (actualLen >= 2 && buffer[actualLen - 2] == 0 && buffer[actualLen - 1] == 0)
         {

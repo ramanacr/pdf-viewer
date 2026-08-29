@@ -1,0 +1,44 @@
+name: CI Build, Test & Security Matrix
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore Dependencies
+      run: dotnet restore PdfViewer.slnx
+
+    - name: Build Solution (Debug & Release)
+      run: |
+        dotnet build PdfViewer.slnx --configuration Debug --no-restore
+        dotnet build PdfViewer.slnx --configuration Release --no-restore
+
+    - name: Run Test Suite & Code Coverage
+      run: dotnet test tests/PdfViewer.Tests/PdfViewer.Tests.csproj --configuration Release --no-build --verbosity normal --collect:"XPlat Code Coverage"
+
+    - name: Run Performance Benchmarks
+      run: dotnet run --project benchmarks/PdfViewer.Benchmarks/PdfViewer.Benchmarks.csproj --configuration Release --no-build
+
+    - name: Generate CycloneDX & SPDX SBOMs
+      shell: pwsh
+      run: ./scripts/generate_sbom.ps1
+
+    - name: Verify Release Packaging Script
+      shell: pwsh
+      run: ./scripts/build_publish.ps1 -DryRun

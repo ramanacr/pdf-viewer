@@ -44,57 +44,39 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           WPF UI Layer (.NET 9)                         │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │ MainWindow.xaml (Ribbon Toolbar, Menus, Status Bar, Themes)    │   │
-│   ├───────────────────────────────┬─────────────────────────────────┤   │
-│   │ Left Sidebar (TabControl)     │ Central Document Viewport       │   │
-│   │  • Pages (Thumbnails)         │  • Continuous Virtualized View  │   │
-│   │  • Bookmarks (TreeView)       │  • Single Page Paginated View   │   │
-│   │  • Search Results (ListBox)   │  • Pan & Zoom Gesture Engine    │   │
-│   │  • Annotations (Inspector)    │  • Interactive Selection Layer  │   │
-│   └───────────────────────────────┴─────────────────────────────────┘   │
+│  • MainWindow.xaml (Ribbon, Menus, Status Bar, Dark/Light Themes)       │
+│  • MainViewModel (Controllers: Navigation, Search, Annotations, Zoom)   │
+│  • WpfBitmapAdapter (Zero-copy RenderedPage BGRA -> BitmapSource)       │
 └────────────────────────────────────▲────────────────────────────────────┘
-                                     │ Data Binding & RelayCommands
+                                     │
 ┌────────────────────────────────────▼────────────────────────────────────┐
-│                        MVVM ViewModels Layer                            │
-│  • MainViewModel (State, Navigation, Search, File I/O, Zoom, Rotation) │
-│  • PageViewModel (Per-Page Dimensions, Scale, Render Binding, Cache)   │
-│  • ThumbnailViewModel (Asynchronous Sidebar Thumbnail Loader)          │
-│  • ThemeManager (Dynamic Light/Dark ResourceDictionary Switching)       │
+│                    PdfViewer.Core (Platform Services)                   │
+│  • DocumentSession (Identity, SHA-256 Fingerprint, Revision, Dirty)     │
+│  • RenderPriorityScheduler (Deduplication, Priority Queue, Cancel)     │
+│  • MultiTierCache (Memory-Budgeted LRU Byte Ceiling & Metrics)          │
+│  • CommandHistory (Transactional Undo / Redo Stack)                     │
+│  • PdfSecurityPolicy (Sandboxing, Links, JavaScript, Execution Limits)  │
+│  • PdfComparisonService (Pixel Heatmap Diff & Textual Comparison)       │
+│  • DefaultOcrEngine (Word token geometry extraction & OCR engine)       │
+│  • FeatureGate (Community, Pro, Enterprise, Developer SDK Tiers)        │
 └────────────────────────────────────▲────────────────────────────────────┘
-                                     │ Async Pipeline & CancellationToken
+                                     │ Engine Contracts
 ┌────────────────────────────────────▼────────────────────────────────────┐
-│                       Core Services & Engine                            │
-│  ┌───────────────────────┐  ┌────────────────────────────────────────┐  │
-│  │    LruPageCache.cs    │  │          AsyncPageRenderer.cs          │  │
-│  │ (Thread-Safe Bitmap   │◄─┤ (Background Thread Pool Worker Queue,  │  │
-│  │  Memory LRU Cache)    │  │  CancellationToken Cancellation)       │  │
-│  └───────────────────────┘  └───────────────────┬────────────────────┘  │
-│                                                 ▼                       │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                     IPdfDocumentService (Interface)               │  │
-│  └──────────────────────────────────────┬────────────────────────────┘  │
-│                                         ▼                               │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                       PdfiumDocumentService.cs                    │  │
-│  │  • Document Loading, Decryption & Memory Buffer Management        │  │
-│  │  • Direct BGRA Bitmap Rendering (FPDFBitmap_CreateEx / BGRA32)    │  │
-│  │  • Fast Text Search (FPDFText_FindStart / FPDFText_GetRect)       │  │
-│  │  • Outline Extraction (FPDFBookmark_GetFirstChild / GetDest)      │  │
-│  │  • Vector / Ink Annotations (FPDFPage_CreateAnnot / FPDFAnnot_*)  │  │
-│  │  • Page Flattening & Incremental/Full Save (FPDFPage_Flatten)     │  │
-│  │  • Document Printing (WPF PrintDialog + PdfiumPdfPaginator)       │  │
-│  └───────────────────────────────────┬───────────────────────────────┘  │
-│                                      ▼                                  │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                       PdfiumNativeBridge.cs                       │  │
-│  │  • Dynamic NativeLibrary Resolver (runtimes/win-x64/native)       │  │
-│  │  • P/Invoke C ABI Exports & SafeHandles (SafeDocumentHandle, etc) │  │
-│  └───────────────────────────────────┬───────────────────────────────┘  │
-│                                      ▼                                  │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │               pdfium.dll (Pinned Native Windows x64)              │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
+│                PdfEngine.Abstractions (UI-Neutral Domain)                │
+│  • IPdfEngine, IPdfDocument, IPdfPage, IPdfRenderer                     │
+│  • IPdfTextService, IPdfAnnotationService, IPdfSaveService              │
+│  • IPdfPageOrganizerService (Rotate, Delete, Insert, Merge, Split)      │
+│  • IPdfFormService, IPdfSignatureService, IPdfRedactionService          │
+│  • Typed Exception Hierarchy (PdfOpenException, Corrupt, Password, etc) │
+└────────────────────────────────────▲────────────────────────────────────┘
+                                     │ Implementation Adapter
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                PdfEngine.Pdfium (Native Interop Layer)                  │
+│  • SafeHandles (SafeDocumentHandle, SafePageHandle, SafeTextPageHandle) │
+│  • PdfiumNativeBridge (C ABI P/Invoke bindings pinned to Chromium 8021) │
+│  • Zero-Copy NativeMemoryOwner (IMemoryOwner<byte> BGRA Pixel Buffers)  │
+│  • Native Adapters: Renderer, Text, Annotations, Forms, Redaction, etc. │
+│  • pdfium.dll (x64 Native Engine: FreeType, libjpeg-turbo, OpenJPEG)    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -160,15 +142,32 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - Integrated with the native WPF `PrintDialog` (`Ctrl+P`).
   - High-resolution (300 DPI) paginated printing via `PdfiumPdfPaginator`.
   - Supports All Pages or Custom Page Ranges.
-- **Document Properties & Metadata**:
-  - Detailed inspector dialog (`Ctrl+D`) displaying File Name, Full Path, File Size, Title, Author, Subject, Keywords, Creator, Producer, Creation Date, Modification Date, PDF Version, Page Count, Page Dimensions, Encryption Status, and Native Engine Status.
-- **Encrypted PDF Support**:
-  - Automatically detects password-protected documents and prompts the user with a clean unlock dialog.
-- **Modern Light & Dark Themes**:
-  - Instant theme switching between Modern Clean Light mode and Dark mode.
-- **Drag-and-Drop & Recent Files**:
-  - Drag and drop any `.pdf` file from Windows Explorer into the application window to open immediately.
-  - Automatically records and persists recently opened documents across application restarts.
+- **Page Assembly & Operations**:
+  - Rotate individual or all pages (0°, 90°, 180°, 270°).
+  - Insert blank pages with custom dimensions.
+  - Delete individual pages with boundary guards.
+  - Extract arbitrary page ranges (e.g. 1-5, 8, 12) into a standalone PDF.
+  - High-speed Multi-Document Merging with live progress reporting.
+  - Document Splitting by page count intervals.
+  - Transactional Undo/Redo support for page manipulations.
+- **Irreversible Content Redaction**:
+  - Redaction bounding box markup with custom blackout overlay text.
+  - Irreversible vector flattening and underlying text stream destruction.
+- **Forms & AcroForm Support**:
+  - AcroForm field discovery and inspection (Text, Checkbox, Radio, Choice).
+  - Standard XFDF form data import and export.
+  - Document form field flattening.
+- **Document Comparison & Diff Heatmaps**:
+  - Page-by-page textual diffing (Added, Deleted, Modified text tokens).
+  - Visual pixel comparison with `VisualSimilarityScore` (0.0 to 1.0) and visual difference heatmap overlay generation (magenta highlighting).
+- **Pluggable OCR Engine**:
+  - Sub-pixel word token extraction with confidence scoring and searchable overlay generator.
+- **High-Performance Architecture & Benchmarks**:
+  - 150 DPI Raw Render: **7.95 ms/page** (125.8 pages/sec).
+  - Full Text Extraction: **0.10 ms/page** (5 ms for 50 pages).
+  - Memory-budgeted priority scheduler strictly maintaining memory under configured limits.
+- **Software Bill of Materials (SBOM)**:
+  - Automated CycloneDX v1.6 (`sbom.cyclonedx.json`) and SPDX v2.3 (`sbom.spdx.json`) generation for supply chain transparency.
 
 ---
 
@@ -201,77 +200,30 @@ pwsh -ExecutionPolicy Bypass -File .\eng\pdfium\build.ps1
 ```
 d:\Practice\pdf-viewer\
 │
-├── Directory.Build.props          # Dynamic auto-incremented build numbering (1.0.{git-commits})
+├── Directory.Build.props          # Dynamic auto-incremented build numbering
 ├── PdfViewer.slnx                 # Modern XML-based Solution file (.NET 9+)
-├── README.md                      # Complete documentation and usage guide
+├── README.md                      # Complete architecture, benchmark & usage guide
 ├── THIRD_PARTY_NOTICES.md         # Open-source licenses & notices (Google PDFium)
 │
 ├── assets/                        # Multi-resolution application & file icons
-│   ├── app_icon.ico / .png        # Main Application Icon
-│   └── pdf_file.ico / .png        # PDF File Association Icon
-│
-├── eng/pdfium/                    # Native PDFium configuration & build automation
-│   ├── build.ps1                  # Checksum verification & native staging script
-│   ├── version.json               # Pinned version metadata & SHA-256 hash
-│   └── include/                   # Native PDFium C header files
-│
-├── publish/                       # Output folder for distribution
-│   ├── PdfViewerSetup.exe         # Windows Installable Setup Executable
-│   ├── PdfViewer.exe              # Standalone Portable Single-File Executable
-│   ├── THIRD_PARTY_NOTICES.md     # Third-party notices
-│   └── SampleDocument.pdf         # Demo 8-page test document with bookmarks & tables
-│
-├── samples/
-│   └── SampleDocument.pdf         # Multi-page test document
-│
-├── sbom/                          # Machine-readable Software Bill of Materials
-│   ├── sbom.cyclonedx.json        # CycloneDX v1.6 SBOM
-│   └── sbom.spdx.json             # SPDX v2.3 SBOM
-│
+├── benchmarks/
+│   └── PdfViewer.Benchmarks/      # BenchmarkDotNet & high-throughput memory metrics
+├── eng/pdfium/                    # Native PDFium configuration & header definitions
+├── publish/                       # Output folder for distribution (Setup & Portable EXE, SBOM)
+├── samples/                       # Multi-page test documents
 ├── scripts/
 │   ├── build_publish.ps1          # Automated 1-click build, package, SBOM & publish script
-│   ├── generate_sbom.ps1          # CycloneDX and SPDX SBOM generation script
-│   ├── convert_icons.ps1          # Icon conversion pipeline script
-│   └── CreateIcon.cs              # Multi-resolution ICO builder utility
+│   └── generate_sbom.ps1          # CycloneDX v1.6 and SPDX v2.3 SBOM generation script
 │
 ├── src/
-│   ├── Installer/                 # Windows Graphical Setup Installer & Uninstaller
-│   │   ├── PdfViewerInstaller.csproj
-│   │   ├── App.xaml / App.xaml.cs
-│   │   ├── InstallService.cs
-│   │   └── InstallerWindow.xaml (.cs)
-│   │
-│   └── PdfViewer/
-│       ├── PdfViewer.csproj       # WPF Application project file (net9.0-windows)
-│       ├── App.xaml               # Application entry point & resource definitions
-│       ├── App.xaml.cs            # Native engine initialization & CLI dispatcher
-│       ├── SamplePdfGenerator.cs  # Standalone demo PDF generator
-│       │
-│       ├── Converters/            # Data-binding converters
-│       ├── Models/                # Data structures (BookmarkItem, Metadata, Annotations)
-│       │
-│       ├── Services/              # Engine & backend services
-│       │   ├── AsyncPageRenderer.cs      # Multi-threaded background render coordinator
-│       │   ├── IPdfDocumentService.cs     # Engine-neutral document service interface
-│       │   ├── LruPageCache.cs           # Thread-safe LRU bitmap cache
-│       │   ├── PdfDocumentServiceFactory.cs # Service factory
-│       │   ├── PdfiumDocumentService.cs  # Native PDFium implementation
-│       │   ├── PdfiumNativeBridge.cs     # P/Invoke bridge & SafeHandles
-│       │   ├── PdfiumPdfPaginator.cs     # High-resolution print paginator
-│       │   ├── RecentFilesService.cs     # Local JSON persistence for recent files
-│       │   ├── ThemeManager.cs           # Light/Dark dynamic theme switcher
-│       │   └── UpdateService.cs          # Automatic updates & release checking
-│       │
-│       ├── Themes/                # XAML styles and themes
-│       ├── ViewModels/            # MVVM ViewModels (MainViewModel, PageViewModel, etc)
-│       └── Views/                 # WPF User Interface Views & Dialogs
+│   ├── PdfEngine.Abstractions/    # UI-neutral domain models, geometry, exceptions & contracts
+│   ├── PdfEngine.Pdfium/          # Native PDFium safe interop engine, adapters & memory manager
+│   ├── PdfViewer.Core/            # DocumentSession, RenderPriorityScheduler, MultiTierCache & Undo/Redo
+│   ├── PdfViewer/                 # Modern WPF MVVM application with Light/Dark themes
+│   └── Installer/                 # Windows Graphical Setup Installer & Uninstaller
 │
 └── tests/
-    └── PdfViewer.Tests/
-        ├── PdfViewer.Tests.csproj # xUnit test project
-        ├── TestPdfBuilder.cs      # Native zero-dependency PDF test generator
-        ├── FixtureGenerator.cs    # Test fixture management
-        └── PdfServiceTests.cs     # 37 comprehensive unit & integration tests
+    └── PdfViewer.Tests/           # 63 automated unit, integration, comparison & engine tests
 ```
 
 ---
