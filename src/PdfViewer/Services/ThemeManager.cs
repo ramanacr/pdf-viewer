@@ -20,7 +20,12 @@ public static class ThemeManager
     public static void SetTheme(AppTheme theme)
     {
         var app = Application.Current;
-        if (app == null) return;
+        if (app == null)
+        {
+            CurrentTheme = theme;
+            ThemeChanged?.Invoke(theme);
+            return;
+        }
 
         string themeUri = theme == AppTheme.Dark
             ? "Themes/DarkTheme.xaml"

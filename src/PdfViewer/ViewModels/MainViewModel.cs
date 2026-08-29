@@ -194,6 +194,19 @@ public partial class MainViewModel : ObservableObject
     public Action<int>? ScrollToPageAction { get; set; }
     public Action<int, double, double>? ScrollToMatchAction { get; set; }
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
+    public Action<string, string, MessageBoxButton, MessageBoxImage>? ShowMessageBoxAction { get; set; }
+
+    private void ShowAlert(string message, string caption, MessageBoxButton button, MessageBoxImage image)
+    {
+        if (ShowMessageBoxAction != null)
+        {
+            ShowMessageBoxAction(message, caption, button, image);
+        }
+        else if (Application.Current != null && Application.Current.MainWindow != null)
+        {
+            MessageBox.Show(message, caption, button, image);
+        }
+    }
 
     public DocumentSession Session { get; } = new();
     public ICommandHistory CommandHistory { get; } = new CommandHistory();
@@ -270,7 +283,7 @@ public partial class MainViewModel : ObservableObject
         }
         else if (!string.IsNullOrEmpty(filePath))
         {
-            MessageBox.Show($"File no longer exists:\n{filePath}", "Open File Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ShowAlert($"File no longer exists:\n{filePath}", "Open File Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             ReloadRecentFiles();
         }
     }
@@ -379,7 +392,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to open PDF document:\n{ex.Message}", "Error Loading PDF", MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowAlert($"Failed to open PDF document:\n{ex.Message}", "Error Loading PDF", MessageBoxButton.OK, MessageBoxImage.Error);
             StatusText = $"Error: {ex.Message}";
         }
     }
@@ -1119,7 +1132,7 @@ public partial class MainViewModel : ObservableObject
                         Metadata.FilePath);
 
                     StatusText = $"Saved annotated document ({result.Mode}): {Path.GetFileName(result.TargetPath)}";
-                    MessageBox.Show(
+                    ShowAlert(
                         $"Annotated document successfully saved ({result.Mode}):\n{result.TargetPath}",
                         "Save Successful",
                         MessageBoxButton.OK,
@@ -1128,7 +1141,7 @@ public partial class MainViewModel : ObservableObject
                 catch (Exception ex)
                 {
                     StatusText = $"Save error: {ex.Message}";
-                    MessageBox.Show(
+                    ShowAlert(
                         $"Failed to save annotated document:\n{ex.Message}",
                         "Save Error",
                         MessageBoxButton.OK,
@@ -1193,7 +1206,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Print failed: {ex.Message}", "Print Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowAlert($"Print failed: {ex.Message}", "Print Error", MessageBoxButton.OK, MessageBoxImage.Error);
             StatusText = $"Print error: {ex.Message}";
         }
     }
@@ -1217,11 +1230,11 @@ public partial class MainViewModel : ObservableObject
 
             await _docService.ExportPagesToImagesAsync(outDir, prefix, start, end, format, dpi, progress);
             StatusText = $"Successfully exported {end - start + 1} images to {outDir}";
-            MessageBox.Show($"Successfully exported {end - start + 1} pages to:\n{outDir}", "Export Completed", MessageBoxButton.OK, MessageBoxImage.Information);
+            ShowAlert($"Successfully exported {end - start + 1} pages to:\n{outDir}", "Export Completed", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Export failed: {ex.Message}", "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowAlert($"Export failed: {ex.Message}", "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
             StatusText = $"Export error: {ex.Message}";
         }
     }

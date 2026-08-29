@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using Xunit;
+
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
 
 namespace PdfViewer.Tests;
 

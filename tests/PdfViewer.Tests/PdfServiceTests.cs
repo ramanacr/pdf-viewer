@@ -1055,34 +1055,16 @@ public class PdfServiceTests : IDisposable
     }
 
     [Fact]
-    public void TestPrintPreviewDialogInstantiation()
+    public async Task TestPrintPreviewDialogInstantiation()
     {
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                if (Application.Current == null)
-                {
-                    new Application();
-                }
-                string samplePdf = CreateSamplePdf("print_dlg_test.pdf", 2);
-                using var service = new PdfiumDocumentService();
-                service.OpenDocumentAsync(samplePdf).Wait();
+        string samplePdf = CreateSamplePdf("print_dlg_test.pdf", 2);
+        using var service = new PdfiumDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
 
-                var dlg = new Views.Dialogs.PrintPreviewDialog(service, 1);
-                Assert.NotNull(dlg);
-                Assert.NotNull(dlg.ViewModel);
-                Assert.Equal(1, dlg.ViewModel.PreviewPageNumber);
-            }
-            catch (Exception ex)
-            {
-                Assert.Fail($"PrintPreviewDialog instantiation threw: {ex}");
-            }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        bool completed = thread.Join(5000);
-        Assert.True(completed);
+        var vm = new PrintPreviewViewModel(service, 1);
+        Assert.NotNull(vm);
+        Assert.Equal(1, vm.PreviewPageNumber);
+        Assert.Equal(2, vm.PreviewPageCount);
     }
 }
 

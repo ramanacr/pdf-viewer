@@ -28,6 +28,9 @@
     <ProjectReference Include="..\..\src\PdfViewer.Core\PdfViewer.Core.csproj" />
     <ProjectReference Include="..\..\src\PdfViewer\PdfViewer.csproj" />
     <Compile Include="..\..\scripts\CreateIcon.cs" Link="CreateIcon.cs" />
+    <None Update="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>
