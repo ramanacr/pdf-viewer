@@ -138,10 +138,16 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - Export document pages to high-resolution **PNG** or **JPEG** images.
   - Selectable DPI: 150 DPI (Standard Screen), 300 DPI (High-Resolution Print), or 600 DPI (Ultra Sharp).
   - Export all pages, the current page only, or a specific page range (e.g. pages 2 to 7).
-- **Native Windows Printing**:
-  - Integrated with the native WPF `PrintDialog` (`Ctrl+P`).
-  - High-resolution (300 DPI) paginated printing via `PdfiumPdfPaginator`.
-  - Supports All Pages or Custom Page Ranges.
+- **Interactive Print & Live Print Preview**:
+  - Dedicated **Modern In-App Print & Print Preview Dialog** (`Ctrl+P`).
+  - Live interactive document page preview with page navigation (`<<`, `<`, `Page X of Y`, `>`, `>>`).
+  - Printer discovery, status inspection, orientation (Portrait/Landscape/Auto), copies, collate, color mode (Color vs Grayscale), and custom page range formatting.
+  - High-resolution (300 DPI) paginated physical/virtual printing via `PdfiumPdfPaginator`.
+- **Windows Shell Document Preview & Thumbnail Integration**:
+  - Complete Windows File Explorer integration: `PerceivedType=document`, `Treatment=0`, `ThumbnailCutoff=0`, and `PreviewDetails` metadata registration.
+  - CLI thumbnail generator: `PdfViewer.exe --thumbnail <input.pdf> <output.png> [dpi]` for instant headless page rendering.
+  - Shell registration commands: `PdfViewer.exe --register` and `PdfViewer.exe --unregister`.
+  - In-app thumbnail sidebar with interactive hover tooltip document previews.
 - **Page Assembly & Operations**:
   - Rotate individual or all pages (0°, 90°, 180°, 270°).
   - Insert blank pages with custom dimensions.

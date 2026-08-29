@@ -31,6 +31,7 @@ public partial class MainWindow : Window
         _vm.ShowPropertiesAction = ShowPropertiesDialog;
         _vm.ShowExportDialogFunc = ShowExportImagesDialog;
         _vm.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
+        _vm.ShowPrintDialogFunc = ShowPrintPreviewDialog;
         _vm.ScrollToPageAction = ScrollToPage;
         _vm.ScrollToMatchAction = ScrollToMatch;
         _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
@@ -149,6 +150,15 @@ public partial class MainWindow : Window
         }
 
         return (false, string.Empty, string.Empty, 1, 1, "PNG", 300);
+    }
+
+    private bool ShowPrintPreviewDialog(IPdfDocumentService docService, int currentPage)
+    {
+        var dialog = new PrintPreviewDialog(docService, currentPage)
+        {
+            Owner = this
+        };
+        return dialog.ShowDialog() == true;
     }
 
     #endregion

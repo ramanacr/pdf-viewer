@@ -1018,4 +1018,39 @@ public class PdfServiceTests : IDisposable
         Assert.NotNull(loadedInk.InkPoints);
         Assert.True(loadedInk.InkPoints.Count >= 4);
     }
+
+    [Fact]
+    public async Task TestPrintPreviewViewModelOperations()
+    {
+        string samplePdf = CreateSamplePdf("print_test.pdf", 5);
+        using var service = new PdfiumDocumentService();
+        await service.OpenDocumentAsync(samplePdf);
+
+        var vm = new PrintPreviewViewModel(service, 2);
+
+        Assert.Equal(2, vm.PreviewPageNumber);
+        Assert.Equal(5, vm.PreviewPageCount);
+        Assert.Equal(PrintRangeMode.AllPages, vm.RangeMode);
+        Assert.Equal(PrintOrientationMode.Auto, vm.Orientation);
+        Assert.Equal(PrintColorMode.Color, vm.ColorMode);
+
+        vm.NextPreviewPage();
+        Assert.Equal(3, vm.PreviewPageNumber);
+
+        vm.PrevPreviewPage();
+        Assert.Equal(2, vm.PreviewPageNumber);
+
+        vm.LastPreviewPage();
+        Assert.Equal(5, vm.PreviewPageNumber);
+
+        vm.FirstPreviewPage();
+        Assert.Equal(1, vm.PreviewPageNumber);
+
+        vm.Orientation = PrintOrientationMode.Landscape;
+        Assert.Equal(PrintOrientationMode.Landscape, vm.Orientation);
+
+        vm.ColorMode = PrintColorMode.Grayscale;
+        Assert.Equal(PrintColorMode.Grayscale, vm.ColorMode);
+    }
 }
+

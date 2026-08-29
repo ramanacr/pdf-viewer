@@ -547,6 +547,32 @@
                                                 </Style>
                                             </Border.Style>
 
+                                            <Border.ToolTip>
+                                                <ToolTip Background="{DynamicResource SurfaceBgBrush}"
+                                                         BorderBrush="{DynamicResource BorderBrush}"
+                                                         BorderThickness="1"
+                                                         Padding="8"
+                                                         Placement="Right">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding PageNumber, StringFormat='Page {0} Preview'}"
+                                                                   FontWeight="Bold"
+                                                                   FontSize="12"
+                                                                   Margin="0,0,0,6"
+                                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                        <Border BorderBrush="{DynamicResource BorderBrush}"
+                                                                BorderThickness="1"
+                                                                MaxWidth="320"
+                                                                MaxHeight="450"
+                                                                Background="White"
+                                                                Effect="{DynamicResource PageShadowEffect}">
+                                                            <Image Source="{Binding ThumbnailImage}"
+                                                                   Stretch="Uniform"
+                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                </ToolTip>
+                                            </Border.ToolTip>
+
                                             <StackPanel Margin="6">
                                                 <Border Height="160"
                                                         Background="{DynamicResource BorderBrush}"

@@ -190,6 +190,7 @@ public partial class MainViewModel : ObservableObject
     public Action<DocumentMetadata>? ShowPropertiesAction { get; set; }
     public Func<DocumentMetadata, (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi)>? ShowExportDialogFunc { get; set; }
     public Func<DocumentMetadata, (bool Confirmed, string TargetPath, AnnotationSaveMode Mode)>? ShowSaveAnnotatedDialogFunc { get; set; }
+    public Func<IPdfDocumentService, int, bool>? ShowPrintDialogFunc { get; set; }
     public Action<int>? ScrollToPageAction { get; set; }
     public Action<int, double, double>? ScrollToMatchAction { get; set; }
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
@@ -1157,6 +1158,16 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
+            if (ShowPrintDialogFunc != null)
+            {
+                bool printed = ShowPrintDialogFunc(_docService, CurrentPageNumber);
+                if (printed)
+                {
+                    StatusText = "Print job sent to printer.";
+                }
+                return;
+            }
+
             var printDialog = new PrintDialog
             {
                 UserPageRangeEnabled = true,

@@ -244,27 +244,61 @@ public static class InstallService
         {
             string installDir = Path.GetDirectoryName(mainExePath) ?? string.Empty;
             string fileIconPath = Path.Combine(installDir, "assets", "pdf_file.ico");
+            string iconRef = File.Exists(fileIconPath) ? $"{fileIconPath},0" : $"{mainExePath},0";
 
-            using var progKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\PdfViewer.Document");
-            if (progKey != null)
+            // 1. Register .pdf Extension with document perceived type
+            using (var extKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.pdf"))
             {
-                progKey.SetValue("", "PDF Document");
-                using var iconKey = progKey.CreateSubKey("DefaultIcon");
-                if (File.Exists(fileIconPath))
+                if (extKey != null)
                 {
-                    iconKey?.SetValue("", $"{fileIconPath},0");
-                }
-                else
-                {
-                    iconKey?.SetValue("", $"{mainExePath},0");
-                }
+                    extKey.SetValue("Content Type", "application/pdf");
+                    extKey.SetValue("PerceivedType", "document");
 
-                using var cmdKey = progKey.CreateSubKey(@"shell\open\command");
-                cmdKey?.SetValue("", $"\"{mainExePath}\" \"%1\"");
+                    using var openWith = extKey.CreateSubKey("OpenWithProgids");
+                    openWith?.SetValue("PdfViewer.Document", string.Empty);
+
+                    using var openWithList = extKey.CreateSubKey(@"OpenWithList\PdfViewer.exe");
+                    openWithList?.SetValue(string.Empty, string.Empty);
+                }
             }
 
-            using var pdfKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.pdf\OpenWithProgids");
-            pdfKey?.SetValue("PdfViewer.Document", string.Empty);
+            // 2. Register ProgId with Shell Thumbnail & Preview details
+            using (var progKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\PdfViewer.Document"))
+            {
+                if (progKey != null)
+                {
+                    progKey.SetValue(string.Empty, "PDF Document");
+                    progKey.SetValue("FriendlyTypeName", "PDF Document");
+                    progKey.SetValue("PerceivedType", "document");
+                    progKey.SetValue("Treatment", 0, RegistryValueKind.DWord);
+                    progKey.SetValue("ThumbnailCutoff", 0, RegistryValueKind.DWord);
+                    progKey.SetValue("PreviewDetails", "prop:System.ItemNameDisplay;System.ItemTypeText;System.Size;System.DateModified;System.Author;System.Title");
+                    progKey.SetValue("InfoTip", "prop:System.ItemType;System.Size;System.DateModified;System.Author;System.Title");
+
+                    using var iconKey = progKey.CreateSubKey("DefaultIcon");
+                    iconKey?.SetValue(string.Empty, iconRef);
+
+                    using var cmdKey = progKey.CreateSubKey(@"shell\open\command");
+                    cmdKey?.SetValue(string.Empty, $"\"{mainExePath}\" \"%1\"");
+
+                    using var printCmd = progKey.CreateSubKey(@"shell\print\command");
+                    printCmd?.SetValue(string.Empty, $"\"{mainExePath}\" /p \"%1\"");
+                }
+            }
+
+            // 3. Register Applications entry
+            using (var appKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\PdfViewer.exe"))
+            {
+                if (appKey != null)
+                {
+                    appKey.SetValue("FriendlyAppName", "PDF Viewer Native");
+                    using var supTypes = appKey.CreateSubKey("SupportedTypes");
+                    supTypes?.SetValue(".pdf", string.Empty);
+
+                    using var appOpen = appKey.CreateSubKey(@"shell\open\command");
+                    appOpen?.SetValue(string.Empty, $"\"{mainExePath}\" \"%1\"");
+                }
+            }
         }
         catch { }
     }
