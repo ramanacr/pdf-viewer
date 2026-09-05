@@ -3,10 +3,14 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <!--
-      Windows 10.0.19041 (20H1) is required to reach the built-in Windows.Media.Ocr engine,
-      which provides real optical character recognition with no external dependency or
-      licence. Windows 10 reached end of support in October 2025, so this floor excludes
-      only already-unsupported systems.
+      Windows 10.0.19041 (20H1) is required to reach the built-in Windows.Media.Ocr engine.
+      Windows 10 left support in October 2025, so this floor excludes only already
+      unsupported systems.
+
+      This TFM brings in the Windows SDK projection (Microsoft.Windows.SDK.NET.dll, ~24 MB).
+      A filtered CsWinRT projection was tried to avoid that, but the transitive closure of
+      Windows.Media.Ocr pulls in Storage, System and Devices anyway, so it bought nothing for
+      considerable fragility. Single-file compression below reclaims the size instead.
     -->
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
@@ -21,6 +25,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="PdfViewer.Tests" />
   </ItemGroup>
+
 
   <ItemGroup>
     <Resource Include="assets\app_icon.ico" />
