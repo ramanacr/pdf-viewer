@@ -7,6 +7,7 @@ using PdfEngine.Documents;
 using PdfEngine.Geometry;
 using PdfEngine.Pdfium;
 using PdfEngine.Rendering;
+using PdfEngine.Signatures;
 using PdfViewer.Core.Cache;
 using PdfViewer.Core.Commands;
 using PdfViewer.Core.Licensing;
@@ -102,6 +103,215 @@ public class PdfEngineCoreTests
 
         session.MarkSaved();
         Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public async Task TestImageExportProducesDecodableJpegAndBmp()
+    {
+        // Regression test: the engine advertised a `format` parameter (and its own doc
+        // comment claimed BMP) while only ever writing PNG. Each format must now produce a
+        // file the platform decoder can actually read back at the right dimensions.
+        string samplePdf = GetOrCreateSamplePdf();
+        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageExportFormats");
+        if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        foreach (var (format, extension) in new[] { ("png", "png"), ("jpeg", "jpg"), ("bmp", "bmp") })
+        {
+            await engine.SaveService.ExportPagesToImagesAsync(
+                doc, outDir, $"page_{format}", 1, 1, format, dpi: 72);
+
+            string path = Path.Combine(outDir, $"page_{format}_page_0001.{extension}");
+            Assert.True(File.Exists(path), $"{format} export did not produce {path}");
+            Assert.True(new FileInfo(path).Length > 0, $"{format} export produced an empty file");
+
+            // Decode it with WPF's own codecs - proof the bytes are a valid image, not just
+            // a file with the right extension.
+            using var stream = File.OpenRead(path);
+            var decoded = System.Windows.Media.Imaging.BitmapFrame.Create(
+                stream,
+                System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat,
+                System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+
+            Assert.True(decoded.PixelWidth > 0 && decoded.PixelHeight > 0,
+                $"{format} decoded to an empty image");
+        }
+    }
+
+    [Fact]
+    public async Task TestImageExportRejectsUnknownFormat()
+    {
+        string samplePdf = GetOrCreateSamplePdf();
+        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageExportBadFormat");
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        // Unknown formats are refused rather than silently written as PNG under a .tiff name.
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await engine.SaveService.ExportPagesToImagesAsync(doc, outDir, "x", 1, 1, "tiff", dpi: 72));
+    }
+
+    [Fact]
+    public async Task TestOcrReportsHonestlyWhenNoTextLayerAndNoOpticalEngine()
+    {
+        // Regression test: DefaultOcrEngine used to return the embedded text layer stamped
+        // with a fabricated 0.98 confidence and claim it was OCR. A page with no text layer
+        // and no optical engine must report zero confidence and say why - not look like a
+        // successful recognition that happened to find nothing.
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        var textLayerOnly = new PdfViewer.Core.Ocr.DefaultOcrEngine(engine.TextService);
+
+        // This page HAS a text layer: exact text, full confidence, and clearly not optical.
+        var withText = await textLayerOnly.RecognizePageAsync(doc, 1);
+        Assert.NotEmpty(withText.FullText);
+        Assert.Equal(1.0, withText.Confidence);
+        Assert.False(withText.UsedOpticalRecognition);
+        Assert.Contains("embedded text layer", withText.Notes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestOcrFallsBackToOpticalEngineForPagesWithoutText()
+    {
+        // A page with no embedded text must be routed to the optical engine rather than
+        // silently returning nothing.
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        var stubOptical = new RecordingOcrEngine();
+        var composed = new PdfViewer.Core.Ocr.DefaultOcrEngine(new EmptyTextService(), stubOptical);
+
+        var result = await composed.RecognizePageAsync(doc, 1);
+
+        Assert.True(stubOptical.WasCalled, "The optical engine must be used when there is no text layer.");
+        Assert.True(result.UsedOpticalRecognition);
+        Assert.Equal("recognized text", result.FullText);
+    }
+
+    [Fact]
+    public async Task TestOcrWithoutOpticalEngineReportsZeroConfidence()
+    {
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        var noFallback = new PdfViewer.Core.Ocr.DefaultOcrEngine(new EmptyTextService());
+        var result = await noFallback.RecognizePageAsync(doc, 1);
+
+        Assert.Empty(result.FullText);
+        Assert.Equal(0.0, result.Confidence);
+        Assert.False(result.UsedOpticalRecognition);
+        Assert.Contains("no optical recognition engine", result.Notes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A text service that reports no embedded text, simulating a scanned page.</summary>
+    private sealed class EmptyTextService : PdfEngine.Text.IPdfTextService
+    {
+        public ValueTask<IReadOnlyList<PdfEngine.Text.TextSegment>> ExtractTextSegmentsAsync(
+            IPdfDocument document, int pageNumber, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<PdfEngine.Text.TextSegment>>(Array.Empty<PdfEngine.Text.TextSegment>());
+
+        public ValueTask<string> ExtractPageTextAsync(
+            IPdfDocument document, int pageNumber, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(string.Empty);
+
+        public ValueTask<IReadOnlyList<PdfEngine.Text.SearchMatch>> SearchTextAsync(
+            IPdfDocument document, string query, PdfEngine.Text.SearchOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<PdfEngine.Text.SearchMatch>>(Array.Empty<PdfEngine.Text.SearchMatch>());
+    }
+
+    private sealed class RecordingOcrEngine : PdfEngine.Ocr.IOcrEngine
+    {
+        public bool WasCalled { get; private set; }
+        public string EngineName => "Recording Test Engine";
+        public IReadOnlyList<string> SupportedLanguages { get; } = new[] { "en" };
+
+        public ValueTask<PdfEngine.Ocr.OcrPageResult> RecognizePageAsync(
+            IPdfDocument document, int pageNumber, string language = "en",
+            CancellationToken cancellationToken = default)
+        {
+            WasCalled = true;
+            return ValueTask.FromResult(new PdfEngine.Ocr.OcrPageResult
+            {
+                PageNumber = pageNumber,
+                FullText = "recognized text",
+                Language = language,
+                UsedOpticalRecognition = true
+            });
+        }
+    }
+
+    [Fact]
+    public async Task TestWindowsOcrEngineActuallyRecognizesRenderedText()
+    {
+        // Proves the OCR engine performs REAL optical recognition: it rasterizes the page
+        // and reads the pixels, with no access to the embedded text layer.
+        if (!PdfViewer.Services.WindowsOcrEngine.IsAvailable)
+        {
+            // No recognizer language pack installed on this machine - nothing to assert.
+            return;
+        }
+
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        var ocr = new PdfViewer.Services.WindowsOcrEngine(engine.Renderer);
+        var result = await ocr.RecognizePageAsync(doc, 1, ocr.SupportedLanguages[0]);
+
+        Assert.True(result.UsedOpticalRecognition);
+        Assert.NotEmpty(result.Words);
+
+        // The sample page renders the words "This is page number 1 of the test document".
+        Assert.Contains("page", result.FullText, StringComparison.OrdinalIgnoreCase);
+
+        // Word geometry must come back normalized to the page, not in raw pixels.
+        foreach (var word in result.Words)
+        {
+            Assert.InRange(word.Bounds.X, 0.0, 1.0);
+            Assert.InRange(word.Bounds.Y, 0.0, 1.0);
+        }
+    }
+
+    [Fact]
+    public async Task TestUnsignedDocumentIsNotReportedAsValidlySigned()
+    {
+        // SECURITY regression test: VerifySignatureAsync previously returned
+        // SignatureStatus.Valid unconditionally, for ANY document - including unsigned and
+        // tampered ones. An unsigned document must report Unknown, never Valid.
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        var signatures = await engine.SignatureService.GetSignaturesAsync(doc);
+        Assert.Empty(signatures);
+
+        var status = await engine.SignatureService.VerifySignatureAsync(doc, "Signature1");
+        Assert.NotEqual(SignatureStatus.Valid, status);
+        Assert.Equal(SignatureStatus.Unknown, status);
+    }
+
+    [Fact]
+    public void TestPdfDateParsing()
+    {
+        // Signing times come through as PDF date strings; a bad parse must yield null
+        // rather than a bogus DateTime presented to the user as fact.
+        Assert.Equal(new DateTime(2026, 9, 5, 12, 30, 45, DateTimeKind.Utc),
+            PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate("D:20260905123045+05'30'"));
+
+        Assert.Equal(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate("D:2026"));
+
+        Assert.Null(PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate(""));
+        Assert.Null(PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate("not-a-date"));
+        Assert.Null(PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate("D:20261305000000"));
     }
 
     [Fact]

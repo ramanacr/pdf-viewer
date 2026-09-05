@@ -272,6 +272,36 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFPageObj_GetType(IntPtr page_object);
 
+    // Digital signatures (fpdf_signature.h)
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_GetSignatureCount(SafeDocumentHandle document);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDF_GetSignatureObject(SafeDocumentHandle document, int index);
+
+    /// <summary>Raw PKCS#7/CMS blob from the signature dictionary's /Contents entry.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFSignatureObj_GetContents(IntPtr signature, byte[]? buffer, uint length);
+
+    /// <summary>The /ByteRange array: pairs of (offset, length) covering the signed bytes.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFSignatureObj_GetByteRange(IntPtr signature, int[]? buffer, uint length);
+
+    /// <summary>/SubFilter, e.g. "adbe.pkcs7.detached" or "ETSI.CAdES.detached". ASCII, NOT UTF-16.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFSignatureObj_GetSubFilter(IntPtr signature, byte[]? buffer, uint length);
+
+    /// <summary>/Reason as UTF-16LE bytes.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFSignatureObj_GetReason(IntPtr signature, byte[]? buffer, uint length);
+
+    /// <summary>/M signing time as an ASCII PDF date string, e.g. "D:20260905120000+05'30'".</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFSignatureObj_GetTime(IntPtr signature, byte[]? buffer, uint length);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFSignatureObj_GetDocMDPPermission(IntPtr signature);
+
     // Page Import (PPO)
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDF_ImportPages(SafeDocumentHandle dest_doc, SafeDocumentHandle src_doc, [MarshalAs(UnmanagedType.LPStr)] string? pagerange, int index);

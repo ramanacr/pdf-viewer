@@ -11,7 +11,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using PdfViewer.Core.Commands;
+using PdfEngine.Ocr;
 using PdfViewer.Core.Licensing;
+using PdfViewer.Core.Ocr;
 using PdfViewer.Core.Rendering;
 using PdfViewer.Core.Security;
 using PdfViewer.Core.Session;
@@ -244,6 +246,17 @@ public partial class MainViewModel : ObservableObject
     public DocumentSession Session { get; }
     public ICommandHistory CommandHistory { get; }
 
+    /// <summary>
+    /// Text acquisition for a page: reads the embedded text layer, and falls back to real
+    /// Windows optical recognition for scanned pages that have none. Null only when the
+    /// Windows OCR runtime is unavailable on this machine, in which case scanned pages
+    /// report that no text could be produced rather than silently returning nothing.
+    /// </summary>
+    public IOcrEngine OcrEngine { get; }
+
+    /// <summary>True when genuine optical recognition is available on this machine.</summary>
+    public bool IsOpticalRecognitionAvailable { get; }
+
     // Bindable licence state so the UI can disable or badge gated features rather than
     // offering them and failing at execution time.
     public bool IsRedactionAvailable => FeatureGate.IsFeatureEnabled(FeatureId.Redaction);
@@ -262,6 +275,18 @@ public partial class MainViewModel : ObservableObject
         _docService = PdfDocumentServiceFactory.CreateService(SecurityPolicy);
         _cache = new LruPageCache(60);
         _renderer = new AsyncPageRenderer(_docService, _cache);
+
+        // Compose text acquisition: embedded text layer first, real Windows OCR for pages
+        // that have none. If the OCR runtime is missing, DefaultOcrEngine reports that
+        // honestly instead of returning an empty result that looks like a blank page.
+        var engine = new PdfEngine.Pdfium.PdfiumEngine();
+        IOcrEngine? optical = null;
+        if (WindowsOcrEngine.IsAvailable)
+        {
+            optical = new WindowsOcrEngine(engine.Renderer);
+        }
+        IsOpticalRecognitionAvailable = optical != null;
+        OcrEngine = new DefaultOcrEngine(engine.TextService, optical);
 
         ReloadRecentFiles();
         CurrentTheme = ThemeManager.CurrentTheme;

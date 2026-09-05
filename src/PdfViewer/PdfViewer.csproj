@@ -2,7 +2,14 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <!--
+      Windows 10.0.19041 (20H1) is required to reach the built-in Windows.Media.Ocr engine,
+      which provides real optical character recognition with no external dependency or
+      licence. Windows 10 reached end of support in October 2025, so this floor excludes
+      only already-unsupported systems.
+    -->
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

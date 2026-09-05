@@ -19,6 +19,25 @@ public sealed class PdfiumSaveService : IPdfSaveService
         _renderer = renderer;
     }
 
+    /// <summary>
+    /// Maps a caller-supplied format name onto the encoders that actually exist, returning
+    /// the canonical file extension. Unknown formats are refused rather than silently
+    /// substituted with PNG.
+    /// </summary>
+    private static string NormalizeImageFormat(string format)
+    {
+        if (string.IsNullOrWhiteSpace(format)) return "png";
+
+        return format.Trim().TrimStart('.').ToLowerInvariant() switch
+        {
+            "png" => "png",
+            "jpg" or "jpeg" => "jpg",
+            "bmp" or "dib" => "bmp",
+            _ => throw new NotSupportedException(
+                $"Image export format '{format}' is not supported. Supported formats: png, jpeg, bmp.")
+        };
+    }
+
     public ValueTask SaveAsync(
         IPdfDocument document,
         string targetPath,
@@ -111,15 +130,7 @@ public sealed class PdfiumSaveService : IPdfSaveService
             Directory.CreateDirectory(outputDirectory);
         }
 
-        // PNG is the only encoder ImageEncoder implements. Previously any other value was
-        // accepted and silently ignored, so a caller asking for "bmp" or "jpg" got a PNG
-        // written under that assumption. Fail loudly instead of substituting.
-        if (!string.IsNullOrWhiteSpace(format) &&
-            !format.Trim().TrimStart('.').Equals("png", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new NotSupportedException(
-                $"Image export format '{format}' is not supported; only 'png' is available.");
-        }
+        string normalizedFormat = NormalizeImageFormat(format);
 
         startPage = Math.Clamp(startPage, 1, pdfiumDoc.PageCount);
         endPage = Math.Clamp(endPage, startPage, pdfiumDoc.PageCount);
@@ -138,11 +149,22 @@ public sealed class PdfiumSaveService : IPdfSaveService
             };
 
             using var rendered = await _renderer.RenderPageAsync(pdfiumDoc, req, cancellationToken);
-            string outPath = Path.Combine(outputDirectory, $"{filePrefix}_page_{p:D4}.png");
+            string outPath = Path.Combine(outputDirectory, $"{filePrefix}_page_{p:D4}.{normalizedFormat}");
 
             using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                ImageEncoder.SaveAsPng(fs, rendered.WidthPixels, rendered.HeightPixels, rendered.Pixels.Span, rendered.Stride);
+                switch (normalizedFormat)
+                {
+                    case "jpg":
+                        ImageEncoder.SaveAsJpeg(fs, rendered.WidthPixels, rendered.HeightPixels, rendered.Pixels.Span, rendered.Stride);
+                        break;
+                    case "bmp":
+                        ImageEncoder.SaveAsBmp(fs, rendered.WidthPixels, rendered.HeightPixels, rendered.Pixels.Span, rendered.Stride);
+                        break;
+                    default:
+                        ImageEncoder.SaveAsPng(fs, rendered.WidthPixels, rendered.HeightPixels, rendered.Pixels.Span, rendered.Stride);
+                        break;
+                }
             }
 
             completed++;

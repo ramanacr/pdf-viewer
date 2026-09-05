@@ -15,6 +15,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- PKCS#7/CMS parsing and verification for PDF digital signatures. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfViewer.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\PdfViewer\runtimes\win-x64\native\pdfium.dll" Link="runtimes\win-x64\native\pdfium.dll" Condition="Exists('..\PdfViewer\runtimes\win-x64\native\pdfium.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>runtimes\win-x64\native\pdfium.dll</TargetPath>
