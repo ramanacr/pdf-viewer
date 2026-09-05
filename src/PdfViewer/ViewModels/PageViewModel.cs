@@ -76,6 +76,19 @@ public partial class PageViewModel : ObservableObject
 
     private int _renderedDpi;
 
+    /// <summary>
+    /// Why this page could not be rendered, or empty when it rendered fine. Bindable so the
+    /// page surface can show the reason in place of a blank rectangle.
+    /// </summary>
+    [ObservableProperty]
+    private string _renderErrorMessage = string.Empty;
+
+    /// <summary>
+    /// Raised when a render is refused by the active security policy. MainViewModel uses
+    /// this to report the refusal once per document rather than leaving a silent blank page.
+    /// </summary>
+    public Action<int, string>? RenderRefused { get; set; }
+
     public async Task LoadImageAsync(AsyncPageRenderer renderer, int dpi, int rotation, CancellationToken ct = default)
     {
         if (RenderedImage != null && RotationAngle == rotation && _renderedDpi == dpi) return;
@@ -88,9 +101,17 @@ public partial class PageViewModel : ObservableObject
             {
                 RenderedImage = bitmap;
                 _renderedDpi = dpi;
+                RenderErrorMessage = string.Empty;
             }
         }
         catch (OperationCanceledException) { }
+        catch (PdfEngine.Exceptions.PdfSecurityPolicyException ex)
+        {
+            // Deliberately NOT swallowed: a policy refusal must be visible. Silently
+            // leaving the page blank would look identical to a rendering bug.
+            RenderErrorMessage = ex.Message;
+            RenderRefused?.Invoke(PageNumber, ex.Message);
+        }
         catch (Exception) { }
         finally
         {

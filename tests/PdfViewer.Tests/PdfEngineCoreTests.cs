@@ -660,11 +660,12 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
-    public async Task TestViewerClampsOversizedRenderInsteadOfRefusing()
+    public async Task TestViewerRefusesOversizedRenderLoudly()
     {
-        // The viewer path deliberately clamps to the policy ceiling rather than throwing:
-        // a large-format drawing must still display (at reduced resolution) instead of
-        // becoming undisplayable at high zoom. The memory bound is unchanged.
+        // The viewer REFUSES a render that would breach the policy rather than silently
+        // returning a lower-resolution image that looks like the real page. The refusal is
+        // an exception, which PageViewModel surfaces via RenderErrorMessage and
+        // MainViewModel reports to the user - never a silently blank page.
         string samplePdf = GetOrCreateSamplePdf();
         var policy = PdfSecurityPolicy.DefaultStrict with { MaxRenderDimensionPixels = 200 };
 
@@ -672,11 +673,46 @@ public class PdfEngineCoreTests
         await service.OpenDocumentAsync(samplePdf);
 
         // 5000 DPI would demand a raster far beyond the ceiling.
-        var bitmap = service.RenderPage(1, dpi: 5000);
+        var ex = Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            () => service.RenderPage(1, dpi: 5000));
+        Assert.Equal(nameof(PdfSecurityPolicy.MaxRenderDimensionPixels), ex.PolicyName);
 
-        Assert.NotNull(bitmap);
-        Assert.True(bitmap!.PixelWidth <= 200, $"Width {bitmap.PixelWidth} exceeds the clamp ceiling.");
-        Assert.True(bitmap.PixelHeight <= 200, $"Height {bitmap.PixelHeight} exceeds the clamp ceiling.");
+        // A render inside the ceiling still succeeds (792pt at 15 DPI = 165px, under 200).
+        var ok = service.RenderPage(1, dpi: 15);
+        Assert.NotNull(ok);
+        Assert.True(ok!.PixelWidth <= 200 && ok.PixelHeight <= 200,
+            $"Expected a raster within the ceiling, got {ok.PixelWidth}x{ok.PixelHeight}.");
+    }
+
+    [Fact]
+    public async Task TestPageViewModelSurfacesPolicyRefusal()
+    {
+        // A policy refusal must be reported, not swallowed: a silently blank page is
+        // indistinguishable from a rendering bug.
+        string samplePdf = GetOrCreateSamplePdf();
+        var policy = PdfSecurityPolicy.DefaultStrict with { MaxRenderDimensionPixels = 50 };
+
+        using var service = new PdfViewer.Services.PdfiumDocumentService(policy);
+        await service.OpenDocumentAsync(samplePdf);
+
+        var cache = new PdfViewer.Services.LruPageCache(4);
+        var renderer = new PdfViewer.Services.AsyncPageRenderer(service, cache);
+
+        int? refusedPage = null;
+        string? refusedMessage = null;
+
+        var pageVm = new PdfViewer.ViewModels.PageViewModel(1, 612, 792)
+        {
+            RenderRefused = (page, message) => { refusedPage = page; refusedMessage = message; }
+        };
+
+        await pageVm.LoadImageAsync(renderer, dpi: 300, rotation: 0);
+
+        Assert.Null(pageVm.RenderedImage);
+        Assert.False(pageVm.IsLoading);
+        Assert.NotEmpty(pageVm.RenderErrorMessage);
+        Assert.Equal(1, refusedPage);
+        Assert.Contains("security limit", refusedMessage);
     }
 
     [Fact]

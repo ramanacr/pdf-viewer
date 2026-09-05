@@ -61,6 +61,13 @@ public partial class PrintPreviewViewModel : ObservableObject
 
     public ObservableCollection<PrinterItem> Printers { get; } = new();
 
+    /// <summary>
+    /// Why the preview could not be produced, or empty when it rendered fine.
+    /// Bindable so the preview pane shows the reason instead of an empty rectangle.
+    /// </summary>
+    [ObservableProperty]
+    private string _previewErrorMessage = string.Empty;
+
     [ObservableProperty]
     private PrinterItem? _selectedPrinter;
 
@@ -251,6 +258,7 @@ public partial class PrintPreviewViewModel : ObservableObject
                     if (bitmap != null)
                     {
                         PreviewImage = bitmap;
+                        PreviewErrorMessage = string.Empty;
                     }
 
                     // Always clear the spinner for the current request, even when the render
@@ -260,11 +268,25 @@ public partial class PrintPreviewViewModel : ObservableObject
                 });
             }
             catch (OperationCanceledException) { }
-            catch (Exception)
+            catch (PdfEngine.Exceptions.PdfSecurityPolicyException ex)
+            {
+                // Surface policy refusals in the preview rather than showing an empty pane
+                // that is indistinguishable from a broken preview.
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (token.IsCancellationRequested) return;
+                    PreviewImage = null;
+                    PreviewErrorMessage = ex.Message;
+                    IsPreviewLoading = false;
+                });
+            }
+            catch (Exception ex)
             {
                 await Application.Current.Dispatcher.InvokeAsync(() =>
                 {
-                    if (!token.IsCancellationRequested) IsPreviewLoading = false;
+                    if (token.IsCancellationRequested) return;
+                    PreviewErrorMessage = $"Preview failed: {ex.Message}";
+                    IsPreviewLoading = false;
                 });
             }
         }, token);

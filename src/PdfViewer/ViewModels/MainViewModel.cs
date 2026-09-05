@@ -197,6 +197,29 @@ public partial class MainViewModel : ObservableObject
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
     public Action<string, string, MessageBoxButton, MessageBoxImage>? ShowMessageBoxAction { get; set; }
 
+    // Set while a security-policy refusal has already been reported for the current
+    // document, so a 500-page document cannot produce 500 dialogs.
+    private bool _renderRefusalReported;
+
+    /// <summary>
+    /// Reports a render refused by the security policy. The status bar always reflects it;
+    /// the modal alert is shown only once per opened document.
+    /// </summary>
+    private void OnRenderRefusedByPolicy(int pageNumber, string message)
+    {
+        StatusText = $"Page {pageNumber} could not be displayed: {message}";
+
+        if (_renderRefusalReported) return;
+        _renderRefusalReported = true;
+
+        ShowAlert(
+            $"Page {pageNumber} cannot be displayed at the current zoom level.\n\n{message}\n\n" +
+            "Reduce the zoom level to view this page.",
+            "Render Blocked by Security Policy",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
     private void ShowAlert(string message, string caption, MessageBoxButton button, MessageBoxImage image)
     {
         if (ShowMessageBoxAction != null)
@@ -374,12 +397,16 @@ public partial class MainViewModel : ObservableObject
                 AllAnnotations.Add(a);
             }
 
+            // A refusal reported for a previous document must not suppress the alert for this one.
+            _renderRefusalReported = false;
+
             // Build Page and Thumbnail ViewModels
             for (int i = 1; i <= meta.PageCount; i++)
             {
                 var (w, h) = _docService.GetPageDimensions(i);
                 var pageVm = new PageViewModel(i, w, h);
                 pageVm.UpdateScale(ZoomLevel);
+                pageVm.RenderRefused = OnRenderRefusedByPolicy;
 
                 // Attach annotations on this page
                 foreach (var a in existingAnnots)

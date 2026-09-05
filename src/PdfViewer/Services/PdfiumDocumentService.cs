@@ -296,17 +296,11 @@ public class PdfiumDocumentService : IPdfDocumentService
             // Bound the raster before allocating: a hostile MediaBox combined with a high
             // zoom DPI can otherwise demand an arbitrarily large native bitmap.
             //
-            // In the VIEWER path we clamp rather than throw. Refusing outright would make
-            // legitimately large-format documents (E-size engineering drawings, posters)
-            // undisplayable at high zoom, which is a worse outcome than showing them at a
-            // reduced resolution. The memory bound - the actual security goal - is identical.
-            int ceiling = _securityPolicy.MaxRenderDimensionPixels;
-            if (widthPx > ceiling || heightPx > ceiling)
-            {
-                double clampScale = Math.Min((double)ceiling / widthPx, (double)ceiling / heightPx);
-                widthPx = Math.Max(1, (int)(widthPx * clampScale));
-                heightPx = Math.Max(1, (int)(heightPx * clampScale));
-            }
+            // This REFUSES rather than silently degrading. A render that would breach the
+            // policy is reported to the user (see PageViewModel.RenderErrorMessage and the
+            // print preview error banner) instead of quietly returning a lower-resolution
+            // image that looks like the real page.
+            _securityPolicy.EnsureRenderDimensionsAllowed(widthPx, heightPx);
 
             using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
             if (page == null || page.IsInvalid) return null;
