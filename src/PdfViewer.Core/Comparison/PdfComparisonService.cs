@@ -33,6 +33,7 @@ public sealed class PdfComparisonService : IPdfComparisonService
         var visualDiffPages = new List<int>();
         int maxPages = Math.Max(documentA.PageCount, documentB.PageCount);
         double totalSimilarity = 0.0;
+        int comparedPages = 0;
 
         for (int p = 1; p <= maxPages; p++)
         {
@@ -65,6 +66,7 @@ public sealed class PdfComparisonService : IPdfComparisonService
 
                 double sim = ComputePixelSimilarity(pageA, pageB);
                 totalSimilarity += sim;
+                comparedPages++;
                 if (sim < 0.999)
                 {
                     visualDiffPages.Add(p);
@@ -76,7 +78,11 @@ public sealed class PdfComparisonService : IPdfComparisonService
             }
         }
 
-        double avgSimilarity = maxPages > 0 ? totalSimilarity / maxPages : 1.0;
+        // Average over the pages actually COMPARED, not over the longer document's page
+        // count. Only common pages contribute to totalSimilarity, so dividing by maxPages
+        // reported a 10-page document that matches the first 10 pages of a 100-page one as
+        // 10% similar rather than "10 identical pages, 90 added".
+        double avgSimilarity = comparedPages > 0 ? totalSimilarity / comparedPages : 1.0;
 
         return new DocumentComparisonResult
         {
@@ -108,8 +114,18 @@ public sealed class PdfComparisonService : IPdfComparisonService
         int height = Math.Min(pageA.HeightPixels, pageB.HeightPixels);
         int stride = width * 4;
         int byteLength = stride * height;
-        var memoryOwner = new Rendering.ManagedMemoryOwner(byteLength);
 
+        // A zero-size page would otherwise hit ManagedMemoryOwner's length <= 0 guard and
+        // throw ArgumentOutOfRangeException out of a comparison API.
+        if (byteLength <= 0)
+        {
+            return new RenderedPage(pageNumber, 0, 0, 0, dpi, PageRotation.Rotate0,
+                new Rendering.ManagedMemoryOwner(1));
+        }
+
+        var memoryOwner = new Rendering.ManagedMemoryOwner(byteLength);
+        try
+        {
         var spanA = pageA.Pixels.Span;
         var spanB = pageB.Pixels.Span;
         var spanDiff = memoryOwner.Memory.Span;
@@ -151,6 +167,14 @@ public sealed class PdfComparisonService : IPdfComparisonService
         }
 
         return new RenderedPage(pageNumber, width, height, stride, dpi, PageRotation.Rotate0, memoryOwner);
+        }
+        catch
+        {
+            // memoryOwner is not owned by anything until the RenderedPage is constructed,
+            // so any throw in the pixel loop above would otherwise leak it.
+            memoryOwner.Dispose();
+            throw;
+        }
     }
 
     private static double ComputePixelSimilarity(RenderedPage a, RenderedPage b)

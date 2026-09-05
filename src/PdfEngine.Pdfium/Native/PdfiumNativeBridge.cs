@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using PdfEngine.Exceptions;
 
 namespace PdfEngine.Pdfium.Native;
 
@@ -9,8 +10,16 @@ namespace PdfEngine.Pdfium.Native;
 public static class PdfiumNativeBridge
 {
     private const string DllName = "pdfium";
-    private static readonly object _initLock = new();
     private static bool _isInitialized;
+
+    /// <summary>
+    /// Process-wide serialization lock for ALL PDFium calls.
+    /// PDFium is not thread-safe: its font mapper/cache, codec modules and render-device
+    /// pool are process-global state, so locking per-document is NOT sufficient — two
+    /// documents rendering concurrently still corrupt each other. Every native entry
+    /// point must be called while holding this lock.
+    /// </summary>
+    public static readonly object PdfiumLock = new();
 
     static PdfiumNativeBridge()
     {
@@ -49,30 +58,42 @@ public static class PdfiumNativeBridge
 
     public static void EnsureInitialized()
     {
-        lock (_initLock)
+        // Uses the same global lock as every native call, so init can never interleave
+        // with a call — and so the check-then-set of PDFIUM_INITIALIZED is atomic with
+        // respect to the second bridge copy in PdfViewer.Services, which locks on this
+        // very same object.
+        lock (PdfiumLock)
         {
-            if (!_isInitialized)
+            if (_isInitialized) return;
+
+            if (AppDomain.CurrentDomain.GetData("PDFIUM_INITIALIZED") == null)
             {
-                if (AppDomain.CurrentDomain.GetData("PDFIUM_INITIALIZED") == null)
+                try
                 {
-                    try
-                    {
-                        var config = new FPDF_LIBRARY_CONFIG { version = 2 };
-                        FPDF_InitLibraryWithConfig(ref config);
-                        AppDomain.CurrentDomain.ProcessExit += (s, e) =>
-                        {
-                            try { FPDF_DestroyLibrary(); } catch { }
-                        };
-                        AppDomain.CurrentDomain.SetData("PDFIUM_INITIALIZED", true);
-                    }
-                    catch
-                    {
-                        // Handled if previously initialized
-                    }
+                    var config = new FPDF_LIBRARY_CONFIG { version = 2 };
+                    FPDF_InitLibraryWithConfig(ref config);
                 }
-                _isInitialized = true;
+                catch (Exception ex)
+                {
+                    // Do NOT latch _isInitialized on failure: swallowing this and marking
+                    // the library ready makes every later call run against an
+                    // uninitialized PDFium, surfacing as an unrelated error much later.
+                    throw new PdfException(
+                        "Failed to initialize the native PDFium library. Ensure pdfium.dll is deployed " +
+                        "next to the application or under runtimes/win-x64/native/.", ex);
+                }
+
+                AppDomain.CurrentDomain.SetData("PDFIUM_INITIALIZED", true);
             }
+
+            _isInitialized = true;
         }
+
+        // Deliberately NOT calling FPDF_DestroyLibrary on ProcessExit. That handler runs
+        // on an arbitrary thread with a ~2s budget without suspending other threads, so it
+        // can tear down PDFium while a render is still in flight, and it races SafeHandle
+        // finalizers that call FPDF_CloseDocument. Leaking the library at process exit is
+        // correct for a single-process host: the OS reclaims everything.
     }
 
     #region Constants
@@ -131,6 +152,14 @@ public static class PdfiumNativeBridge
     // Annotation color types
     public const int FPDFANNOT_COLORTYPE_Color = 0;
     public const int FPDFANNOT_COLORTYPE_InteriorColor = 1;
+
+    // Page object types (FPDFPageObj_GetType)
+    public const int FPDF_PAGEOBJ_UNKNOWN = 0;
+    public const int FPDF_PAGEOBJ_TEXT = 1;
+    public const int FPDF_PAGEOBJ_PATH = 2;
+    public const int FPDF_PAGEOBJ_IMAGE = 3;
+    public const int FPDF_PAGEOBJ_SHADING = 4;
+    public const int FPDF_PAGEOBJ_FORM = 5;
 
     #endregion
 
@@ -222,6 +251,26 @@ public static class PdfiumNativeBridge
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFPage_GenerateContent(SafePageHandle page);
+
+    // Page objects — required to genuinely remove content (true redaction), rather than
+    // merely painting an opaque box over text that remains extractable underneath.
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFPage_CountObjects(SafePageHandle page);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDFPage_GetObject(SafePageHandle page, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFPage_RemoveObject(SafePageHandle page, IntPtr page_object);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void FPDFPageObj_Destroy(IntPtr page_object);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFPageObj_GetBounds(IntPtr page_object, out float left, out float bottom, out float right, out float top);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFPageObj_GetType(IntPtr page_object);
 
     // Page Import (PPO)
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

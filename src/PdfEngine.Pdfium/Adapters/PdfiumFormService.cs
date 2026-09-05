@@ -41,10 +41,13 @@ public sealed class PdfiumFormService : IPdfFormService
                 int subtype = PdfiumNativeBridge.FPDFAnnot_GetSubtype(annot);
                 if (subtype == PdfiumNativeBridge.FPDF_ANNOT_WIDGET)
                 {
+                    // Derive the real field type from the widget's /FT entry instead of
+                    // hardcoding TextField, which made every checkbox, radio, combo and
+                    // signature field surface as a text box and drove the wrong UI editor.
                     var field = new FormFieldModel
                     {
                         PageNumber = pageNumber,
-                        Type = FormFieldType.TextField
+                        Type = ReadFieldType(annot)
                     };
 
                     if (PdfiumNativeBridge.FPDFAnnot_GetRect(annot, out var rect) != 0 && pageW > 0 && pageH > 0)
@@ -87,8 +90,13 @@ public sealed class PdfiumFormService : IPdfFormService
         string value,
         CancellationToken cancellationToken = default)
     {
-        // Field setting will be enhanced with form fill environment in Phase 3
-        return ValueTask.CompletedTask;
+        // Writing field values requires a PDFium form-fill environment
+        // (FPDFDOC_InitFormFillEnvironment), which this adapter does not create. Throw
+        // rather than returning CompletedTask: silently discarding the value made callers
+        // - notably ImportFormDataXfdfAsync - report a successful import that wrote nothing.
+        throw new NotSupportedException(
+            "Setting form field values is not supported by the PDFium adapter yet: it requires a " +
+            "form-fill environment. Field values can currently be read and exported, not written.");
     }
 
     public async ValueTask ExportFormDataXfdfAsync(
@@ -146,7 +154,37 @@ public sealed class PdfiumFormService : IPdfFormService
         IPdfDocument document,
         CancellationToken cancellationToken = default)
     {
-        return ValueTask.CompletedTask;
+        // Same limitation as SetFieldValueAsync - resetting requires a form-fill
+        // environment. Reporting success while doing nothing is worse than failing.
+        throw new NotSupportedException(
+            "Resetting form fields is not supported by the PDFium adapter yet: it requires a " +
+            "form-fill environment.");
+    }
+
+    /// <summary>
+    /// Reads the widget's field type from its /FT entry ("Tx", "Btn", "Ch", "Sig").
+    /// Note /FT may be inherited from a /Parent field, in which case it is absent on the
+    /// widget itself and we fall back to Unknown.
+    /// </summary>
+    private static FormFieldType ReadFieldType(SafeAnnotHandle annot)
+    {
+        uint len = PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "FT", null, 0);
+        if (len == 0) return FormFieldType.Unknown;
+
+        byte[] buf = new byte[len];
+        PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "FT", buf, len);
+        string ft = PdfiumNativeBridge.Utf16BytesToString(buf, (int)len).Trim();
+
+        return ft switch
+        {
+            "Tx" => FormFieldType.TextField,
+            "Ch" => FormFieldType.ComboBox,
+            "Sig" => FormFieldType.Signature,
+            // /Btn covers push buttons, checkboxes and radio buttons; distinguishing them
+            // needs the /Ff flag bits, which are not exposed as a string value.
+            "Btn" => FormFieldType.CheckBox,
+            _ => FormFieldType.Unknown
+        };
     }
 
     public ValueTask FlattenFormFieldsAsync(
@@ -166,9 +204,23 @@ public sealed class PdfiumFormService : IPdfFormService
             IntPtr unmanagedBuf = System.Runtime.InteropServices.Marshal.AllocHGlobal(fileBytes.Length);
             System.Runtime.InteropServices.Marshal.Copy(fileBytes, 0, unmanagedBuf, fileBytes.Length);
 
-            using var editDoc = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, fileBytes.Length, null);
+            // editDoc lives INSIDE the try so FPDF_CloseDocument runs before the finally
+            // frees unmanagedBuf: FPDF_LoadMemDocument parses lazily out of that buffer for
+            // the document's whole lifetime, so freeing first corrupts the heap on close.
+            SafeDocumentHandle? editDoc = null;
             try
             {
+                editDoc = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, fileBytes.Length, null);
+                // Unlike its sibling services this had no validity check at all, so a
+                // truncated/replaced/encrypted file meant FPDF_LoadPage and FPDF_SaveAsCopy
+                // ran against a null document and the real PDFium error was lost.
+                if (editDoc == null || editDoc.IsInvalid)
+                {
+                    throw new PdfEngine.Exceptions.PdfSaveException(
+                        $"Failed to open working copy for form flattening (PDFium error {PdfiumNativeBridge.FPDF_GetLastError()}).",
+                        targetPath);
+                }
+
                 for (int p = 0; p < pdfiumDoc.PageCount; p++)
                 {
                     using var pageHandle = PdfiumNativeBridge.FPDF_LoadPage(editDoc, p);
@@ -179,19 +231,34 @@ public sealed class PdfiumFormService : IPdfFormService
                 }
 
                 using var outStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                Exception? writeFailure = null;
                 var fileWrite = new FPDF_FILEWRITE
                 {
                     version = 1,
                     WriteBlock = (pThis, pData, size) =>
                     {
-                        byte[] buffer = new byte[size];
-                        System.Runtime.InteropServices.Marshal.Copy(pData, buffer, 0, (int)size);
-                        outStream.Write(buffer, 0, (int)size);
-                        return 1;
+                        // Never unwind a managed exception through PDFium's C++ frames.
+                        try
+                        {
+                            byte[] buffer = new byte[size];
+                            System.Runtime.InteropServices.Marshal.Copy(pData, buffer, 0, (int)size);
+                            outStream.Write(buffer, 0, (int)size);
+                            return 1;
+                        }
+                        catch (Exception ex)
+                        {
+                            writeFailure ??= ex;
+                            return 0;
+                        }
                     }
                 };
 
                 int res = PdfiumNativeBridge.FPDF_SaveAsCopy(editDoc, ref fileWrite, PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
+                GC.KeepAlive(fileWrite);
+
+                if (writeFailure != null)
+                    throw new PdfEngine.Exceptions.PdfSaveException("Failed writing flattened document to disk.", writeFailure, targetPath);
+
                 if (res == 0)
                 {
                     throw new PdfEngine.Exceptions.PdfSaveException("Failed to flatten form fields.", targetPath);
@@ -199,6 +266,7 @@ public sealed class PdfiumFormService : IPdfFormService
             }
             finally
             {
+                editDoc?.Dispose();
                 System.Runtime.InteropServices.Marshal.FreeHGlobal(unmanagedBuf);
             }
         }

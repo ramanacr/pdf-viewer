@@ -65,16 +65,24 @@ public sealed class InsertBlankPageCommand : IDocumentCommand
         _height = height;
     }
 
+    // The index the page was ACTUALLY inserted at. InsertBlankPageAsync clamps its argument,
+    // so undoing with the raw requested index deleted the wrong page (or threw) whenever the
+    // caller passed an out-of-range index - e.g. insert at 50 in a 10-page document appended
+    // page 11, but undo tried to delete page 51.
+    private int _effectiveIndex;
+
     public async ValueTask ExecuteAsync(DocumentSession session, CancellationToken cancellationToken = default)
     {
         if (session.Document == null) return;
-        await _organizer.InsertBlankPageAsync(session.Document, _targetIndex, _width, _height, cancellationToken);
+
+        _effectiveIndex = Math.Clamp(_targetIndex, 0, session.Document.PageCount);
+        await _organizer.InsertBlankPageAsync(session.Document, _effectiveIndex, _width, _height, cancellationToken);
     }
 
     public async ValueTask UndoAsync(DocumentSession session, CancellationToken cancellationToken = default)
     {
         if (session.Document == null) return;
         // Page number is 1-indexed
-        await _organizer.DeletePageAsync(session.Document, _targetIndex + 1, cancellationToken);
+        await _organizer.DeletePageAsync(session.Document, _effectiveIndex + 1, cancellationToken);
     }
 }

@@ -207,9 +207,17 @@ public partial class PrintPreviewViewModel : ObservableObject
 
     public void UpdatePreview()
     {
-        _previewCts?.Cancel();
+        // Dispose the superseded CTS as well as cancelling it - the old one was simply
+        // dropped, leaking a CancellationTokenSource on every page flip.
+        var previousCts = _previewCts;
         _previewCts = new CancellationTokenSource();
         var token = _previewCts.Token;
+        try
+        {
+            previousCts?.Cancel();
+            previousCts?.Dispose();
+        }
+        catch (ObjectDisposedException) { }
 
         IsPreviewLoading = true;
         int pageToRender = PreviewPageNumber;
@@ -233,19 +241,31 @@ public partial class PrintPreviewViewModel : ObservableObject
                     bitmap = ConvertToGrayscale(bitmap);
                 }
 
-                if (!token.IsCancellationRequested && bitmap != null)
+                await Application.Current.Dispatcher.InvokeAsync(() =>
                 {
-                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    // Re-check INSIDE the dispatcher callback. Checking only before the
+                    // marshal let a slow render for page 5 post after a newer render for
+                    // page 6 had already landed, leaving the wrong page on screen.
+                    if (token.IsCancellationRequested) return;
+
+                    if (bitmap != null)
                     {
                         PreviewImage = bitmap;
-                        IsPreviewLoading = false;
-                    });
-                }
+                    }
+
+                    // Always clear the spinner for the current request, even when the render
+                    // returned null (page out of range, document closed underneath, bitmap
+                    // allocation failure) - previously the overlay stuck forever.
+                    IsPreviewLoading = false;
+                });
             }
             catch (OperationCanceledException) { }
             catch (Exception)
             {
-                await Application.Current.Dispatcher.InvokeAsync(() => IsPreviewLoading = false);
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (!token.IsCancellationRequested) IsPreviewLoading = false;
+                });
             }
         }, token);
     }

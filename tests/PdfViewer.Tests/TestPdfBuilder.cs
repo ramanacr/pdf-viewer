@@ -11,7 +11,14 @@ namespace PdfViewer.Tests;
 /// </summary>
 public static class TestPdfBuilder
 {
-    public static string CreateSimplePdf(string filePath, int pageCount = 3, string keywordPrefix = "SearchableToken")
+    /// <summary>
+    /// Creates a document whose pages carry an intrinsic /Rotate entry, for verifying that
+    /// rendering and text-coordinate normalization handle page rotation correctly.
+    /// </summary>
+    public static string CreateRotatedPdf(string filePath, int rotateDegrees, int pageCount = 1)
+        => CreateSimplePdf(filePath, pageCount, "RotatedToken", rotateDegrees);
+
+    public static string CreateSimplePdf(string filePath, int pageCount = 3, string keywordPrefix = "SearchableToken", int rotateDegrees = 0)
     {
         var dir = Path.GetDirectoryName(filePath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -75,7 +82,8 @@ public static class TestPdfBuilder
         // Write each Page and its Content stream
         for (int i = 0; i < pageCount; i++)
         {
-            WriteObj(pageObjs[i], $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] /Contents {contentObjs[i]} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
+            string rotateEntry = rotateDegrees != 0 ? $"/Rotate {rotateDegrees} " : string.Empty;
+            WriteObj(pageObjs[i], $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] {rotateEntry}/Contents {contentObjs[i]} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
 
             string streamText = $"BT\n/F1 16 Tf\n50 700 Td\n(This is page number {i + 1} of the test document. Keyword: {keywordPrefix}_{i + 1}) Tj\nET";
             byte[] streamBytes = Encoding.ASCII.GetBytes(streamText);

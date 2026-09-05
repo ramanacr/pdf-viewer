@@ -86,9 +86,14 @@ public sealed class PdfiumTextService : IPdfTextService
                 cancellationToken.ThrowIfCancellationRequested();
 
                 uint charCode = PdfiumNativeBridge.FPDFText_GetUnicode(textPage, i);
-                char ch = (char)charCode;
 
-                if (char.IsWhiteSpace(ch) || char.IsControl(ch))
+                // FPDFText_GetUnicode returns a full UTF-32 codepoint. Narrowing it to a
+                // single char silently mangled anything outside the BMP (emoji, CJK Ext-B),
+                // corrupting both the extracted text and the word grouping.
+                string chars = char.ConvertFromUtf32(
+                    charCode is > 0x10FFFF or (>= 0xD800 and <= 0xDFFF) ? 0xFFFD : (int)charCode);
+
+                if (string.IsNullOrEmpty(chars) || char.IsWhiteSpace(chars[0]) || char.IsControl(chars[0]))
                 {
                     FlushWord();
                     continue;
@@ -101,7 +106,7 @@ public sealed class PdfiumTextService : IPdfTextService
                         wordStartIndex = i;
                     }
 
-                    wordBuilder.Append(ch);
+                    wordBuilder.Append(chars);
                     wordMinL = Math.Min(wordMinL, Math.Min(cl, cr));
                     wordMaxR = Math.Max(wordMaxR, Math.Max(cl, cr));
                     wordMinB = Math.Min(wordMinB, Math.Min(cb, ct));

@@ -140,47 +140,71 @@ public sealed class PdfiumPageOrganizerService : IPdfPageOrganizerService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var mergedDoc = PdfiumNativeBridge.FPDF_CreateNewDocument();
-        if (mergedDoc == null || mergedDoc.IsInvalid)
-            throw new PdfException("Failed to create merged destination PDF document.");
-
-        int currentInsertIndex = 0;
-        int totalFiles = sourceFiles.Count;
-
-        for (int i = 0; i < totalFiles; i++)
+        // Every native call below is serialized on the global PDFium lock. File I/O stays
+        // outside it so we never block other renders while reading from disk (and so we
+        // never await while holding a lock).
+        SafeDocumentHandle? mergedDoc;
+        lock (PdfiumNativeBridge.PdfiumLock)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            string srcFile = sourceFiles[i];
-
-            if (!File.Exists(srcFile))
-                throw new FileNotFoundException($"Source PDF file not found: {srcFile}", srcFile);
-
-            byte[] srcBytes = await File.ReadAllBytesAsync(srcFile, cancellationToken);
-            IntPtr unmanagedBuf = Marshal.AllocHGlobal(srcBytes.Length);
-            Marshal.Copy(srcBytes, 0, unmanagedBuf, srcBytes.Length);
-
-            try
-            {
-                using var srcDoc = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, srcBytes.Length, null);
-                if (srcDoc == null || srcDoc.IsInvalid)
-                    throw new PdfCorruptDocumentException($"Failed to load source document for merge: {srcFile}", srcFile);
-
-                int srcPageCount = PdfiumNativeBridge.FPDF_GetPageCount(srcDoc);
-                int result = PdfiumNativeBridge.FPDF_ImportPages(mergedDoc, srcDoc, null, currentInsertIndex);
-                if (result == 0)
-                    throw new PdfException($"Failed to import pages from {srcFile}");
-
-                currentInsertIndex += srcPageCount;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(unmanagedBuf);
-            }
-
-            progress?.Report((double)(i + 1) / totalFiles);
+            mergedDoc = PdfiumNativeBridge.FPDF_CreateNewDocument();
+            if (mergedDoc == null || mergedDoc.IsInvalid)
+                throw new PdfException("Failed to create merged destination PDF document.");
         }
 
-        SaveDocToDisk(mergedDoc, targetPath);
+        try
+        {
+            int currentInsertIndex = 0;
+            int totalFiles = sourceFiles.Count;
+
+            for (int i = 0; i < totalFiles; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string srcFile = sourceFiles[i];
+
+                if (!File.Exists(srcFile))
+                    throw new FileNotFoundException($"Source PDF file not found: {srcFile}", srcFile);
+
+                byte[] srcBytes = await File.ReadAllBytesAsync(srcFile, cancellationToken);
+
+                lock (PdfiumNativeBridge.PdfiumLock)
+                {
+                    IntPtr unmanagedBuf = Marshal.AllocHGlobal(srcBytes.Length);
+                    Marshal.Copy(srcBytes, 0, unmanagedBuf, srcBytes.Length);
+
+                    SafeDocumentHandle? srcDoc = null;
+                    try
+                    {
+                        srcDoc = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, srcBytes.Length, null);
+                        if (srcDoc == null || srcDoc.IsInvalid)
+                            throw new PdfCorruptDocumentException($"Failed to load source document for merge: {srcFile}", srcFile);
+
+                        int srcPageCount = PdfiumNativeBridge.FPDF_GetPageCount(srcDoc);
+                        int result = PdfiumNativeBridge.FPDF_ImportPages(mergedDoc, srcDoc, null, currentInsertIndex);
+                        if (result == 0)
+                            throw new PdfException($"Failed to import pages from {srcFile}");
+
+                        currentInsertIndex += srcPageCount;
+                    }
+                    finally
+                    {
+                        // Close the document BEFORE freeing the buffer it parses out of.
+                        srcDoc?.Dispose();
+                        Marshal.FreeHGlobal(unmanagedBuf);
+                    }
+                }
+
+                progress?.Report((double)(i + 1) / totalFiles);
+            }
+
+            SaveDocToDisk(mergedDoc, targetPath);
+        }
+        finally
+        {
+            lock (PdfiumNativeBridge.PdfiumLock)
+            {
+                mergedDoc.Dispose();
+            }
+        }
     }
 
     public async ValueTask SplitDocumentAsync(
@@ -223,23 +247,42 @@ public sealed class PdfiumPageOrganizerService : IPdfPageOrganizerService
 
     private static void SaveDocToDisk(SafeDocumentHandle docHandle, string targetPath)
     {
-        using var outStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        var fileWrite = new FPDF_FILEWRITE
+        // Serialized like every other native entry point; this one previously took no lock.
+        lock (PdfiumNativeBridge.PdfiumLock)
         {
-            version = 1,
-            WriteBlock = (pThis, pData, size) =>
+            using var outStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            Exception? writeFailure = null;
+            var fileWrite = new FPDF_FILEWRITE
             {
-                byte[] buffer = new byte[size];
-                Marshal.Copy(pData, buffer, 0, (int)size);
-                outStream.Write(buffer, 0, (int)size);
-                return 1;
-            }
-        };
+                version = 1,
+                WriteBlock = (pThis, pData, size) =>
+                {
+                    // Never unwind a managed exception through PDFium's C++ frames.
+                    try
+                    {
+                        byte[] buffer = new byte[size];
+                        Marshal.Copy(pData, buffer, 0, (int)size);
+                        outStream.Write(buffer, 0, (int)size);
+                        return 1;
+                    }
+                    catch (Exception ex)
+                    {
+                        writeFailure ??= ex;
+                        return 0;
+                    }
+                }
+            };
 
-        int saveResult = PdfiumNativeBridge.FPDF_SaveAsCopy(docHandle, ref fileWrite, PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
-        if (saveResult == 0)
-        {
-            throw new PdfSaveException("Failed to write PDF file to disk.", targetPath);
+            int saveResult = PdfiumNativeBridge.FPDF_SaveAsCopy(docHandle, ref fileWrite, PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
+            GC.KeepAlive(fileWrite);
+
+            if (writeFailure != null)
+                throw new PdfSaveException("Failed writing PDF file to disk.", writeFailure, targetPath);
+
+            if (saveResult == 0)
+            {
+                throw new PdfSaveException("Failed to write PDF file to disk.", targetPath);
+            }
         }
     }
 }

@@ -22,7 +22,10 @@ namespace PdfViewer.Services;
 public class PdfiumDocumentService : IPdfDocumentService
 {
     private SafeDocumentHandle? _document;
-    private readonly object _docLock = new();
+    // The process-wide PDFium lock, not a private one. PDFium's font/codec/render-device
+    // state is global, so serializing only this service still raced the PdfEngine.Pdfium
+    // adapters running against the same native library.
+    private readonly object _docLock = PdfiumNativeBridge.PdfiumLock;
     private string _currentFilePath = string.Empty;
     private byte[]? _fileBytes;
     private IntPtr _nativeBuffer = IntPtr.Zero;
@@ -30,7 +33,24 @@ public class PdfiumDocumentService : IPdfDocumentService
 
     public bool IsDocumentLoaded => _document != null && !_document.IsInvalid;
     public string CurrentFilePath => _currentFilePath;
-    public int PageCount => IsDocumentLoaded ? PdfiumNativeBridge.FPDF_GetPageCount(_document!) : 0;
+    /// <summary>
+    /// Page count. Takes the document lock like every other member: this was the one public
+    /// member that did not, so a UI-thread read could run FPDF_GetPageCount concurrently
+    /// with a background FPDF_RenderPageBitmap, and could still be inside the native call
+    /// when CloseDocument freed the document's backing buffer.
+    /// </summary>
+    public int PageCount
+    {
+        get
+        {
+            lock (_docLock)
+            {
+                return (_document != null && !_document.IsInvalid)
+                    ? PdfiumNativeBridge.FPDF_GetPageCount(_document)
+                    : 0;
+            }
+        }
+    }
 
     public PdfiumDocumentService()
     {
@@ -411,8 +431,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                     if (textPage == null || textPage.IsInvalid) continue;
 
                     if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, p - 1, out var size) == 0) continue;
-                    double pageWidth = size.width > 0 ? size.width : 612;
-                    double pageHeight = size.height > 0 ? size.height : 792;
+                    GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
 
                     using var searchHandle = PdfiumNativeBridge.FPDFText_FindStart(textPage, findBytes, flags, 0);
                     if (searchHandle == null || searchHandle.IsInvalid) continue;
@@ -503,6 +522,30 @@ public class PdfiumDocumentService : IPdfDocumentService
     }
 
     /// <summary>
+    /// Returns the page dimensions in UNROTATED page space.
+    /// FPDF_GetPageSizeByIndexF reports the DISPLAY size - PDFium swaps width and height for
+    /// pages with /Rotate 90 or 270 - but FPDFText_GetCharBox and FPDFAnnot_GetRect report
+    /// boxes in unrotated page space. Normalizing those boxes by the swapped dimensions put
+    /// every search highlight and selection rectangle in the wrong place on rotated pages
+    /// (commonly clamped into the top-left corner), even though the rendered bitmap itself
+    /// was correct.
+    /// </summary>
+    private static void GetUnrotatedPageSize(SafePageHandle page, FS_SIZEF displaySize, out double width, out double height)
+    {
+        double w = displaySize.width > 0 ? displaySize.width : 612;
+        double h = displaySize.height > 0 ? displaySize.height : 792;
+
+        int rotation = PdfiumNativeBridge.FPDFPage_GetRotation(page);
+        if (rotation == 1 || rotation == 3)
+        {
+            (w, h) = (h, w);
+        }
+
+        width = w;
+        height = h;
+    }
+
+    /// <summary>
     /// Extracts all selectable text segments and their normalized bounding boxes from a given page.
     /// </summary>
     public List<PageTextSegment> ExtractPageTextSegments(int pageNumber)
@@ -520,8 +563,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             if (textPage == null || textPage.IsInvalid) return list;
 
             if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var size) == 0) return list;
-            double pageWidth = size.width > 0 ? size.width : 612;
-            double pageHeight = size.height > 0 ? size.height : 792;
+            GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
 
             int totalChars = PdfiumNativeBridge.FPDFText_CountChars(textPage);
             if (totalChars <= 0) return list;
@@ -718,8 +760,8 @@ public class PdfiumDocumentService : IPdfDocumentService
                 if (page == null || page.IsInvalid) continue;
 
                 if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, p - 1, out var size) == 0) continue;
-                double pageWidth = size.width > 0 ? size.width : 612;
-                double pageHeight = size.height > 0 ? size.height : 792;
+                // FPDFAnnot_GetRect is in unrotated page space, same as char boxes.
+                GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
 
                 int annotCount = PdfiumNativeBridge.FPDFPage_GetAnnotCount(page);
                 for (int i = 0; i < annotCount; i++)
@@ -867,7 +909,25 @@ public class PdfiumDocumentService : IPdfDocumentService
 
             if (mode == AnnotationSaveMode.ExportXfdf)
             {
-                ExportAnnotationsToXfdf(targetPath, annotations);
+                // Gather page dimensions so the export can emit real PDF points.
+                var pageSizes = new Dictionary<int, (double Width, double Height)>();
+                lock (_docLock)
+                {
+                    if (_document != null && !_document.IsInvalid)
+                    {
+                        foreach (int pageNumber in annotations.Select(a => a.PageNumber).Distinct())
+                        {
+                            using var pg = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
+                            if (pg == null || pg.IsInvalid) continue;
+                            if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var sz) == 0) continue;
+
+                            GetUnrotatedPageSize(pg, sz, out double w, out double h);
+                            pageSizes[pageNumber] = (w, h);
+                        }
+                    }
+                }
+
+                ExportAnnotationsToXfdf(targetPath, annotations, pageSizes);
                 return;
             }
 
@@ -969,19 +1029,38 @@ public class PdfiumDocumentService : IPdfDocumentService
                 if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
 
                 using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                Exception? writeFailure = null;
                 var writer = new FPDF_FILEWRITE
                 {
                     version = 1,
                     WriteBlock = (pThis, pData, size) =>
                     {
-                        byte[] buffer = new byte[size];
-                        Marshal.Copy(pData, buffer, 0, (int)size);
-                        fileStream.Write(buffer, 0, (int)size);
-                        return 1;
+                        // Never let a managed exception (disk full, share dropped, AV lock)
+                        // unwind through PDFium's C++ frames: it is built without exception
+                        // support, so destructors are skipped and native state is corrupted.
+                        try
+                        {
+                            byte[] buffer = new byte[size];
+                            Marshal.Copy(pData, buffer, 0, (int)size);
+                            fileStream.Write(buffer, 0, (int)size);
+                            return 1;
+                        }
+                        catch (Exception ex)
+                        {
+                            writeFailure ??= ex;
+                            return 0;
+                        }
                     }
                 };
 
                 int success = PdfiumNativeBridge.FPDF_SaveAsCopy(saveDoc, ref writer, PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
+                GC.KeepAlive(writer);
+
+                if (writeFailure != null)
+                {
+                    throw new IOException("Failed writing the saved PDF document to disk.", writeFailure);
+                }
+
                 if (success == 0)
                 {
                     throw new InvalidOperationException("PDFium failed to write the saved PDF document.");
@@ -1022,7 +1101,14 @@ public class PdfiumDocumentService : IPdfDocumentService
     /// <summary>
     /// Exports annotations to an XFDF XML comments file.
     /// </summary>
-    public static void ExportAnnotationsToXfdf(string xfdfPath, IEnumerable<AnnotationModel> annotations)
+    /// <param name="pageSizes">
+    /// Page number -> (width, height) in PDF points. Required to emit spec-conformant
+    /// coordinates; when a page is missing, US Letter is assumed.
+    /// </param>
+    public static void ExportAnnotationsToXfdf(
+        string xfdfPath,
+        IEnumerable<AnnotationModel> annotations,
+        IReadOnlyDictionary<int, (double Width, double Height)>? pageSizes = null)
     {
         string? outDir = Path.GetDirectoryName(xfdfPath);
         if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
@@ -1048,7 +1134,39 @@ public class PdfiumDocumentService : IPdfDocumentService
                 _ => "highlight"
             };
 
-            writer.WriteLine($"    <{annotTag} page=\"{a.PageNumber - 1}\" rect=\"{a.X:F4},{a.Y:F4},{a.X + a.Width:F4},{a.Y + a.Height:F4}\" color=\"{a.ColorHex}\" title=\"{System.Security.SecurityElement.Escape(a.Author)}\" date=\"D:{dateStr}\">");
+            // XFDF rect is PDF user-space points with a BOTTOM-LEFT origin
+            // (left,bottom,right,top). The annotation model stores normalized 0..1 top-down
+            // values; writing those raw collapsed every annotation into a sub-point speck at
+            // the page origin in Acrobat. The color attribute must also be #RRGGBB, whereas
+            // ColorHex is #AARRGGBB.
+            double pw = 612, ph = 792;
+            if (pageSizes != null && pageSizes.TryGetValue(a.PageNumber, out var ps))
+            {
+                pw = ps.Width;
+                ph = ps.Height;
+            }
+
+            double left = a.X * pw;
+            double right = (a.X + a.Width) * pw;
+            double bottom = (1.0 - a.Y - a.Height) * ph;
+            double top = (1.0 - a.Y) * ph;
+
+            string rect = string.Format(CultureInfo.InvariantCulture, "{0:F4},{1:F4},{2:F4},{3:F4}", left, bottom, right, top);
+            string colorAttr = ToXfdfRgbHex(a.ColorHex);
+
+            writer.Write($"    <{annotTag} page=\"{a.PageNumber - 1}\" rect=\"{rect}\" color=\"{colorAttr}\" title=\"{System.Security.SecurityElement.Escape(a.Author ?? string.Empty)}\" date=\"D:{dateStr}\"");
+
+            // Markup annotations are drawn from quadpoints; without coords most viewers
+            // render nothing for highlight/underline/strikeout.
+            if (a.Type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
+            {
+                string coords = string.Format(CultureInfo.InvariantCulture,
+                    "{0:F4},{1:F4},{2:F4},{3:F4},{4:F4},{5:F4},{6:F4},{7:F4}",
+                    left, top, right, top, left, bottom, right, bottom);
+                writer.Write($" coords=\"{coords}\"");
+            }
+
+            writer.WriteLine(">");
             if (!string.IsNullOrEmpty(a.Contents))
             {
                 writer.WriteLine($"      <contents>{System.Security.SecurityElement.Escape(a.Contents)}</contents>");
@@ -1058,6 +1176,18 @@ public class PdfiumDocumentService : IPdfDocumentService
 
         writer.WriteLine("  </annots>");
         writer.WriteLine("</xfdf>");
+    }
+
+    /// <summary>
+    /// Converts the app's #AARRGGBB (or #RRGGBB) color to the #RRGGBB form XFDF requires.
+    /// </summary>
+    private static string ToXfdfRgbHex(string? colorHex)
+    {
+        if (string.IsNullOrWhiteSpace(colorHex)) return "#000000";
+        string hex = colorHex.Trim().TrimStart('#');
+        if (hex.Length == 8) hex = hex.Substring(2);
+        if (hex.Length != 6) return "#000000";
+        return "#" + hex.ToUpperInvariant();
     }
 
     #endregion

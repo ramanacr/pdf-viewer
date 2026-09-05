@@ -21,7 +21,17 @@
       <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitHash" />
     </Exec>
     <PropertyGroup>
+      <!--
+        Exec with IgnoreExitCode captures whatever the command printed, so when git is not
+        on PATH (clean CI container, build from a source archive) ConsoleOutput is the shell's
+        error text - e.g. "'git' is not recognized...". Feeding that straight into Version
+        fails the whole build with CS7034/MC1005, so validate the shape before trusting it
+        and fall back to a a well-formed placeholder instead.
+      -->
+      <GitLatestTag Condition="'$(GitLatestTag)' != '' And !$([System.Text.RegularExpressions.Regex]::IsMatch($(GitLatestTag), '^[vV]?[0-9]+(\.[0-9]+){0,2}$'))"></GitLatestTag>
       <GitLatestTag Condition="'$(GitLatestTag)' == ''">v0.0.0</GitLatestTag>
+      <GitCommitHash Condition="'$(GitCommitHash)' != '' And !$([System.Text.RegularExpressions.Regex]::IsMatch($(GitCommitHash), '^[0-9a-fA-F]{7,40}$'))"></GitCommitHash>
+
       <GitReleaseVersion Condition="$(GitLatestTag.StartsWith('v')) Or $(GitLatestTag.StartsWith('V'))">$(GitLatestTag.Substring(1))</GitReleaseVersion>
       <GitReleaseVersion Condition="'$(GitReleaseVersion)' == ''">$(GitLatestTag)</GitReleaseVersion>
       <Version>$(GitReleaseVersion)</Version>

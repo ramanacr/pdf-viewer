@@ -28,6 +28,17 @@ public sealed class DefaultOcrEngine : IOcrEngine
     {
         if (document == null) throw new ArgumentNullException(nameof(document));
 
+        // The language argument was accepted and then ignored, so a caller passing an
+        // unsupported language got a result stamped with it at 0.98 confidence and no way to
+        // tell that nothing language-specific had happened.
+        if (!string.IsNullOrWhiteSpace(language) &&
+            !SupportedLanguages.Contains(language, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"Language '{language}' is not supported. Supported languages: {string.Join(", ", SupportedLanguages)}.",
+                nameof(language));
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
 
         var segments = await _textService.ExtractTextSegmentsAsync(document, pageNumber, cancellationToken);

@@ -40,27 +40,46 @@ public sealed class PdfiumSaveService : IPdfSaveService
         lock (pdfiumDoc.SyncLock)
         {
             using var outStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            Exception? writeFailure = null;
             var fileWrite = new FPDF_FILEWRITE
             {
                 version = 1,
                 WriteBlock = (pThis, pData, size) =>
                 {
-                    byte[] buffer = new byte[size];
-                    Marshal.Copy(pData, buffer, 0, (int)size);
-                    outStream.Write(buffer, 0, (int)size);
-                    return 1;
+                    // Never unwind a managed exception through PDFium's C++ frames.
+                    try
+                    {
+                        byte[] buffer = new byte[size];
+                        Marshal.Copy(pData, buffer, 0, (int)size);
+                        outStream.Write(buffer, 0, (int)size);
+                        return 1;
+                    }
+                    catch (Exception ex)
+                    {
+                        writeFailure ??= ex;
+                        return 0;
+                    }
                 }
             };
 
-            uint flags = options.Mode switch
-            {
-                SaveMode.Incremental => PdfiumNativeBridge.FPDF_INCREMENTAL,
-                _ => PdfiumNativeBridge.FPDF_NO_INCREMENTAL
-            };
+            // Always a full (non-incremental) write. FPDF_INCREMENTAL emits ONLY the
+            // incremental update section, which is meaningless against the brand-new empty
+            // file this method creates (FileMode.Create, and the target may not be the
+            // source) - the result was a PDF with no base body that no reader could open.
+            uint flags = PdfiumNativeBridge.FPDF_NO_INCREMENTAL;
 
-            if (options.RemoveUnusedObjects) flags |= PdfiumNativeBridge.FPDF_REMOVE_SECURITY;
+            // NOTE: RemoveUnusedObjects deliberately does NOT map to FPDF_REMOVE_SECURITY.
+            // That flag strips the document's encryption and permissions - nothing to do
+            // with unused objects - so saving a password-protected PDF silently produced an
+            // unencrypted copy. PDFium has no "remove unused objects" flag; a full rewrite
+            // already drops unreferenced objects.
 
             int result = PdfiumNativeBridge.FPDF_SaveAsCopy(pdfiumDoc.Handle, ref fileWrite, flags);
+            GC.KeepAlive(fileWrite);
+
+            if (writeFailure != null)
+                throw new PdfSaveException("Failed writing document to disk.", writeFailure, targetPath);
+
             if (result == 0)
             {
                 throw new PdfSaveException("Native FPDF_SaveAsCopy failed to save document.", targetPath);
@@ -90,6 +109,16 @@ public sealed class PdfiumSaveService : IPdfSaveService
         if (!Directory.Exists(outputDirectory))
         {
             Directory.CreateDirectory(outputDirectory);
+        }
+
+        // PNG is the only encoder ImageEncoder implements. Previously any other value was
+        // accepted and silently ignored, so a caller asking for "bmp" or "jpg" got a PNG
+        // written under that assumption. Fail loudly instead of substituting.
+        if (!string.IsNullOrWhiteSpace(format) &&
+            !format.Trim().TrimStart('.').Equals("png", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException(
+                $"Image export format '{format}' is not supported; only 'png' is available.");
         }
 
         startPage = Math.Clamp(startPage, 1, pdfiumDoc.PageCount);

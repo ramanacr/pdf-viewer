@@ -11,6 +11,12 @@ namespace PdfEngine.Pdfium.Adapters;
 /// </summary>
 public sealed class PdfiumRenderer : IPdfRenderer
 {
+    /// <summary>
+    /// Upper bound on a single page raster (bytes). Guards against int overflow in the
+    /// stride/buffer math and against a caller-supplied DPI producing an unallocatable size.
+    /// </summary>
+    private const long MaxBufferBytes = 2_000_000_000L;
+
     public ValueTask<RenderedPage> RenderPageAsync(
         IPdfDocument document,
         RenderRequest request,
@@ -40,11 +46,15 @@ public sealed class PdfiumRenderer : IPdfRenderer
             if (pageHandle == null || pageHandle.IsInvalid)
                 throw new PdfCorruptDocumentException($"Failed to load page {request.PageNumber} for rendering.");
 
-            float origW = PdfiumNativeBridge.FPDF_GetPageWidthF(pageHandle);
-            float origH = PdfiumNativeBridge.FPDF_GetPageHeightF(pageHandle);
-            int nativeRotation = PdfiumNativeBridge.FPDFPage_GetRotation(pageHandle);
+            // FPDF_GetPageWidthF/HeightF already return ROTATION-ADJUSTED dimensions, and
+            // FPDF_RenderPageBitmap's rotate argument is applied ON TOP OF the page's own
+            // /Rotate. Adding the page's native rotation here therefore applied it twice,
+            // rendering any /Rotate 90 page sideways into a transposed bitmap.
+            float displayW = PdfiumNativeBridge.FPDF_GetPageWidthF(pageHandle);
+            float displayH = PdfiumNativeBridge.FPDF_GetPageHeightF(pageHandle);
 
-            int combinedRotation = ((int)request.Rotation / 90 + nativeRotation) % 4;
+            int userRotation = ((int)request.Rotation / 90) % 4;
+            if (userRotation < 0) userRotation += 4;
 
             int pixelW = request.TargetWidthPixels;
             int pixelH = request.TargetHeightPixels;
@@ -52,23 +62,36 @@ public sealed class PdfiumRenderer : IPdfRenderer
             if (pixelW <= 0 || pixelH <= 0)
             {
                 double scale = request.Dpi / 72.0;
-                if (combinedRotation == 1 || combinedRotation == 3)
+                if (userRotation == 1 || userRotation == 3)
                 {
-                    pixelW = (int)Math.Round(origH * scale);
-                    pixelH = (int)Math.Round(origW * scale);
+                    pixelW = (int)Math.Round(displayH * scale);
+                    pixelH = (int)Math.Round(displayW * scale);
                 }
                 else
                 {
-                    pixelW = (int)Math.Round(origW * scale);
-                    pixelH = (int)Math.Round(origH * scale);
+                    pixelW = (int)Math.Round(displayW * scale);
+                    pixelH = (int)Math.Round(displayH * scale);
                 }
             }
 
             pixelW = Math.Max(1, pixelW);
             pixelH = Math.Max(1, pixelH);
 
-            int stride = pixelW * 4;
-            int bufferSize = stride * pixelH;
+            // Compute in long: a large page at a high export DPI (e.g. an E-size drawing at
+            // 600 DPI) overflows int, which either throws far from the cause or - worse -
+            // wraps to a small positive size and hands PDFium a buffer far smaller than the
+            // bitmap dimensions it will write.
+            long strideL = (long)pixelW * 4;
+            long bufferSizeL = strideL * pixelH;
+            if (bufferSizeL > MaxBufferBytes)
+            {
+                throw new PdfException(
+                    $"Requested render of {pixelW}x{pixelH} needs {bufferSizeL:N0} bytes, exceeding the " +
+                    $"{MaxBufferBytes:N0} byte limit. Reduce the DPI or target pixel size.");
+            }
+
+            int stride = (int)strideL;
+            int bufferSize = (int)bufferSizeL;
 
             var memoryOwner = new NativeMemoryOwner(bufferSize);
             IntPtr fpdfBitmap = IntPtr.Zero;
@@ -91,7 +114,13 @@ public sealed class PdfiumRenderer : IPdfRenderer
                 PdfiumNativeBridge.FPDFBitmap_FillRect(fpdfBitmap, 0, 0, pixelW, pixelH, 0xFFFFFFFF);
 
                 int renderFlags = PdfiumNativeBridge.FPDF_LCD_TEXT;
-                if (request.RenderAnnotations) renderFlags |= PdfiumNativeBridge.FPDF_ANNOT;
+                // Form fields are widget annotations, so FPDF_ANNOT draws their appearance
+                // streams. RenderForms was previously accepted and then silently ignored;
+                // honouring it here means a caller asking only for forms still gets them.
+                // Limitation: fields with no appearance stream need a full form-fill
+                // environment (FPDFDOC_InitFormFillEnvironment + FPDF_FFLDraw), which this
+                // renderer does not create.
+                if (request.RenderAnnotations || request.RenderForms) renderFlags |= PdfiumNativeBridge.FPDF_ANNOT;
                 if (request.HighQuality) renderFlags |= PdfiumNativeBridge.FPDF_PRINTING;
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -103,20 +132,37 @@ public sealed class PdfiumRenderer : IPdfRenderer
                     0,
                     pixelW,
                     pixelH,
-                    combinedRotation,
+                    userRotation,
                     renderFlags);
+
+                // Report the DPI the raster was ACTUALLY produced at. When the caller drives
+                // size via TargetWidth/HeightPixels, request.Dpi describes nothing, and a
+                // consumer using it for BitmapSource.Create renders at the wrong physical size.
+                double effectiveDpi = request.Dpi;
+                double sourcePoints = (userRotation == 1 || userRotation == 3) ? displayH : displayW;
+                if (sourcePoints > 0)
+                {
+                    effectiveDpi = pixelW / sourcePoints * 72.0;
+                }
 
                 return new RenderedPage(
                     request.PageNumber,
                     pixelW,
                     pixelH,
                     stride,
-                    request.Dpi,
+                    effectiveDpi,
                     request.Rotation,
                     memoryOwner);
             }
             catch
             {
+                // Destroy the FPDF bitmap BEFORE releasing the buffer it was created over,
+                // so PDFium never holds a bitmap pointing at freed memory.
+                if (fpdfBitmap != IntPtr.Zero)
+                {
+                    PdfiumNativeBridge.FPDFBitmap_Destroy(fpdfBitmap);
+                    fpdfBitmap = IntPtr.Zero;
+                }
                 memoryOwner.Dispose();
                 throw;
             }

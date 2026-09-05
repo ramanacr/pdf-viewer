@@ -85,15 +85,38 @@ public static class ShellIntegrationService
         catch { }
     }
 
-    public static void UnregisterShellAssociation()
+    /// <summary>
+    /// Removes every key <see cref="RegisterShellAssociation"/> creates.
+    /// Returns false if cleanup failed, rather than swallowing the error - a failed
+    /// unregister was previously indistinguishable from a successful one.
+    /// </summary>
+    public static bool UnregisterShellAssociation()
     {
         try
         {
             Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{ProgId}", throwOnMissingSubKey: false);
             Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Applications\PdfViewer.exe", throwOnMissingSubKey: false);
+
+            // Registration also writes these two .pdf entries; leaving them behind left a
+            // dangling "Open with" entry pointing at a ProgId that no longer exists.
+            using (var progIds = Registry.CurrentUser.OpenSubKey(@"Software\Classes\.pdf\OpenWithProgids", writable: true))
+            {
+                progIds?.DeleteValue(ProgId, throwOnMissingValue: false);
+            }
+
+            using (var openWith = Registry.CurrentUser.OpenSubKey(@"Software\Classes\.pdf\OpenWithList", writable: true))
+            {
+                openWith?.DeleteValue("PdfViewer.exe", throwOnMissingValue: false);
+            }
+
             SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);
+            return true;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"UnregisterShellAssociation failed: {ex}");
+            return false;
+        }
     }
 
     [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]

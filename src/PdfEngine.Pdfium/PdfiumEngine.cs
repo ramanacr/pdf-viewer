@@ -77,33 +77,39 @@ public sealed class PdfiumEngine : IPdfEngine
 
     private static IPdfDocument OpenDocumentFromBytesInternal(string filePath, byte[] fileBytes, string? password)
     {
-        IntPtr unmanagedBuf = Marshal.AllocHGlobal(fileBytes.Length);
-        Marshal.Copy(fileBytes, 0, unmanagedBuf, fileBytes.Length);
-
-        var docHandle = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, fileBytes.Length, password);
-        if (docHandle == null || docHandle.IsInvalid)
+        // Must hold the global PDFium lock: opening a document touches the same global
+        // font/codec state a concurrent render on another document is using, and this path
+        // previously took no lock at all.
+        lock (PdfiumNativeBridge.PdfiumLock)
         {
-            Marshal.FreeHGlobal(unmanagedBuf);
-            uint err = PdfiumNativeBridge.FPDF_GetLastError();
+            IntPtr unmanagedBuf = Marshal.AllocHGlobal(fileBytes.Length);
+            Marshal.Copy(fileBytes, 0, unmanagedBuf, fileBytes.Length);
 
-            if (err == PdfiumNativeBridge.FPDF_ERR_PASSWORD)
+            var docHandle = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, fileBytes.Length, password);
+            if (docHandle == null || docHandle.IsInvalid)
             {
-                throw new PdfPasswordRequiredException("Password required or invalid password provided.", filePath);
+                Marshal.FreeHGlobal(unmanagedBuf);
+                uint err = PdfiumNativeBridge.FPDF_GetLastError();
+
+                if (err == PdfiumNativeBridge.FPDF_ERR_PASSWORD)
+                {
+                    throw new PdfPasswordRequiredException("Password required or invalid password provided.", filePath);
+                }
+                else if (err == PdfiumNativeBridge.FPDF_ERR_FORMAT || err == PdfiumNativeBridge.FPDF_ERR_FILE)
+                {
+                    throw new PdfCorruptDocumentException($"Failed to parse PDF document (error code {err}).", filePath);
+                }
+                else
+                {
+                    throw new PdfOpenException($"Failed to open PDF document (error code {err}).", filePath);
+                }
             }
-            else if (err == PdfiumNativeBridge.FPDF_ERR_FORMAT || err == PdfiumNativeBridge.FPDF_ERR_FILE)
-            {
-                throw new PdfCorruptDocumentException($"Failed to parse PDF document (error code {err}).", filePath);
-            }
-            else
-            {
-                throw new PdfOpenException($"Failed to open PDF document (error code {err}).", filePath);
-            }
+
+            int pageCount = PdfiumNativeBridge.FPDF_GetPageCount(docHandle);
+            var meta = ExtractMetadata(docHandle, filePath, fileBytes.Length, pageCount);
+
+            return new PdfiumDocument(filePath, docHandle, unmanagedBuf, meta, pageCount);
         }
-
-        int pageCount = PdfiumNativeBridge.FPDF_GetPageCount(docHandle);
-        var meta = ExtractMetadata(docHandle, filePath, fileBytes.Length, pageCount);
-
-        return new PdfiumDocument(filePath, docHandle, unmanagedBuf, meta, pageCount);
     }
 
     private static DocumentMetadata ExtractMetadata(SafeDocumentHandle docHandle, string filePath, long fileLength, int pageCount)
@@ -124,8 +130,11 @@ public sealed class PdfiumEngine : IPdfEngine
         string creator = GetTag("Creator");
         string producer = GetTag("Producer");
 
+        // FPDF_GetSecurityHandlerRevision returns -1 when the document is NOT encrypted, so
+        // revision 0 is a valid encrypted document. The old "> 0" test misreported those as
+        // unencrypted (PdfiumDocumentService already used the correct ">= 0" test).
         int securityHandler = PdfiumNativeBridge.FPDF_GetSecurityHandlerRevision(docHandle);
-        bool isEncrypted = securityHandler > 0;
+        bool isEncrypted = securityHandler >= 0;
 
         return new DocumentMetadata
         {

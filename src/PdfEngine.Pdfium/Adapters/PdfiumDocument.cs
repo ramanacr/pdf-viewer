@@ -11,13 +11,40 @@ namespace PdfEngine.Pdfium.Adapters;
 public sealed class PdfiumDocument : IPdfDocument
 {
     private readonly SafeDocumentHandle _handle;
-    private readonly IntPtr _unmanagedBuffer;
-    private readonly object _syncLock = new();
-    private bool _isDisposed;
+    private IntPtr _unmanagedBuffer;
+
+    // Deliberately THE process-wide PDFium lock rather than a per-document lock.
+    // PDFium's font cache, codec modules and render-device pool are global, so two
+    // documents locking independently still corrupt each other. Using one lock also
+    // removes any possibility of a lock-ordering deadlock between the document lock
+    // and the native lock. Monitor is reentrant, so nesting is safe.
+    private readonly object _syncLock = PdfiumNativeBridge.PdfiumLock;
+    private readonly HashSet<PdfiumPage> _livePages = new();
+    private readonly int _initialPageCount;
+    private volatile bool _isDisposed;
 
     public string FilePath { get; }
     public DocumentMetadata Metadata { get; }
-    public int PageCount { get; }
+
+    /// <summary>
+    /// Live page count. Queried from the native document on every access because
+    /// page insert/delete mutates it; a value cached at open time goes stale and
+    /// lets out-of-range indices slip past bounds checks.
+    /// </summary>
+    public int PageCount
+    {
+        get
+        {
+            if (_isDisposed) return _initialPageCount;
+            lock (_syncLock)
+            {
+                if (_isDisposed || _handle.IsInvalid || _handle.IsClosed) return _initialPageCount;
+                int live = PdfiumNativeBridge.FPDF_GetPageCount(_handle);
+                return live >= 0 ? live : _initialPageCount;
+            }
+        }
+    }
+
     public bool IsOpen => !_isDisposed && !_handle.IsInvalid && !_handle.IsClosed;
     public SafeDocumentHandle Handle => _handle;
     public object SyncLock => _syncLock;
@@ -28,7 +55,25 @@ public sealed class PdfiumDocument : IPdfDocument
         _handle = handle;
         _unmanagedBuffer = unmanagedBuffer;
         Metadata = metadata;
-        PageCount = pageCount;
+        _initialPageCount = pageCount;
+    }
+
+    ~PdfiumDocument()
+    {
+        // Safety net: SafeDocumentHandle has its own finalizer, but the backing
+        // buffer is plain unmanaged memory that would otherwise leak the entire
+        // file for the life of the process if a caller forgets to dispose.
+        FreeBuffer();
+    }
+
+    internal void RegisterPage(PdfiumPage page)
+    {
+        lock (_syncLock) { _livePages.Add(page); }
+    }
+
+    internal void UnregisterPage(PdfiumPage page)
+    {
+        lock (_syncLock) { _livePages.Remove(page); }
     }
 
     public ValueTask<PageInfo> GetPageInfoAsync(int pageNumber, CancellationToken cancellationToken = default)
@@ -158,14 +203,35 @@ public sealed class PdfiumDocument : IPdfDocument
 
     public void Dispose()
     {
-        if (!_isDisposed)
+        // Taking the lock is what makes this safe against an in-flight render:
+        // FPDF_CloseDocument must not run while another thread is inside a native
+        // call on this document.
+        lock (_syncLock)
         {
+            if (_isDisposed) return;
             _isDisposed = true;
-            _handle?.Dispose();
-            if (_unmanagedBuffer != IntPtr.Zero)
+
+            // A page must be closed before the document that owns it, otherwise
+            // FPDF_ClosePage runs against a freed CPDF_Document.
+            foreach (var page in _livePages.ToArray())
             {
-                Marshal.FreeHGlobal(_unmanagedBuffer);
+                page.CloseHandleOnly();
             }
+            _livePages.Clear();
+
+            _handle?.Dispose();
+            FreeBuffer();
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    private void FreeBuffer()
+    {
+        IntPtr buffer = Interlocked.Exchange(ref _unmanagedBuffer, IntPtr.Zero);
+        if (buffer != IntPtr.Zero)
+        {
+            Marshal.FreeHGlobal(buffer);
         }
     }
 
@@ -191,15 +257,27 @@ public sealed class PdfiumPage : IPdfPage
         _document = document;
         _handle = handle;
         Info = info;
+        _document.RegisterPage(this);
     }
 
     public void Dispose()
     {
-        if (!_isDisposed)
-        {
-            _isDisposed = true;
-            _handle?.Dispose();
-        }
+        if (_isDisposed) return;
+        _isDisposed = true;
+        _handle?.Dispose();
+        _document.UnregisterPage(this);
+    }
+
+    /// <summary>
+    /// Closes the native page handle without touching the owning document's page
+    /// registry. Called by PdfiumDocument.Dispose, which already holds the lock and
+    /// is clearing the registry itself.
+    /// </summary>
+    internal void CloseHandleOnly()
+    {
+        if (_isDisposed) return;
+        _isDisposed = true;
+        _handle?.Dispose();
     }
 
     public ValueTask DisposeAsync()

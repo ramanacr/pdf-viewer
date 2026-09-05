@@ -14,6 +14,13 @@ public sealed class DocumentSession : ObservableObject, IAsyncDisposable, IDispo
     private long _revision;
     private bool _isDirty;
     private string _fingerprint = string.Empty;
+    private CancellationTokenSource _lifetimeCts = new();
+
+    /// <summary>
+    /// Cancelled when the session closes. Long-running work (renders, prefetches) should
+    /// observe this so it stops touching the document before its handles are freed.
+    /// </summary>
+    public CancellationToken SessionToken => _lifetimeCts.Token;
 
     public IPdfDocument? Document => _document;
     public bool IsOpen => _document != null && _document.IsOpen;
@@ -40,7 +47,23 @@ public sealed class DocumentSession : ObservableObject, IAsyncDisposable, IDispo
 
     public void AttachDocument(IPdfDocument document)
     {
-        _document = document ?? throw new ArgumentNullException(nameof(document));
+        ArgumentNullException.ThrowIfNull(document);
+
+        // Attaching over an existing document used to silently drop it, leaking its PDFium
+        // handle and its backing buffer and keeping the old file locked. Close first.
+        if (_document != null)
+        {
+            Close();
+        }
+
+        // Close() cancelled the previous lifetime token; start a fresh one for this document.
+        if (_lifetimeCts.IsCancellationRequested)
+        {
+            _lifetimeCts.Dispose();
+            _lifetimeCts = new CancellationTokenSource();
+        }
+
+        _document = document;
         _revision = 1;
         _isDirty = false;
         _fingerprint = ComputeFingerprint(document.FilePath);
@@ -68,6 +91,10 @@ public sealed class DocumentSession : ObservableObject, IAsyncDisposable, IDispo
 
     public void Close()
     {
+        // Signal cancellation BEFORE disposing the document so in-flight renders stop
+        // dereferencing handles this method is about to free.
+        try { _lifetimeCts.Cancel(); } catch (ObjectDisposedException) { }
+
         if (_document != null)
         {
             _document.Dispose();
@@ -88,36 +115,67 @@ public sealed class DocumentSession : ObservableObject, IAsyncDisposable, IDispo
         OnPropertyChanged(nameof(IsDirty));
     }
 
+    /// <summary>
+    /// Stable per-document cache identity.
+    /// Hashes a bounded prefix plus length and last-write time rather than the whole file:
+    /// AttachDocument is synchronous and called from the UI thread, so a full SHA-256 of a
+    /// large PDF stalled the UI for seconds. Falling back to a random GUID (as the previous
+    /// implementation did on every error) also meant cache keys never matched across
+    /// attaches, silently reducing the render cache hit rate to zero.
+    /// </summary>
+    private const int FingerprintPrefixBytes = 1024 * 1024;
+
     private static string ComputeFingerprint(string filePath)
     {
         if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
-            return Guid.NewGuid().ToString("N");
+        {
+            // In-memory document: no stable on-disk identity exists. A fresh GUID is correct
+            // here (each such document is genuinely distinct) - it just must not be cached
+            // across attaches, which it is not.
+            return "mem-" + Guid.NewGuid().ToString("N");
+        }
 
         try
         {
+            var info = new FileInfo(filePath);
             using var sha = SHA256.Create();
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            byte[] hash = sha.ComputeHash(stream);
-            return Convert.ToHexString(hash);
+
+            byte[] buffer = new byte[Math.Min(FingerprintPrefixBytes, (int)Math.Min(info.Length, int.MaxValue))];
+            int read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+
+            sha.TransformBlock(buffer, 0, read, null, 0);
+            byte[] tail = System.Text.Encoding.UTF8.GetBytes(
+                $"|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{info.FullName.ToLowerInvariant()}");
+            sha.TransformFinalBlock(tail, 0, tail.Length);
+
+            return Convert.ToHexString(sha.Hash!);
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return Guid.NewGuid().ToString("N");
+            // Locked or unreadable: derive a deterministic identity from the path so repeated
+            // attaches of the same file still share cache entries.
+            return "path-" + Convert.ToHexString(
+                SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(filePath.ToLowerInvariant())));
         }
     }
 
     public void Dispose()
     {
         Close();
+        _lifetimeCts.Dispose();
     }
 
     public async ValueTask DisposeAsync()
     {
+        try { _lifetimeCts.Cancel(); } catch (ObjectDisposedException) { }
+
         if (_document != null)
         {
             await _document.DisposeAsync();
             _document = null;
         }
         Close();
+        _lifetimeCts.Dispose();
     }
 }

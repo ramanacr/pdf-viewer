@@ -13,9 +13,9 @@ public sealed class RenderPriorityScheduler : IDisposable
 {
     private readonly IPdfRenderer _renderer;
     private readonly MultiTierCache _cache;
-    private readonly ConcurrentDictionary<RenderCacheKey, Task<RenderedPage>> _inFlightTasks = new();
+    private readonly ConcurrentDictionary<RenderCacheKey, Task<bool>> _inFlightTasks = new();
     private readonly CancellationTokenSource _globalCts = new();
-    private bool _isDisposed;
+    private volatile bool _isDisposed;
 
     public MultiTierCache Cache => _cache;
 
@@ -25,7 +25,12 @@ public sealed class RenderPriorityScheduler : IDisposable
         _cache = cache ?? new MultiTierCache();
     }
 
-    public async Task<RenderedPage> GetOrRenderPageAsync(
+    /// <summary>
+    /// Returns a lease on the rendered page. The caller MUST dispose the lease; the page's
+    /// unmanaged buffer stays alive for as long as any lease is outstanding, even if the
+    /// cache evicts it in the meantime.
+    /// </summary>
+    public async Task<MultiTierCache.CachedPageLease> GetOrRenderPageAsync(
         DocumentSession session,
         RenderRequest request,
         CancellationToken cancellationToken = default)
@@ -36,6 +41,8 @@ public sealed class RenderPriorityScheduler : IDisposable
         if (_isDisposed)
             throw new ObjectDisposedException(nameof(RenderPriorityScheduler));
 
+        cancellationToken.ThrowIfCancellationRequested();
+
         int dpiBucket = RenderCacheKey.GetDpiBucket(request.Dpi);
         var cacheKey = new RenderCacheKey(
             session.Fingerprint,
@@ -45,33 +52,53 @@ public sealed class RenderPriorityScheduler : IDisposable
             session.Revision);
 
         // 1. Check in-memory cache
-        if (_cache.TryGet(cacheKey, out var cachedPage) && cachedPage != null)
+        if (_cache.TryGet(cacheKey, out var cachedLease) && cachedLease != null)
         {
-            return cachedPage;
+            return cachedLease;
         }
 
-        // 2. Check or register in-flight deduplicated task
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_globalCts.Token, cancellationToken);
-        var inFlightToken = linkedCts.Token;
-
+        // 2. Check or register in-flight deduplicated task.
+        //    The shared task is deliberately NOT tied to any one caller's token: cancelling
+        //    caller A used to cancel the shared render that caller B was still waiting on.
+        //    Each caller instead awaits the shared task through its own token below.
+        // The shared task renders and publishes into the cache, then releases its own
+        // lease - leaving the cache holding the only reference. Each awaiting caller then
+        // takes an independent lease, so no lease is ever disposed twice.
         var task = _inFlightTasks.GetOrAdd(cacheKey, key =>
             Task.Run(async () =>
             {
-                try
-                {
-                    inFlightToken.ThrowIfCancellationRequested();
-                    var rendered = await _renderer.RenderPageAsync(session.Document, request, inFlightToken);
-                    _cache.Put(key, rendered);
-                    return rendered;
-                }
-                finally
-                {
-                    _inFlightTasks.TryRemove(key, out _);
-                }
-            }, inFlightToken)
+                var renderToken = _globalCts.Token;
+                renderToken.ThrowIfCancellationRequested();
+                var rendered = await _renderer.RenderPageAsync(session.Document, request, renderToken);
+                using var publishLease = _cache.Put(key, rendered);
+                return true;
+            }, _globalCts.Token)
         );
 
-        return await task;
+        // Cleanup is attached to the STORED task rather than run inside the delegate. The
+        // delegate's finally could run before GetOrAdd inserted the task (leaving a
+        // completed task cached forever), and never ran at all when Task.Run was handed an
+        // already-cancelled token - which permanently poisoned that key so the page could
+        // never be rendered again.
+        _ = task.ContinueWith(
+            _ => _inFlightTasks.TryRemove(cacheKey, out _),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        // Await the shared render under THIS caller's token, so one caller cancelling never
+        // fails another caller that still wants the page.
+        await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_cache.TryGet(cacheKey, out var ownLease) && ownLease != null)
+        {
+            return ownLease;
+        }
+
+        // Missed the cache (evicted immediately, or too large to cache at all): render a
+        // copy owned solely by this caller.
+        var fallback = await _renderer.RenderPageAsync(session.Document, request, cancellationToken).ConfigureAwait(false);
+        return _cache.Put(cacheKey, fallback);
     }
 
     public void InvalidateDocument(string fingerprint)
@@ -81,12 +108,28 @@ public sealed class RenderPriorityScheduler : IDisposable
 
     public void Dispose()
     {
-        if (!_isDisposed)
+        if (_isDisposed) return;
+        _isDisposed = true;
+
+        _globalCts.Cancel();
+
+        // Wait for in-flight renders to observe cancellation before tearing down the cache
+        // and the CTS underneath them. Disposing first let a task complete afterwards and
+        // Put into a dead cache (leaking the page), and raced the linked tokens.
+        try
         {
-            _isDisposed = true;
-            _globalCts.Cancel();
-            _globalCts.Dispose();
-            _cache.Dispose();
+            var pending = _inFlightTasks.Values.ToArray();
+            if (pending.Length > 0)
+            {
+                Task.WaitAll(pending, TimeSpan.FromSeconds(5));
+            }
         }
+        catch
+        {
+            // Cancelled/faulted renders are expected here; nothing to report during teardown.
+        }
+
+        _cache.Dispose();
+        _globalCts.Dispose();
     }
 }

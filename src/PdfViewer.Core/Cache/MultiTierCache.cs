@@ -34,6 +34,7 @@ public sealed class MultiTierCache : IDisposable
     private readonly long _maxMemoryBytes;
     private long _currentMemoryBytes;
     private readonly object _lock = new();
+    private bool _isDisposed;
 
     private readonly LinkedList<CacheEntry> _lruList = new();
     private readonly Dictionary<RenderCacheKey, LinkedListNode<CacheEntry>> _cache = new();
@@ -61,7 +62,13 @@ public sealed class MultiTierCache : IDisposable
         _maxMemoryBytes = Math.Max(1024, maxMemoryBytes);
     }
 
-    public bool TryGet(RenderCacheKey key, out RenderedPage? page)
+    /// <summary>
+    /// Borrows a cached page. The returned lease keeps the underlying RenderedPage alive
+    /// even if the cache evicts it in the meantime; the page's unmanaged pixel buffer is
+    /// released only once the cache AND every outstanding lease are done with it.
+    /// Callers MUST dispose the lease.
+    /// </summary>
+    public bool TryGet(RenderCacheKey key, out CachedPageLease? lease)
     {
         lock (_lock)
         {
@@ -70,30 +77,60 @@ public sealed class MultiTierCache : IDisposable
                 _lruList.Remove(node);
                 _lruList.AddFirst(node);
                 Interlocked.Increment(ref _hitCount);
-                page = node.Value.Page;
+                lease = node.Value.Acquire();
                 return true;
             }
 
             Interlocked.Increment(ref _missCount);
-            page = null;
+            lease = null;
             return false;
         }
     }
 
-    public void Put(RenderCacheKey key, RenderedPage page)
+    /// <summary>
+    /// Stores a page and returns a lease for the caller's own continued use.
+    /// Ownership of <paramref name="page"/> transfers to the cache/lease pair - the caller
+    /// must use the returned lease and not the raw page reference afterwards.
+    /// </summary>
+    public CachedPageLease Put(RenderCacheKey key, RenderedPage page)
     {
-        if (page == null) return;
+        ArgumentNullException.ThrowIfNull(page);
 
         lock (_lock)
         {
+            // A render that completes after the cache was disposed must not be stored into
+            // a dead cache (it would never be released). Hand ownership to the lease instead.
+            if (_isDisposed)
+            {
+                return CacheEntry.CreateUncached(key, page).Acquire();
+            }
+
             long entryBytes = page.ByteLength;
 
             if (_cache.TryGetValue(key, out var existingNode))
             {
+                // Re-putting the very same instance must not dispose it and then store the
+                // corpse; just refresh LRU position and hand back a new lease.
+                if (ReferenceEquals(existingNode.Value.Page, page))
+                {
+                    _lruList.Remove(existingNode);
+                    _lruList.AddFirst(existingNode);
+                    return existingNode.Value.Acquire();
+                }
+
                 _lruList.Remove(existingNode);
                 _currentMemoryBytes -= existingNode.Value.Page.ByteLength;
-                existingNode.Value.Page.Dispose();
+                existingNode.Value.ReleaseCacheReference();
                 _cache.Remove(key);
+            }
+
+            // An entry larger than the entire budget can never fit, and the old loop would
+            // therefore evict and dispose EVERY other entry and then store it anyway,
+            // leaving the cache permanently over budget with a 0% hit rate. Don't cache it:
+            // hand back a standalone lease that owns the page on its own.
+            if (entryBytes > _maxMemoryBytes)
+            {
+                return CacheEntry.CreateUncached(key, page).Acquire();
             }
 
             // Evict until within budget
@@ -105,7 +142,10 @@ public sealed class MultiTierCache : IDisposable
                 _lruList.RemoveLast();
                 _cache.Remove(oldest.Value.Key);
                 _currentMemoryBytes -= oldest.Value.Page.ByteLength;
-                oldest.Value.Page.Dispose();
+                // Drops the CACHE's reference only. If a caller still holds a lease, the
+                // page stays alive until they dispose it - this is what previously caused
+                // reads of freed unmanaged pixel memory.
+                oldest.Value.ReleaseCacheReference();
                 Interlocked.Increment(ref _evictionCount);
             }
 
@@ -114,6 +154,7 @@ public sealed class MultiTierCache : IDisposable
             _lruList.AddFirst(newNode);
             _cache[key] = newNode;
             _currentMemoryBytes += entryBytes;
+            return entry.Acquire();
         }
     }
 
@@ -127,7 +168,7 @@ public sealed class MultiTierCache : IDisposable
                 _lruList.Remove(kv.Value);
                 _cache.Remove(kv.Key);
                 _currentMemoryBytes -= kv.Value.Value.Page.ByteLength;
-                kv.Value.Value.Page.Dispose();
+                kv.Value.Value.ReleaseCacheReference();
             }
         }
     }
@@ -138,7 +179,7 @@ public sealed class MultiTierCache : IDisposable
         {
             foreach (var node in _lruList)
             {
-                node.Page.Dispose();
+                node.ReleaseCacheReference();
             }
             _lruList.Clear();
             _cache.Clear();
@@ -148,8 +189,75 @@ public sealed class MultiTierCache : IDisposable
 
     public void Dispose()
     {
+        lock (_lock)
+        {
+            _isDisposed = true;
+        }
         Clear();
     }
 
-    private sealed record CacheEntry(RenderCacheKey Key, RenderedPage Page);
+    /// <summary>
+    /// A borrowed reference to a cached page. Disposing releases the borrow; the page is
+    /// destroyed only when the cache and all leases have released it.
+    /// </summary>
+    public sealed class CachedPageLease : IDisposable
+    {
+        private CacheEntry? _entry;
+        public RenderedPage Page { get; }
+
+        internal CachedPageLease(CacheEntry entry)
+        {
+            _entry = entry;
+            Page = entry.Page;
+        }
+
+        public void Dispose()
+        {
+            var entry = Interlocked.Exchange(ref _entry, null);
+            entry?.ReleaseLease();
+        }
+    }
+
+    internal sealed class CacheEntry
+    {
+        public RenderCacheKey Key { get; }
+        public RenderedPage Page { get; }
+
+        // Starts at 1 for the cache's own reference (0 for an uncached, lease-only entry).
+        private int _refCount;
+
+        public CacheEntry(RenderCacheKey key, RenderedPage page)
+        {
+            Key = key;
+            Page = page;
+            _refCount = 1;
+        }
+
+        private CacheEntry(RenderCacheKey key, RenderedPage page, int initialRefCount)
+        {
+            Key = key;
+            Page = page;
+            _refCount = initialRefCount;
+        }
+
+        public static CacheEntry CreateUncached(RenderCacheKey key, RenderedPage page)
+            => new(key, page, 0);
+
+        public CachedPageLease Acquire()
+        {
+            Interlocked.Increment(ref _refCount);
+            return new CachedPageLease(this);
+        }
+
+        public void ReleaseCacheReference() => Release();
+        public void ReleaseLease() => Release();
+
+        private void Release()
+        {
+            if (Interlocked.Decrement(ref _refCount) <= 0)
+            {
+                Page.Dispose();
+            }
+        }
+    }
 }

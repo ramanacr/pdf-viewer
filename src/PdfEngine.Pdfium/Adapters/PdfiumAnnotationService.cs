@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml.Linq;
@@ -64,7 +65,10 @@ public sealed class PdfiumAnnotationService : IPdfAnnotationService
                 if (PdfiumNativeBridge.FPDFAnnot_GetColor(annot, PdfiumNativeBridge.FPDFANNOT_COLORTYPE_Color, out uint r, out uint g, out uint b, out uint a) != 0)
                 {
                     model.Color = $"#{r:X2}{g:X2}{b:X2}";
-                    model.Opacity = a > 0 ? a / 255.0 : 1.0;
+                    // Map alpha straight through: the old "a > 0 ? a/255 : 1.0" turned a
+                    // fully transparent annotation into a fully OPAQUE one, and a
+                    // save round-trip then wrote it back at alpha 255.
+                    model.Opacity = a / 255.0;
                 }
 
                 uint contentsLen = PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "Contents", null, 0);
@@ -130,7 +134,24 @@ public sealed class PdfiumAnnotationService : IPdfAnnotationService
 
         if (mode == AnnotationSaveMode.ExportXfdf)
         {
-            return ExportXfdfInternalAsync(targetPath, annotations, cancellationToken);
+            // Collect page dimensions up front (under the lock) so the writer can convert
+            // the app's normalized coordinates into the PDF points XFDF requires.
+            var pageSizes = new Dictionary<int, (double Width, double Height)>();
+            lock (pdfiumDoc.SyncLock)
+            {
+                foreach (int pageNumber in annotations.Select(a => a.PageNumber).Distinct())
+                {
+                    int pageIndex = pageNumber - 1;
+                    if (pageIndex < 0 || pageIndex >= pdfiumDoc.PageCount) continue;
+
+                    if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(pdfiumDoc.Handle, pageIndex, out var size) != 0)
+                    {
+                        pageSizes[pageNumber] = (size.width, size.height);
+                    }
+                }
+            }
+
+            return ExportXfdfInternalAsync(targetPath, annotations, pageSizes, cancellationToken);
         }
 
         lock (pdfiumDoc.SyncLock)
@@ -140,15 +161,20 @@ public sealed class PdfiumAnnotationService : IPdfAnnotationService
             IntPtr unmanagedBuf = Marshal.AllocHGlobal(fileBytes.Length);
             Marshal.Copy(fileBytes, 0, unmanagedBuf, fileBytes.Length);
 
-            using var editDoc = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, fileBytes.Length, null);
-            if (editDoc == null || editDoc.IsInvalid)
-            {
-                Marshal.FreeHGlobal(unmanagedBuf);
-                throw new PdfSaveException("Failed to open working copy for annotation saving.", targetPath);
-            }
-
+            // editDoc is declared INSIDE the try so FPDF_CloseDocument runs before the
+            // finally frees unmanagedBuf. FPDF_LoadMemDocument does not copy the buffer, so
+            // freeing it first left PDFium tearing down a document over freed heap.
+            SafeDocumentHandle? editDoc = null;
             try
             {
+                editDoc = PdfiumNativeBridge.FPDF_LoadMemDocument(unmanagedBuf, fileBytes.Length, null);
+                if (editDoc == null || editDoc.IsInvalid)
+                {
+                    throw new PdfSaveException(
+                        $"Failed to open working copy for annotation saving (PDFium error {PdfiumNativeBridge.FPDF_GetLastError()}).",
+                        targetPath);
+                }
+
                 var grouped = annotations.GroupBy(a => a.PageNumber);
                 foreach (var grp in grouped)
                 {
@@ -235,19 +261,36 @@ public sealed class PdfiumAnnotationService : IPdfAnnotationService
 
                 // Save out to file
                 using var outStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                Exception? writeFailure = null;
                 var fileWrite = new FPDF_FILEWRITE
                 {
                     version = 1,
                     WriteBlock = (pThis, pData, size) =>
                     {
-                        byte[] buffer = new byte[size];
-                        Marshal.Copy(pData, buffer, 0, (int)size);
-                        outStream.Write(buffer, 0, (int)size);
-                        return 1;
+                        // Never let a managed exception unwind through PDFium's C++ frames -
+                        // it is built without exception support, so destructors are skipped
+                        // and native state is left inconsistent. Signal failure with 0.
+                        try
+                        {
+                            byte[] buffer = new byte[size];
+                            Marshal.Copy(pData, buffer, 0, (int)size);
+                            outStream.Write(buffer, 0, (int)size);
+                            return 1;
+                        }
+                        catch (Exception ex)
+                        {
+                            writeFailure ??= ex;
+                            return 0;
+                        }
                     }
                 };
 
                 int saveResult = PdfiumNativeBridge.FPDF_SaveAsCopy(editDoc, ref fileWrite, PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
+                GC.KeepAlive(fileWrite);
+
+                if (writeFailure != null)
+                    throw new PdfSaveException("Failed writing annotated document to disk.", writeFailure, targetPath);
+
                 if (saveResult == 0)
                 {
                     throw new PdfSaveException("Native FPDF_SaveAsCopy failed.", targetPath);
@@ -255,6 +298,7 @@ public sealed class PdfiumAnnotationService : IPdfAnnotationService
             }
             finally
             {
+                editDoc?.Dispose();
                 Marshal.FreeHGlobal(unmanagedBuf);
             }
 
@@ -262,24 +306,72 @@ public sealed class PdfiumAnnotationService : IPdfAnnotationService
         }
     }
 
-    private static async ValueTask ExportXfdfInternalAsync(string targetPath, IReadOnlyList<AnnotationModel> annotations, CancellationToken ct)
+    /// <summary>
+    /// Writes a spec-conformant XFDF file.
+    /// The rect attribute must be PDF user-space points with a BOTTOM-LEFT origin
+    /// (left,bottom,right,top) - the previous implementation emitted the raw normalized
+    /// 0..1 top-down values, which collapsed every annotation into a sub-point speck at the
+    /// page origin when opened in Acrobat. Colors must be #RRGGBB, not the app's #AARRGGBB.
+    /// </summary>
+    private static async ValueTask ExportXfdfInternalAsync(
+        string targetPath,
+        IReadOnlyList<AnnotationModel> annotations,
+        IReadOnlyDictionary<int, (double Width, double Height)> pageSizes,
+        CancellationToken ct)
     {
-        var xfdf = new XElement("xfdf",
-            new XAttribute(XNamespace.Xmlns + "xfdf", "http://ns.adobe.com/xfdf/"),
-            new XElement("annots",
-                annotations.Select(a => new XElement(a.Type.ToString().ToLowerInvariant(),
-                    new XAttribute("page", a.PageNumber - 1),
-                    new XAttribute("rect", $"{a.X},{a.Y},{a.X + a.Width},{a.Y + a.Height}"),
-                    new XAttribute("color", a.Color),
-                    new XAttribute("opacity", a.Opacity),
-                    new XAttribute("title", a.Author),
-                    new XElement("contents", a.Contents)
-                ))
-            )
-        );
+        XNamespace xfdfNs = "http://ns.adobe.com/xfdf/";
+
+        var annotElements = new List<XElement>();
+        foreach (var a in annotations)
+        {
+            if (!pageSizes.TryGetValue(a.PageNumber, out var size))
+            {
+                size = (612.0, 792.0);
+            }
+
+            double left = a.X * size.Width;
+            double right = (a.X + a.Width) * size.Width;
+            double bottom = (1.0 - a.Y - a.Height) * size.Height;
+            double top = (1.0 - a.Y) * size.Height;
+
+            var element = new XElement(xfdfNs + a.Type.ToString().ToLowerInvariant(),
+                new XAttribute("page", a.PageNumber - 1),
+                new XAttribute("rect", FormatInvariant(left, bottom, right, top)),
+                new XAttribute("color", ToRgbHex(a.Color)),
+                new XAttribute("opacity", a.Opacity.ToString(CultureInfo.InvariantCulture)),
+                new XAttribute("title", a.Author ?? string.Empty),
+                new XElement(xfdfNs + "contents", a.Contents ?? string.Empty));
+
+            // Markup annotations are drawn from quadpoints, not rect; without coords most
+            // viewers render nothing at all for highlight/underline/strikeout.
+            if (a.Type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
+            {
+                element.Add(new XAttribute("coords", FormatInvariant(
+                    left, top, right, top, left, bottom, right, bottom)));
+            }
+
+            annotElements.Add(element);
+        }
+
+        var xfdf = new XElement(xfdfNs + "xfdf", new XElement(xfdfNs + "annots", annotElements));
 
         using var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
         await xfdf.SaveAsync(fs, SaveOptions.None, ct);
+    }
+
+    private static string FormatInvariant(params double[] values) =>
+        string.Join(",", values.Select(v => v.ToString("F4", CultureInfo.InvariantCulture)));
+
+    /// <summary>
+    /// Normalizes an app color (#AARRGGBB or #RRGGBB) to the #RRGGBB form XFDF requires.
+    /// </summary>
+    private static string ToRgbHex(string? color)
+    {
+        if (string.IsNullOrWhiteSpace(color)) return "#000000";
+        string hex = color.Trim().TrimStart('#');
+        if (hex.Length == 8) hex = hex.Substring(2);   // drop alpha
+        if (hex.Length != 6) return "#000000";
+        return "#" + hex.ToUpperInvariant();
     }
 
     private static AnnotationType MapSubtypeToAnnotationType(int subtype) => subtype switch

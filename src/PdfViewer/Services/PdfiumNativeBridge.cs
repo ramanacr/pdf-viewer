@@ -152,8 +152,14 @@ public struct FPDF_FILEWRITE
 public static class PdfiumNativeBridge
 {
     private const string DllName = "pdfium";
-    private static readonly object _initLock = new();
     private static bool _isInitialized;
+
+    /// <summary>
+    /// The process-wide PDFium serialization lock. Deliberately the SAME object instance
+    /// used by PdfEngine.Pdfium's bridge: PDFium's global font/codec/render-device state
+    /// means both copies must serialize against each other, not just against themselves.
+    /// </summary>
+    public static object PdfiumLock => PdfEngine.Pdfium.Native.PdfiumNativeBridge.PdfiumLock;
 
     static PdfiumNativeBridge()
     {
@@ -192,30 +198,40 @@ public static class PdfiumNativeBridge
 
     public static void EnsureInitialized()
     {
-        lock (_initLock)
+        // Locks on the SAME object as PdfEngine.Pdfium's bridge copy, so the
+        // check-then-set of PDFIUM_INITIALIZED is atomic across both copies (two
+        // separate locks previously let both call FPDF_InitLibraryWithConfig).
+        lock (PdfiumLock)
         {
-            if (!_isInitialized)
+            if (_isInitialized) return;
+
+            if (AppDomain.CurrentDomain.GetData("PDFIUM_INITIALIZED") == null)
             {
-                if (AppDomain.CurrentDomain.GetData("PDFIUM_INITIALIZED") == null)
+                try
                 {
-                    try
-                    {
-                        var config = new FPDF_LIBRARY_CONFIG { version = 2 };
-                        FPDF_InitLibraryWithConfig(ref config);
-                        AppDomain.CurrentDomain.ProcessExit += (s, e) =>
-                        {
-                            try { FPDF_DestroyLibrary(); } catch { }
-                        };
-                        AppDomain.CurrentDomain.SetData("PDFIUM_INITIALIZED", true);
-                    }
-                    catch
-                    {
-                        // Handled if previously initialized
-                    }
+                    var config = new FPDF_LIBRARY_CONFIG { version = 2 };
+                    FPDF_InitLibraryWithConfig(ref config);
                 }
-                _isInitialized = true;
+                catch (Exception ex)
+                {
+                    // Do NOT latch _isInitialized on failure — that made every later call
+                    // run against an uninitialized PDFium and surface as an unrelated
+                    // "Failed to open PDF document" far from the real cause.
+                    throw new InvalidOperationException(
+                        "Failed to initialize the native PDFium library. Ensure pdfium.dll is deployed " +
+                        "next to the application or under runtimes/win-x64/native/.", ex);
+                }
+
+                AppDomain.CurrentDomain.SetData("PDFIUM_INITIALIZED", true);
             }
+
+            _isInitialized = true;
         }
+
+        // Deliberately NOT calling FPDF_DestroyLibrary on ProcessExit: that handler runs on
+        // an arbitrary thread without suspending others, so it could tear down PDFium while
+        // a render was still in flight and race SafeHandle finalizers calling
+        // FPDF_CloseDocument. The OS reclaims everything at exit anyway.
     }
 
     #region Constants
@@ -348,8 +364,14 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDF_GetPageSizeByIndexF(IntPtr document, int page_index, out FS_SIZEF size);
 
+    // NOTE: the real PDFium export is FPDFPage_GetRotation. This was previously declared
+    // as "FPDF_GetPageRotation", which is not exported by pdfium.dll at all and would have
+    // thrown EntryPointNotFoundException on first call.
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDF_GetPageRotation(SafePageHandle page);
+    public static extern int FPDFPage_GetRotation(SafePageHandle page);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void FPDFPage_SetRotation(SafePageHandle page, int rotate);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern SafePageHandle FPDFPage_New(SafeDocumentHandle document, int page_index, double width, double height);
