@@ -81,7 +81,7 @@ public sealed class RenderPriorityScheduler : IDisposable
         // already-cancelled token - which permanently poisoned that key so the page could
         // never be rendered again.
         _ = task.ContinueWith(
-            _ => _inFlightTasks.TryRemove(cacheKey, out _),
+            _ => _inFlightTasks.TryRemove(cacheKey, out Task<bool>? _),
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
