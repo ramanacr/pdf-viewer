@@ -29,6 +29,7 @@ public partial class MainWindow : Window
         _vm = (MainViewModel)DataContext;
         _vm.RequestPasswordFunc = PromptForPasswordAsync;
         _vm.ShowPropertiesAction = ShowPropertiesDialog;
+        _vm.ShowFormFieldsFunc = ShowFormFieldsDialog;
         _vm.ShowExportDialogFunc = ShowExportImagesDialog;
         _vm.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
         _vm.ShowPrintDialogFunc = ShowPrintPreviewDialog;
@@ -126,6 +127,18 @@ public partial class MainWindow : Window
         }
 
         return tcs.Task;
+    }
+
+    /// <summary>
+    /// Shows the form field editor. Returns the edited fields, or null when cancelled.
+    /// </summary>
+    private IReadOnlyList<PdfEngine.Forms.FormFieldModel>? ShowFormFieldsDialog(
+        IReadOnlyList<PdfEngine.Forms.FormFieldModel> fields, string documentName)
+    {
+        var dialog = new FormFieldsDialog(fields, documentName) { Owner = this };
+        bool? result = dialog.ShowDialog();
+
+        return result == true && dialog.SaveRequested ? dialog.Fields.ToList() : null;
     }
 
     private void ShowPropertiesDialog(DocumentMetadata metadata)

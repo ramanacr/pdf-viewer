@@ -984,6 +984,89 @@ public partial class MainViewModel : ObservableObject
         ClearSelection();
     }
 
+    /// <summary>
+    /// Builds one redaction rectangle per selected text segment, so redaction follows the
+    /// exact glyph boxes rather than one loose box around the whole selection.
+    /// </summary>
+    public List<PdfEngine.Redaction.RedactionArea> BuildRedactionAreasFromSelection()
+    {
+        var areas = new List<PdfEngine.Redaction.RedactionArea>();
+        foreach (var page in Pages)
+        {
+            foreach (var segment in page.SelectedSegments)
+            {
+                areas.Add(new PdfEngine.Redaction.RedactionArea
+                {
+                    PageNumber = page.PageNumber,
+                    Bounds = new PdfEngine.Geometry.PdfRect(
+                        segment.X, segment.Y, segment.Width, segment.Height)
+                });
+            }
+        }
+        return areas;
+    }
+
+    /// <summary>
+    /// Permanently redacts the selected text and writes the result to a new document.
+    ///
+    /// Redaction removes the underlying content, so it deliberately never overwrites the
+    /// open file - the user always keeps the unredacted original.
+    /// </summary>
+    [RelayCommand]
+    public async Task RedactSelectionAsync()
+    {
+        if (string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        var areas = BuildRedactionAreasFromSelection();
+
+        if (areas.Count == 0)
+        {
+            ShowAlert("Select the text you want to redact first.", "Redact",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var confirm = MessageBoxResult.Yes;
+        if (ShowMessageBoxAction == null)
+        {
+            confirm = MessageBox.Show(
+                $"Permanently remove the selected text from {areas.Count} area(s)?\n\n" +
+                "The text is deleted from the saved copy and cannot be recovered from it. " +
+                "Your open document is not modified.",
+                "Confirm Redaction", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        }
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var target = new SaveFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = "Save redacted document as",
+            FileName = $"{Path.GetFileNameWithoutExtension(_docService.CurrentFilePath)}_redacted.pdf"
+        };
+        if (target.ShowDialog() != true) return;
+
+        StatusText = $"Redacting {areas.Count} area(s)...";
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+            await engine.RedactionService.ApplyRedactionsAsync(doc, target.FileName, areas);
+
+            ClearSelection();
+            StatusText = $"Redacted {areas.Count} area(s) into {Path.GetFileName(target.FileName)}.";
+            ShowAlert(
+                $"Redacted document saved to:\n{target.FileName}\n\n" +
+                "The redacted text has been removed from the file, not merely covered.",
+                "Redact", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Redaction failed: {ex.Message}";
+            ShowAlert($"Could not redact the document:\n\n{ex.Message}", "Redact",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     #endregion
 
     #region Text Search
@@ -1236,6 +1319,87 @@ public partial class MainViewModel : ObservableObject
         if (Metadata != null)
         {
             ShowPropertiesAction?.Invoke(Metadata);
+        }
+    }
+
+    /// <summary>
+    /// Shows the document's form fields for editing, then writes the edited values to a new
+    /// document. Returns the fields the dialog produced, or null when it was cancelled.
+    /// </summary>
+    public Func<IReadOnlyList<PdfEngine.Forms.FormFieldModel>, string, IReadOnlyList<PdfEngine.Forms.FormFieldModel>?>? ShowFormFieldsFunc { get; set; }
+
+    [RelayCommand]
+    public async Task EditFormFieldsAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        StatusText = "Reading form fields...";
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+
+            var allFields = new List<PdfEngine.Forms.FormFieldModel>();
+            await using (var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath))
+            {
+                for (int p = 1; p <= doc.PageCount; p++)
+                {
+                    allFields.AddRange(await engine.FormService.GetFormFieldsAsync(doc, p));
+                }
+            }
+
+            if (allFields.Count == 0)
+            {
+                StatusText = "This document has no form fields.";
+                ShowAlert("This document contains no form fields.", "Form Fields",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            string name = Path.GetFileName(_docService.CurrentFilePath);
+            var edited = ShowFormFieldsFunc?.Invoke(allFields, name);
+            if (edited == null)
+            {
+                StatusText = $"{allFields.Count} form field(s).";
+                return;
+            }
+
+            var target = new SaveFileDialog
+            {
+                Filter = "PDF Files (*.pdf)|*.pdf",
+                Title = "Save filled document as",
+                FileName = $"{Path.GetFileNameWithoutExtension(_docService.CurrentFilePath)}_filled.pdf"
+            };
+            if (target.ShowDialog() != true) return;
+
+            StatusText = "Writing form values...";
+            await using (var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath))
+            {
+                int written = 0;
+                foreach (var field in edited.Where(f => !f.IsReadOnly && !string.IsNullOrEmpty(f.Name)))
+                {
+                    try
+                    {
+                        await engine.FormService.SetFieldValueAsync(doc, field.Name, field.Value ?? string.Empty);
+                        written++;
+                    }
+                    catch (KeyNotFoundException)
+                    {
+                        // A field the document no longer exposes; skip rather than abort the save.
+                    }
+                }
+
+                await engine.SaveService.SaveAsync(doc, target.FileName);
+                StatusText = $"Wrote {written} field value(s) to {Path.GetFileName(target.FileName)}.";
+            }
+
+            ShowAlert($"Filled document saved to:\n{target.FileName}", "Form Fields",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Form editing failed: {ex.Message}";
+            ShowAlert($"Could not edit the form fields:\n\n{ex.Message}", "Form Fields",
+                MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

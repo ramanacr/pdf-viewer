@@ -107,6 +107,83 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public async Task TestFormFieldsDialogInstantiatesOnUiThread()
+    {
+        // The dialog must construct cleanly - a XAML or resource-lookup failure here would
+        // only ever surface when a user opened it.
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Dialog_Test.pdf");
+        TestPdfBuilder.CreateFormPdf(formPdf);
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(formPdf);
+        var fields = await engine.FormService.GetFormFieldsAsync(doc, 1);
+
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var dialog = new PdfViewer.Views.Dialogs.FormFieldsDialog(fields, "Form_Dialog_Test.pdf");
+                Assert.Equal(fields.Count, dialog.Fields.Count);
+                Assert.False(dialog.SaveRequested);
+                dialog.Close();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public async Task TestRedactSelectedTextRemovesItFromTheSavedCopy()
+    {
+        // End-to-end for Edit > Redact Selected Text: select text in the viewer, build the
+        // redaction areas the command uses, apply them, and confirm the text is genuinely
+        // gone from the output - and that the original document is untouched.
+        string source = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RedactSelection.pdf");
+        TestPdfBuilder.CreateSimplePdf(source, 1, "ClassifiedToken");
+
+        var vm = new PdfViewer.ViewModels.MainViewModel();
+        vm.ShowMessageBoxAction = (_, _, _, _) => { };
+        await vm.LoadDocumentAsync(source);
+
+        var page = vm.Pages[0];
+        await page.LoadTextSegmentsAsync(vm.DocumentService);
+        page.SelectAllText();
+        vm.UpdateSelectionFromPages();
+
+        var areas = vm.BuildRedactionAreasFromSelection();
+        Assert.NotEmpty(areas);
+        Assert.All(areas, a => Assert.Equal(1, a.PageNumber));
+
+        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RedactSelection_out.pdf");
+        if (File.Exists(target)) File.Delete(target);
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using (var doc = await engine.OpenDocumentAsync(source))
+        {
+            await engine.RedactionService.ApplyRedactionsAsync(doc, target, areas);
+        }
+
+        await using (var redacted = await engine.OpenDocumentAsync(target))
+        {
+            string after = await engine.TextService.ExtractPageTextAsync(redacted, 1);
+            Assert.DoesNotContain("ClassifiedToken", after);
+        }
+
+        // The original must still contain the text: redaction never edits the open file.
+        await using var original = await engine.OpenDocumentAsync(source);
+        Assert.Contains("ClassifiedToken", await engine.TextService.ExtractPageTextAsync(original, 1));
+    }
+
+    [Fact]
     public async Task TestMergeSplitAndExtractProduceUsableDocuments()
     {
         // These operations back the Tools > Merge / Split / Extract commands. Each output

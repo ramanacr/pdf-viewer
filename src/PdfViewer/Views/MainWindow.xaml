@@ -96,6 +96,11 @@
                 <Separator />
                 <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}" />
                 <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}" />
+                <Separator />
+                <MenuItem Header="_Redact Selected Text..."
+                          Command="{Binding RedactSelectionCommand}"
+                          IsEnabled="{Binding HasTextSelection}"
+                          ToolTip="Permanently removes the selected text and saves the result as a new document." />
             </MenuItem>
 
             <MenuItem Header="_View">
@@ -138,6 +143,11 @@
                           Command="{Binding ExtractCurrentPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Saves the page you are viewing as its own PDF." />
+                <Separator />
+                <MenuItem Header="Fill _Form Fields..."
+                          Command="{Binding EditFormFieldsCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Lists the document's form fields and writes edited values to a new document." />
             </MenuItem>
 
             <MenuItem Header="_Help">
