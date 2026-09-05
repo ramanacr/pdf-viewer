@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -1235,6 +1236,134 @@ public partial class MainViewModel : ObservableObject
         if (Metadata != null)
         {
             ShowPropertiesAction?.Invoke(Metadata);
+        }
+    }
+
+    /// <summary>
+    /// The text produced by the most recent page text recognition. Exposed so the result is
+    /// available even when the clipboard could not be written.
+    /// </summary>
+    [ObservableProperty]
+    private string _recognizedPageText = string.Empty;
+
+    private static bool TryCopyToClipboard(string text)
+    {
+        try
+        {
+            Clipboard.SetText(text);
+            return true;
+        }
+        catch (Exception)
+        {
+            // Clipboard locked by another process, or no STA thread available.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Verifies every digital signature in the open document and reports the result.
+    /// </summary>
+    [RelayCommand]
+    public async Task VerifySignaturesAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        StatusText = "Verifying digital signatures...";
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+            var signatures = await engine.SignatureService.GetSignaturesAsync(doc);
+
+            if (signatures.Count == 0)
+            {
+                StatusText = "This document is not digitally signed.";
+                ShowAlert("This document contains no digital signatures.",
+                    "Digital Signatures", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var report = new StringBuilder();
+            foreach (var s in signatures)
+            {
+                report.AppendLine($"{s.FieldName}: {s.Status}");
+                if (!string.IsNullOrWhiteSpace(s.SignerName)) report.AppendLine($"    Signer: {s.SignerName}");
+                if (s.SigningTime.HasValue) report.AppendLine($"    Signed: {s.SigningTime:yyyy-MM-dd HH:mm:ss} UTC");
+                if (!string.IsNullOrWhiteSpace(s.Reason)) report.AppendLine($"    Reason: {s.Reason}");
+                if (!string.IsNullOrWhiteSpace(s.StatusMessage)) report.AppendLine($"    {s.StatusMessage}");
+                report.AppendLine();
+            }
+
+            bool allValid = signatures.All(s => s.Status == PdfEngine.Signatures.SignatureStatus.Valid);
+            StatusText = allValid
+                ? $"{signatures.Count} signature(s) verified successfully."
+                : "One or more signatures could not be validated.";
+
+            ShowAlert(report.ToString().TrimEnd(), "Digital Signatures", MessageBoxButton.OK,
+                allValid ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Signature verification failed: {ex.Message}";
+            ShowAlert($"Could not verify signatures:\n\n{ex.Message}",
+                "Digital Signatures", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Extracts the text of the current page, using real optical recognition when the page
+    /// has no embedded text layer (a scanned image).
+    /// </summary>
+    [RelayCommand]
+    public async Task RecognizeTextOnPageAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        int pageNumber = CurrentPageNumber;
+        StatusText = $"Reading text on page {pageNumber}...";
+
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+
+            var result = await OcrEngine.RecognizePageAsync(doc, pageNumber);
+
+            if (string.IsNullOrWhiteSpace(result.FullText))
+            {
+                StatusText = $"No text found on page {pageNumber}.";
+                ShowAlert(
+                    $"No text could be read from page {pageNumber}.\n\n{result.Notes}",
+                    "Text Recognition", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            // The clipboard can legitimately fail - another process may hold it open, and it
+            // is unavailable off the UI thread. Losing the clipboard copy must not be
+            // reported as losing the recognized text.
+            bool copied = TryCopyToClipboard(result.FullText);
+
+            string how = result.UsedOpticalRecognition
+                ? "recognized optically"
+                : "read from the page's text layer";
+
+            RecognizedPageText = result.FullText;
+
+            StatusText = copied
+                ? $"Page {pageNumber} text {how} and copied to the clipboard ({result.FullText.Length} characters)."
+                : $"Page {pageNumber} text {how} ({result.FullText.Length} characters); the clipboard was unavailable.";
+
+            ShowAlert(
+                copied
+                    ? $"Text {how} and copied to the clipboard.\n\n{result.Notes}"
+                    : $"Text {how}, but the clipboard could not be updated.\n\n{result.Notes}",
+                "Text Recognition", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Text recognition failed: {ex.Message}";
+            ShowAlert($"Could not read text from page {pageNumber}:\n\n{ex.Message}",
+                "Text Recognition", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

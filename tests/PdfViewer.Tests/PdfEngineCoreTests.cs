@@ -107,6 +107,44 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public async Task TestVerifySignaturesCommandNeverClaimsUnsignedDocumentIsValid()
+    {
+        // The Tools > Verify Digital Signatures command must tell the truth about an
+        // unsigned document rather than reporting a reassuring success.
+        string samplePdf = GetOrCreateSamplePdf();
+
+        var vm = new PdfViewer.ViewModels.MainViewModel();
+        string? caption = null;
+        string? message = null;
+        vm.ShowMessageBoxAction = (msg, cap, _, _) => { message = msg; caption = cap; };
+
+        await vm.LoadDocumentAsync(samplePdf);
+        await vm.VerifySignaturesCommand.ExecuteAsync(null);
+
+        Assert.Equal("Digital Signatures", caption);
+        Assert.Contains("no digital signatures", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("valid", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestRecognizeTextCommandReturnsPageText()
+    {
+        // The Tools > Recognise Text command must produce the page's text and say how it
+        // was obtained, without depending on the clipboard being writable.
+        string samplePdf = GetOrCreateSamplePdf();
+
+        var vm = new PdfViewer.ViewModels.MainViewModel();
+        vm.ShowMessageBoxAction = (_, _, _, _) => { };
+
+        await vm.LoadDocumentAsync(samplePdf);
+        await vm.RecognizeTextOnPageCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RecognizedPageText.Contains("CoreTestToken"),
+            $"RecognizedPageText was '{vm.RecognizedPageText}'; StatusText was '{vm.StatusText}'");
+        Assert.Contains("text layer", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task TestFormFieldsReportTrueTypesAndMetadata()
     {
         // Regression test: every widget was reported as TextField and IsChecked was never

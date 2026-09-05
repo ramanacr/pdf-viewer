@@ -117,6 +117,15 @@
             <MenuItem Header="_Tools">
                 <MenuItem Header="_Find Text..." Command="{Binding ToggleSearchCommand}" InputGestureText="Ctrl+F" IsEnabled="{Binding IsDocumentLoaded}" />
                 <MenuItem Header="_Hand / Pan Tool" Command="{Binding TogglePanToolCommand}" IsCheckable="True" IsChecked="{Binding IsPanningEnabled}" IsEnabled="{Binding IsDocumentLoaded}" />
+                <Separator />
+                <MenuItem Header="Recognise _Text on Page (OCR)"
+                          Command="{Binding RecognizeTextOnPageCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard." />
+                <MenuItem Header="Verify Digital _Signatures..."
+                          Command="{Binding VerifySignaturesCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Cryptographically verifies every signature in the document." />
             </MenuItem>
 
             <MenuItem Header="_Help">

@@ -155,8 +155,23 @@ public sealed class WindowsOcrEngine : IOcrEngine
         try
         {
             var lang = new Language(language);
-            return OcrEngine.TryCreateFromLanguage(lang)
-                   ?? OcrEngine.TryCreateFromUserProfileLanguages();
+            var engine = OcrEngine.TryCreateFromLanguage(lang);
+            if (engine != null) return engine;
+
+            // A plain primary subtag such as "en" has no recognizer of its own; resolve it
+            // to an installed regional variant like "en-US" before giving up.
+            string primary = language.Split('-')[0];
+            foreach (var candidate in OcrEngine.AvailableRecognizerLanguages)
+            {
+                if (candidate.LanguageTag.StartsWith(primary + "-", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(candidate.LanguageTag, primary, StringComparison.OrdinalIgnoreCase))
+                {
+                    engine = OcrEngine.TryCreateFromLanguage(candidate);
+                    if (engine != null) return engine;
+                }
+            }
+
+            return OcrEngine.TryCreateFromUserProfileLanguages();
         }
         catch (ArgumentException)
         {

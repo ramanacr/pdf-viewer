@@ -38,6 +38,28 @@ public sealed class DefaultOcrEngine : IOcrEngine
         _opticalEngine = opticalEngine;
     }
 
+    /// <summary>
+    /// Matches on the primary language subtag, so a plain "en" is satisfied by an installed
+    /// "en-US" or "en-GB" recognizer. Exact-string matching rejected the default language
+    /// outright on any machine whose OCR packs are region-tagged.
+    /// </summary>
+    private bool IsLanguageSupported(string language)
+    {
+        string requested = PrimarySubtag(language);
+        foreach (string supported in SupportedLanguages)
+        {
+            if (string.Equals(supported, language, StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(PrimarySubtag(supported), requested, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static string PrimarySubtag(string languageTag)
+    {
+        int dash = languageTag.IndexOf('-');
+        return dash < 0 ? languageTag : languageTag.Substring(0, dash);
+    }
+
     public async ValueTask<OcrPageResult> RecognizePageAsync(
         IPdfDocument document,
         int pageNumber,
@@ -46,8 +68,7 @@ public sealed class DefaultOcrEngine : IOcrEngine
     {
         if (document == null) throw new ArgumentNullException(nameof(document));
 
-        if (!string.IsNullOrWhiteSpace(language) &&
-            !SupportedLanguages.Contains(language, StringComparer.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(language) && !IsLanguageSupported(language))
         {
             throw new ArgumentException(
                 $"Language '{language}' is not supported. Supported languages: {string.Join(", ", SupportedLanguages)}.",
