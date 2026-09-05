@@ -244,6 +244,44 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public void TestPrivacyDialogInstantiatesAndReflectsTheStoredChoice()
+    {
+        // This dialog is the only consent surface in the product and the only place the
+        // network switch can be changed, so a XAML failure here would silently strand the
+        // user with whatever was already stored.
+        Exception? failure = null;
+        bool? checkedState = null;
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var dialog = new PdfViewer.Views.Dialogs.PrivacyDialog();
+                checkedState = dialog.UpdateCheckBox.IsChecked;
+                Assert.NotEmpty(dialog.StatementText.Text);
+                Assert.NotNull(dialog.GuaranteeList.ItemsSource);
+                dialog.Close();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        Assert.Null(failure);
+
+        // Unanswered and declined both have to present as unchecked; only an explicit yes
+        // may show as allowed.
+        Assert.Equal(
+            PdfViewer.Services.PrivacySettings.AutomaticUpdateChecksEnabled == true,
+            checkedState == true);
+    }
+
+    [Fact]
     public async Task TestRedactSelectedTextRemovesItFromTheSavedCopy()
     {
         // End-to-end for Edit > Redact Selected Text: select text in the viewer, build the
