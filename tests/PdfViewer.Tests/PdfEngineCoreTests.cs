@@ -107,6 +107,59 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public async Task TestMergeSplitAndExtractProduceUsableDocuments()
+    {
+        // These operations back the Tools > Merge / Split / Extract commands. Each output
+        // must be a real, re-openable PDF with the expected page count - not just a file.
+        string docA = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OrganiseA.pdf");
+        string docB = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OrganiseB.pdf");
+        TestPdfBuilder.CreateSimplePdf(docA, 2, "AlphaToken");
+        TestPdfBuilder.CreateSimplePdf(docB, 3, "BetaToken");
+
+        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OrganiseOut");
+        if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
+        Directory.CreateDirectory(outDir);
+
+        using IPdfEngine engine = new PdfiumEngine();
+
+        // Merge: 2 + 3 pages => 5.
+        string merged = Path.Combine(outDir, "Merged.pdf");
+        await engine.PageOrganizer.MergeDocumentsAsync(new[] { docA, docB }, merged);
+
+        await using (var mergedDoc = await engine.OpenDocumentAsync(merged))
+        {
+            Assert.Equal(5, mergedDoc.PageCount);
+        }
+
+        // Extract a single page into its own document.
+        string extracted = Path.Combine(outDir, "Page2.pdf");
+        await using (var source = await engine.OpenDocumentAsync(merged))
+        {
+            await engine.PageOrganizer.ExtractPagesAsync(source, new[] { 2 }, extracted);
+        }
+
+        await using (var extractedDoc = await engine.OpenDocumentAsync(extracted))
+        {
+            Assert.Equal(1, extractedDoc.PageCount);
+        }
+
+        // Split into one file per page.
+        string splitDir = Path.Combine(outDir, "Split");
+        Directory.CreateDirectory(splitDir);
+        await using (var source = await engine.OpenDocumentAsync(merged))
+        {
+            await engine.PageOrganizer.SplitDocumentAsync(
+                source, Enumerable.Repeat(1, source.PageCount).ToList(), splitDir, "part");
+        }
+
+        var parts = Directory.GetFiles(splitDir, "*.pdf");
+        Assert.Equal(5, parts.Length);
+
+        await using var firstPart = await engine.OpenDocumentAsync(parts[0]);
+        Assert.Equal(1, firstPart.PageCount);
+    }
+
+    [Fact]
     public async Task TestVerifySignaturesCommandNeverClaimsUnsignedDocumentIsValid()
     {
         // The Tools > Verify Digital Signatures command must tell the truth about an

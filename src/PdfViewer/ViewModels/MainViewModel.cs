@@ -1240,6 +1240,126 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Combines several PDFs into one file.
+    /// </summary>
+    [RelayCommand]
+    public async Task MergeDocumentsAsync()
+    {
+        var picker = new OpenFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = "Select PDF documents to merge (in order)",
+            Multiselect = true
+        };
+
+        if (picker.ShowDialog() != true || picker.FileNames.Length < 2)
+        {
+            if (picker.FileNames.Length == 1)
+            {
+                ShowAlert("Select at least two documents to merge.", "Merge PDFs",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            return;
+        }
+
+        var target = new SaveFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = "Save merged document as",
+            FileName = "Merged.pdf"
+        };
+        if (target.ShowDialog() != true) return;
+
+        StatusText = $"Merging {picker.FileNames.Length} documents...";
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await engine.PageOrganizer.MergeDocumentsAsync(picker.FileNames, target.FileName);
+
+            StatusText = $"Merged {picker.FileNames.Length} documents into {Path.GetFileName(target.FileName)}.";
+            ShowAlert($"Merged {picker.FileNames.Length} documents into:\n{target.FileName}",
+                "Merge PDFs", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Merge failed: {ex.Message}";
+            ShowAlert($"Could not merge the documents:\n\n{ex.Message}", "Merge PDFs",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Splits the open document into one file per page.
+    /// </summary>
+    [RelayCommand]
+    public async Task SplitDocumentAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        var folder = new OpenFolderDialog { Title = "Choose a folder for the split pages" };
+        if (folder.ShowDialog() != true) return;
+
+        string prefix = Path.GetFileNameWithoutExtension(_docService.CurrentFilePath);
+        StatusText = "Splitting document...";
+
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+
+            // One page per output file.
+            var perSplit = Enumerable.Repeat(1, doc.PageCount).ToList();
+            await engine.PageOrganizer.SplitDocumentAsync(doc, perSplit, folder.FolderName, prefix);
+
+            StatusText = $"Split into {doc.PageCount} files in {folder.FolderName}.";
+            ShowAlert($"Split into {doc.PageCount} single-page documents in:\n{folder.FolderName}",
+                "Split PDF", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Split failed: {ex.Message}";
+            ShowAlert($"Could not split the document:\n\n{ex.Message}", "Split PDF",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Extracts the current page into its own PDF.
+    /// </summary>
+    [RelayCommand]
+    public async Task ExtractCurrentPageAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        int pageNumber = CurrentPageNumber;
+        var target = new SaveFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = $"Save page {pageNumber} as",
+            FileName = $"{Path.GetFileNameWithoutExtension(_docService.CurrentFilePath)}_page{pageNumber}.pdf"
+        };
+        if (target.ShowDialog() != true) return;
+
+        StatusText = $"Extracting page {pageNumber}...";
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+            await engine.PageOrganizer.ExtractPagesAsync(doc, new[] { pageNumber }, target.FileName);
+
+            StatusText = $"Page {pageNumber} saved to {Path.GetFileName(target.FileName)}.";
+            ShowAlert($"Page {pageNumber} saved to:\n{target.FileName}", "Extract Page",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Extract failed: {ex.Message}";
+            ShowAlert($"Could not extract page {pageNumber}:\n\n{ex.Message}", "Extract Page",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
     /// The text produced by the most recent page text recognition. Exposed so the result is
     /// available even when the clipboard could not be written.
     /// </summary>

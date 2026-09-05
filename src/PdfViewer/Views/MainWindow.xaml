@@ -126,6 +126,18 @@
                           Command="{Binding VerifySignaturesCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Cryptographically verifies every signature in the document." />
+                <Separator />
+                <MenuItem Header="_Merge PDFs..."
+                          Command="{Binding MergeDocumentsCommand}"
+                          ToolTip="Combines several PDF documents into a single file." />
+                <MenuItem Header="Spl_it Into Pages..."
+                          Command="{Binding SplitDocumentCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Writes each page of this document to its own PDF file." />
+                <MenuItem Header="E_xtract Current Page..."
+                          Command="{Binding ExtractCurrentPageCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Saves the page you are viewing as its own PDF." />
             </MenuItem>
 
             <MenuItem Header="_Help">
