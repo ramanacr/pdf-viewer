@@ -107,6 +107,26 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public void TestApplicationStartsWhetherOrNotOcrRuntimeIsPresent()
+    {
+        // The Windows OCR runtime is optional: it is absent on Server Core, on installs
+        // without a language pack, and on Windows older than the build the app is compiled
+        // against. Probing for it must never throw, and the application's composition root
+        // must construct either way - otherwise raising the target framework to reach OCR
+        // would stop the whole app from starting on those machines.
+        bool available = PdfViewer.Services.WindowsOcrEngine.IsAvailable;
+
+        var vm = new PdfViewer.ViewModels.MainViewModel();
+
+        Assert.NotNull(vm.OcrEngine);
+        Assert.Equal(available, vm.IsOpticalRecognitionAvailable);
+
+        // Text acquisition is wired regardless; without a recognizer it reports honestly
+        // rather than failing to construct.
+        Assert.NotEmpty(vm.OcrEngine.EngineName);
+    }
+
+    [Fact]
     public async Task TestDocumentComparisonDetectsIdenticalAndDifferentDocuments()
     {
         // Backs Tools > Compare With Document. Identical input must report identical, and
