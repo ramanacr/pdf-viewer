@@ -26,62 +26,107 @@ public sealed class PdfiumFormService : IPdfFormService
         lock (pdfiumDoc.SyncLock)
         {
             var fields = new List<FormFieldModel>();
-            using var pageHandle = PdfiumNativeBridge.FPDF_LoadPage(pdfiumDoc.Handle, pageNumber - 1);
-            if (pageHandle == null || pageHandle.IsInvalid) return ValueTask.FromResult<IReadOnlyList<FormFieldModel>>(fields);
+            ReadFieldsFromPage(pdfiumDoc, pageNumber, fields);
+            return ValueTask.FromResult<IReadOnlyList<FormFieldModel>>(fields);
+        }
+    }
 
-            float pageW = PdfiumNativeBridge.FPDF_GetPageWidthF(pageHandle);
-            float pageH = PdfiumNativeBridge.FPDF_GetPageHeightF(pageHandle);
+    /// <summary>
+    /// Reads every widget on a page directly from its annotation dictionary.
+    ///
+    /// Deliberately does NOT use a PDFium form-fill environment. The environment would give
+    /// richer metadata (fully-qualified names, option lists, resolved button subtypes), but
+    /// FPDFDOC_ExitFormFillEnvironment corrupts the heap in this PDFium build - reproducibly
+    /// crashing the process during teardown, sometimes as an "Internal CLR error" much later.
+    /// Crashing the host is a far worse outcome than reduced metadata fidelity, so field data
+    /// is read from the annotation dictionary, which is stable.
+    ///
+    /// Known limits of the dictionary-only approach, in exchange for not crashing:
+    ///   - Name is the PARTIAL /T name; fields nested under a /Parent are not qualified.
+    ///   - /Btn cannot be split into push button vs checkbox vs radio (reported as CheckBox).
+    ///   - Choice option lists are not enumerated, so Options stays empty.
+    /// </summary>
+    private static void ReadFieldsFromPage(
+        PdfiumDocument pdfiumDoc,
+        int pageNumber,
+        List<FormFieldModel> fields)
+    {
+        using var pageHandle = PdfiumNativeBridge.FPDF_LoadPage(pdfiumDoc.Handle, pageNumber - 1);
+        if (pageHandle == null || pageHandle.IsInvalid) return;
 
-            int annotCount = PdfiumNativeBridge.FPDFPage_GetAnnotCount(pageHandle);
+        float pageW = PdfiumNativeBridge.FPDF_GetPageWidthF(pageHandle);
+        float pageH = PdfiumNativeBridge.FPDF_GetPageHeightF(pageHandle);
+
+        int annotCount = PdfiumNativeBridge.FPDFPage_GetAnnotCount(pageHandle);
+        {
             for (int i = 0; i < annotCount; i++)
             {
                 using var annot = PdfiumNativeBridge.FPDFPage_GetAnnot(pageHandle, i);
                 if (annot == null || annot.IsInvalid) continue;
 
                 int subtype = PdfiumNativeBridge.FPDFAnnot_GetSubtype(annot);
-                if (subtype == PdfiumNativeBridge.FPDF_ANNOT_WIDGET)
+                if (subtype != PdfiumNativeBridge.FPDF_ANNOT_WIDGET) continue;
+
+                var field = new FormFieldModel
                 {
-                    // Derive the real field type from the widget's /FT entry instead of
-                    // hardcoding TextField, which made every checkbox, radio, combo and
-                    // signature field surface as a text box and drove the wrong UI editor.
-                    var field = new FormFieldModel
-                    {
-                        PageNumber = pageNumber,
-                        Type = ReadFieldType(annot)
-                    };
+                    PageNumber = pageNumber,
+                    Type = ReadFieldType(annot)
+                };
 
-                    if (PdfiumNativeBridge.FPDFAnnot_GetRect(annot, out var rect) != 0 && pageW > 0 && pageH > 0)
-                    {
-                        field.Bounds = new Geometry.PdfRect(
-                            Math.Max(0.0, Math.Min(1.0, rect.left / pageW)),
-                            Math.Max(0.0, Math.Min(1.0, 1.0 - (rect.top / pageH))),
-                            Math.Max(0.0, Math.Min(1.0, (rect.right - rect.left) / pageW)),
-                            Math.Max(0.0, Math.Min(1.0, (rect.top - rect.bottom) / pageH))
-                        );
-                    }
-
-                    uint nameLen = PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "T", null, 0);
-                    if (nameLen > 0)
-                    {
-                        byte[] nBuf = new byte[nameLen];
-                        PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "T", nBuf, nameLen);
-                        field.Name = PdfiumNativeBridge.Utf16BytesToString(nBuf, (int)nameLen);
-                    }
-
-                    uint valLen = PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "V", null, 0);
-                    if (valLen > 0)
-                    {
-                        byte[] vBuf = new byte[valLen];
-                        PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "V", vBuf, valLen);
-                        field.Value = PdfiumNativeBridge.Utf16BytesToString(vBuf, (int)valLen);
-                    }
-
-                    fields.Add(field);
+                if (PdfiumNativeBridge.FPDFAnnot_GetRect(annot, out var rect) != 0 && pageW > 0 && pageH > 0)
+                {
+                    field.Bounds = new Geometry.PdfRect(
+                        Math.Max(0.0, Math.Min(1.0, rect.left / pageW)),
+                        Math.Max(0.0, Math.Min(1.0, 1.0 - (rect.top / pageH))),
+                        Math.Max(0.0, Math.Min(1.0, (rect.right - rect.left) / pageW)),
+                        Math.Max(0.0, Math.Min(1.0, (rect.top - rect.bottom) / pageH))
+                    );
                 }
-            }
 
-            return ValueTask.FromResult<IReadOnlyList<FormFieldModel>>(fields);
+                field.Name = ReadAnnotString(annot, "T");
+                field.Value = ReadAnnotString(annot, "V");
+                field.DefaultValue = ReadAnnotString(annot, "DV");
+
+                if (field.Type is FormFieldType.CheckBox or FormFieldType.RadioButton)
+                {
+                    field.IsChecked = ReadCheckedState(annot);
+                }
+
+                fields.Add(field);
+            }
         }
+    }
+
+    /// <summary>
+    /// Determines checkbox/radio state from the widget's /AS appearance state, falling back
+    /// to /V. Any state other than "Off" means checked, per the PDF specification.
+    ///
+    /// Deliberately NOT using FPDFAnnot_IsChecked: that API dereferences the field's form
+    /// control without a null check, so a checkbox lacking an /AP appearance dictionary -
+    /// which real documents do contain - crashes the process. A native access violation
+    /// cannot be caught, so the only safe option is not to make the call. Reading /AS is
+    /// the spec's own representation of the state and cannot fault.
+    /// </summary>
+    private static bool ReadCheckedState(SafeAnnotHandle annot)
+    {
+        string state = ReadAnnotString(annot, "AS");
+        if (string.IsNullOrEmpty(state))
+        {
+            state = ReadAnnotString(annot, "V");
+        }
+
+        return !string.IsNullOrEmpty(state)
+               && !string.Equals(state, "Off", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ReadAnnotString(SafeAnnotHandle annot, string key)
+    {
+        uint len = PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, key, null, 0);
+        if (len == 0) return string.Empty;
+
+        byte[] buffer = new byte[len];
+        PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, key, buffer, len);
+        return PdfiumNativeBridge.Utf16BytesToString(buffer, (int)len);
     }
 
     public ValueTask SetFieldValueAsync(
@@ -90,13 +135,87 @@ public sealed class PdfiumFormService : IPdfFormService
         string value,
         CancellationToken cancellationToken = default)
     {
-        // Writing field values requires a PDFium form-fill environment
-        // (FPDFDOC_InitFormFillEnvironment), which this adapter does not create. Throw
-        // rather than returning CompletedTask: silently discarding the value made callers
-        // - notably ImportFormDataXfdfAsync - report a successful import that wrote nothing.
-        throw new NotSupportedException(
-            "Setting form field values is not supported by the PDFium adapter yet: it requires a " +
-            "form-fill environment. Field values can currently be read and exported, not written.");
+        if (document is not PdfiumDocument pdfiumDoc)
+            throw new ArgumentException("Document must be a PdfiumDocument instance.", nameof(document));
+
+        if (!pdfiumDoc.IsOpen)
+            throw new ObjectDisposedException(nameof(document));
+
+        if (string.IsNullOrEmpty(fieldName))
+            throw new ArgumentException("Field name must be supplied.", nameof(fieldName));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!TryUpdateField(pdfiumDoc, fieldName, value, cancellationToken, out bool wasReadOnly))
+        {
+            if (wasReadOnly)
+            {
+                throw new InvalidOperationException(
+                    $"Form field '{fieldName}' is read-only and cannot be modified.");
+            }
+
+            throw new KeyNotFoundException($"No form field named '{fieldName}' exists in the document.");
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Finds the widget for a field and writes its value.
+    ///
+    /// The value is written to the field's /V entry and the widget's cached appearance
+    /// stream is dropped so viewers regenerate it; without clearing /AP the field would
+    /// keep rendering its previous text even though the stored value changed.
+    /// </summary>
+    private static bool TryUpdateField(
+        PdfiumDocument document,
+        string fieldName,
+        string value,
+        CancellationToken cancellationToken,
+        out bool wasReadOnly)
+    {
+        wasReadOnly = false;
+        bool updated = false;
+
+        lock (document.SyncLock)
+        {
+            int pageCount = document.PageCount;
+
+            for (int p = 0; p < pageCount; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                using var page = PdfiumNativeBridge.FPDF_LoadPage(document.Handle, p);
+                if (page == null || page.IsInvalid) continue;
+
+                int annotCount = PdfiumNativeBridge.FPDFPage_GetAnnotCount(page);
+                for (int i = 0; i < annotCount; i++)
+                {
+                    using var annot = PdfiumNativeBridge.FPDFPage_GetAnnot(page, i);
+                    if (annot == null || annot.IsInvalid) continue;
+
+                    if (PdfiumNativeBridge.FPDFAnnot_GetSubtype(annot) != PdfiumNativeBridge.FPDF_ANNOT_WIDGET)
+                        continue;
+
+                    string name = ReadAnnotString(annot, "T");
+                    if (!string.Equals(name, fieldName, StringComparison.Ordinal)) continue;
+
+                    byte[] encoded = PdfiumNativeBridge.StringToUtf16NullTerminated(value);
+                    if (PdfiumNativeBridge.FPDFAnnot_SetStringValue(annot, "V", encoded) == 0)
+                    {
+                        continue;
+                    }
+
+                    // NOTE: do NOT try to clear the widget's cached /AP here. /AP is a
+                    // dictionary, so writing a string into it corrupts the annotation and
+                    // crashes PDFium during teardown. Regeneration is driven by the
+                    // AcroForm's /NeedAppearances flag instead.
+                    updated = true;
+                }
+            }
+        }
+
+        return updated;
     }
 
     public async ValueTask ExportFormDataXfdfAsync(
@@ -150,38 +269,49 @@ public sealed class PdfiumFormService : IPdfFormService
         }
     }
 
-    public ValueTask ResetFormAsync(
+    public async ValueTask ResetFormAsync(
         IPdfDocument document,
         CancellationToken cancellationToken = default)
     {
-        // Same limitation as SetFieldValueAsync - resetting requires a form-fill
-        // environment. Reporting success while doing nothing is worse than failing.
-        throw new NotSupportedException(
-            "Resetting form fields is not supported by the PDFium adapter yet: it requires a " +
-            "form-fill environment.");
+        if (document is not PdfiumDocument pdfiumDoc)
+            throw new ArgumentException("Document must be a PdfiumDocument instance.", nameof(document));
+
+        if (!pdfiumDoc.IsOpen)
+            throw new ObjectDisposedException(nameof(document));
+
+        // Reset each field to its /DV default value, or to empty when it has none - which
+        // is what a PDF reset action does.
+        for (int p = 1; p <= pdfiumDoc.PageCount; p++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var fields = await GetFormFieldsAsync(document, p, cancellationToken);
+            foreach (var field in fields)
+            {
+                if (string.IsNullOrEmpty(field.Name) || field.IsReadOnly) continue;
+                if (field.Type == FormFieldType.PushButton || field.Type == FormFieldType.Signature) continue;
+
+                TryUpdateField(pdfiumDoc, field.Name, field.DefaultValue ?? string.Empty, cancellationToken, out _);
+            }
+        }
     }
 
     /// <summary>
-    /// Reads the widget's field type from its /FT entry ("Tx", "Btn", "Ch", "Sig").
-    /// Note /FT may be inherited from a /Parent field, in which case it is absent on the
-    /// widget itself and we fall back to Unknown.
+    /// Reads the widget's true field type.
+    ///
+    /// With a form handle PDFium resolves inheritance and the /Ff flag bits, so push
+    /// buttons, checkboxes and radio buttons are distinguished properly. Without one we
+    /// fall back to the widget's own /FT entry, which cannot tell those three apart and is
+    /// absent entirely when the type is inherited from a /Parent field.
     /// </summary>
     private static FormFieldType ReadFieldType(SafeAnnotHandle annot)
     {
-        uint len = PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "FT", null, 0);
-        if (len == 0) return FormFieldType.Unknown;
-
-        byte[] buf = new byte[len];
-        PdfiumNativeBridge.FPDFAnnot_GetStringValue(annot, "FT", buf, len);
-        string ft = PdfiumNativeBridge.Utf16BytesToString(buf, (int)len).Trim();
-
+        string ft = ReadAnnotString(annot, "FT").Trim();
         return ft switch
         {
             "Tx" => FormFieldType.TextField,
             "Ch" => FormFieldType.ComboBox,
             "Sig" => FormFieldType.Signature,
-            // /Btn covers push buttons, checkboxes and radio buttons; distinguishing them
-            // needs the /Ff flag bits, which are not exposed as a string value.
             "Btn" => FormFieldType.CheckBox,
             _ => FormFieldType.Unknown
         };

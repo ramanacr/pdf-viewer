@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using PdfEngine;
 using PdfEngine.Documents;
+using PdfEngine.Forms;
 using PdfEngine.Geometry;
 using PdfEngine.Pdfium;
 using PdfEngine.Rendering;
@@ -103,6 +104,101 @@ public class PdfEngineCoreTests
 
         session.MarkSaved();
         Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public async Task TestFormFieldsReportTrueTypesAndMetadata()
+    {
+        // Regression test: every widget was reported as TextField and IsChecked was never
+        // populated, so a UI could not build the right editor for a field.
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Fields_Test.pdf");
+        TestPdfBuilder.CreateFormPdf(formPdf);
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(formPdf);
+
+        var fields = await engine.FormService.GetFormFieldsAsync(doc, 1);
+        Assert.Equal(3, fields.Count);
+
+        var text = fields.Single(f => f.Name == "FullName");
+        Assert.Equal(FormFieldType.TextField, text.Type);
+        Assert.Equal("Initial Value", text.Value);
+
+        var checkbox = fields.Single(f => f.Name == "Subscribe");
+        Assert.Equal(FormFieldType.CheckBox, checkbox.Type);
+        Assert.False(checkbox.IsChecked);
+
+        var combo = fields.Single(f => f.Name == "Country");
+        Assert.Equal(FormFieldType.ComboBox, combo.Type);
+        Assert.Equal("India", combo.Value);
+    }
+
+    [Fact]
+    public async Task TestSetFieldValueActuallyPersists()
+    {
+        // Regression test: SetFieldValueAsync was a no-op (later a throw), so XFDF import
+        // reported success while discarding every value. The write must survive a save and
+        // reopen cycle.
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Write_Test.pdf");
+        TestPdfBuilder.CreateFormPdf(formPdf);
+
+        string savedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Write_Saved.pdf");
+        if (File.Exists(savedPdf)) File.Delete(savedPdf);
+
+        using IPdfEngine engine = new PdfiumEngine();
+
+        await using (var doc = await engine.OpenDocumentAsync(formPdf))
+        {
+            await engine.FormService.SetFieldValueAsync(doc, "FullName", "Ramana Reddy");
+
+            // Visible immediately on the open document.
+            var updated = await engine.FormService.GetFormFieldsAsync(doc, 1);
+            Assert.Equal("Ramana Reddy", updated.Single(f => f.Name == "FullName").Value);
+
+            await engine.SaveService.SaveAsync(doc, savedPdf);
+        }
+
+        // And persisted to the saved file.
+        await using var reopened = await engine.OpenDocumentAsync(savedPdf);
+        var reloaded = await engine.FormService.GetFormFieldsAsync(reopened, 1);
+        Assert.Equal("Ramana Reddy", reloaded.Single(f => f.Name == "FullName").Value);
+    }
+
+    [Fact]
+    public async Task TestSetFieldValueRejectsUnknownField()
+    {
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Unknown_Test.pdf");
+        TestPdfBuilder.CreateFormPdf(formPdf);
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(formPdf);
+
+        // A misspelled field must fail rather than silently doing nothing.
+        await Assert.ThrowsAsync<KeyNotFoundException>(async () =>
+            await engine.FormService.SetFieldValueAsync(doc, "NoSuchField", "x"));
+    }
+
+    [Fact]
+    public async Task TestXfdfImportActuallyAppliesValues()
+    {
+        // The whole point of the round trip: export, edit, import, and see the values land.
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Xfdf_Test.pdf");
+        TestPdfBuilder.CreateFormPdf(formPdf);
+
+        string xfdfPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Xfdf_Test.xfdf");
+        File.WriteAllText(xfdfPath,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+            "<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><fields>" +
+            "<field name=\"FullName\"><value>Imported Name</value></field>" +
+            "</fields></xfdf>");
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(formPdf);
+
+        await engine.FormService.ImportFormDataXfdfAsync(doc, xfdfPath);
+
+        var fields = await engine.FormService.GetFormFieldsAsync(doc, 1);
+        Assert.Equal("Imported Name", fields.Single(f => f.Name == "FullName").Value);
     }
 
     [Fact]

@@ -2,77 +2,65 @@ using Microsoft.Win32.SafeHandles;
 
 namespace PdfEngine.Pdfium.Native;
 
-public sealed class SafeDocumentHandle : SafeHandleZeroOrMinusOneIsInvalid
+/// <summary>
+/// Base for PDFium handles.
+///
+/// ReleaseHandle runs on the GC's FINALIZER THREAD whenever a handle is not disposed
+/// explicitly. PDFium is not thread-safe, so a finalizer closing a page or annotation while
+/// the main thread is inside any other PDFium call corrupts shared state - which surfaces
+/// later as an access violation in an unrelated call, typically wherever the next teardown
+/// happens. Every release therefore takes the same process-wide lock as every other native
+/// entry point.
+/// </summary>
+public abstract class SafePdfiumHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
-    public SafeDocumentHandle() : base(true) { }
+    protected SafePdfiumHandle() : base(true) { }
+
+    /// <summary>Closes the native resource. Always invoked under the global PDFium lock.</summary>
+    protected abstract void CloseNativeHandle(IntPtr nativeHandle);
 
     protected override bool ReleaseHandle()
     {
-        if (!IsInvalid)
+        if (IsInvalid) return true;
+
+        IntPtr toClose = handle;
+        handle = IntPtr.Zero;
+
+        lock (PdfiumNativeBridge.PdfiumLock)
         {
-            PdfiumNativeBridge.FPDF_CloseDocument(handle);
-            handle = IntPtr.Zero;
+            CloseNativeHandle(toClose);
         }
+
         return true;
     }
 }
 
-public sealed class SafePageHandle : SafeHandleZeroOrMinusOneIsInvalid
+public sealed class SafeDocumentHandle : SafePdfiumHandle
 {
-    public SafePageHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDF_ClosePage(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
+    protected override void CloseNativeHandle(IntPtr nativeHandle)
+        => PdfiumNativeBridge.FPDF_CloseDocument(nativeHandle);
 }
 
-public sealed class SafeTextPageHandle : SafeHandleZeroOrMinusOneIsInvalid
+public sealed class SafePageHandle : SafePdfiumHandle
 {
-    public SafeTextPageHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDFText_ClosePage(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
+    protected override void CloseNativeHandle(IntPtr nativeHandle)
+        => PdfiumNativeBridge.FPDF_ClosePage(nativeHandle);
 }
 
-public sealed class SafeSearchHandle : SafeHandleZeroOrMinusOneIsInvalid
+public sealed class SafeTextPageHandle : SafePdfiumHandle
 {
-    public SafeSearchHandle() : base(true) { }
-
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDFText_FindClose(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
+    protected override void CloseNativeHandle(IntPtr nativeHandle)
+        => PdfiumNativeBridge.FPDFText_ClosePage(nativeHandle);
 }
 
-public sealed class SafeAnnotHandle : SafeHandleZeroOrMinusOneIsInvalid
+public sealed class SafeSearchHandle : SafePdfiumHandle
 {
-    public SafeAnnotHandle() : base(true) { }
+    protected override void CloseNativeHandle(IntPtr nativeHandle)
+        => PdfiumNativeBridge.FPDFText_FindClose(nativeHandle);
+}
 
-    protected override bool ReleaseHandle()
-    {
-        if (!IsInvalid)
-        {
-            PdfiumNativeBridge.FPDFPage_CloseAnnot(handle);
-            handle = IntPtr.Zero;
-        }
-        return true;
-    }
+public sealed class SafeAnnotHandle : SafePdfiumHandle
+{
+    protected override void CloseNativeHandle(IntPtr nativeHandle)
+        => PdfiumNativeBridge.FPDFPage_CloseAnnot(nativeHandle);
 }

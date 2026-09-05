@@ -117,6 +117,102 @@ public static class TestPdfBuilder
         return filePath;
     }
 
+    /// <summary>
+    /// Creates a single-page PDF with a real AcroForm containing a text field, a checkbox
+    /// and a combo box, for exercising form discovery and field writes.
+    /// </summary>
+    public static string CreateFormPdf(string filePath)
+    {
+        var dir = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+        using var writer = new StreamWriter(fs, Encoding.ASCII);
+
+        var offsets = new List<long>();
+        void WriteObj(int objNum, string content)
+        {
+            writer.Flush();
+            offsets.Add(fs.Position);
+            writer.WriteLine($"{objNum} 0 obj");
+            writer.WriteLine(content);
+            writer.WriteLine("endobj");
+        }
+
+        writer.WriteLine("%PDF-1.7");
+        writer.WriteLine("%\xAA\xBB\xCC\xDD");
+
+        const int catalogObj = 1;
+        const int pagesObj = 2;
+        const int pageObj = 3;
+        const int fontObj = 4;
+        const int textFieldObj = 5;
+        const int checkBoxObj = 6;
+        const int comboObj = 7;
+        const int acroFormObj = 8;
+        const int checkOnApObj = 9;
+        const int checkOffApObj = 10;
+
+        WriteObj(catalogObj, $"<< /Type /Catalog /Pages {pagesObj} 0 R /AcroForm {acroFormObj} 0 R >>");
+        WriteObj(pagesObj, $"<< /Type /Pages /Kids [{pageObj} 0 R] /Count 1 >>");
+        WriteObj(pageObj,
+            $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] " +
+            $"/Annots [{textFieldObj} 0 R {checkBoxObj} 0 R {comboObj} 0 R] " +
+            $"/Resources << /Font << /Helv {fontObj} 0 R >> >> >>");
+        WriteObj(fontObj, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        // Text field with an initial value and a default for reset.
+        WriteObj(textFieldObj,
+            $"<< /Type /Annot /Subtype /Widget /FT /Tx /T (FullName) /V (Initial Value) /DV (Default Value) " +
+            $"/Rect [72 700 372 724] /F 4 /P {pageObj} 0 R /DA (/Helv 12 Tf 0 g) >>");
+
+        // Checkbox, currently off, with the /AP appearance dictionary real forms carry.
+        WriteObj(checkBoxObj,
+            $"<< /Type /Annot /Subtype /Widget /FT /Btn /T (Subscribe) /V /Off /AS /Off " +
+            $"/AP << /N << /Yes {checkOnApObj} 0 R /Off {checkOffApObj} 0 R >> >> " +
+            $"/Rect [72 660 92 680] /F 4 /P {pageObj} 0 R /DA (/Helv 12 Tf 0 g) >>");
+
+        // Combo box (/Ff bit 18 = Combo) with an option list.
+        WriteObj(comboObj,
+            $"<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (Country) /V (India) " +
+            $"/Opt [(India) (Germany) (Japan)] " +
+            $"/Rect [72 620 272 644] /F 4 /P {pageObj} 0 R /DA (/Helv 12 Tf 0 g) >>");
+
+        WriteObj(acroFormObj,
+            $"<< /Fields [{textFieldObj} 0 R {checkBoxObj} 0 R {comboObj} 0 R] /NeedAppearances true " +
+            $"/DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv {fontObj} 0 R >> >> >>");
+
+        // Appearance streams for the checkbox's on/off states.
+        string onStream = "q 0 0 1 rg 2 2 16 16 re f Q";
+        WriteObj(checkOnApObj,
+            $"<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Resources << >> /Length {onStream.Length} >>\n" +
+            $"stream\n{onStream}\nendstream");
+
+        string offStream = "q Q";
+        WriteObj(checkOffApObj,
+            $"<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Resources << >> /Length {offStream.Length} >>\n" +
+            $"stream\n{offStream}\nendstream");
+
+        writer.Flush();
+        long startXref = fs.Position;
+        writer.WriteLine("xref");
+        writer.WriteLine($"0 {offsets.Count + 1}");
+        writer.WriteLine("0000000000 65535 f ");
+        foreach (var off in offsets)
+        {
+            writer.WriteLine($"{off:D10} 00000 n ");
+        }
+
+        writer.WriteLine("trailer");
+        writer.WriteLine($"<< /Size {offsets.Count + 1} /Root {catalogObj} 0 R >>");
+        writer.WriteLine("startxref");
+        writer.WriteLine(startXref);
+        writer.WriteLine("%%EOF");
+        writer.Flush();
+
+        return filePath;
+    }
+
     public static string CreateNonLatinPdf(string filePath)
     {
         return CreateSimplePdf(filePath, 2, "UnicodeTest");
