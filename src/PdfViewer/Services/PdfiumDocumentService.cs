@@ -12,6 +12,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using PdfViewer.Core.Security;
 using PdfViewer.Models;
 
 namespace PdfViewer.Services;
@@ -52,8 +53,16 @@ public class PdfiumDocumentService : IPdfDocumentService
         }
     }
 
-    public PdfiumDocumentService()
+    private readonly PdfSecurityPolicy _securityPolicy;
+
+    /// <summary>
+    /// The security policy enforced by this service at the document-open and render boundaries.
+    /// </summary>
+    public PdfSecurityPolicy SecurityPolicy => _securityPolicy;
+
+    public PdfiumDocumentService(PdfSecurityPolicy? securityPolicy = null)
     {
+        _securityPolicy = securityPolicy ?? PdfSecurityPolicy.DefaultStrict;
         PdfiumNativeBridge.EnsureInitialized();
     }
 
@@ -73,6 +82,11 @@ public class PdfiumDocumentService : IPdfDocumentService
                 {
                     throw new FileNotFoundException($"File not found: {filePath}", filePath);
                 }
+
+                // Enforce the size ceiling BEFORE reading the file into memory, so an
+                // oversized document is refused rather than allocated twice (managed array
+                // plus unmanaged copy) on the way to failing.
+                _securityPolicy.EnsureDocumentSizeAllowed(new FileInfo(filePath).Length, filePath);
 
                 // Read file bytes into pinned unmanaged native buffer
                 byte[] bytes = File.ReadAllBytes(filePath);
@@ -278,6 +292,21 @@ public class PdfiumDocumentService : IPdfDocumentService
 
             int widthPx = Math.Max(1, (int)Math.Round((isRotated90 ? heightPt : widthPt) * dpi / 72.0));
             int heightPx = Math.Max(1, (int)Math.Round((isRotated90 ? widthPt : heightPt) * dpi / 72.0));
+
+            // Bound the raster before allocating: a hostile MediaBox combined with a high
+            // zoom DPI can otherwise demand an arbitrarily large native bitmap.
+            //
+            // In the VIEWER path we clamp rather than throw. Refusing outright would make
+            // legitimately large-format documents (E-size engineering drawings, posters)
+            // undisplayable at high zoom, which is a worse outcome than showing them at a
+            // reduced resolution. The memory bound - the actual security goal - is identical.
+            int ceiling = _securityPolicy.MaxRenderDimensionPixels;
+            if (widthPx > ceiling || heightPx > ceiling)
+            {
+                double clampScale = Math.Min((double)ceiling / widthPx, (double)ceiling / heightPx);
+                widthPx = Math.Max(1, (int)(widthPx * clampScale));
+                heightPx = Math.Max(1, (int)(heightPx * clampScale));
+            }
 
             using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
             if (page == null || page.IsInvalid) return null;

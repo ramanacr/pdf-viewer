@@ -1,4 +1,5 @@
 using PdfEngine.Redaction;
+using PdfViewer.Core.Licensing;
 using PdfViewer.Core.Session;
 
 namespace PdfViewer.Core.Commands;
@@ -10,6 +11,7 @@ public sealed class ApplyRedactionsCommand : IDocumentCommand
     private readonly IReadOnlyList<RedactionArea> _redactions;
 
     public string Name => $"Apply {_redactions.Count} Redactions";
+    public FeatureId RequiredFeature => FeatureId.Redaction;
 
     public ApplyRedactionsCommand(
         IPdfRedactionService redactionService,

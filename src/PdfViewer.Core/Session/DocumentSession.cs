@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using CommunityToolkit.Mvvm.ComponentModel;
 using PdfEngine.Documents;
 using PdfEngine.Exceptions;
+using PdfViewer.Core.Security;
 
 namespace PdfViewer.Core.Session;
 
@@ -41,13 +42,30 @@ public sealed class DocumentSession : ObservableObject, IAsyncDisposable, IDispo
         set => SetProperty(ref _isDirty, value);
     }
 
-    public DocumentSession()
+    private readonly PdfSecurityPolicy _securityPolicy;
+
+    public PdfSecurityPolicy SecurityPolicy => _securityPolicy;
+
+    public DocumentSession(PdfSecurityPolicy? securityPolicy = null)
     {
+        _securityPolicy = securityPolicy ?? PdfSecurityPolicy.DefaultStrict;
     }
 
     public void AttachDocument(IPdfDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
+
+        // Enforce the size ceiling before the session adopts the document. Checked here
+        // because this is the boundary every consumer of a session passes through.
+        long sizeBytes = document.Metadata?.FileSizeBytes ?? 0;
+        if (sizeBytes <= 0 && !string.IsNullOrEmpty(document.FilePath) && File.Exists(document.FilePath))
+        {
+            sizeBytes = new FileInfo(document.FilePath).Length;
+        }
+        if (sizeBytes > 0)
+        {
+            _securityPolicy.EnsureDocumentSizeAllowed(sizeBytes, document.FilePath);
+        }
 
         // Attaching over an existing document used to silently drop it, leaking its PDFium
         // handle and its backing buffer and keeping the old file locked. Close first.

@@ -13,6 +13,7 @@ using Microsoft.Win32;
 using PdfViewer.Core.Commands;
 using PdfViewer.Core.Licensing;
 using PdfViewer.Core.Rendering;
+using PdfViewer.Core.Security;
 using PdfViewer.Core.Session;
 using PdfViewer.Models;
 using PdfViewer.Services;
@@ -208,13 +209,34 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    public DocumentSession Session { get; } = new();
-    public ICommandHistory CommandHistory { get; } = new CommandHistory();
+    /// <summary>
+    /// Composition root for the security policy and the licence gate. Both are constructed
+    /// here and threaded into every component that enforces them, so there is exactly one
+    /// place to change the application's posture.
+    /// </summary>
+    public PdfSecurityPolicy SecurityPolicy { get; } = PdfSecurityPolicy.DefaultStrict;
+
     public IFeatureGate FeatureGate { get; } = new DefaultFeatureGate();
+
+    public DocumentSession Session { get; }
+    public ICommandHistory CommandHistory { get; }
+
+    // Bindable licence state so the UI can disable or badge gated features rather than
+    // offering them and failing at execution time.
+    public bool IsRedactionAvailable => FeatureGate.IsFeatureEnabled(FeatureId.Redaction);
+    public bool IsOcrAvailable => FeatureGate.IsFeatureEnabled(FeatureId.Ocr);
+    public bool IsMergeSplitAvailable => FeatureGate.IsFeatureEnabled(FeatureId.MergeSplit);
+    public bool IsPageOperationsAvailable => FeatureGate.IsFeatureEnabled(FeatureId.PageOperations);
+    public bool IsFormsAvailable => FeatureGate.IsFeatureEnabled(FeatureId.Forms);
+    public bool IsSignaturesAvailable => FeatureGate.IsFeatureEnabled(FeatureId.Signatures);
+    public string LicenseTierName => FeatureGate.CurrentTier.ToString();
 
     public MainViewModel()
     {
-        _docService = PdfDocumentServiceFactory.CreateService();
+        Session = new DocumentSession(SecurityPolicy);
+        CommandHistory = new CommandHistory(featureGate: FeatureGate);
+
+        _docService = PdfDocumentServiceFactory.CreateService(SecurityPolicy);
         _cache = new LruPageCache(60);
         _renderer = new AsyncPageRenderer(_docService, _cache);
 

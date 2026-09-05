@@ -1,4 +1,5 @@
 using System;
+using PdfViewer.Core.Security;
 
 namespace PdfViewer.Services;
 
@@ -9,8 +10,12 @@ public static class PdfDocumentServiceFactory
 {
     public static string CurrentEngine => "Pdfium";
 
-    public static IPdfDocumentService CreateService()
+    /// <summary>
+    /// Creates the document service under a security policy. Defaults to the strict policy
+    /// so a caller that forgets to pass one still gets the size and render ceilings.
+    /// </summary>
+    public static IPdfDocumentService CreateService(PdfSecurityPolicy? securityPolicy = null)
     {
-        return new PdfiumDocumentService();
+        return new PdfiumDocumentService(securityPolicy ?? PdfSecurityPolicy.DefaultStrict);
     }
 }

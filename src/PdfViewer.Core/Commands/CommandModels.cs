@@ -1,3 +1,4 @@
+using PdfViewer.Core.Licensing;
 using PdfViewer.Core.Session;
 
 namespace PdfViewer.Core.Commands;
@@ -5,6 +6,15 @@ namespace PdfViewer.Core.Commands;
 public interface IDocumentCommand
 {
     string Name { get; }
+
+    /// <summary>
+    /// The licensed feature this command belongs to. CommandHistory refuses to execute a
+    /// command whose feature is not enabled, so gating happens once at the choke point
+    /// rather than being re-implemented (and forgotten) at each call site.
+    /// Defaults to <see cref="FeatureId.Viewer"/>, which every tier includes.
+    /// </summary>
+    FeatureId RequiredFeature => FeatureId.Viewer;
+
     ValueTask ExecuteAsync(DocumentSession session, CancellationToken cancellationToken = default);
     ValueTask UndoAsync(DocumentSession session, CancellationToken cancellationToken = default);
 }
@@ -33,9 +43,12 @@ public sealed class CommandHistory : ICommandHistory
     public string? NextUndoName => CanUndo ? _undoStack.Peek().Name : null;
     public string? NextRedoName => CanRedo ? _redoStack.Peek().Name : null;
 
-    public CommandHistory(int maxHistory = 100)
+    private readonly IFeatureGate _featureGate;
+
+    public CommandHistory(int maxHistory = 100, IFeatureGate? featureGate = null)
     {
         _maxHistory = Math.Max(1, maxHistory);
+        _featureGate = featureGate ?? new DefaultFeatureGate();
     }
 
     // Serializes the whole execute-and-record sequence. The stacks were previously mutated
@@ -47,6 +60,9 @@ public sealed class CommandHistory : ICommandHistory
     public async ValueTask ExecuteCommandAsync(IDocumentCommand command, DocumentSession session, CancellationToken cancellationToken = default)
     {
         if (command == null) throw new ArgumentNullException(nameof(command));
+
+        // Licence check before anything is executed or recorded.
+        _featureGate.EnsureFeatureEnabled(command.RequiredFeature);
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -106,6 +122,8 @@ public sealed class CommandHistory : ICommandHistory
             if (_redoStack.Count == 0) return;
 
             var cmd = _redoStack.Peek();
+            // Redo re-executes the command, so it must pass the same licence check.
+            _featureGate.EnsureFeatureEnabled(cmd.RequiredFeature);
             await cmd.ExecuteAsync(session, cancellationToken);
 
             _redoStack.Pop();

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using PdfEngine.Documents;
 using PdfEngine.Rendering;
 using PdfViewer.Core.Cache;
+using PdfViewer.Core.Security;
 using PdfViewer.Core.Session;
 
 namespace PdfViewer.Core.Rendering;
@@ -13,16 +14,23 @@ public sealed class RenderPriorityScheduler : IDisposable
 {
     private readonly IPdfRenderer _renderer;
     private readonly MultiTierCache _cache;
+    private readonly PdfSecurityPolicy _securityPolicy;
     private readonly ConcurrentDictionary<RenderCacheKey, Task<bool>> _inFlightTasks = new();
     private readonly CancellationTokenSource _globalCts = new();
     private volatile bool _isDisposed;
 
     public MultiTierCache Cache => _cache;
 
-    public RenderPriorityScheduler(IPdfRenderer renderer, MultiTierCache? cache = null)
+    public PdfSecurityPolicy SecurityPolicy => _securityPolicy;
+
+    public RenderPriorityScheduler(
+        IPdfRenderer renderer,
+        MultiTierCache? cache = null,
+        PdfSecurityPolicy? securityPolicy = null)
     {
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
         _cache = cache ?? new MultiTierCache();
+        _securityPolicy = securityPolicy ?? PdfSecurityPolicy.DefaultStrict;
     }
 
     /// <summary>
@@ -42,6 +50,10 @@ public sealed class RenderPriorityScheduler : IDisposable
             throw new ObjectDisposedException(nameof(RenderPriorityScheduler));
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // Enforce the render ceiling before any work is scheduled or cached, so hostile page
+        // geometry (or an absurd caller-supplied DPI) cannot drive an unbounded allocation.
+        EnforceRenderLimits(session, request);
 
         int dpiBucket = RenderCacheKey.GetDpiBucket(request.Dpi);
         var cacheKey = new RenderCacheKey(
@@ -99,6 +111,26 @@ public sealed class RenderPriorityScheduler : IDisposable
         // copy owned solely by this caller.
         var fallback = await _renderer.RenderPageAsync(session.Document, request, cancellationToken).ConfigureAwait(false);
         return _cache.Put(cacheKey, fallback);
+    }
+
+    /// <summary>
+    /// Applies the security policy's render ceiling to the request, resolving the effective
+    /// pixel size the same way the renderer will (explicit target pixels, else DPI scaling).
+    /// </summary>
+    private void EnforceRenderLimits(DocumentSession session, RenderRequest request)
+    {
+        int width = request.TargetWidthPixels;
+        int height = request.TargetHeightPixels;
+
+        if (width <= 0 || height <= 0)
+        {
+            var pageInfo = session.Document!.GetPageInfoAsync(request.PageNumber).AsTask().GetAwaiter().GetResult();
+            double scale = request.Dpi / 72.0;
+            width = (int)Math.Round(pageInfo.WidthPoints * scale);
+            height = (int)Math.Round(pageInfo.HeightPoints * scale);
+        }
+
+        _securityPolicy.EnsureRenderDimensionsAllowed(width, height);
     }
 
     public void InvalidateDocument(string fingerprint)

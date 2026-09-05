@@ -1,5 +1,6 @@
 using PdfEngine.Pages;
 using PdfEngine.Rendering;
+using PdfViewer.Core.Licensing;
 using PdfViewer.Core.Session;
 
 namespace PdfViewer.Core.Commands;
@@ -15,6 +16,7 @@ public sealed class RotatePageCommand : IDocumentCommand
     private readonly PageRotation _oldRotation;
 
     public string Name => $"Rotate Page {_pageNumber} to {_newRotation}";
+    public FeatureId RequiredFeature => FeatureId.PageOperations;
 
     public RotatePageCommand(
         IPdfPageOrganizerService organizer,
@@ -52,6 +54,7 @@ public sealed class InsertBlankPageCommand : IDocumentCommand
     private readonly double _height;
 
     public string Name => $"Insert Blank Page at index {_targetIndex + 1}";
+    public FeatureId RequiredFeature => FeatureId.PageOperations;
 
     public InsertBlankPageCommand(
         IPdfPageOrganizerService organizer,

@@ -526,20 +526,189 @@ public class PdfEngineCoreTests
     [Fact]
     public void TestFeatureGateEntitlements()
     {
-        var gate = new DefaultFeatureGate { CurrentTier = LicenseTier.Community };
-        Assert.True(gate.IsFeatureEnabled(FeatureId.Viewer));
-        Assert.True(gate.IsFeatureEnabled(FeatureId.Search));
-        Assert.True(gate.IsFeatureEnabled(FeatureId.Annotations));
-        Assert.False(gate.IsFeatureEnabled(FeatureId.Redaction));
-        Assert.False(gate.IsFeatureEnabled(FeatureId.Sdk));
+        // The tier is now constructor-supplied and read-only: a public setter let any code
+        // path silently promote itself to Enterprise, defeating the gate entirely.
+        var community = new DefaultFeatureGate(LicenseTier.Community);
+        Assert.True(community.IsFeatureEnabled(FeatureId.Viewer));
+        Assert.True(community.IsFeatureEnabled(FeatureId.Search));
+        Assert.True(community.IsFeatureEnabled(FeatureId.Annotations));
+        Assert.False(community.IsFeatureEnabled(FeatureId.Redaction));
+        Assert.False(community.IsFeatureEnabled(FeatureId.Sdk));
 
-        gate.CurrentTier = LicenseTier.Pro;
-        Assert.True(gate.IsFeatureEnabled(FeatureId.Redaction));
-        Assert.True(gate.IsFeatureEnabled(FeatureId.Forms));
-        Assert.False(gate.IsFeatureEnabled(FeatureId.Sdk));
+        var pro = new DefaultFeatureGate(LicenseTier.Pro);
+        Assert.True(pro.IsFeatureEnabled(FeatureId.Redaction));
+        Assert.True(pro.IsFeatureEnabled(FeatureId.Forms));
+        Assert.False(pro.IsFeatureEnabled(FeatureId.Sdk));
 
-        gate.CurrentTier = LicenseTier.DeveloperSdk;
-        Assert.True(gate.IsFeatureEnabled(FeatureId.Sdk));
+        var sdk = new DefaultFeatureGate(LicenseTier.DeveloperSdk);
+        Assert.True(sdk.IsFeatureEnabled(FeatureId.Sdk));
+
+        // The default is the most restrictive tier.
+        Assert.Equal(LicenseTier.Community, new DefaultFeatureGate().CurrentTier);
+    }
+
+    [Fact]
+    public void TestEnsureFeatureEnabledThrowsForUnlicensedFeature()
+    {
+        var community = new DefaultFeatureGate(LicenseTier.Community);
+
+        community.EnsureFeatureEnabled(FeatureId.Viewer); // allowed, must not throw
+
+        var ex = Assert.Throws<FeatureNotLicensedException>(
+            () => community.EnsureFeatureEnabled(FeatureId.Redaction));
+
+        Assert.Equal(FeatureId.Redaction, ex.Feature);
+        Assert.Equal(LicenseTier.Community, ex.CurrentTier);
+    }
+
+    [Fact]
+    public async Task TestCommandHistoryEnforcesFeatureGate()
+    {
+        // The gate is enforced at the CommandHistory choke point, so an unlicensed command
+        // cannot execute no matter which call site constructed it.
+        using var session = new DocumentSession();
+
+        var community = new CommandHistory(featureGate: new DefaultFeatureGate(LicenseTier.Community));
+        var redaction = new ApplyRedactionsCommand(
+            new PdfEngine.Pdfium.Adapters.PdfiumRedactionService(),
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gated_redaction.pdf"),
+            Array.Empty<PdfEngine.Redaction.RedactionArea>());
+
+        await Assert.ThrowsAsync<FeatureNotLicensedException>(
+            async () => await community.ExecuteCommandAsync(redaction, session));
+
+        // Nothing was recorded, because nothing ran.
+        Assert.False(community.CanUndo);
+
+        // A Community-tier command still executes normally.
+        var viewerCommand = new DelegateCommand("Viewer op", _ => ValueTask.CompletedTask, _ => ValueTask.CompletedTask);
+        await community.ExecuteCommandAsync(viewerCommand, session);
+        Assert.True(community.CanUndo);
+    }
+
+    [Fact]
+    public void TestSecurityPolicyRejectsOversizedDocumentAndRender()
+    {
+        var policy = PdfSecurityPolicy.DefaultStrict with
+        {
+            MaxDocumentSizeBytes = 1024,
+            MaxRenderDimensionPixels = 100
+        };
+
+        // Within limits - must not throw.
+        policy.EnsureDocumentSizeAllowed(512, "small.pdf");
+        policy.EnsureRenderDimensionsAllowed(100, 100);
+
+        var sizeEx = Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            () => policy.EnsureDocumentSizeAllowed(4096, "huge.pdf"));
+        Assert.Equal(nameof(PdfSecurityPolicy.MaxDocumentSizeBytes), sizeEx.PolicyName);
+
+        var renderEx = Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            () => policy.EnsureRenderDimensionsAllowed(101, 50));
+        Assert.Equal(nameof(PdfSecurityPolicy.MaxRenderDimensionPixels), renderEx.PolicyName);
+    }
+
+    [Fact]
+    public void TestSecurityPolicyBlocksDocumentOriginatedActions()
+    {
+        var strict = PdfSecurityPolicy.DefaultStrict;
+
+        // Strict policy blocks script, launch and network actions by default.
+        Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            () => strict.EnsureActionAllowed(PdfDocumentAction.JavaScript));
+        Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            () => strict.EnsureActionAllowed(PdfDocumentAction.LaunchProgram));
+        Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            () => strict.EnsureActionAllowed(PdfDocumentAction.NetworkAccess));
+
+        // External links are permitted by default, attachments need confirmation.
+        strict.EnsureActionAllowed(PdfDocumentAction.ExternalLink);
+        Assert.True(strict.IsConfirmationRequired(PdfDocumentAction.AttachmentExtraction));
+
+        // The permissive policy allows everything.
+        var permissive = PdfSecurityPolicy.Permissive;
+        permissive.EnsureActionAllowed(PdfDocumentAction.JavaScript);
+        permissive.EnsureActionAllowed(PdfDocumentAction.LaunchProgram);
+        permissive.EnsureActionAllowed(PdfDocumentAction.NetworkAccess);
+        Assert.False(permissive.IsConfirmationRequired(PdfDocumentAction.AttachmentExtraction));
+    }
+
+    [Fact]
+    public async Task TestSchedulerEnforcesRenderDimensionCeiling()
+    {
+        // The policy ceiling is applied before any render work is scheduled or cached.
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        using var session = new DocumentSession();
+        session.AttachDocument(doc);
+
+        var policy = PdfSecurityPolicy.DefaultStrict with { MaxRenderDimensionPixels = 200 };
+        using var scheduler = new RenderPriorityScheduler(engine.Renderer, cache: null, securityPolicy: policy);
+
+        await Assert.ThrowsAsync<PdfEngine.Exceptions.PdfSecurityPolicyException>(async () =>
+        {
+            using var _ = await scheduler.GetOrRenderPageAsync(session,
+                new RenderRequest { PageNumber = 1, TargetWidthPixels = 5000, TargetHeightPixels = 5000 });
+        });
+
+        // A request inside the ceiling still renders.
+        using var ok = await scheduler.GetOrRenderPageAsync(session,
+            new RenderRequest { PageNumber = 1, TargetWidthPixels = 150, TargetHeightPixels = 150 });
+        Assert.Equal(150, ok.Page.WidthPixels);
+    }
+
+    [Fact]
+    public async Task TestViewerClampsOversizedRenderInsteadOfRefusing()
+    {
+        // The viewer path deliberately clamps to the policy ceiling rather than throwing:
+        // a large-format drawing must still display (at reduced resolution) instead of
+        // becoming undisplayable at high zoom. The memory bound is unchanged.
+        string samplePdf = GetOrCreateSamplePdf();
+        var policy = PdfSecurityPolicy.DefaultStrict with { MaxRenderDimensionPixels = 200 };
+
+        using var service = new PdfViewer.Services.PdfiumDocumentService(policy);
+        await service.OpenDocumentAsync(samplePdf);
+
+        // 5000 DPI would demand a raster far beyond the ceiling.
+        var bitmap = service.RenderPage(1, dpi: 5000);
+
+        Assert.NotNull(bitmap);
+        Assert.True(bitmap!.PixelWidth <= 200, $"Width {bitmap.PixelWidth} exceeds the clamp ceiling.");
+        Assert.True(bitmap.PixelHeight <= 200, $"Height {bitmap.PixelHeight} exceeds the clamp ceiling.");
+    }
+
+    [Fact]
+    public async Task TestServiceRejectsDocumentExceedingSizePolicy()
+    {
+        // The open boundary DOES hard-refuse: an oversized file is never read into memory.
+        string samplePdf = GetOrCreateSamplePdf();
+        var policy = PdfSecurityPolicy.DefaultStrict with { MaxDocumentSizeBytes = 1 };
+
+        using var service = new PdfViewer.Services.PdfiumDocumentService(policy);
+
+        var ex = await Assert.ThrowsAsync<PdfEngine.Exceptions.PdfSecurityPolicyException>(
+            async () => await service.OpenDocumentAsync(samplePdf));
+
+        Assert.Equal(nameof(PdfSecurityPolicy.MaxDocumentSizeBytes), ex.PolicyName);
+    }
+
+    [Fact]
+    public async Task TestSessionRejectsDocumentExceedingSizePolicy()
+    {
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = new PdfiumEngine();
+        var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        // A 1-byte ceiling rejects any real document.
+        var policy = PdfSecurityPolicy.DefaultStrict with { MaxDocumentSizeBytes = 1 };
+        using var session = new DocumentSession(policy);
+
+        Assert.Throws<PdfEngine.Exceptions.PdfSecurityPolicyException>(() => session.AttachDocument(doc));
+        Assert.False(session.IsOpen);
+
+        doc.Dispose();
     }
 
     [Fact]

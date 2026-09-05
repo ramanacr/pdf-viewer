@@ -131,7 +131,10 @@ public class PageOrganizerTests
         using var session = new DocumentSession();
         session.AttachDocument(doc);
 
-        var history = new CommandHistory();
+        // Page operations are a Pro-tier feature and CommandHistory enforces the licence
+        // gate, so this exercise needs a gate that actually licenses them.
+        var history = new CommandHistory(
+            featureGate: new PdfViewer.Core.Licensing.DefaultFeatureGate(PdfViewer.Core.Licensing.LicenseTier.Pro));
         var cmd = new RotatePageCommand(engine.PageOrganizer, 1, PageRotation.Rotate180, PageRotation.Rotate0);
 
         await history.ExecuteCommandAsync(cmd, session);
