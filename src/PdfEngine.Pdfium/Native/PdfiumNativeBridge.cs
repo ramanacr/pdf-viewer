@@ -277,6 +277,47 @@ public static class PdfiumNativeBridge
     // this PDFium build - see PdfiumFormService - so nothing may call it, and dead interop
     // for a crashing API is an invitation to reintroduce the bug.
 
+    // Document JavaScript (fpdf_javascript.h). Used to DETECT and report embedded script;
+    // this application never executes it.
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFDoc_GetJavaScriptActionCount(SafeDocumentHandle document);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDFDoc_GetJavaScriptAction(SafeDocumentHandle document, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void FPDFDoc_CloseJavaScriptAction(IntPtr javascript);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFJavaScriptAction_GetName(IntPtr javascript, byte[]? buffer, uint buflen);
+
+    // Embedded file attachments (fpdf_attachment.h)
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFDoc_GetAttachmentCount(SafeDocumentHandle document);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDFDoc_GetAttachment(SafeDocumentHandle document, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFAttachment_GetName(IntPtr attachment, byte[]? buffer, uint buflen);
+
+    // Link/annotation actions (fpdf_doc.h)
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDFAction_GetType(IntPtr action);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDFAnnot_GetLink(SafeAnnotHandle annot);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_GetDocPermissions(SafeDocumentHandle document);
+
+    // PDFACTION_* values returned by FPDFAction_GetType
+    public const uint PDFACTION_UNSUPPORTED = 0;
+    public const uint PDFACTION_GOTO = 1;
+    public const uint PDFACTION_REMOTEGOTO = 2;
+    public const uint PDFACTION_URI = 3;
+    public const uint PDFACTION_LAUNCH = 4;
+
     // Digital signatures (fpdf_signature.h)
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDF_GetSignatureCount(SafeDocumentHandle document);

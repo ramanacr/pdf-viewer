@@ -107,6 +107,55 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public async Task TestSafetyInspectorDetectsActiveContent()
+    {
+        // The product promise: tell the user what the document is carrying, rather than
+        // silently acting on it. Detection must be authoritative, so this fixture carries
+        // real script, a launch action, and an external link.
+        string pdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ActiveContent.pdf");
+        TestPdfBuilder.CreateActiveContentPdf(pdf);
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(pdf);
+
+        var inspector = new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector();
+        var report = await inspector.InspectAsync(doc);
+
+        Assert.True(report.HasKind(PdfEngine.Safety.DocumentRiskKind.JavaScript),
+            "Embedded JavaScript must be detected - it is the vector behind most PDF reader RCEs.");
+        Assert.True(report.HasKind(PdfEngine.Safety.DocumentRiskKind.LaunchAction),
+            "A /Launch action must be detected.");
+        Assert.True(report.HasKind(PdfEngine.Safety.DocumentRiskKind.ExternalLink),
+            "An external URI link must be detected.");
+
+        // A document carrying script is never reported as clean.
+        Assert.False(report.IsClean);
+
+        var js = report.Findings.Single(f => f.Kind == PdfEngine.Safety.DocumentRiskKind.JavaScript);
+        Assert.Equal(PdfEngine.Safety.RiskSeverity.Elevated, js.Severity);
+        Assert.Contains("not been run", js.Description);
+    }
+
+    [Fact]
+    public async Task TestSafetyInspectorReportsOrdinaryDocumentAsClean()
+    {
+        // The inverse must also hold, or the indicator is noise: a plain document with no
+        // active content reports clean.
+        string samplePdf = GetOrCreateSamplePdf();
+
+        using IPdfEngine engine = new PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        var inspector = new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector();
+        var report = await inspector.InspectAsync(doc);
+
+        Assert.True(report.IsClean);
+        Assert.False(report.HasKind(PdfEngine.Safety.DocumentRiskKind.JavaScript));
+        Assert.False(report.HasKind(PdfEngine.Safety.DocumentRiskKind.EmbeddedFile));
+        Assert.False(report.InspectionWasLimited);
+    }
+
+    [Fact]
     public void TestApplicationStartsWhetherOrNotOcrRuntimeIsPresent()
     {
         // The Windows OCR runtime is optional: it is absent on Server Core, on installs

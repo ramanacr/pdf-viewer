@@ -1066,5 +1066,97 @@ public class PdfServiceTests : IDisposable
         Assert.Equal(1, vm.PreviewPageNumber);
         Assert.Equal(2, vm.PreviewPageCount);
     }
+
+    /// <summary>
+    /// A fresh installation must not have consented to anything. This is the guarantee that
+    /// keeps the first launch silent, so it is asserted rather than assumed.
+    /// </summary>
+    [Fact]
+    public void TestPrivacySettingsDefaultToUnansweredSoNoNetworkCallHappens()
+    {
+        WithIsolatedPrivacySettings("privacy_default", dir =>
+        {
+            Assert.False(File.Exists(Path.Combine(dir, "privacy.json")));
+            Assert.Null(PrivacySettings.AutomaticUpdateChecksEnabled);
+
+            // Reproduces the startup guard in MainWindow_Loaded: unanswered must not check.
+            Assert.False(PrivacySettings.AutomaticUpdateChecksEnabled == true);
+        });
+    }
+
+    [Fact]
+    public void TestPrivacySettingsRoundTripTheUsersChoice()
+    {
+        WithIsolatedPrivacySettings("privacy_roundtrip", _ =>
+        {
+            PrivacySettings.SetAutomaticUpdateChecks(true);
+            Assert.True(PrivacySettings.AutomaticUpdateChecksEnabled);
+
+            PrivacySettings.SetAutomaticUpdateChecks(false);
+            Assert.False(PrivacySettings.AutomaticUpdateChecksEnabled);
+
+            PrivacySettings.SetAutomaticUpdateChecks(null);
+            Assert.Null(PrivacySettings.AutomaticUpdateChecksEnabled);
+        });
+    }
+
+    /// <summary>
+    /// An unreadable settings file must fall back to "not asked", never to "allowed" - a
+    /// corrupt file is not consent.
+    /// </summary>
+    [Fact]
+    public void TestPrivacySettingsTreatCorruptFileAsUnanswered()
+    {
+        WithIsolatedPrivacySettings("privacy_corrupt", dir =>
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "privacy.json"), "{ not json at all");
+
+            Assert.Null(PrivacySettings.AutomaticUpdateChecksEnabled);
+        });
+    }
+
+    /// <summary>
+    /// The "no script engine" claim shown to the user is derived from the installation, not
+    /// hard-coded, so it cannot silently become false.
+    /// </summary>
+    [Fact]
+    public void TestPrivacyGuaranteesReportAbsenceOfScriptRuntime()
+    {
+        var guarantees = PdfViewer.Views.Dialogs.PrivacyDialog.BuildGuarantees();
+
+        Assert.NotEmpty(guarantees);
+        Assert.All(guarantees, g =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(g.Claim));
+            Assert.False(string.IsNullOrWhiteSpace(g.Evidence));
+        });
+
+        var scriptClaim = guarantees[0];
+        Assert.Contains("script engine", scriptClaim.Claim, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Unexpected JavaScript runtime files", scriptClaim.Evidence);
+
+        foreach (var runtimeFile in new[] { "v8.dll", "v8_context_snapshot.bin", "snapshot_blob.bin", "icudtl.dat" })
+        {
+            Assert.False(
+                File.Exists(Path.Combine(AppContext.BaseDirectory, runtimeFile)),
+                $"{runtimeFile} ships with a script-enabled PDFium build and must never be present.");
+        }
+    }
+
+    private void WithIsolatedPrivacySettings(string name, Action<string> body)
+    {
+        string originalDir = PrivacySettings.CurrentSettingsDirectory;
+        string tempDir = Path.Combine(_testDir, name);
+        try
+        {
+            PrivacySettings.SetSettingsDirectoryForTests(tempDir);
+            body(tempDir);
+        }
+        finally
+        {
+            PrivacySettings.SetSettingsDirectoryForTests(originalDir);
+        }
+    }
 }
 

@@ -127,6 +127,10 @@
                           Command="{Binding RecognizeTextOnPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard." />
+                <MenuItem Header="_Document Safety..."
+                          Command="{Binding ShowDocumentSafetyCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Shows what this document carries: script, launch actions, embedded files and external links." />
                 <MenuItem Header="Verify Digital _Signatures..."
                           Command="{Binding VerifySignaturesCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
@@ -155,6 +159,9 @@
             </MenuItem>
 
             <MenuItem Header="_Help">
+                <MenuItem Header="_Privacy &amp; Safety..." Click="PrivacyMenuItem_Click"
+                          ToolTip="What this application does and does not do with your documents, and the one network setting." />
+                <Separator />
                 <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click" />
                 <Separator />
                 <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click" />
@@ -1468,6 +1475,24 @@
                    BorderThickness="0,1,0,0">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusText}" />
+            </StatusBarItem>
+
+            <!--
+                Document safety indicator. Shown only when the document carries active
+                content, so it means something when it appears. Clicking opens the detail.
+            -->
+            <StatusBarItem Visibility="{Binding HasElevatedRisk, Converter={StaticResource BoolToVis}}">
+                <Button Command="{Binding ShowDocumentSafetyCommand}"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        Padding="8,0"
+                        ToolTip="This document carries active content. Click for details.">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#x26A0;" Margin="0,0,6,0" Foreground="#E6A700" FontSize="13" />
+                        <TextBlock Text="{Binding SafetySummary}" Foreground="#E6A700" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Button>
             </StatusBarItem>
 
             <StatusBarItem HorizontalAlignment="Right">

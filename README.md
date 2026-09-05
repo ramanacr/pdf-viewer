@@ -8,6 +8,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 
 ## Table of Contents
 
+- [Privacy & Safety](#privacy--safety)
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
 - [Native Engine & PDFium Tooling](#native-engine--pdfium-tooling)
@@ -34,6 +35,28 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Comprehensive Keyboard Shortcuts](#comprehensive-keyboard-shortcuts)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
 - [License & Third-Party Notices](#license--third-party-notices)
+
+---
+
+## Privacy & Safety
+
+A PDF is a program as much as it is a page. The format can carry JavaScript, launch actions,
+embedded files and remote references, and the long tail of viewer vulnerabilities lives in
+exactly those features. This viewer takes the opposite position from the mainstream readers:
+**a document is data, and it is never given a chance to act.**
+
+| Guarantee | What backs it |
+| --- | --- |
+| No script engine is present | PDFium is linked without V8. None of the JavaScript runtime files a script-enabled build requires (`v8.dll`, `v8_context_snapshot.bin`, `snapshot_blob.bin`, `icudtl.dat`) ship with the application, and a test asserts their absence. |
+| Embedded actions are never executed | JavaScript, `/Launch` actions and embedded files are parsed, reported and left inert. Links open only on an explicit click, through `PdfSecurityPolicy`. |
+| You are told what is inside | Every document is inspected on open by `PdfiumSafetyInspector`. Anything active is named in the status bar and detailed under **Tools → Document Safety**. |
+| No telemetry, no analytics, no account | Nothing about you or your documents is recorded or transmitted. There is no sign-in and no cloud storage. |
+| Documents stay on this machine | Files are read from and written to local paths you choose. |
+| One network request, opt-in | The only outbound call the application can make is an update check against the public GitHub releases page. It is **off until you allow it**, asked once on first launch, and changeable under **Help → Privacy & Safety**. |
+| The bill of materials is published | Every release ships CycloneDX and SPDX SBOMs so the above can be checked rather than taken on trust. |
+
+The claims shown in **Help → Privacy & Safety** are derived from the installation at runtime,
+not hard-coded, so they cannot quietly stop being true.
 
 ---
 

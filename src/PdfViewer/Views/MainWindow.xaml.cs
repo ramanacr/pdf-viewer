@@ -103,8 +103,27 @@ public partial class MainWindow : Window
             await _vm.LoadDocumentAsync(App.StartupPdfPath);
         }
 
-        // Non-blocking background update check
-        CheckForUpdatesOnStartup();
+        // The first launch asks before anything touches the network; afterwards the stored
+        // answer is honoured. A privacy-first reader must not phone home unasked.
+        if (Services.PrivacySettings.AutomaticUpdateChecksEnabled is null)
+        {
+            ShowPrivacyDialog();
+        }
+
+        if (Services.PrivacySettings.AutomaticUpdateChecksEnabled == true)
+        {
+            CheckForUpdatesOnStartup();
+        }
+    }
+
+    private void ShowPrivacyDialog()
+    {
+        new PrivacyDialog { Owner = this }.ShowDialog();
+    }
+
+    private void PrivacyMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        ShowPrivacyDialog();
     }
 
     #region Dialog Helpers
@@ -506,6 +525,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Runs a non-blocking background check for updates after the window is fully loaded.
+    /// Only ever reached when the user has explicitly opted in; see <see cref="PrivacySettings"/>.
     /// </summary>
     private async void CheckForUpdatesOnStartup()
     {

@@ -114,7 +114,11 @@ public class TextSelectionAndSearchEventTests : IDisposable
 
         var page = vm.Pages[0];
 
-        // Simulate page text segments loaded
+        // Opening the document extracts the page's real text. This test drives the selection
+        // logic over known geometry, so replace it rather than selecting over whatever the
+        // fixture happens to contain.
+        page.TextSegments.Clear();
+
         var seg1 = new PageTextSegment { Text = "Hello", X = 0.1, Y = 0.1, Width = 0.2, Height = 0.05, SegmentIndex = 0 };
         var seg2 = new PageTextSegment { Text = "World", X = 0.35, Y = 0.1, Width = 0.2, Height = 0.05, SegmentIndex = 1 };
         page.TextSegments.Add(seg1);
@@ -143,6 +147,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
         await vm.LoadDocumentAsync(pdfPath);
 
         var page = vm.Pages[0];
+        page.TextSegments.Clear();
         page.TextSegments.Add(new PageTextSegment { Text = "Important", X = 0.2, Y = 0.3, Width = 0.3, Height = 0.05, SegmentIndex = 0 });
 
         page.SelectRange(new Point(0.21, 0.31), new Point(0.4, 0.31));

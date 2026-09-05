@@ -473,6 +473,14 @@ public partial class MainViewModel : ObservableObject
             // Trigger asynchronous render
             await RenderVisiblePagesAsync();
             _ = RenderThumbnailsAsync();
+
+            // Inspect what the document carries. Done after the first render so opening
+            // stays responsive, and reported rather than acted upon.
+            await InspectDocumentSafetyAsync(filePath);
+            if (HasElevatedRisk)
+            {
+                StatusText = $"Loaded {meta.FileName} - {SafetySummary}";
+            }
         }
         catch (Exception ex)
         {
@@ -1410,6 +1418,121 @@ public partial class MainViewModel : ObservableObject
             ShowAlert($"Could not edit the form fields:\n\n{ex.Message}", "Form Fields",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    /// <summary>
+    /// What the open document carries that could act on the user's machine. Null until a
+    /// document has been inspected.
+    /// </summary>
+    [ObservableProperty]
+    private PdfEngine.Safety.DocumentSafetyReport? _documentSafety;
+
+    /// <summary>True when the document carries script, a launch action, or an embedded file.</summary>
+    public bool HasElevatedRisk => DocumentSafety is { IsClean: false };
+
+    /// <summary>Short status-bar text describing what the document carries.</summary>
+    public string SafetySummary
+    {
+        get
+        {
+            if (DocumentSafety == null) return string.Empty;
+            if (DocumentSafety.IsClean) return "No active content";
+
+            var kinds = DocumentSafety.Findings
+                .Where(f => f.Severity == PdfEngine.Safety.RiskSeverity.Elevated)
+                .Select(f => f.Kind switch
+                {
+                    PdfEngine.Safety.DocumentRiskKind.JavaScript => "script",
+                    PdfEngine.Safety.DocumentRiskKind.LaunchAction => "launch action",
+                    PdfEngine.Safety.DocumentRiskKind.EmbeddedFile => "embedded file",
+                    _ => f.Kind.ToString().ToLowerInvariant()
+                });
+
+            return "Contains " + string.Join(", ", kinds) + " (not run)";
+        }
+    }
+
+    partial void OnDocumentSafetyChanged(PdfEngine.Safety.DocumentSafetyReport? value)
+    {
+        OnPropertyChanged(nameof(HasElevatedRisk));
+        OnPropertyChanged(nameof(SafetySummary));
+    }
+
+    /// <summary>
+    /// Inspects the open document and records what it carries. Never throws into the open
+    /// path: a document that cannot be inspected must still open, with the inspection
+    /// reported as unavailable rather than silently implying the document is clean.
+    /// </summary>
+    private async Task InspectDocumentSafetyAsync(string filePath)
+    {
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(filePath);
+
+            var inspector = new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector();
+            DocumentSafety = await inspector.InspectAsync(doc);
+        }
+        catch (Exception ex)
+        {
+            DocumentSafety = new PdfEngine.Safety.DocumentSafetyReport
+            {
+                InspectionWasLimited = true,
+                LimitationReason = $"The document could not be inspected: {ex.Message}"
+            };
+        }
+    }
+
+    /// <summary>
+    /// Shows what the document carries, in full.
+    /// </summary>
+    [RelayCommand]
+    public void ShowDocumentSafety()
+    {
+        if (!IsDocumentLoaded) return;
+
+        if (DocumentSafety == null)
+        {
+            ShowAlert("This document has not been inspected.", "Document Safety",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var report = new StringBuilder();
+
+        if (DocumentSafety.IsClean)
+        {
+            report.AppendLine("No active content was found in this document.");
+            report.AppendLine();
+            report.AppendLine("It carries no embedded script, no launch actions and no embedded files.");
+        }
+        else
+        {
+            report.AppendLine("This document carries active content. None of it has been run.");
+            report.AppendLine();
+        }
+
+        foreach (var finding in DocumentSafety.Findings)
+        {
+            report.AppendLine($"• {finding.Description}");
+            foreach (var detail in finding.Details)
+            {
+                report.AppendLine($"      {detail}");
+            }
+        }
+
+        if (DocumentSafety.InspectionWasLimited)
+        {
+            report.AppendLine();
+            report.AppendLine($"Note: {DocumentSafety.LimitationReason}");
+        }
+
+        report.AppendLine();
+        report.AppendLine("This reader has no JavaScript engine and never executes document script,");
+        report.AppendLine("follows launch actions, or opens embedded files on your behalf.");
+
+        ShowAlert(report.ToString().TrimEnd(), "Document Safety", MessageBoxButton.OK,
+            DocumentSafety.IsClean ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     /// <summary>

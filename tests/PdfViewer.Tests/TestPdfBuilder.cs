@@ -213,6 +213,92 @@ public static class TestPdfBuilder
         return filePath;
     }
 
+    /// <summary>
+    /// Creates a document carrying the active content a hostile PDF would use: document-level
+    /// JavaScript reachable from the name tree, an /OpenAction that runs script on open, a
+    /// /Launch action link, and a URI link. Used to verify the safety inspector detects them.
+    /// </summary>
+    public static string CreateActiveContentPdf(string filePath)
+    {
+        var dir = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+        using var writer = new StreamWriter(fs, Encoding.ASCII);
+
+        var offsets = new List<long>();
+        void WriteObj(int objNum, string content)
+        {
+            writer.Flush();
+            offsets.Add(fs.Position);
+            writer.WriteLine($"{objNum} 0 obj");
+            writer.WriteLine(content);
+            writer.WriteLine("endobj");
+        }
+
+        writer.WriteLine("%PDF-1.7");
+        writer.WriteLine("%\xAA\xBB\xCC\xDD");
+
+        const int catalogObj = 1;
+        const int pagesObj = 2;
+        const int pageObj = 3;
+        const int contentObj = 4;
+        const int jsActionObj = 5;
+        const int namesObj = 6;
+        const int jsNameTreeObj = 7;
+        const int uriLinkObj = 8;
+        const int launchLinkObj = 9;
+
+        WriteObj(catalogObj,
+            $"<< /Type /Catalog /Pages {pagesObj} 0 R /Names {namesObj} 0 R " +
+            $"/OpenAction {jsActionObj} 0 R >>");
+
+        WriteObj(pagesObj, $"<< /Type /Pages /Kids [{pageObj} 0 R] /Count 1 >>");
+
+        WriteObj(pageObj,
+            $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] " +
+            $"/Contents {contentObj} 0 R /Annots [{uriLinkObj} 0 R {launchLinkObj} 0 R] >>");
+
+        string stream = "BT /F1 12 Tf 50 700 Td (Active content test) Tj ET";
+        WriteObj(contentObj, $"<< /Length {stream.Length} >>\nstream\n{stream}\nendstream");
+
+        // Document-level JavaScript action.
+        WriteObj(jsActionObj, "<< /Type /Action /S /JavaScript /JS (app.alert\\('hello'\\);) >>");
+
+        // Name tree that makes the script discoverable as a document JavaScript action.
+        WriteObj(namesObj, $"<< /JavaScript {jsNameTreeObj} 0 R >>");
+        WriteObj(jsNameTreeObj, $"<< /Names [(EmbeddedScript) {jsActionObj} 0 R] >>");
+
+        // A link that navigates to an external address.
+        WriteObj(uriLinkObj,
+            $"<< /Type /Annot /Subtype /Link /Rect [50 650 300 670] /Border [0 0 0] " +
+            $"/A << /Type /Action /S /URI /URI (https://example.com/tracker) >> >>");
+
+        // A link that asks the reader to start an external program.
+        WriteObj(launchLinkObj,
+            $"<< /Type /Annot /Subtype /Link /Rect [50 600 300 620] /Border [0 0 0] " +
+            $"/A << /Type /Action /S /Launch /F (calc.exe) >> >>");
+
+        writer.Flush();
+        long startXref = fs.Position;
+        writer.WriteLine("xref");
+        writer.WriteLine($"0 {offsets.Count + 1}");
+        writer.WriteLine("0000000000 65535 f ");
+        foreach (var off in offsets)
+        {
+            writer.WriteLine($"{off:D10} 00000 n ");
+        }
+
+        writer.WriteLine("trailer");
+        writer.WriteLine($"<< /Size {offsets.Count + 1} /Root {catalogObj} 0 R >>");
+        writer.WriteLine("startxref");
+        writer.WriteLine(startXref);
+        writer.WriteLine("%%EOF");
+        writer.Flush();
+
+        return filePath;
+    }
+
     public static string CreateNonLatinPdf(string filePath)
     {
         return CreateSimplePdf(filePath, 2, "UnicodeTest");
