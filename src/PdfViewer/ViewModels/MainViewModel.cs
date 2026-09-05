@@ -1413,6 +1413,78 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Compares the open document against another and reports where they differ.
+    /// </summary>
+    [RelayCommand]
+    public async Task CompareWithDocumentAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        var picker = new OpenFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = "Select the document to compare against"
+        };
+        if (picker.ShowDialog() != true) return;
+
+        StatusText = "Comparing documents...";
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, engine.TextService);
+
+            await using var docA = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+            await using var docB = await engine.OpenDocumentAsync(picker.FileName);
+
+            var result = await comparer.CompareDocumentsAsync(docA, docB);
+
+            var report = new StringBuilder();
+            report.AppendLine($"This document: {result.PageCountA} page(s)");
+            report.AppendLine($"Compared with: {result.PageCountB} page(s)");
+            report.AppendLine($"Visual similarity: {result.VisualSimilarityScore:P1}");
+            report.AppendLine();
+
+            if (result.PagesWithVisualDifferences.Count == 0 && result.TextDifferences.Count == 0)
+            {
+                report.AppendLine("The documents are identical.");
+            }
+            else
+            {
+                if (result.PagesWithVisualDifferences.Count > 0)
+                {
+                    report.AppendLine($"Pages that differ visually: " +
+                        string.Join(", ", result.PagesWithVisualDifferences.Take(30)) +
+                        (result.PagesWithVisualDifferences.Count > 30 ? ", ..." : string.Empty));
+                }
+
+                if (result.TextDifferences.Count > 0)
+                {
+                    report.AppendLine();
+                    report.AppendLine($"Text differences ({result.TextDifferences.Count}):");
+                    foreach (var diff in result.TextDifferences.Take(10))
+                    {
+                        report.AppendLine($"  Page {diff.PageNumber} [{diff.Type}]");
+                    }
+                    if (result.TextDifferences.Count > 10) report.AppendLine("  ...");
+                }
+            }
+
+            StatusText = result.PagesWithVisualDifferences.Count == 0 && result.TextDifferences.Count == 0
+                ? "The documents are identical."
+                : $"{result.PagesWithVisualDifferences.Count} page(s) differ visually.";
+
+            ShowAlert(report.ToString().TrimEnd(), "Compare Documents",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Comparison failed: {ex.Message}";
+            ShowAlert($"Could not compare the documents:\n\n{ex.Message}", "Compare Documents",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
     /// Combines several PDFs into one file.
     /// </summary>
     [RelayCommand]

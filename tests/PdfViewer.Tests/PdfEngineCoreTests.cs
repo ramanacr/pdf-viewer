@@ -107,6 +107,39 @@ public class PdfEngineCoreTests
     }
 
     [Fact]
+    public async Task TestDocumentComparisonDetectsIdenticalAndDifferentDocuments()
+    {
+        // Backs Tools > Compare With Document. Identical input must report identical, and
+        // genuinely different content must be detected - not merely "compared".
+        string a = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CompareA.pdf");
+        string b = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CompareB.pdf");
+        TestPdfBuilder.CreateSimplePdf(a, 2, "SameToken");
+        TestPdfBuilder.CreateSimplePdf(b, 2, "OtherToken");
+
+        using IPdfEngine engine = new PdfiumEngine();
+        var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, engine.TextService);
+
+        // Same file compared against itself: identical.
+        await using (var d1 = await engine.OpenDocumentAsync(a))
+        await using (var d2 = await engine.OpenDocumentAsync(a))
+        {
+            var same = await comparer.CompareDocumentsAsync(d1, d2);
+            Assert.Equal(2, same.PageCountA);
+            Assert.Empty(same.PagesWithVisualDifferences);
+            Assert.Equal(1.0, same.VisualSimilarityScore, precision: 3);
+        }
+
+        // Different text on every page: detected.
+        await using (var d1 = await engine.OpenDocumentAsync(a))
+        await using (var d2 = await engine.OpenDocumentAsync(b))
+        {
+            var diff = await comparer.CompareDocumentsAsync(d1, d2);
+            Assert.NotEmpty(diff.PagesWithVisualDifferences);
+            Assert.True(diff.VisualSimilarityScore < 1.0);
+        }
+    }
+
+    [Fact]
     public async Task TestFormFieldsDialogInstantiatesOnUiThread()
     {
         // The dialog must construct cleanly - a XAML or resource-lookup failure here would

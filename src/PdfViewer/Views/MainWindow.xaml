@@ -148,6 +148,10 @@
                           Command="{Binding EditFormFieldsCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Lists the document's form fields and writes edited values to a new document." />
+                <MenuItem Header="_Compare With Document..."
+                          Command="{Binding CompareWithDocumentCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Compares this document against another and reports the pages that differ." />
             </MenuItem>
 
             <MenuItem Header="_Help">
