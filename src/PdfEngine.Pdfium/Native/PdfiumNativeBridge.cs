@@ -272,63 +272,10 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFPageObj_GetType(IntPtr page_object);
 
-    // Form fill environment (fpdf_formfill.h). Required for reading true field types and
-    // for writing field values - PDFium routes form edits through this handle.
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr FPDFDOC_InitFormFillEnvironment(SafeDocumentHandle document, ref FPDF_FORMFILLINFO formInfo);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void FPDFDOC_ExitFormFillEnvironment(IntPtr formHandle);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDF_GetFormType(SafeDocumentHandle document);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void FORM_OnAfterLoadPage(SafePageHandle page, IntPtr formHandle);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void FORM_OnBeforeClosePage(SafePageHandle page, IntPtr formHandle);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void FPDF_FFLDraw(IntPtr formHandle, IntPtr bitmap, SafePageHandle page, int start_x, int start_y, int size_x, int size_y, int rotate, int flags);
-
-    // Form field accessors (fpdf_annot.h) - these all require the form handle.
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDFAnnot_GetFormFieldType(IntPtr formHandle, SafeAnnotHandle annot);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern uint FPDFAnnot_GetFormFieldName(IntPtr formHandle, SafeAnnotHandle annot, byte[]? buffer, uint buflen);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern uint FPDFAnnot_GetFormFieldValue(IntPtr formHandle, SafeAnnotHandle annot, byte[]? buffer, uint buflen);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDFAnnot_GetFormFieldFlags(IntPtr formHandle, SafeAnnotHandle annot);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDFAnnot_GetOptionCount(IntPtr formHandle, SafeAnnotHandle annot);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern uint FPDFAnnot_GetOptionLabel(IntPtr formHandle, SafeAnnotHandle annot, int index, byte[]? buffer, uint buflen);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int FPDFAnnot_IsChecked(IntPtr formHandle, SafeAnnotHandle annot);
-
-    // Form field types (FPDF_FORMFIELD_*)
-    public const int FPDF_FORMFIELD_UNKNOWN = 0;
-    public const int FPDF_FORMFIELD_PUSHBUTTON = 1;
-    public const int FPDF_FORMFIELD_CHECKBOX = 2;
-    public const int FPDF_FORMFIELD_RADIOBUTTON = 3;
-    public const int FPDF_FORMFIELD_COMBOBOX = 4;
-    public const int FPDF_FORMFIELD_LISTBOX = 5;
-    public const int FPDF_FORMFIELD_TEXTFIELD = 6;
-    public const int FPDF_FORMFIELD_SIGNATURE = 7;
-
-    // Field flags (/Ff)
-    public const int FPDF_FORMFLAG_READONLY = 1 << 0;
-    public const int FPDF_FORMFLAG_REQUIRED = 1 << 1;
-    public const int FPDF_FORMFLAG_TEXT_MULTILINE = 1 << 12;
-    public const int FPDF_FORMFLAG_TEXT_PASSWORD = 1 << 13;
+    // NOTE: the form-fill environment bindings (FPDFDOC_InitFormFillEnvironment and the
+    // form-handle field accessors) were deliberately removed. That API corrupts the heap in
+    // this PDFium build - see PdfiumFormService - so nothing may call it, and dead interop
+    // for a crashing API is an invitation to reintroduce the bug.
 
     // Digital signatures (fpdf_signature.h)
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

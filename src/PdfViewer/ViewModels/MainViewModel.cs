@@ -242,7 +242,16 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     public PdfSecurityPolicy SecurityPolicy { get; } = PdfSecurityPolicy.DefaultStrict;
 
-    public IFeatureGate FeatureGate { get; } = new DefaultFeatureGate();
+    /// <summary>
+    /// The desktop application ships every feature it exposes - redaction, page operations,
+    /// merge/split, forms, OCR and signatures are all reachable from its menus - so its gate
+    /// is constructed at the tier that reflects what is actually shipped. Running it at
+    /// Community would advertise menu items that refuse to work.
+    ///
+    /// The gate still does real work for SDK and embedding scenarios, where the host
+    /// constructs its own IFeatureGate and CommandHistory enforces it.
+    /// </summary>
+    public IFeatureGate FeatureGate { get; } = new DefaultFeatureGate(LicenseTier.Enterprise);
 
     public DocumentSession Session { get; }
     public ICommandHistory CommandHistory { get; }
