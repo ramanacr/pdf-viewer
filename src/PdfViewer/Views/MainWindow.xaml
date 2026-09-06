@@ -27,6 +27,7 @@
     <Window.InputBindings>
         <KeyBinding Modifiers="Ctrl" Key="O" Command="{Binding OpenFileDialogCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="P" Command="{Binding PrintCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="S" Command="{Binding SaveCommand}" />
         <KeyBinding Modifiers="Ctrl+Shift" Key="S" Command="{Binding SaveAnnotatedAsCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="C" Command="{Binding CopySelectedTextCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="A" Command="{Binding SelectAllTextCommand}" />
@@ -70,8 +71,8 @@
               BorderThickness="0,0,0,1"
               Padding="4,2">
             <MenuItem Header="_File">
-                <MenuItem Header="_Open..." Command="{Binding OpenFileDialogCommand}" InputGestureText="Ctrl+O" />
-                <MenuItem Header="Open _Sample Demo Document" Command="{Binding OpenSampleDocumentCommand}" />
+                <MenuItem Header="_Open..." Command="{Binding OpenFileDialogCommand}" InputGestureText="Ctrl+O"><MenuItem.Icon><Path Data="{StaticResource IconOpen}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Open _Sample Demo Document" Command="{Binding OpenSampleDocumentCommand}"><MenuItem.Icon><Path Data="{StaticResource IconSample}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Open _Recent" ItemsSource="{Binding RecentFiles}">
                     <MenuItem.ItemContainerStyle>
                         <Style TargetType="MenuItem">
@@ -82,41 +83,43 @@
                     </MenuItem.ItemContainerStyle>
                 </MenuItem>
                 <Separator />
-                <MenuItem Header="_Close Document" Command="{Binding CloseDocumentCommand}" IsEnabled="{Binding IsDocumentLoaded}" />
-                <MenuItem Header="Save _Annotated As..." Command="{Binding SaveAnnotatedAsCommand}" InputGestureText="Ctrl+Shift+S" IsEnabled="{Binding IsDocumentLoaded}" />
-                <MenuItem Header="_Export to Images..." Command="{Binding ExportImagesCommand}" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="_Close Document" Command="{Binding CloseDocumentCommand}" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconClose}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Save" Command="{Binding SaveCommand}" InputGestureText="Ctrl+S"
+                          ToolTip="Writes your annotations into this document, keeping them editable."><MenuItem.Icon><Path Data="{StaticResource IconSave}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Save _Annotated As..." Command="{Binding SaveAnnotatedAsCommand}" InputGestureText="Ctrl+Shift+S" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSaveAs}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Export to Images..." Command="{Binding ExportImagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconExport}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Export _Text..." Command="{Binding ExportTextCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Writes the document's text layer to a plain text file." />
+                          ToolTip="Writes the document's text layer to a plain text file."><MenuItem.Icon><Path Data="{StaticResource IconExportText}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Organize Pages..." Command="{Binding OrganizePagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Reorder, rotate or leave out pages and save the result as a new document." />
+                          ToolTip="Reorder, rotate or leave out pages and save the result as a new document."><MenuItem.Icon><Path Data="{StaticResource IconOrganizePages}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Embedded _Files..." Command="{Binding ShowAttachmentsCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Lists the files embedded in this document and extracts one if you ask. Nothing is ever run." />
-                <MenuItem Header="_Print..." Command="{Binding PrintCommand}" InputGestureText="Ctrl+P" IsEnabled="{Binding IsDocumentLoaded}" />
+                          ToolTip="Lists the files embedded in this document and extracts one if you ask. Nothing is ever run."><MenuItem.Icon><Path Data="{StaticResource IconAttachment}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Print..." Command="{Binding PrintCommand}" InputGestureText="Ctrl+P" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconPrint}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Document _Properties..." Command="{Binding ShowPropertiesCommand}" InputGestureText="Ctrl+D" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="Document _Properties..." Command="{Binding ShowPropertiesCommand}" InputGestureText="Ctrl+D" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconProperties}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="E_xit" Click="ExitMenuItem_Click" InputGestureText="Alt+F4" />
+                <MenuItem Header="E_xit" Click="ExitMenuItem_Click" InputGestureText="Alt+F4"><MenuItem.Icon><Path Data="{StaticResource IconExit}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Edit">
-                <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}" />
-                <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}" />
+                <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconCopy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconHighlight}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}" />
-                <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}" />
+                <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSelectAll}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconDeselect}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_Redact Selected Text..."
                           Command="{Binding RedactSelectionCommand}"
                           IsEnabled="{Binding HasTextSelection}"
-                          ToolTip="Permanently removes the selected text and saves the result as a new document." />
+                          ToolTip="Permanently removes the selected text and saves the result as a new document."><MenuItem.Icon><Path Data="{StaticResource IconRedact}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_View">
                 <MenuItem Header="_Back" Command="{Binding GoBackCommand}" InputGestureText="Alt+Left"
-                          ToolTip="Returns to the page you jumped away from." />
-                <MenuItem Header="_Forward" Command="{Binding GoForwardCommand}" InputGestureText="Alt+Right" />
+                          ToolTip="Returns to the page you jumped away from."><MenuItem.Icon><Path Data="{StaticResource IconArrowLeft}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Forward" Command="{Binding GoForwardCommand}" InputGestureText="Alt+Right"><MenuItem.Icon><Path Data="{StaticResource IconArrowRight}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11" />
+                <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11"><MenuItem.Icon><Path Data="{StaticResource IconFullScreen}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Continuous Scrolling" Command="{Binding SetContinuousViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
                 <MenuItem Header="Single Page View" Command="{Binding SetSinglePageViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}" />
@@ -126,26 +129,26 @@
                           IsEnabled="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Facing, Mode=OneWay}"
                           ToolTip="A book's cover has no page facing it, so the spreads line up with the printed original." />
                 <Separator />
-                <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="Ctrl++" />
-                <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="Ctrl+-" />
-                <MenuItem Header="Fit to _Width" Command="{Binding FitWidthCommand}" InputGestureText="Ctrl+1" />
-                <MenuItem Header="Fit to _Page" Command="{Binding FitPageCommand}" InputGestureText="Ctrl+0" />
+                <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="Ctrl++"><MenuItem.Icon><Path Data="{StaticResource IconZoomIn}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="Ctrl+-"><MenuItem.Icon><Path Data="{StaticResource IconZoomOut}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Fit to _Width" Command="{Binding FitWidthCommand}" InputGestureText="Ctrl+1"><MenuItem.Icon><Path Data="{StaticResource IconFitWidth}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Fit to _Page" Command="{Binding FitPageCommand}" InputGestureText="Ctrl+0"><MenuItem.Icon><Path Data="{StaticResource IconFitPage}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Rotate _Clockwise" Command="{Binding RotateClockwiseCommand}" InputGestureText="Ctrl+R" IsEnabled="{Binding IsDocumentLoaded}" />
-                <MenuItem Header="Rotate Counter-Clockwise" Command="{Binding RotateCounterClockwiseCommand}" InputGestureText="Ctrl+Shift+R" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="Rotate _Clockwise" Command="{Binding RotateClockwiseCommand}" InputGestureText="Ctrl+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconRotateCW}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Rotate Counter-Clockwise" Command="{Binding RotateCounterClockwiseCommand}" InputGestureText="Ctrl+Shift+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconRotateCCW}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen}" />
-                <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}" />
+                <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}"><MenuItem.Icon><Path Data="{StaticResource IconTheme}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Tools">
-                <MenuItem Header="_Find Text..." Command="{Binding ToggleSearchCommand}" InputGestureText="Ctrl+F" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="_Find Text..." Command="{Binding ToggleSearchCommand}" InputGestureText="Ctrl+F" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSearch}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Hand / Pan Tool" Command="{Binding TogglePanToolCommand}" IsCheckable="True" IsChecked="{Binding IsPanningEnabled}" IsEnabled="{Binding IsDocumentLoaded}" />
                 <Separator />
                 <MenuItem Header="Recognise _Text on Page (OCR)"
                           Command="{Binding RecognizeTextOnPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard." />
+                          ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard."><MenuItem.Icon><Path Data="{StaticResource IconOcr}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Read Aloud"
                           Command="{Binding ToggleReadAloudCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
@@ -154,53 +157,53 @@
                           ToolTip="Reads the document from the current page. An optional component; you will be asked before anything is downloaded." />
                 <MenuItem Header="_Pause / Resume Reading"
                           Command="{Binding PauseOrResumeReadingCommand}"
-                          IsEnabled="{Binding IsReadingAloud}" />
+                          IsEnabled="{Binding IsReadingAloud}"><MenuItem.Icon><Path Data="{StaticResource IconPauseResume}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_Document Safety..."
                           Command="{Binding ShowDocumentSafetyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Shows what this document carries: script, launch actions, embedded files and external links." />
+                          ToolTip="Shows what this document carries: script, launch actions, embedded files and external links."><MenuItem.Icon><Path Data="{StaticResource IconShield}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Save _Clean Copy..."
                           Command="{Binding SaveCleanCopyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified." />
+                          ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified."><MenuItem.Icon><Path Data="{StaticResource IconCleanCopy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Verify Digital _Signatures..."
                           Command="{Binding VerifySignaturesCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Cryptographically verifies every signature in the document." />
+                          ToolTip="Cryptographically verifies every signature in the document."><MenuItem.Icon><Path Data="{StaticResource IconSignature}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_Merge PDFs..."
                           Command="{Binding MergeDocumentsCommand}"
-                          ToolTip="Combines several PDF documents into a single file." />
+                          ToolTip="Combines several PDF documents into a single file."><MenuItem.Icon><Path Data="{StaticResource IconMerge}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Spl_it Into Pages..."
                           Command="{Binding SplitDocumentCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Writes each page of this document to its own PDF file." />
+                          ToolTip="Writes each page of this document to its own PDF file."><MenuItem.Icon><Path Data="{StaticResource IconSplit}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="E_xtract Current Page..."
                           Command="{Binding ExtractCurrentPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Saves the page you are viewing as its own PDF." />
+                          ToolTip="Saves the page you are viewing as its own PDF."><MenuItem.Icon><Path Data="{StaticResource IconExtractPage}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Fill _Form Fields..."
                           Command="{Binding EditFormFieldsCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Lists the document's form fields and writes edited values to a new document." />
+                          ToolTip="Lists the document's form fields and writes edited values to a new document."><MenuItem.Icon><Path Data="{StaticResource IconForm}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Compare With Document..."
                           Command="{Binding CompareWithDocumentCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Compares this document against another and reports the pages that differ." />
+                          ToolTip="Compares this document against another and reports the pages that differ."><MenuItem.Icon><Path Data="{StaticResource IconCompare}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Help">
                 <MenuItem Header="_Privacy &amp; Safety..." Click="PrivacyMenuItem_Click"
-                          ToolTip="What this application does and does not do with your documents, and the one network setting." />
+                          ToolTip="What this application does and does not do with your documents, and the one network setting."><MenuItem.Icon><Path Data="{StaticResource IconPrivacy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click" />
+                <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconUpdate}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click" />
-                <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click" />
+                <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconGitHub}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconReleases}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_About PDF Viewer..." Click="AboutMenuItem_Click" />
+                <MenuItem Header="_About PDF Viewer..." Click="AboutMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconAbout}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
         </Menu>
 

@@ -404,6 +404,10 @@ public partial class MainViewModel : ObservableObject
 
     public async Task LoadDocumentAsync(string filePath, string? password = null)
     {
+        // Opening another document replaces this one, so unsaved work would go with it.
+        // Only ask on the first attempt: a password retry re-enters this method.
+        if (password == null && !await ConfirmDiscardChangesAsync()) return;
+
         StatusText = $"Opening {Path.GetFileName(filePath)}...";
         _renderCts?.Cancel();
         _renderCts = new CancellationTokenSource();
@@ -437,7 +441,8 @@ public partial class MainViewModel : ObservableObject
             CurrentPageNumber = 1;
             RotationAngle = 0;
             IsDocumentLoaded = true;
-            WindowTitle = $"{meta.FileName} - PDF Viewer";
+            HasUnsavedChanges = false;
+            UpdateWindowTitle();
             StatusText = $"Loaded {meta.FileName} ({meta.PageCount} pages)";
 
             RecentFilesService.AddRecentFile(filePath);
@@ -552,6 +557,7 @@ public partial class MainViewModel : ObservableObject
         CurrentPageNumber = 1;
         SingleCurrentPage = null;
         DocumentSafety = null;
+        HasUnsavedChanges = false;
         ClearNavigationHistory();
         WindowTitle = "PDF Viewer";
         StatusText = "Ready";
@@ -1538,6 +1544,33 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// True when the document has annotation changes that are not on disk. Drives Save, the
+    /// title bar marker, and the prompt on closing.
+    /// </summary>
+    [ObservableProperty]
+    private bool _hasUnsavedChanges;
+
+    partial void OnHasUnsavedChangesChanged(bool value)
+    {
+        SaveCommand.NotifyCanExecuteChanged();
+        UpdateWindowTitle();
+    }
+
+    private void UpdateWindowTitle()
+    {
+        if (Metadata == null)
+        {
+            WindowTitle = "PDF Viewer";
+            return;
+        }
+
+        // The asterisk is the only signal a user gets that closing will lose something.
+        WindowTitle = HasUnsavedChanges
+            ? $"*{Metadata.FileName} - PDF Viewer"
+            : $"{Metadata.FileName} - PDF Viewer";
+    }
+
     [RelayCommand]
     public void AddAnnotation(AnnotationModel annot)
     {
@@ -1546,6 +1579,7 @@ public partial class MainViewModel : ObservableObject
         {
             Pages[annot.PageNumber - 1].AnnotationsOnPage.Add(annot);
         }
+        HasUnsavedChanges = true;
         StatusText = $"Added {annot.Type} annotation on page {annot.PageNumber}";
     }
 
@@ -1558,18 +1592,126 @@ public partial class MainViewModel : ObservableObject
         {
             Pages[annot.PageNumber - 1].AnnotationsOnPage.Remove(annot);
         }
+        HasUnsavedChanges = true;
         StatusText = $"Removed annotation from page {annot.PageNumber}";
     }
 
     [RelayCommand]
     public void ClearAllAnnotations()
     {
+        if (AllAnnotations.Count > 0) HasUnsavedChanges = true;
+
         AllAnnotations.Clear();
         foreach (var page in Pages)
         {
             page.AnnotationsOnPage.Clear();
         }
         StatusText = "Cleared all annotations.";
+    }
+
+    /// <summary>
+    /// Saves the document in place, keeping annotations editable.
+    ///
+    /// The write goes to a temporary file beside the original and only then replaces it, so a
+    /// failure part-way through leaves the original intact rather than truncated. The document
+    /// is held in memory rather than kept open on disk, so nothing has to be closed first.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanSave))]
+    public async Task SaveAsync()
+    {
+        if (!CanSave()) return;
+
+        string originalPath = Metadata!.FilePath;
+        string directory = Path.GetDirectoryName(Path.GetFullPath(originalPath)) ?? string.Empty;
+        string temporaryPath = Path.Combine(directory, $".{Path.GetFileName(originalPath)}.saving");
+        string backupPath = temporaryPath + ".bak";
+
+        StatusText = "Saving...";
+
+        try
+        {
+            await _docService.SaveAnnotatedDocumentAsync(
+                temporaryPath, AnnotationSaveMode.Embedded, AllAnnotations, originalPath);
+
+            ReplaceOriginal(temporaryPath, originalPath, backupPath);
+
+            HasUnsavedChanges = false;
+            StatusText = $"Saved {Path.GetFileName(originalPath)}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Save failed: {ex.Message}";
+            ShowAlert($"The document was not saved:\n\n{ex.Message}\n\nYour file on disk is unchanged.",
+                "Save", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            TryDeleteQuietly(temporaryPath);
+            TryDeleteQuietly(backupPath);
+        }
+    }
+
+    public bool CanSave() => IsDocumentLoaded && HasUnsavedChanges && Metadata != null
+                             && !string.IsNullOrEmpty(Metadata.FilePath);
+
+    /// <summary>
+    /// Swaps the freshly written file in for the original. File.Replace keeps a backup and
+    /// does the swap in one step, so the original is never left half-written.
+    /// </summary>
+    private static void ReplaceOriginal(string temporaryPath, string originalPath, string backupPath)
+    {
+        if (!File.Exists(temporaryPath))
+            throw new IOException("The document was not written, so nothing was replaced.");
+
+        if (new FileInfo(temporaryPath).Length == 0)
+            throw new IOException("The document came out empty, so the original was left alone.");
+
+        try
+        {
+            File.Replace(temporaryPath, originalPath, backupPath, ignoreMetadataErrors: true);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // File.Replace needs both paths on one volume and a real file system; fall back to
+            // a move, which is still better than writing over the original directly.
+            File.Move(temporaryPath, originalPath, overwrite: true);
+        }
+    }
+
+    private static void TryDeleteQuietly(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A leftover scratch file is untidy, not harmful.
+        }
+    }
+
+    /// <summary>
+    /// Asks what to do about unsaved work. Returns false to cancel whatever prompted it.
+    /// </summary>
+    public Func<string, bool?>? ConfirmSaveBeforeClosingFunc { get; set; }
+
+    /// <summary>
+    /// Runs the save-or-discard prompt. Returns false when the user cancels, in which case the
+    /// caller must not close or replace the document.
+    /// </summary>
+    public async Task<bool> ConfirmDiscardChangesAsync()
+    {
+        if (!HasUnsavedChanges || Metadata == null) return true;
+
+        bool? answer = ConfirmSaveBeforeClosingFunc?.Invoke(Metadata.FileName);
+
+        if (answer == null) return false;      // cancelled
+        if (answer == false) return true;      // discard
+
+        await SaveAsync();
+
+        // A failed save must not be treated as permission to throw the work away.
+        return !HasUnsavedChanges;
     }
 
     [RelayCommand]
@@ -1590,6 +1732,10 @@ public partial class MainViewModel : ObservableObject
                         result.Mode,
                         AllAnnotations,
                         Metadata.FilePath);
+
+                    // Only an embedded save captures the annotations in the document itself;
+                    // an XFDF export leaves the PDF as it was, so the work is still unsaved.
+                    if (result.Mode == AnnotationSaveMode.Embedded) HasUnsavedChanges = false;
 
                     StatusText = $"Saved annotated document ({result.Mode}): {Path.GetFileName(result.TargetPath)}";
                     ShowAlert(

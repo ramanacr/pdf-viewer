@@ -37,6 +37,7 @@ public partial class MainWindow : Window
         _vm.ShowAttachmentsFunc = ShowAttachmentsDialog;
         _vm.ConfirmFunc = ConfirmDialog;
         _vm.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
+        _vm.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
         _vm.ScrollToPageAction = ScrollToPage;
         _vm.ScrollToMatchAction = ScrollToMatch;
         _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
@@ -279,6 +280,44 @@ public partial class MainWindow : Window
     }
 
     private void FullScreenMenuItem_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    /// <summary>
+    /// Yes / No / Cancel on unsaved work. Null means cancel, which leaves the document open.
+    /// </summary>
+    private bool? ConfirmSaveBeforeClosing(string fileName)
+    {
+        var answer = MessageBox.Show(this,
+            $"\"{fileName}\" has annotation changes that are not saved.\n\nSave them?",
+            "Unsaved Changes",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Warning);
+
+        return answer switch
+        {
+            MessageBoxResult.Yes => true,
+            MessageBoxResult.No => false,
+            _ => null
+        };
+    }
+
+    private bool _closeConfirmed;
+
+    protected override async void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+
+        if (_closeConfirmed || !_vm.HasUnsavedChanges) return;
+
+        // The prompt is async and Closing is not, so the first pass always cancels the close
+        // and the answer decides whether to ask the window to close again.
+        e.Cancel = true;
+
+        if (await _vm.ConfirmDiscardChangesAsync())
+        {
+            _closeConfirmed = true;
+            Close();
+        }
+    }
 
     protected override void OnClosed(EventArgs e)
     {
