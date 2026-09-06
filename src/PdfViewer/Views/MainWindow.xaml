@@ -118,8 +118,13 @@
                 <Separator />
                 <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11" />
                 <Separator />
-                <MenuItem Header="Continuous Scrolling" Command="{Binding ToggleViewModeCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
-                <MenuItem Header="Single Page View" Command="{Binding ToggleViewModeCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}" />
+                <MenuItem Header="Continuous Scrolling" Command="{Binding SetContinuousViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
+                <MenuItem Header="Single Page View" Command="{Binding SetSinglePageViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}" />
+                <MenuItem Header="_Two Pages (Facing)" Command="{Binding SetFacingViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Facing, Mode=OneWay}"
+                          ToolTip="Shows two pages side by side, the way the document was printed." />
+                <MenuItem Header="Show Co_ver Page Alone" IsCheckable="True" IsChecked="{Binding ShowCoverPageAlone}"
+                          IsEnabled="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Facing, Mode=OneWay}"
+                          ToolTip="A book's cover has no page facing it, so the spreads line up with the printed original." />
                 <Separator />
                 <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="Ctrl++" />
                 <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="Ctrl+-" />
@@ -915,14 +920,26 @@
                     <Grid MinWidth="{Binding ViewportWidth, ElementName=DocumentScrollViewer}" HorizontalAlignment="Left" Margin="24">
 
                         <!-- Mode 1: Continuous Scrolling Mode -->
+                        <!-- Bound to rows, not to the flat page list: the grouping on screen is
+                             then the same grouping the scroll maths uses, rather than two
+                             pieces of code that have to agree. A row holds one page in
+                             continuous mode and a facing pair in two-page mode. -->
                         <ItemsControl x:Name="ContinuousPagesItemsControl"
-                                      ItemsSource="{Binding Pages}"
-                                      HorizontalAlignment="Stretch"
-                                      Visibility="{Binding ViewMode, Converter={StaticResource EnumToVis}, ConverterParameter=Continuous}">
+                                      ItemsSource="{Binding PageRows}"
+                                      HorizontalAlignment="Center"
+                                      Visibility="{Binding IsMultiPageLayout, Converter={StaticResource BoolToVis}}">
                             <ItemsControl.ItemTemplate>
+                              <DataTemplate DataType="{x:Type vm:PageRowViewModel}">
+                                <ItemsControl ItemsSource="{Binding Pages}" HorizontalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:PageViewModel}">
                                     <Border HorizontalAlignment="Center"
-                                            Margin="0,0,0,20"
+                                            Margin="10,0,10,20"
                                             Background="{DynamicResource PageBgBrush}"
                                             CornerRadius="2">
                                         <Border.Effect>
@@ -1198,6 +1215,9 @@
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                              </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 

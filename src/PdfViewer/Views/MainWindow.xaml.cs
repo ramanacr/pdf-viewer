@@ -307,16 +307,14 @@ public partial class MainWindow : Window
     {
         if (pageNumber < 1 || pageNumber > _vm.Pages.Count) return;
 
-        if (_vm.ViewMode == ViewLayoutMode.Continuous)
+        if (_vm.IsMultiPageLayout)
         {
-            double accumulatedHeight = 0;
-            for (int i = 0; i < pageNumber - 1; i++)
-            {
-                accumulatedHeight += _vm.Pages[i].DisplayHeight + 20; // 20 is bottom margin
-            }
+            // The view model owns the layout, so scrolling can never disagree with where the
+            // pages actually are - including when two sit side by side.
+            double offset = _vm.GetPageOffset(pageNumber);
 
-            DocumentScrollViewer.ScrollToVerticalOffset(accumulatedHeight);
-            _vm.RenderPagesInViewport(accumulatedHeight, DocumentScrollViewer.ViewportHeight);
+            DocumentScrollViewer.ScrollToVerticalOffset(offset);
+            _vm.RenderPagesInViewport(offset, DocumentScrollViewer.ViewportHeight);
         }
 
         ScrollThumbnailIntoView(pageNumber);
@@ -326,16 +324,10 @@ public partial class MainWindow : Window
     {
         if (pageNumber < 1 || pageNumber > _vm.Pages.Count) return;
 
-        if (_vm.ViewMode == ViewLayoutMode.Continuous)
+        if (_vm.IsMultiPageLayout)
         {
-            double accumulatedHeight = 0;
-            for (int i = 0; i < pageNumber - 1; i++)
-            {
-                accumulatedHeight += _vm.Pages[i].DisplayHeight + 20;
-            }
-
             var page = _vm.Pages[pageNumber - 1];
-            double matchTop = accumulatedHeight + (normY * page.DisplayHeight);
+            double matchTop = _vm.GetPageOffset(pageNumber) + (normY * page.DisplayHeight);
             double targetVOffset = Math.Max(0, matchTop - (DocumentScrollViewer.ViewportHeight / 3.0));
 
             double matchLeft = normX * page.DisplayWidth;
@@ -367,40 +359,14 @@ public partial class MainWindow : Window
     {
         if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
 
-        if (_vm.ViewMode == ViewLayoutMode.Continuous)
+        if (_vm.IsMultiPageLayout)
         {
             // Determine current visible page from the center of the viewport
             double viewportTop = DocumentScrollViewer.VerticalOffset;
             double viewportHeight = DocumentScrollViewer.ViewportHeight;
             double centerOffset = viewportTop + (viewportHeight / 2.0);
 
-            double accumulated = 0;
-            int centerPage = 1;
-            bool found = false;
-
-            for (int i = 0; i < _vm.Pages.Count; i++)
-            {
-                double pageH = _vm.Pages[i].DisplayHeight + 20;
-                if (centerOffset >= accumulated && centerOffset < accumulated + pageH)
-                {
-                    centerPage = i + 1;
-                    found = true;
-                    break;
-                }
-                accumulated += pageH;
-            }
-
-            if (!found)
-            {
-                if (centerOffset < 0)
-                {
-                    centerPage = 1;
-                }
-                else if (centerOffset >= accumulated && _vm.Pages.Count > 0)
-                {
-                    centerPage = _vm.Pages.Count;
-                }
-            }
+            int centerPage = _vm.GetPageAtOffset(centerOffset);
 
             _vm.SetCurrentPageFromScroll(centerPage);
             _vm.RenderPagesInViewport(viewportTop, viewportHeight);

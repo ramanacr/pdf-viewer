@@ -207,11 +207,15 @@ public class ViewModelUserEventTests : IDisposable
 
         Assert.Equal(ViewLayoutMode.Continuous, vm.ViewMode);
 
-        // User switches to Single Page mode
+        // The toolbar button cycles through the layouts rather than flipping between two,
+        // so a user can reach facing pages without opening the View menu.
         vm.ToggleViewMode();
         Assert.Equal(ViewLayoutMode.SinglePage, vm.ViewMode);
 
-        // User switches back to Continuous mode
+        vm.ToggleViewMode();
+        Assert.Equal(ViewLayoutMode.Facing, vm.ViewMode);
+
+        // And back round to where it started.
         vm.ToggleViewMode();
         Assert.Equal(ViewLayoutMode.Continuous, vm.ViewMode);
     }

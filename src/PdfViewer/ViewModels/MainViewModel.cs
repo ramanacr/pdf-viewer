@@ -26,7 +26,24 @@ namespace PdfViewer.ViewModels;
 public enum ViewLayoutMode
 {
     Continuous,
-    SinglePage
+    SinglePage,
+
+    /// <summary>Two pages side by side, scrolling vertically. Reading a book, not a scroll.</summary>
+    Facing
+}
+
+/// <summary>
+/// One row of the laid-out document: which pages sit in it, where it starts, and how tall it
+/// is. Everything that needs to know where a page lives on screen - scrolling to it, deciding
+/// which page the viewport is centred on, choosing what to render - asks for these rather
+/// than walking the page list itself.
+/// </summary>
+public readonly record struct PageRowMetrics(int FirstPageIndex, int PageCount, double Top, double Height)
+{
+    public double Bottom => Top + Height;
+
+    public bool Contains(int pageIndex) =>
+        pageIndex >= FirstPageIndex && pageIndex < FirstPageIndex + PageCount;
 }
 
 public enum PageFitMode
@@ -481,6 +498,7 @@ public partial class MainViewModel : ObservableObject
 
             CurrentPageNumber = 1;
             UpdateSingleCurrentPage();
+            RaiseLayoutChanged();
 
             // Calculate initial fit if requested
             if (FitMode != PageFitMode.Custom)
@@ -749,21 +767,27 @@ public partial class MainViewModel : ObservableObject
         double docPageWidth = RotationAngle == 90 || RotationAngle == 270 ? targetPage.HeightPt : targetPage.WidthPt;
         double docPageHeight = RotationAngle == 90 || RotationAngle == 270 ? targetPage.WidthPt : targetPage.HeightPt;
 
+        // Two pages across have to share the viewport, and the gap between them is real
+        // width that the pages do not get. Fitting one page's width in facing mode would put
+        // the second one off screen, which is the opposite of what "fit" means.
+        int across = PagesPerRow;
+        double requiredWidth = (docPageWidth * across) + (PageGap * (across - 1));
+
         if (FitMode == PageFitMode.FitWidth)
         {
             double availableWidth = viewportWidth - 40; // account for scrollbar & margins
-            if (availableWidth > 0 && docPageWidth > 0)
+            if (availableWidth > 0 && requiredWidth > 0)
             {
-                ZoomLevel = Math.Clamp(availableWidth / docPageWidth, 0.25, 5.0);
+                ZoomLevel = Math.Clamp(availableWidth / requiredWidth, 0.25, 5.0);
             }
         }
         else if (FitMode == PageFitMode.FitPage)
         {
             double availableWidth = viewportWidth - 40;
             double availableHeight = viewportHeight - 40;
-            if (availableWidth > 0 && availableHeight > 0 && docPageWidth > 0 && docPageHeight > 0)
+            if (availableWidth > 0 && availableHeight > 0 && requiredWidth > 0 && docPageHeight > 0)
             {
-                double scaleX = availableWidth / docPageWidth;
+                double scaleX = availableWidth / requiredWidth;
                 double scaleY = availableHeight / docPageHeight;
                 ZoomLevel = Math.Clamp(Math.Min(scaleX, scaleY), 0.25, 5.0);
             }
@@ -796,15 +820,45 @@ public partial class MainViewModel : ObservableObject
             thumb.UnloadThumbnail();
         }
         _cache.Clear();
+        RaiseLayoutChanged();
         _ = RenderVisiblePagesAsync();
         _ = RenderThumbnailsAsync();
     }
 
+    /// <summary>
+    /// Cycles the toolbar button through the layouts, in the order a reader is likely to want
+    /// them: scrolling, one page at a time, then two up.
+    /// </summary>
     [RelayCommand]
-    public void ToggleViewMode()
+    public void ToggleViewMode() => SetViewMode(ViewMode switch
     {
-        ViewMode = ViewMode == ViewLayoutMode.Continuous ? ViewLayoutMode.SinglePage : ViewLayoutMode.Continuous;
+        ViewLayoutMode.Continuous => ViewLayoutMode.SinglePage,
+        ViewLayoutMode.SinglePage => ViewLayoutMode.Facing,
+        _ => ViewLayoutMode.Continuous
+    });
+
+    [RelayCommand]
+    public void SetContinuousView() => SetViewMode(ViewLayoutMode.Continuous);
+
+    [RelayCommand]
+    public void SetSinglePageView() => SetViewMode(ViewLayoutMode.SinglePage);
+
+    [RelayCommand]
+    public void SetFacingView() => SetViewMode(ViewLayoutMode.Facing);
+
+    public void SetViewMode(ViewLayoutMode mode)
+    {
+        if (ViewMode == mode) return;
+
+        ViewMode = mode;
+        RaiseLayoutChanged();
         UpdateSingleCurrentPage();
+
+        // The page area changes width, so a fit that was calculated for one page across is
+        // wrong the moment two are.
+        if (FitMode != PageFitMode.Custom) ApplyFitMode();
+
+        ScrollToPageAction?.Invoke(CurrentPageNumber);
         _ = RenderVisiblePagesAsync();
     }
 
@@ -849,25 +903,167 @@ public partial class MainViewModel : ObservableObject
         return 300;
     }
 
+    #region Page Layout
+
+    /// <summary>Gap below and between pages, in device-independent pixels.</summary>
+    public const double PageGap = 20;
+
+    /// <summary>True while pages are laid out as a scrolling list rather than one at a time.</summary>
+    public bool IsMultiPageLayout => ViewMode != ViewLayoutMode.SinglePage;
+
+    /// <summary>How many pages sit side by side in a row.</summary>
+    public int PagesPerRow => ViewMode == ViewLayoutMode.Facing ? 2 : 1;
+
+    /// <summary>
+    /// Whether the first page stands alone in facing mode. A book's cover has no page facing
+    /// it, so pairing from page 1 puts every spread one page out of step with the printed
+    /// original.
+    /// </summary>
+    [ObservableProperty]
+    private bool _showCoverPageAlone = true;
+
+    partial void OnShowCoverPageAloneChanged(bool value)
+    {
+        if (ViewMode == ViewLayoutMode.Facing)
+        {
+            RebuildPageRows();
+            ScrollToPageAction?.Invoke(CurrentPageNumber);
+            _ = RenderVisiblePagesAsync();
+        }
+    }
+
+    /// <summary>
+    /// The rows the document is drawn as. The view binds to this, so what is on screen and
+    /// what the scroll maths believes are the same grouping by construction rather than by
+    /// two pieces of code agreeing to behave the same way.
+    /// </summary>
+    public ObservableCollection<PageRowViewModel> PageRows { get; } = new();
+
+    private void RaiseLayoutChanged()
+    {
+        OnPropertyChanged(nameof(IsMultiPageLayout));
+        OnPropertyChanged(nameof(PagesPerRow));
+        RebuildPageRows();
+    }
+
+    private void RebuildPageRows()
+    {
+        PageRows.Clear();
+        foreach (var (start, count) in BuildRowGrouping())
+        {
+            PageRows.Add(new PageRowViewModel(Pages.Skip(start).Take(count).ToList()));
+        }
+    }
+
+    /// <summary>
+    /// Which pages share a row, as (first index, count) pairs. The one rule that decides the
+    /// document's shape; both the visual rows and the geometry below are built from it.
+    /// </summary>
+    private List<(int Start, int Count)> BuildRowGrouping()
+    {
+        var grouping = new List<(int, int)>();
+        if (Pages.Count == 0) return grouping;
+
+        int perRow = PagesPerRow;
+        int index = 0;
+
+        // In facing mode the cover optionally stands alone, which shifts every later spread
+        // so that the pairs match the printed document.
+        if (perRow > 1 && ShowCoverPageAlone)
+        {
+            grouping.Add((0, 1));
+            index = 1;
+        }
+
+        while (index < Pages.Count)
+        {
+            int count = Math.Min(perRow, Pages.Count - index);
+            grouping.Add((index, count));
+            index += count;
+        }
+
+        return grouping;
+    }
+
+    /// <summary>
+    /// Where each row sits vertically, at the current zoom. Scrolling, hit-testing the
+    /// viewport and render scheduling all read this, so they cannot disagree with each other
+    /// or with what is drawn.
+    /// </summary>
+    public IReadOnlyList<PageRowMetrics> BuildPageRows()
+    {
+        var rows = new List<PageRowMetrics>();
+        double top = 0;
+
+        foreach (var (start, count) in BuildRowGrouping())
+        {
+            double tallest = 0;
+            for (int i = start; i < start + count; i++)
+            {
+                if (Pages[i].DisplayHeight > tallest) tallest = Pages[i].DisplayHeight;
+            }
+
+            double height = tallest + PageGap;
+            rows.Add(new PageRowMetrics(start, count, top, height));
+            top += height;
+        }
+
+        return rows;
+    }
+
+    /// <summary>Vertical offset of the row holding the given 1-based page.</summary>
+    public double GetPageOffset(int pageNumber)
+    {
+        if (pageNumber < 1 || pageNumber > Pages.Count) return 0;
+
+        int pageIndex = pageNumber - 1;
+        foreach (var row in BuildPageRows())
+        {
+            if (row.Contains(pageIndex)) return row.Top;
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// The 1-based page the given vertical offset falls on. Offsets above the document
+    /// resolve to the first page and offsets past the end to the last, so a caller always
+    /// gets a page that exists.
+    /// </summary>
+    public int GetPageAtOffset(double offset)
+    {
+        if (Pages.Count == 0) return 1;
+
+        var rows = BuildPageRows();
+        if (rows.Count == 0) return 1;
+        if (offset < 0) return 1;
+
+        foreach (var row in rows)
+        {
+            if (offset >= row.Top && offset < row.Bottom) return row.FirstPageIndex + 1;
+        }
+
+        return rows[^1].FirstPageIndex + 1;
+    }
+
+    #endregion
+
     public void RenderPagesInViewport(double viewportTop, double viewportHeight)
     {
-        if (!IsDocumentLoaded || Pages.Count == 0 || ViewMode == ViewLayoutMode.SinglePage) return;
+        if (!IsDocumentLoaded || Pages.Count == 0 || !IsMultiPageLayout) return;
 
         double buffer = Math.Max(viewportHeight * 1.5, 1200); // 1.5 screens buffer ahead & behind
         double minOffset = Math.Max(0, viewportTop - buffer);
         double maxOffset = viewportTop + viewportHeight + buffer;
 
-        double accumulated = 0;
         int dpi = GetCurrentDpi();
 
-        for (int i = 0; i < Pages.Count; i++)
+        foreach (var row in BuildPageRows())
         {
-            var page = Pages[i];
-            double pageTop = accumulated;
-            double pageBottom = accumulated + page.DisplayHeight + 20;
+            if (row.Bottom < minOffset || row.Top > maxOffset) continue;
 
-            if (pageBottom >= minOffset && pageTop <= maxOffset)
+            for (int i = row.FirstPageIndex; i < row.FirstPageIndex + row.PageCount; i++)
             {
+                var page = Pages[i];
                 if (page.RenderedImage == null && !page.IsLoading)
                 {
                     _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
@@ -877,7 +1073,6 @@ public partial class MainViewModel : ObservableObject
                     _ = page.LoadTextSegmentsAsync(_docService, CancellationToken.None);
                 }
             }
-            accumulated = pageBottom;
         }
     }
 
