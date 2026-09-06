@@ -245,6 +245,81 @@ public sealed class PdfiumPageOrganizerService : IPdfPageOrganizerService
         }
     }
 
+    public ValueTask ArrangePagesAsync(
+        IPdfDocument document,
+        IReadOnlyList<PageArrangementEntry> arrangement,
+        string targetPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (document is not PdfiumDocument pdfiumDoc)
+            throw new ArgumentException("Document must be a PdfiumDocument instance.", nameof(document));
+
+        if (!pdfiumDoc.IsOpen)
+            throw new ObjectDisposedException(nameof(document));
+
+        if (arrangement == null || arrangement.Count == 0)
+            throw new ArgumentException("A document must keep at least one page.", nameof(arrangement));
+
+        if (string.IsNullOrWhiteSpace(targetPath))
+            throw new ArgumentException("Target path cannot be null or empty.", nameof(targetPath));
+
+        if (string.Equals(Path.GetFullPath(targetPath), Path.GetFullPath(pdfiumDoc.FilePath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PdfException("Arranged pages must be written to a new file; the original is never modified.");
+        }
+
+        int sourcePageCount = pdfiumDoc.PageCount;
+        foreach (var entry in arrangement)
+        {
+            if (entry.SourcePageNumber < 1 || entry.SourcePageNumber > sourcePageCount)
+                throw new ArgumentOutOfRangeException(nameof(arrangement),
+                    $"Page {entry.SourcePageNumber} is outside the document's {sourcePageCount} pages.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (pdfiumDoc.SyncLock)
+        {
+            using var newDoc = PdfiumNativeBridge.FPDF_CreateNewDocument();
+            if (newDoc == null || newDoc.IsInvalid)
+                throw new PdfException("Failed to create the destination document.");
+
+            // PDFium's page range is parsed left to right and pages are appended in the order
+            // they appear, so the range string carries the new ordering. A page may repeat.
+            string pageRange = string.Join(",", arrangement.Select(e => e.SourcePageNumber));
+            if (PdfiumNativeBridge.FPDF_ImportPages(newDoc, pdfiumDoc.Handle, pageRange, 0) == 0)
+                throw new PdfException("Failed to import the arranged pages.");
+
+            int written = PdfiumNativeBridge.FPDF_GetPageCount(newDoc);
+            if (written != arrangement.Count)
+            {
+                throw new PdfException(
+                    $"The arranged document came out with {written} pages instead of {arrangement.Count}.");
+            }
+
+            for (int i = 0; i < arrangement.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (arrangement[i].Rotation == PageRotation.Rotate0) continue;
+
+                using var page = PdfiumNativeBridge.FPDF_LoadPage(newDoc, i);
+                if (page == null || page.IsInvalid)
+                    throw new PdfCorruptDocumentException($"Failed to load arranged page {i + 1} to rotate it.");
+
+                // The entry's rotation is relative to what the page already carries, so a
+                // page that was already sideways in the source stays consistent with what
+                // the user saw when they chose to turn it.
+                int quarterTurns = (PdfiumNativeBridge.FPDFPage_GetRotation(page) + ((int)arrangement[i].Rotation / 90)) % 4;
+                PdfiumNativeBridge.FPDFPage_SetRotation(page, quarterTurns);
+                PdfiumNativeBridge.FPDFPage_GenerateContent(page);
+            }
+
+            SaveDocToDisk(newDoc, targetPath);
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private static void SaveDocToDisk(SafeDocumentHandle docHandle, string targetPath)
     {
         // Serialized like every other native entry point; this one previously took no lock.

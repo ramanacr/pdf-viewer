@@ -51,6 +51,7 @@ exactly those features. This viewer takes the opposite position from the mainstr
 | Embedded actions are never executed | JavaScript, `/Launch` actions and embedded files are parsed, reported and left inert. Links open only on an explicit click, through `PdfSecurityPolicy`. |
 | You are told what is inside | Every document is inspected on open by `PdfiumSafetyInspector`. Anything active is named in the status bar and detailed under **Tools → Document Safety**. |
 | You can defuse it | **Tools → Save Clean Copy** writes a copy with the script, launch actions and embedded files removed, keeping the pages. The copy is re-inspected before it is handed back, and discarded if it is not actually clean. The original is never modified. Both major competitors put sanitization behind a paid tier; here it is not even behind the feature gate. |
+| Attachments come out only when you ask | **File → Embedded Files** lists what the document carries and extracts one to a path you choose. Nothing is unpacked on open, an executable type is flagged before anything is written, the extracted file is written as data and never launched, and the document-supplied name cannot steer the save outside the folder you picked. |
 | No telemetry, no analytics, no account | Nothing about you or your documents is recorded or transmitted. There is no sign-in and no cloud storage. |
 | Documents stay on this machine | Files are read from and written to local paths you choose. |
 | One network request, opt-in | The only outbound call the application can make is an update check against the public GitHub releases page. It is **off until you allow it**, asked once on first launch, and changeable under **Help → Privacy & Safety**. |
@@ -130,6 +131,11 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - **Interactive Panning**: Hand/Pan tool toggle or Middle-Mouse drag to pan smoothly around zoomed pages.
 - **Page Rotation**:
   - Rotate current document view 90° Clockwise (`Ctrl+R`) or Counter-Clockwise (`Ctrl+Shift+R`).
+- **Full Screen / Presentation Mode** (`F11`, exit with `F11` or `Esc`): the document fills the screen and all chrome gets out of the way.
+- **Navigation History** (`Alt+Left` / `Alt+Right`): returns you to the page you jumped away from. Deliberate jumps — bookmarks, search hits, the page box — are recorded; ordinary scrolling is not, so "back" never undoes your reading.
+- **Organize Pages** (*File → Organize Pages*): reorder, rotate, duplicate or leave out pages, and save the result as a new document. Applied in a single pass, so the output is always consistent; the original is never modified.
+- **Export Text** (*File → Export Text*): writes the document's text layer to a plain text file, and says so plainly when a page has no text layer rather than handing back an empty file.
+- **Embedded Files** (*File → Embedded Files*): lists what the document carries, flags attachments Windows would treat as executable, and extracts one only when you ask. Nothing is ever unpacked on open or run.
 - **Interactive Text Selection & Clipboard Copying**:
   - **Accurate Glyph Extraction**: Extracts characters and words directly from PDF text streams with sub-pixel bounding box accuracy.
   - **I-Beam Cursor**: Dynamic cursor detection when hovering over selectable text.

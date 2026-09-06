@@ -33,6 +33,9 @@ public partial class MainWindow : Window
         _vm.ShowExportDialogFunc = ShowExportImagesDialog;
         _vm.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
         _vm.ShowPrintDialogFunc = ShowPrintPreviewDialog;
+        _vm.ShowOrganizePagesFunc = ShowOrganizePagesDialog;
+        _vm.ShowAttachmentsFunc = ShowAttachmentsDialog;
+        _vm.ConfirmFunc = ConfirmDialog;
         _vm.ScrollToPageAction = ScrollToPage;
         _vm.ScrollToMatchAction = ScrollToMatch;
         _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
@@ -191,6 +194,109 @@ public partial class MainWindow : Window
             Owner = this
         };
         return dialog.ShowDialog() == true;
+    }
+
+    /// <summary>
+    /// Shows the page organizer. Returns the arrangement the user built, or null when
+    /// cancelled or when nothing was actually changed.
+    /// </summary>
+    private IReadOnlyList<PdfEngine.Pages.PageArrangementEntry>? ShowOrganizePagesDialog(
+        int pageCount, string documentName)
+    {
+        var dialog = new OrganizePagesDialog(pageCount, documentName) { Owner = this };
+        bool? result = dialog.ShowDialog();
+
+        return result == true && dialog.SaveRequested ? dialog.BuildArrangement() : null;
+    }
+
+    private PdfEngine.Safety.EmbeddedFileInfo? ShowAttachmentsDialog(
+        IReadOnlyList<PdfEngine.Safety.EmbeddedFileInfo> files, string documentName)
+    {
+        var dialog = new AttachmentsDialog(files, documentName) { Owner = this };
+        dialog.ShowDialog();
+        return dialog.Chosen;
+    }
+
+    private bool ConfirmDialog(string message, string caption) =>
+        MessageBox.Show(this, message, caption, MessageBoxButton.YesNo, MessageBoxImage.Warning)
+            == MessageBoxResult.Yes;
+
+    /// <summary>
+    /// Presentation mode: the document fills the screen and every chrome element gets out of
+    /// the way. Escape and F11 both return, because a full-screen window with no visible way
+    /// out is the kind of thing users have to kill from Task Manager.
+    /// </summary>
+    private WindowState _preFullScreenState = WindowState.Normal;
+    private bool _isFullScreen;
+
+    private void ToggleFullScreen()
+    {
+        if (_isFullScreen)
+        {
+            _isFullScreen = false;
+            MainMenuBar.Visibility = Visibility.Visible;
+            MainToolBar.Visibility = Visibility.Visible;
+            MainStatusBar.Visibility = Visibility.Visible;
+            WindowStyle = WindowStyle.SingleBorderWindow;
+            ResizeMode = ResizeMode.CanResize;
+            WindowState = _preFullScreenState;
+        }
+        else
+        {
+            _preFullScreenState = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
+            _isFullScreen = true;
+            MainMenuBar.Visibility = Visibility.Collapsed;
+            MainToolBar.Visibility = Visibility.Collapsed;
+            MainStatusBar.Visibility = Visibility.Collapsed;
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
+
+            // Toggling through Normal forces WPF to re-measure, otherwise a window that was
+            // already maximized keeps the taskbar-sized bounds it had with a title bar.
+            WindowState = WindowState.Normal;
+            WindowState = WindowState.Maximized;
+        }
+
+        _vm.StatusText = _isFullScreen
+            ? "Full screen - press Esc or F11 to exit."
+            : "Ready";
+    }
+
+    private void FullScreenMenuItem_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    /// <summary>
+    /// Window-level keys. Handled in preview so they work wherever focus happens to be, but
+    /// skipped while a text box has focus so typing a page number or a search term is never
+    /// swallowed.
+    /// </summary>
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
+
+        switch (e.Key)
+        {
+            case Key.F11:
+                ToggleFullScreen();
+                e.Handled = true;
+                break;
+
+            case Key.Escape when _isFullScreen:
+                ToggleFullScreen();
+                e.Handled = true;
+                break;
+
+            case Key.Left when Keyboard.Modifiers == ModifierKeys.Alt:
+            case Key.System when e.SystemKey == Key.Left && Keyboard.Modifiers == ModifierKeys.Alt:
+                if (_vm.GoBackCommand.CanExecute(null)) _vm.GoBackCommand.Execute(null);
+                e.Handled = true;
+                break;
+
+            case Key.Right when Keyboard.Modifiers == ModifierKeys.Alt:
+            case Key.System when e.SystemKey == Key.Right && Keyboard.Modifiers == ModifierKeys.Alt:
+                if (_vm.GoForwardCommand.CanExecute(null)) _vm.GoForwardCommand.Execute(null);
+                e.Handled = true;
+                break;
+        }
     }
 
     #endregion

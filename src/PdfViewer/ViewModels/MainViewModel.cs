@@ -200,6 +200,23 @@ public partial class MainViewModel : ObservableObject
     public Func<(double ViewportWidth, double ViewportHeight)>? GetViewportSizeFunc { get; set; }
     public Action<string, string, MessageBoxButton, MessageBoxImage>? ShowMessageBoxAction { get; set; }
 
+    /// <summary>
+    /// Shows the page organizer for a document of the given page count, and returns the
+    /// arrangement the user built, or null when cancelled.
+    /// </summary>
+    public Func<int, string, IReadOnlyList<PdfEngine.Pages.PageArrangementEntry>?>? ShowOrganizePagesFunc { get; set; }
+
+    /// <summary>
+    /// Lists the document's embedded files and returns the one the user chose to extract,
+    /// or null when nothing was chosen.
+    /// </summary>
+    public Func<IReadOnlyList<PdfEngine.Safety.EmbeddedFileInfo>, string, PdfEngine.Safety.EmbeddedFileInfo?>? ShowAttachmentsFunc { get; set; }
+
+    /// <summary>Asks a yes/no question. Returns true only on an explicit yes.</summary>
+    public Func<string, string, bool>? ConfirmFunc { get; set; }
+
+    private bool Confirm(string message, string caption) => ConfirmFunc?.Invoke(message, caption) ?? false;
+
     // Set while a security-policy refusal has already been reported for the current
     // document, so a 500-page document cannot produce 500 dialogs.
     private bool _renderRefusalReported;
@@ -409,6 +426,9 @@ public partial class MainViewModel : ObservableObject
             RecentFilesService.AddRecentFile(filePath);
             ReloadRecentFiles();
 
+            // History belongs to a document, not to the window.
+            ClearNavigationHistory();
+
             // Clear collections
             _cache.Clear();
             Pages.Clear();
@@ -513,6 +533,8 @@ public partial class MainViewModel : ObservableObject
         PageCount = 0;
         CurrentPageNumber = 1;
         SingleCurrentPage = null;
+        DocumentSafety = null;
+        ClearNavigationHistory();
         WindowTitle = "PDF Viewer";
         StatusText = "Ready";
     }
@@ -543,9 +565,49 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    public void NavigateToPage(int targetPage)
+    // Deliberate jumps only - a bookmark, a search hit, a page box entry. Scrolling moves
+    // CurrentPageNumber directly and is not recorded, so "back" returns you to where you
+    // jumped from rather than undoing your reading.
+    private readonly List<int> _backHistory = new();
+    private readonly List<int> _forwardHistory = new();
+    private const int MaxHistoryDepth = 50;
+
+    public bool CanGoBack => _backHistory.Count > 0;
+    public bool CanGoForward => _forwardHistory.Count > 0;
+
+    private void RaiseHistoryChanged()
+    {
+        OnPropertyChanged(nameof(CanGoBack));
+        OnPropertyChanged(nameof(CanGoForward));
+        GoBackCommand.NotifyCanExecuteChanged();
+        GoForwardCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ClearNavigationHistory()
+    {
+        _backHistory.Clear();
+        _forwardHistory.Clear();
+        RaiseHistoryChanged();
+    }
+
+    private static void PushBounded(List<int> stack, int value)
+    {
+        stack.Add(value);
+        if (stack.Count > MaxHistoryDepth) stack.RemoveAt(0);
+    }
+
+    public void NavigateToPage(int targetPage) => NavigateToPage(targetPage, recordHistory: true);
+
+    private void NavigateToPage(int targetPage, bool recordHistory)
     {
         if (targetPage < 1 || (PageCount > 0 && targetPage > PageCount)) return;
+
+        if (recordHistory && CurrentPageNumber != targetPage && IsDocumentLoaded)
+        {
+            PushBounded(_backHistory, CurrentPageNumber);
+            _forwardHistory.Clear();
+            RaiseHistoryChanged();
+        }
 
         CurrentPageNumber = targetPage;
         ScrollToPageAction?.Invoke(targetPage);
@@ -554,6 +616,34 @@ public partial class MainViewModel : ObservableObject
         {
             _ = RenderVisiblePagesAsync();
         }
+    }
+
+    /// <summary>Returns to the page you jumped away from.</summary>
+    [RelayCommand(CanExecute = nameof(CanGoBack))]
+    public void GoBack()
+    {
+        if (_backHistory.Count == 0) return;
+
+        int target = _backHistory[^1];
+        _backHistory.RemoveAt(_backHistory.Count - 1);
+        PushBounded(_forwardHistory, CurrentPageNumber);
+
+        NavigateToPage(target, recordHistory: false);
+        RaiseHistoryChanged();
+    }
+
+    /// <summary>Undoes a "back".</summary>
+    [RelayCommand(CanExecute = nameof(CanGoForward))]
+    public void GoForward()
+    {
+        if (_forwardHistory.Count == 0) return;
+
+        int target = _forwardHistory[^1];
+        _forwardHistory.RemoveAt(_forwardHistory.Count - 1);
+        PushBounded(_backHistory, CurrentPageNumber);
+
+        NavigateToPage(target, recordHistory: false);
+        RaiseHistoryChanged();
     }
 
     private void UpdateSingleCurrentPage()
@@ -1619,6 +1709,217 @@ public partial class MainViewModel : ObservableObject
             StatusText = $"Clean copy failed: {ex.Message}";
             ShowAlert($"No clean copy was produced.\n\n{ex.Message}\n\nYour original file is unchanged.",
                 "Save Clean Copy", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Reorders, rotates and removes pages, writing the result to a new document.
+    /// </summary>
+    [RelayCommand]
+    public async Task OrganizePagesAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        if (ShowOrganizePagesFunc == null)
+        {
+            ShowAlert("The page organizer is unavailable.", "Organize Pages",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        string sourcePath = _docService.CurrentFilePath;
+        var arrangement = ShowOrganizePagesFunc(PageCount, Path.GetFileName(sourcePath));
+        if (arrangement == null || arrangement.Count == 0) return;
+
+        var target = new SaveFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = "Save organized document as",
+            FileName = $"{Path.GetFileNameWithoutExtension(sourcePath)}_organized.pdf",
+            InitialDirectory = Path.GetDirectoryName(sourcePath) ?? string.Empty
+        };
+        if (target.ShowDialog() != true) return;
+
+        StatusText = "Writing organized document...";
+        try
+        {
+            using (var engine = new PdfEngine.Pdfium.PdfiumEngine())
+            await using (var doc = await engine.OpenDocumentAsync(sourcePath))
+            {
+                await engine.PageOrganizer.ArrangePagesAsync(doc, arrangement, target.FileName);
+            }
+
+            int removed = PageCount - arrangement.Count;
+            string removedNote = removed > 0 ? $"\n{removed} page(s) were left out." : string.Empty;
+
+            StatusText = $"Organized document saved ({arrangement.Count} pages).";
+            ShowAlert(
+                $"A {arrangement.Count}-page document was saved to:\n{target.FileName}{removedNote}\n\n" +
+                "Your original file is unchanged.",
+                "Organize Pages", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Organize failed: {ex.Message}";
+            ShowAlert($"The organized document was not written.\n\n{ex.Message}\n\nYour original file is unchanged.",
+                "Organize Pages", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Lists the document's embedded files and extracts the one the user picks.
+    ///
+    /// Extraction is always explicit. Nothing is unpacked on open, and the extracted file is
+    /// written as data and never launched - if it is an executable the user is told so before
+    /// anything is written.
+    /// </summary>
+    [RelayCommand]
+    public async Task ShowAttachmentsAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        string sourcePath = _docService.CurrentFilePath;
+
+        try
+        {
+            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            await using var doc = await engine.OpenDocumentAsync(sourcePath);
+
+            var service = new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService();
+            var files = await service.GetAttachmentsAsync(doc);
+
+            if (files.Count == 0)
+            {
+                StatusText = "No embedded files.";
+                ShowAlert("This document carries no embedded files.", "Embedded Files",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var chosen = ShowAttachmentsFunc?.Invoke(files, Path.GetFileName(sourcePath));
+            if (chosen == null)
+            {
+                StatusText = $"{files.Count} embedded file(s).";
+                return;
+            }
+
+            if (chosen.HasExecutableExtension &&
+                !Confirm(
+                    $"\"{chosen.Name}\" is a type Windows can execute.\n\n" +
+                    "It will be written to disk as data and this application will not run it, " +
+                    "but nothing else on your machine knows that.\n\nExtract it anyway?",
+                    "Executable Attachment"))
+            {
+                StatusText = "Extraction cancelled.";
+                return;
+            }
+
+            var target = new SaveFileDialog
+            {
+                Title = "Extract embedded file as",
+                FileName = SanitizeSuggestedFileName(chosen.Name),
+                Filter = "All Files (*.*)|*.*",
+                InitialDirectory = Path.GetDirectoryName(sourcePath) ?? string.Empty
+            };
+            if (target.ShowDialog() != true) return;
+
+            long written = await service.ExtractAttachmentAsync(doc, chosen.Index, target.FileName);
+
+            StatusText = $"Extracted {chosen.Name} ({written:N0} bytes).";
+            ShowAlert($"\"{chosen.Name}\" was written to:\n{target.FileName}\n\n{written:N0} bytes. " +
+                      "It was not opened or run.",
+                "Embedded Files", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Embedded files failed: {ex.Message}";
+            ShowAlert($"Could not read the embedded files:\n\n{ex.Message}", "Embedded Files",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Strips a document-supplied file name down to something safe to put in a save dialog.
+    /// The name comes from the PDF, so it can contain path separators or traversal segments
+    /// aimed at writing outside the folder the user picked.
+    /// </summary>
+    internal static string SanitizeSuggestedFileName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "attachment";
+
+        // Take the last segment regardless of which separator the document used, so
+        // "..\..\Startup\evil.exe" suggests "evil.exe" and nothing more.
+        string leaf = name.Replace('\\', '/');
+        int slash = leaf.LastIndexOf('/');
+        if (slash >= 0) leaf = leaf[(slash + 1)..];
+
+        foreach (char invalid in Path.GetInvalidFileNameChars())
+        {
+            leaf = leaf.Replace(invalid, '_');
+        }
+
+        leaf = leaf.Trim('.', ' ');
+        return string.IsNullOrWhiteSpace(leaf) ? "attachment" : leaf;
+    }
+
+    /// <summary>
+    /// Writes the document's text to a plain text file.
+    /// </summary>
+    [RelayCommand]
+    public async Task ExportTextAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        string sourcePath = _docService.CurrentFilePath;
+        var target = new SaveFileDialog
+        {
+            Filter = "Text Files (*.txt)|*.txt",
+            Title = "Export text as",
+            FileName = $"{Path.GetFileNameWithoutExtension(sourcePath)}.txt",
+            InitialDirectory = Path.GetDirectoryName(sourcePath) ?? string.Empty
+        };
+        if (target.ShowDialog() != true) return;
+
+        StatusText = "Extracting text...";
+        try
+        {
+            var text = new StringBuilder();
+            int pagesWithText = 0;
+
+            using (var engine = new PdfEngine.Pdfium.PdfiumEngine())
+            await using (var doc = await engine.OpenDocumentAsync(sourcePath))
+            {
+                for (int page = 1; page <= doc.PageCount; page++)
+                {
+                    string pageText = await engine.TextService.ExtractPageTextAsync(doc, page);
+                    if (!string.IsNullOrWhiteSpace(pageText)) pagesWithText++;
+
+                    text.AppendLine($"--- Page {page} ---");
+                    text.AppendLine(pageText);
+                    text.AppendLine();
+                }
+            }
+
+            await File.WriteAllTextAsync(target.FileName, text.ToString(), Encoding.UTF8);
+
+            // A scanned document has no text layer, and a file full of page headers and
+            // nothing else is a confusing result to hand back without explanation.
+            string note = pagesWithText == 0
+                ? "\n\nNo text layer was found on any page. This document is probably scanned - " +
+                  "use Tools → Recognise Text on Page (OCR) to read it."
+                : pagesWithText < PageCount
+                    ? $"\n\n{PageCount - pagesWithText} page(s) had no text layer and came out empty."
+                    : string.Empty;
+
+            StatusText = $"Text exported ({pagesWithText}/{PageCount} pages had text).";
+            ShowAlert($"Text was written to:\n{target.FileName}{note}", "Export Text",
+                MessageBoxButton.OK, pagesWithText == 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Export text failed: {ex.Message}";
+            ShowAlert($"Could not export the text:\n\n{ex.Message}", "Export Text",
+                MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

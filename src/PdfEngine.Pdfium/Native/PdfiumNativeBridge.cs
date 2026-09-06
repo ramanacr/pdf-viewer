@@ -313,6 +313,14 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFDoc_DeleteAttachment(SafeDocumentHandle document, int index);
 
+    /// <summary>
+    /// Copies the attachment's bytes. Called with a null buffer to learn the length first.
+    /// Returns 0 on failure, in which case out_buflen is meaningless.
+    /// </summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFAttachment_GetFile(
+        IntPtr attachment, byte[]? buffer, uint buflen, out uint out_buflen);
+
     // Link/annotation actions (fpdf_doc.h)
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint FPDFAction_GetType(IntPtr action);

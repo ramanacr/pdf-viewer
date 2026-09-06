@@ -17,7 +17,8 @@
         Foreground="{DynamicResource TextPrimaryBrush}"
         AllowDrop="True"
         Drop="Window_Drop"
-        DragOver="Window_DragOver">
+        DragOver="Window_DragOver"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.DataContext>
         <vm:MainViewModel />
@@ -61,7 +62,8 @@
         </Grid.RowDefinitions>
 
         <!-- 1. Main Menu -->
-        <Menu Grid.Row="0"
+        <Menu x:Name="MainMenuBar"
+              Grid.Row="0"
               Background="{DynamicResource ToolbarBgBrush}"
               Foreground="{DynamicResource TextPrimaryBrush}"
               BorderBrush="{DynamicResource BorderBrush}"
@@ -83,6 +85,12 @@
                 <MenuItem Header="_Close Document" Command="{Binding CloseDocumentCommand}" IsEnabled="{Binding IsDocumentLoaded}" />
                 <MenuItem Header="Save _Annotated As..." Command="{Binding SaveAnnotatedAsCommand}" InputGestureText="Ctrl+Shift+S" IsEnabled="{Binding IsDocumentLoaded}" />
                 <MenuItem Header="_Export to Images..." Command="{Binding ExportImagesCommand}" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="Export _Text..." Command="{Binding ExportTextCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Writes the document's text layer to a plain text file." />
+                <MenuItem Header="_Organize Pages..." Command="{Binding OrganizePagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Reorder, rotate or leave out pages and save the result as a new document." />
+                <MenuItem Header="Embedded _Files..." Command="{Binding ShowAttachmentsCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Lists the files embedded in this document and extracts one if you ask. Nothing is ever run." />
                 <MenuItem Header="_Print..." Command="{Binding PrintCommand}" InputGestureText="Ctrl+P" IsEnabled="{Binding IsDocumentLoaded}" />
                 <Separator />
                 <MenuItem Header="Document _Properties..." Command="{Binding ShowPropertiesCommand}" InputGestureText="Ctrl+D" IsEnabled="{Binding IsDocumentLoaded}" />
@@ -104,6 +112,12 @@
             </MenuItem>
 
             <MenuItem Header="_View">
+                <MenuItem Header="_Back" Command="{Binding GoBackCommand}" InputGestureText="Alt+Left"
+                          ToolTip="Returns to the page you jumped away from." />
+                <MenuItem Header="_Forward" Command="{Binding GoForwardCommand}" InputGestureText="Alt+Right" />
+                <Separator />
+                <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11" />
+                <Separator />
                 <MenuItem Header="Continuous Scrolling" Command="{Binding ToggleViewModeCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
                 <MenuItem Header="Single Page View" Command="{Binding ToggleViewModeCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}" />
                 <Separator />
@@ -176,7 +190,8 @@
         </Menu>
 
         <!-- 2. Main Ribbon Toolbar -->
-        <Border Grid.Row="1"
+        <Border x:Name="MainToolBar"
+                Grid.Row="1"
                 Background="{DynamicResource ToolbarBgBrush}"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,0,0,1"
@@ -1472,7 +1487,8 @@
         </Grid>
 
         <!-- 5. Bottom Status Bar -->
-        <StatusBar Grid.Row="4"
+        <StatusBar x:Name="MainStatusBar"
+                   Grid.Row="4"
                    Background="{DynamicResource ToolbarBgBrush}"
                    Foreground="{DynamicResource TextSecondaryBrush}"
                    BorderBrush="{DynamicResource BorderBrush}"
