@@ -36,6 +36,7 @@ public partial class MainWindow : Window
         _vm.ShowOrganizePagesFunc = ShowOrganizePagesDialog;
         _vm.ShowAttachmentsFunc = ShowAttachmentsDialog;
         _vm.ConfirmFunc = ConfirmDialog;
+        _vm.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
         _vm.ScrollToPageAction = ScrollToPage;
         _vm.ScrollToMatchAction = ScrollToMatch;
         _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
@@ -222,6 +223,21 @@ public partial class MainWindow : Window
             == MessageBoxResult.Yes;
 
     /// <summary>
+    /// Asks before fetching an optional component. This is the only network request the
+    /// application makes besides the update check, so it says plainly what it will download,
+    /// how big it is, and where from.
+    /// </summary>
+    private bool ConfirmComponentDownload(PdfViewer.Core.Components.OptionalComponent component) =>
+        MessageBox.Show(this,
+            $"{component.DisplayName} is not installed.\n\n" +
+            $"It can be downloaded now ({component.SizeText}) from this project's GitHub releases page. " +
+            "The file is checked against a checksum built into this application and discarded if it does not match.\n\n" +
+            "Download and install it?",
+            "Read Aloud",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question) == MessageBoxResult.Yes;
+
+    /// <summary>
     /// Presentation mode: the document fills the screen and every chrome element gets out of
     /// the way. Escape and F11 both return, because a full-screen window with no visible way
     /// out is the kind of thing users have to kill from Task Manager.
@@ -263,6 +279,14 @@ public partial class MainWindow : Window
     }
 
     private void FullScreenMenuItem_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    protected override void OnClosed(EventArgs e)
+    {
+        // Silence Read Aloud before the window goes, so the application does not carry on
+        // talking through its own shutdown.
+        _vm.ShutdownReadAloud();
+        base.OnClosed(e);
+    }
 
     /// <summary>
     /// Window-level keys. Handled in preview so they work wherever focus happens to be, but

@@ -155,6 +155,40 @@ public static class InstallService
         progress?.Report(100);
     }
 
+    /// <summary>
+    /// Fetches the optional Read Aloud component into an installed application directory.
+    /// Returns null on success, or a message explaining why it did not install.
+    ///
+    /// Deliberately never throws into the installer: the application is already on disk by
+    /// this point, and failing to fetch an optional extra must not fail the installation.
+    /// </summary>
+    public static async Task<string?> TryInstallReadAloudAsync(string targetDirectory)
+    {
+        try
+        {
+            string version = "0.0.0";
+            string mainExePath = Path.Combine(targetDirectory, "PdfViewer.exe");
+            if (File.Exists(mainExePath))
+            {
+                var info = FileVersionInfo.GetVersionInfo(mainExePath);
+                if (!string.IsNullOrEmpty(info.ProductVersion))
+                {
+                    version = info.ProductVersion.Split('+')[0];
+                }
+            }
+
+            var downloader = new PdfViewer.Core.Components.ComponentDownloader();
+            await downloader.InstallAsync(
+                PdfViewer.Core.Components.OptionalComponents.ReadAloud, version, targetDirectory);
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
     public static void Uninstall()
     {
         // 1. Remove shortcuts

@@ -80,6 +80,49 @@ if (Test-Path "$RootDir\assets") {
     Copy-Item -Path "$RootDir\assets" -Destination "$AppStagingDir\assets" -Recurse -Force
 }
 
+# ---------------------------------------------------------------------------
+# Optional components.
+#
+# These are deliberately NOT put in the installer payload: a user who does not
+# want Read Aloud should not carry it. They ship as release assets instead, and
+# are downloaded on request by the installer or the application.
+#
+# The hash pinned in OptionalComponents.cs is what both of those check the
+# download against, so a mismatch here means every download would be rejected
+# in the field. Fail the build now rather than ship that.
+# ---------------------------------------------------------------------------
+$OptionalComponents = @(
+    @{ File = "System.Speech.dll"; Sha256 = "0E3A87AEE550BE22AC42F3BCCAEBAA914A190CD7F8AA5CE39DF2CE35B04F9D4A"; Name = "Read Aloud" }
+)
+
+Write-Host "`n>> Separating optional components from the installer payload..." -ForegroundColor Yellow
+foreach ($component in $OptionalComponents) {
+    $staged = Join-Path $AppStagingDir $component.File
+
+    if (-not (Test-Path $staged)) {
+        Write-Error "Optional component '$($component.File)' was not produced by the publish. It must be excluded from the single-file bundle, not from the build."
+    }
+
+    $actual = (Get-FileHash $staged -Algorithm SHA256).Hash
+    if ($actual -ne $component.Sha256) {
+        Write-Error @"
+Optional component '$($component.File)' does not match the hash pinned in
+src/PdfViewer.Core/Components/OptionalComponents.cs.
+
+  expected $($component.Sha256)
+  actual   $actual
+
+The application and installer both verify downloads against the pinned value, so
+shipping this build would make '$($component.Name)' impossible to install. Update
+the pin (and this script) to the new hash if the change is intended.
+"@
+    }
+
+    # Out of the payload, into the release assets.
+    Move-Item -Path $staged -Destination (Join-Path $PublishDir $component.File) -Force
+    Write-Host "   - $($component.File) -> release asset ($($component.Name), verified)" -ForegroundColor Gray
+}
+
 # 4. Create Payload.zip for the installer
 Write-Host "`n[2/4] Creating installer payload archive..." -ForegroundColor Yellow
 Compress-Archive -Path "$AppStagingDir\*" -DestinationPath "$PayloadZip" -Force

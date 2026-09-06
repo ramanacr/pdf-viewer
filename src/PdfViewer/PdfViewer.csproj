@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="System.Speech" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,6 +44,23 @@
     <ProjectReference Include="..\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
     <ProjectReference Include="..\PdfViewer.Core\PdfViewer.Core.csproj" />
   </ItemGroup>
+
+  <!--
+    Read Aloud is an optional component the installer can leave out, so a user who does not
+    want it does not carry it. That only works if the speech assembly stays a loose file
+    beside the executable rather than being bundled inside it, hence the exclusion below.
+
+    Nothing outside TextReaderFactory may touch a System.Speech type: the runtime resolves an
+    assembly when it first JITs a method that mentions one, so a stray reference in a method
+    on the startup path would turn "not installed" into "will not start".
+  -->
+  <Target Name="KeepSpeechOutOfTheSingleFileBundle" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="'%(Filename)%(Extension)' == 'System.Speech.dll'">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <None Include="runtimes\win-x64\native\pdfium.dll">

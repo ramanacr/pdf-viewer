@@ -58,6 +58,10 @@
                     <CheckBox x:Name="DesktopShortcutCheck" Content="Create Desktop shortcut" IsChecked="True" Margin="0,0,0,8" />
                     <CheckBox x:Name="StartMenuShortcutCheck" Content="Create Start Menu shortcut" IsChecked="True" Margin="0,0,0,8" />
                     <CheckBox x:Name="AssociatePdfCheck" Content="Associate with .pdf files" IsChecked="True" />
+                    <Separator Margin="0,10,0,8" />
+                    <CheckBox x:Name="ReadAloudCheck" Content="Read Aloud (text to speech) — 303 KB, downloaded now" IsChecked="False" />
+                    <TextBlock Text="Optional. Leave it off to keep the install smaller; you can add it later from Tools → Read Aloud."
+                               Foreground="#666666" FontSize="11" TextWrapping="Wrap" Margin="22,4,0,0" />
                 </StackPanel>
             </GroupBox>
 

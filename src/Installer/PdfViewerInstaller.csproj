@@ -22,4 +22,18 @@
     <EmbeddedResource Include="Payload.zip" Condition="Exists('Payload.zip')" />
   </ItemGroup>
 
+  <!--
+    Shares the optional-component definition with the application, so the installer downloads
+    exactly the file the application will accept, checked against the same pinned hash. Two
+    copies of that hash would eventually disagree.
+
+    Linked as source rather than referenced as an assembly: a ProjectReference pulled all of
+    PdfViewer.Core into the setup executable for the sake of two small files, which is the
+    wrong trade in an installer whose whole point here is to stay small.
+  -->
+  <ItemGroup>
+    <Compile Include="..\PdfViewer.Core\Components\OptionalComponents.cs" Link="Components\OptionalComponents.cs" />
+    <Compile Include="..\PdfViewer.Core\Components\ComponentDownloader.cs" Link="Components\ComponentDownloader.cs" />
+  </ItemGroup>
+
 </Project>

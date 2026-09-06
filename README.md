@@ -9,6 +9,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 ## Table of Contents
 
 - [Privacy & Safety](#privacy--safety)
+- [Optional Components](#optional-components)
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
 - [Native Engine & PDFium Tooling](#native-engine--pdfium-tooling)
@@ -54,11 +55,40 @@ exactly those features. This viewer takes the opposite position from the mainstr
 | Attachments come out only when you ask | **File → Embedded Files** lists what the document carries and extracts one to a path you choose. Nothing is unpacked on open, an executable type is flagged before anything is written, the extracted file is written as data and never launched, and the document-supplied name cannot steer the save outside the folder you picked. |
 | No telemetry, no analytics, no account | Nothing about you or your documents is recorded or transmitted. There is no sign-in and no cloud storage. |
 | Documents stay on this machine | Files are read from and written to local paths you choose. |
-| One network request, opt-in | The only outbound call the application can make is an update check against the public GitHub releases page. It is **off until you allow it**, asked once on first launch, and changeable under **Help → Privacy & Safety**. |
+| Two possible network requests, both opt-in | An update check against the public GitHub releases page — **off until you allow it**, asked once on first launch, changeable under **Help → Privacy & Safety** — and downloading an [optional component](#optional-components) if you ask for one. Neither sends anything about you or your documents. Decline both and the application never opens a connection. |
 | The bill of materials is published | Every release ships CycloneDX and SPDX SBOMs so the above can be checked rather than taken on trust. |
 
 The claims shown in **Help → Privacy & Safety** are derived from the installation at runtime,
 not hard-coded, so they cannot quietly stop being true.
+
+---
+
+## Optional Components
+
+Some features are not shipped in the installer, so a user who does not want them does not carry
+them. The installer offers each one as a tick box, and the application can fetch one later on
+request.
+
+| Component | Size | Contains |
+| --- | --- | --- |
+| Read Aloud | 669 KB | `System.Speech.dll` — text to speech through the voice built into Windows |
+
+Downloading code that the application will then load is exactly the pattern this product tells
+users to be wary of, so it is done on the following terms:
+
+- **Never without being asked.** The installer's box is off by default, and the application
+  states what it will fetch, how big it is and where from before anything happens.
+- **Fetched over HTTPS from this project's own GitHub release assets**, at the URL for the
+  running version — so the component always matches the application that loads it.
+- **Checked against a SHA-256 pinned inside the binary.** A file that does not match is deleted,
+  not used, and the same check decides whether an already-present file counts as installed, so a
+  swapped or truncated one is treated as absent.
+- **The build refuses to package** if the file it is about to publish does not match the pinned
+  hash, which is what stops the pin and the asset drifting apart.
+- **Absence is never a crash.** Every reference to the optional assembly is confined to one
+  factory method, because the runtime resolves an assembly when it first compiles a method that
+  mentions one; a stray reference on the startup path would turn "not installed" into "will not
+  start".
 
 ---
 
@@ -131,6 +161,8 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - **Interactive Panning**: Hand/Pan tool toggle or Middle-Mouse drag to pan smoothly around zoomed pages.
 - **Page Rotation**:
   - Rotate current document view 90° Clockwise (`Ctrl+R`) or Counter-Clockwise (`Ctrl+Shift+R`).
+- **Two-Page (Facing) View**: pages side by side the way the document was printed, with an option to keep the cover on its own so the spreads line up with the original. The toolbar button cycles continuous → single page → facing.
+- **Read Aloud** (*Tools → Read Aloud*): reads the document from the current page using the voice built into Windows, following along in the viewer and skipping pages that have no text layer. **Optional component** — not shipped in the installer, so you only carry it if you want it; see [Optional Components](#optional-components).
 - **Full Screen / Presentation Mode** (`F11`, exit with `F11` or `Esc`): the document fills the screen and all chrome gets out of the way.
 - **Navigation History** (`Alt+Left` / `Alt+Right`): returns you to the page you jumped away from. Deliberate jumps — bookmarks, search hits, the page box — are recorded; ordinary scrolling is not, so "back" never undoes your reading.
 - **Organize Pages** (*File → Organize Pages*): reorder, rotate, duplicate or leave out pages, and save the result as a new document. Applied in a single pass, so the output is always consistent; the original is never modified.

@@ -146,6 +146,16 @@
                           Command="{Binding RecognizeTextOnPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard." />
+                <MenuItem Header="_Read Aloud"
+                          Command="{Binding ToggleReadAloudCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          IsCheckable="True"
+                          IsChecked="{Binding IsReadingAloud, Mode=OneWay}"
+                          ToolTip="Reads the document from the current page. An optional component; you will be asked before anything is downloaded." />
+                <MenuItem Header="_Pause / Resume Reading"
+                          Command="{Binding PauseOrResumeReadingCommand}"
+                          IsEnabled="{Binding IsReadingAloud}" />
+                <Separator />
                 <MenuItem Header="_Document Safety..."
                           Command="{Binding ShowDocumentSafetyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"

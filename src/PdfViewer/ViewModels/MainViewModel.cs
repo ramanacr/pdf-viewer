@@ -1907,6 +1907,212 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    #region Read Aloud
+
+    private ITextReader? _reader;
+    private CancellationTokenSource? _readingCts;
+
+    /// <summary>True while the document is being read out loud.</summary>
+    [ObservableProperty]
+    private bool _isReadingAloud;
+
+    [ObservableProperty]
+    private bool _isReadingPaused;
+
+    /// <summary>
+    /// Whether the optional Read Aloud component is present. Checked on demand rather than
+    /// cached, so installing it does not require restarting the application.
+    /// </summary>
+    public bool IsReadAloudInstalled => TextReaderFactory.IsComponentInstalled();
+
+    /// <summary>Asks whether to fetch the optional component. Returns true only on an explicit yes.</summary>
+    public Func<PdfViewer.Core.Components.OptionalComponent, bool>? ConfirmComponentDownloadFunc { get; set; }
+
+    /// <summary>
+    /// Starts reading from the current page, or stops if already reading.
+    /// </summary>
+    [RelayCommand]
+    public async Task ToggleReadAloudAsync()
+    {
+        if (IsReadingAloud)
+        {
+            StopReadingAloud();
+            return;
+        }
+
+        if (!IsDocumentLoaded) return;
+
+        if (!await EnsureReaderAsync()) return;
+
+        _readingCts = new CancellationTokenSource();
+        IsReadingAloud = true;
+        IsReadingPaused = false;
+
+        try
+        {
+            await ReadFromCurrentPageAsync(_readingCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped by the user.
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Read aloud failed: {ex.Message}";
+            ShowAlert($"Reading stopped:\n\n{ex.Message}", "Read Aloud",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsReadingAloud = false;
+            IsReadingPaused = false;
+            _readingCts?.Dispose();
+            _readingCts = null;
+        }
+    }
+
+    /// <summary>
+    /// Reads each page in turn, following along in the viewer. Pages with no text layer are
+    /// skipped and counted rather than passed over in silence, so a scanned document does not
+    /// look like a broken feature.
+    /// </summary>
+    private async Task ReadFromCurrentPageAsync(CancellationToken cancellationToken)
+    {
+        int startPage = CurrentPageNumber;
+        int silentPages = 0;
+
+        for (int page = startPage; page <= PageCount; page++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var segments = await _docService.ExtractPageTextSegmentsAsync(page, cancellationToken);
+            string text = string.Join(" ", segments.Select(s => s.Text)).Trim();
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                silentPages++;
+                continue;
+            }
+
+            if (CurrentPageNumber != page) NavigateToPage(page);
+            StatusText = $"Reading page {page} of {PageCount}...";
+
+            if (_reader != null && !await _reader.SpeakAsync(text, cancellationToken))
+            {
+                StatusText = $"Reading stopped on page {page}.";
+                return;
+            }
+        }
+
+        StatusText = silentPages == PageCount - startPage + 1
+            ? "Nothing to read: no text layer on these pages. Use Tools → Recognise Text on Page (OCR)."
+            : silentPages > 0
+                ? $"Finished reading. {silentPages} page(s) had no text layer and were skipped."
+                : "Finished reading.";
+    }
+
+    /// <summary>
+    /// Makes sure a reader exists, offering to fetch the optional component if it is missing.
+    /// </summary>
+    private async Task<bool> EnsureReaderAsync()
+    {
+        _reader ??= TextReaderFactory.TryCreate();
+        if (_reader != null) return true;
+
+        var component = PdfViewer.Core.Components.OptionalComponents.ReadAloud;
+
+        if (ConfirmComponentDownloadFunc?.Invoke(component) != true)
+        {
+            StatusText = "Read Aloud is not installed.";
+            return false;
+        }
+
+        try
+        {
+            StatusText = $"Downloading {component.DisplayName}...";
+
+            var downloader = new PdfViewer.Core.Components.ComponentDownloader();
+            await downloader.InstallAsync(component, AppVersion, AppContext.BaseDirectory);
+
+            OnPropertyChanged(nameof(IsReadAloudInstalled));
+            _reader = TextReaderFactory.TryCreate();
+
+            if (_reader == null)
+            {
+                StatusText = "Read Aloud could not be started after installing.";
+                ShowAlert("The component installed but could not be loaded. Reinstalling the application should fix it.",
+                    "Read Aloud", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            StatusText = $"{component.DisplayName} installed.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Read Aloud install failed: {ex.Message}";
+            ShowAlert($"{ex.Message}", "Read Aloud", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    /// <summary>Version this build is published as; picks the matching component.</summary>
+    private static string AppVersion =>
+        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
+
+    /// <summary>
+    /// Stops and releases the reader. Called when the window closes: without it the speech
+    /// keeps talking into a closing application and the process lingers while the synthesizer
+    /// finishes whatever sentence it was on.
+    /// </summary>
+    public void ShutdownReadAloud()
+    {
+        _readingCts?.Cancel();
+
+        var reader = _reader;
+        _reader = null;
+
+        try
+        {
+            reader?.Stop();
+            reader?.Dispose();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            // Nothing useful to do while shutting down.
+        }
+    }
+
+    [RelayCommand]
+    public void StopReadingAloud()
+    {
+        _readingCts?.Cancel();
+        _reader?.Stop();
+        IsReadingPaused = false;
+        StatusText = "Reading stopped.";
+    }
+
+    [RelayCommand]
+    public void PauseOrResumeReading()
+    {
+        if (!IsReadingAloud || _reader == null) return;
+
+        if (IsReadingPaused)
+        {
+            _reader.Resume();
+            IsReadingPaused = false;
+            StatusText = "Reading resumed.";
+        }
+        else
+        {
+            _reader.Pause();
+            IsReadingPaused = true;
+            StatusText = "Reading paused.";
+        }
+    }
+
+    #endregion
+
     /// <summary>
     /// Reorders, rotates and removes pages, writing the result to a new document.
     /// </summary>

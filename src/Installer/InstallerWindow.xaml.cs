@@ -67,6 +67,7 @@ public partial class InstallerWindow : Window
         bool desktop = DesktopShortcutCheck.IsChecked == true;
         bool startMenu = StartMenuShortcutCheck.IsChecked == true;
         bool associate = AssociatePdfCheck.IsChecked == true;
+        bool readAloud = ReadAloudCheck.IsChecked == true;
 
         try
         {
@@ -86,6 +87,22 @@ public partial class InstallerWindow : Window
             {
                 InstallService.Install(targetDir, desktop, startMenu, associate, progress);
             });
+
+            // The optional component is fetched after the application is on disk, so a
+            // download problem costs the user a feature rather than the installation.
+            if (readAloud)
+            {
+                ProgressStatusText.Text = "Downloading Read Aloud...";
+                string? failure = await InstallService.TryInstallReadAloudAsync(targetDir);
+
+                if (failure != null)
+                {
+                    MessageBox.Show(
+                        $"PDF Viewer was installed successfully, but Read Aloud was not:\n\n{failure}\n\n" +
+                        "You can add it later from Tools → Read Aloud.",
+                        "Read Aloud", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
 
             // Switch to complete screen
             ProgressStepPanel.Visibility = Visibility.Collapsed;
