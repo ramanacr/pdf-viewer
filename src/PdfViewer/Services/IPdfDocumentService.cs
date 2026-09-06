@@ -51,6 +51,12 @@ public interface IPdfDocumentService : IDisposable
     (double Width, double Height) GetPageDimensions(int pageNumber);
 
     /// <summary>
+    /// The page's own /Rotate entry in degrees, which is what separates the coordinate space
+    /// text and annotations are reported in from the one the page is drawn in.
+    /// </summary>
+    int GetPageIntrinsicRotation(int pageNumber);
+
+    /// <summary>
     /// Synchronously renders a single PDF page into a frozen WPF BitmapSource.
     /// </summary>
     BitmapSource? RenderPage(int pageNumber, int dpi = 150, int rotationAngle = 0);

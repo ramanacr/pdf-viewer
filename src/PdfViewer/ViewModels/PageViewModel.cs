@@ -62,6 +62,32 @@ public partial class PageViewModel : ObservableObject
     public double DisplayHeight => OrientedHeightPt * DisplayScale;
 
     /// <summary>
+    /// The page's own /Rotate entry, in degrees. Fixed for the life of the document, unlike
+    /// <see cref="RotationAngle"/>, which is whatever the reader has turned the view to.
+    /// </summary>
+    public int IntrinsicRotation { get; init; }
+
+    /// <summary>
+    /// The page in unrotated space, scaled for the screen.
+    ///
+    /// Text boxes and annotation rectangles are all normalized against the page as the PDF
+    /// stores it, before any rotation. Everything drawn over the page is laid out in this
+    /// space and then turned by <see cref="OverlayRotationAngle"/> to sit on the rendered
+    /// bitmap - which is why a highlight stays over its word however the page is turned.
+    /// </summary>
+    public double UnrotatedWidthPt => IntrinsicRotation == 90 || IntrinsicRotation == 270 ? HeightPt : WidthPt;
+    public double UnrotatedHeightPt => IntrinsicRotation == 90 || IntrinsicRotation == 270 ? WidthPt : HeightPt;
+
+    public double UnrotatedDisplayWidth => UnrotatedWidthPt * DisplayScale;
+    public double UnrotatedDisplayHeight => UnrotatedHeightPt * DisplayScale;
+
+    /// <summary>
+    /// How far the overlay layers have to turn to line up with the page as it is drawn: the
+    /// page's own rotation plus whatever the reader has added on top of it.
+    /// </summary>
+    public double OverlayRotationAngle => (IntrinsicRotation + RotationAngle) % 360;
+
+    /// <summary>
     /// The document this page belongs to.
     ///
     /// Exists because a ContextMenu is hosted in its own popup, not in the window's visual
@@ -82,15 +108,22 @@ public partial class PageViewModel : ObservableObject
     public void UpdateScale(double scale)
     {
         DisplayScale = scale;
-        OnPropertyChanged(nameof(DisplayWidth));
-        OnPropertyChanged(nameof(DisplayHeight));
+        RaiseGeometryChanged();
     }
 
     public void UpdateRotation(int angle)
     {
         RotationAngle = angle;
+        RaiseGeometryChanged();
+    }
+
+    private void RaiseGeometryChanged()
+    {
         OnPropertyChanged(nameof(DisplayWidth));
         OnPropertyChanged(nameof(DisplayHeight));
+        OnPropertyChanged(nameof(UnrotatedDisplayWidth));
+        OnPropertyChanged(nameof(UnrotatedDisplayHeight));
+        OnPropertyChanged(nameof(OverlayRotationAngle));
     }
 
     private int _renderedDpi;

@@ -1058,14 +1058,28 @@
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
 
+                                            <!-- Everything drawn over the page lives in unrotated page space,
+                                                 because that is the space text boxes and annotation rectangles
+                                                 are reported in. Turning the whole layer stack at once puts it
+                                                 back on the picture; without it, rotating the page left every
+                                                 highlight, selection and pen stroke behind, stranded away from
+                                                 the words they were made over. -->
+                                            <Grid Width="{Binding UnrotatedDisplayWidth}"
+                                                  Height="{Binding UnrotatedDisplayHeight}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center">
+                                                <Grid.LayoutTransform>
+                                                    <RotateTransform Angle="{Binding OverlayRotationAngle}" />
+                                                </Grid.LayoutTransform>
+
                                             <!-- 3. Text Selection Layer (Translucent Accent / Blue) -->
                                             <ItemsControl ItemsSource="{Binding SelectedSegments}"
-                                                          Width="{Binding DisplayWidth}"
-                                                          Height="{Binding DisplayHeight}"
+                                                          Width="{Binding UnrotatedDisplayWidth}"
+                                                          Height="{Binding UnrotatedDisplayHeight}"
                                                           IsHitTestVisible="False">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
-                                                        <Canvas Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" />
+                                                        <Canvas Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" />
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemContainerStyle>
@@ -1074,7 +1088,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="X" />
-                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1082,7 +1096,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Y" />
-                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1090,7 +1104,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Width" />
-                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1098,7 +1112,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Height" />
-                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1116,12 +1130,12 @@
 
                                             <!-- 4. Vector Search Highlights Layer (Lime-Green / Active Gold) -->
                                             <ItemsControl ItemsSource="{Binding MatchesOnPage}"
-                                                          Width="{Binding DisplayWidth}"
-                                                          Height="{Binding DisplayHeight}"
+                                                          Width="{Binding UnrotatedDisplayWidth}"
+                                                          Height="{Binding UnrotatedDisplayHeight}"
                                                           IsHitTestVisible="False">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
-                                                        <Canvas Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" />
+                                                        <Canvas Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" />
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemContainerStyle>
@@ -1130,7 +1144,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="X" />
-                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1138,7 +1152,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Y" />
-                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1146,7 +1160,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Width" />
-                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1154,7 +1168,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Height" />
-                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1172,11 +1186,11 @@
 
                                             <!-- 5. Vector Annotations Layer -->
                                             <ItemsControl ItemsSource="{Binding AnnotationsOnPage}"
-                                                          Width="{Binding DisplayWidth}"
-                                                          Height="{Binding DisplayHeight}">
+                                                          Width="{Binding UnrotatedDisplayWidth}"
+                                                          Height="{Binding UnrotatedDisplayHeight}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
-                                                        <Canvas Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" />
+                                                        <Canvas Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" />
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemContainerStyle>
@@ -1185,7 +1199,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="X" />
-                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1193,7 +1207,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Y" />
-                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1201,7 +1215,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Width" />
-                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1209,7 +1223,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Height" />
-                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1292,8 +1306,8 @@
                                             </ItemsControl>
 
                                             <!-- 6. Interactive Canvas for Selection & Drawing Annotations -->
-                                            <Canvas Width="{Binding DisplayWidth}"
-                                                    Height="{Binding DisplayHeight}"
+                                            <Canvas Width="{Binding UnrotatedDisplayWidth}"
+                                                    Height="{Binding UnrotatedDisplayHeight}"
                                                     Background="Transparent"
                                                     Tag="{Binding}"
                                                     MouseDown="PageCanvas_MouseDown"
@@ -1322,6 +1336,7 @@
                                                     </ContextMenu>
                                                 </Canvas.ContextMenu>
                                             </Canvas>
+                                            </Grid>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -1357,14 +1372,24 @@
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
 
+                                <!-- The overlay stack, in unrotated page space and then turned to
+                                     sit on the picture. Same as the continuous view. -->
+                                <Grid Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}"
+                                      Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center">
+                                    <Grid.LayoutTransform>
+                                        <RotateTransform Angle="{Binding SingleCurrentPage.OverlayRotationAngle}" />
+                                    </Grid.LayoutTransform>
+
                                 <!-- Text Selection Layer (Translucent Accent / Blue) -->
                                 <ItemsControl ItemsSource="{Binding SingleCurrentPage.SelectedSegments}"
-                                              Width="{Binding SingleCurrentPage.DisplayWidth}"
-                                              Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                              Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}"
+                                              Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}"
                                               IsHitTestVisible="False">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
-                                            <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}" />
+                                            <Canvas Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemContainerStyle>
@@ -1373,7 +1398,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="X" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1381,7 +1406,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Y" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1389,7 +1414,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Width" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1397,7 +1422,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Height" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1415,12 +1440,12 @@
 
                                 <!-- Vector Search Highlights Layer -->
                                 <ItemsControl ItemsSource="{Binding SingleCurrentPage.MatchesOnPage}"
-                                              Width="{Binding SingleCurrentPage.DisplayWidth}"
-                                              Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                              Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}"
+                                              Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}"
                                               IsHitTestVisible="False">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
-                                            <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}" />
+                                            <Canvas Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemContainerStyle>
@@ -1429,7 +1454,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="X" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1437,7 +1462,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Y" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1445,7 +1470,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Width" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1453,7 +1478,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Height" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1471,11 +1496,11 @@
 
                                 <!-- Vector Annotations Layer -->
                                 <ItemsControl ItemsSource="{Binding SingleCurrentPage.AnnotationsOnPage}"
-                                              Width="{Binding SingleCurrentPage.DisplayWidth}"
-                                              Height="{Binding SingleCurrentPage.DisplayHeight}">
+                                              Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}"
+                                              Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
-                                            <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}" Height="{Binding SingleCurrentPage.DisplayHeight}" />
+                                            <Canvas Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemContainerStyle>
@@ -1484,7 +1509,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="X" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1492,7 +1517,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Y" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1500,7 +1525,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Width" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayWidth" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1508,7 +1533,7 @@
                                                 <Setter.Value>
                                                     <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                         <Binding Path="Height" />
-                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.UnrotatedDisplayHeight" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                     </MultiBinding>
                                                 </Setter.Value>
                                             </Setter>
@@ -1590,8 +1615,8 @@
                                 </ItemsControl>
 
                                 <!-- Interactive Canvas for Selection & Drawing Annotations -->
-                                <Canvas Width="{Binding SingleCurrentPage.DisplayWidth}"
-                                        Height="{Binding SingleCurrentPage.DisplayHeight}"
+                                <Canvas Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}"
+                                        Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}"
                                         Background="Transparent"
                                         Tag="{Binding SingleCurrentPage}"
                                         MouseDown="PageCanvas_MouseDown"
@@ -1620,6 +1645,7 @@
                                         </ContextMenu>
                                     </Canvas.ContextMenu>
                                 </Canvas>
+                                </Grid>
                             </Grid>
                         </Border>
                     </Grid>

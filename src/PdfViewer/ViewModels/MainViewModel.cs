@@ -503,7 +503,10 @@ public partial class MainViewModel : ObservableObject
             for (int i = 1; i <= meta.PageCount; i++)
             {
                 var (w, h) = _docService.GetPageDimensions(i);
-                var pageVm = new PageViewModel(i, w, h);
+                var pageVm = new PageViewModel(i, w, h)
+                {
+                    IntrinsicRotation = _docService.GetPageIntrinsicRotation(i)
+                };
                 pageVm.UpdateScale(ZoomLevel);
                 pageVm.RenderRefused = OnRenderRefusedByPolicy;
                 pageVm.Owner = this;

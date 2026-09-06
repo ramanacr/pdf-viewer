@@ -272,6 +272,28 @@ public class PdfiumDocumentService : IPdfDocumentService
     }
 
     /// <summary>
+    /// The page's own /Rotate entry, in degrees.
+    ///
+    /// Text boxes and annotation rectangles are reported in unrotated page space while the
+    /// rendered bitmap is upright, so anything drawn over the page has to be turned by this
+    /// much to land on the content it belongs to.
+    /// </summary>
+    public int GetPageIntrinsicRotation(int pageNumber)
+    {
+        lock (_docLock)
+        {
+            if (_document == null || _document.IsInvalid || pageNumber < 1 || pageNumber > PageCount)
+                return 0;
+
+            using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
+            if (page == null || page.IsInvalid) return 0;
+
+            // PDFium reports quarter turns, not degrees.
+            return (PdfiumNativeBridge.FPDFPage_GetRotation(page) % 4 + 4) % 4 * 90;
+        }
+    }
+
+    /// <summary>
     /// Synchronously renders a single PDF page into a frozen WPF BitmapSource directly via BGRA memory.
     /// </summary>
     public BitmapSource? RenderPage(int pageNumber, int dpi = 150, int rotationAngle = 0)

@@ -793,8 +793,8 @@ public partial class MainWindow : Window
             // If Sticky Note click: Open Comment Textarea Dialog immediately
             if (_vm.ActiveAnnotationTool == AnnotationType.Note)
             {
-                double normX = Math.Max(0, Math.Min(1, _annotStartPoint.X / page.DisplayWidth));
-                double normY = Math.Max(0, Math.Min(1, _annotStartPoint.Y / page.DisplayHeight));
+                double normX = Math.Max(0, Math.Min(1, _annotStartPoint.X / page.UnrotatedDisplayWidth));
+                double normY = Math.Max(0, Math.Min(1, _annotStartPoint.Y / page.UnrotatedDisplayHeight));
 
                 var annot = new AnnotationModel
                 {
@@ -807,8 +807,8 @@ public partial class MainWindow : Window
                     // Dividing 24 screen pixels by the zoomed width baked the current zoom
                     // into the stored box: a note dropped at 400% ended up a quarter of the
                     // size, with a hit area far smaller than the icon drawn over it.
-                    Width = NoteSizePoints / Math.Max(1.0, page.OrientedWidthPt),
-                    Height = NoteSizePoints / Math.Max(1.0, page.OrientedHeightPt),
+                    Width = NoteSizePoints / Math.Max(1.0, page.UnrotatedWidthPt),
+                    Height = NoteSizePoints / Math.Max(1.0, page.UnrotatedHeightPt),
                     ColorHex = _vm.SelectedAnnotationColor,
                     Author = _vm.SelectedAnnotationAuthor,
                     Title = "Sticky Note",
@@ -887,8 +887,8 @@ public partial class MainWindow : Window
         if (!_vm.IsPanningEnabled)
         {
             var clickPos = e.GetPosition(canvas);
-            double normClickX = clickPos.X / page.DisplayWidth;
-            double normClickY = clickPos.Y / page.DisplayHeight;
+            double normClickX = clickPos.X / page.UnrotatedDisplayWidth;
+            double normClickY = clickPos.Y / page.UnrotatedDisplayHeight;
 
             // Check if user clicked an existing annotation to open its editor.
             // (This interactive canvas sits above the annotation layer, so
@@ -961,10 +961,10 @@ public partial class MainWindow : Window
         if (_isSelectingText)
         {
             var currentPoint = e.GetPosition(canvas);
-            double startNormX = Math.Max(0, Math.Min(1, _textSelectStartPoint.X / page.DisplayWidth));
-            double startNormY = Math.Max(0, Math.Min(1, _textSelectStartPoint.Y / page.DisplayHeight));
-            double currNormX = Math.Max(0, Math.Min(1, currentPoint.X / page.DisplayWidth));
-            double currNormY = Math.Max(0, Math.Min(1, currentPoint.Y / page.DisplayHeight));
+            double startNormX = Math.Max(0, Math.Min(1, _textSelectStartPoint.X / page.UnrotatedDisplayWidth));
+            double startNormY = Math.Max(0, Math.Min(1, _textSelectStartPoint.Y / page.UnrotatedDisplayHeight));
+            double currNormX = Math.Max(0, Math.Min(1, currentPoint.X / page.UnrotatedDisplayWidth));
+            double currNormY = Math.Max(0, Math.Min(1, currentPoint.Y / page.UnrotatedDisplayHeight));
 
             page.SelectRange(new Point(startNormX, startNormY), new Point(currNormX, currNormY));
             _vm.UpdateSelectionFromPages();
@@ -975,8 +975,8 @@ public partial class MainWindow : Window
         if (_vm.ActiveAnnotationTool == null && !_vm.IsPanningEnabled)
         {
             var hoverPt = e.GetPosition(canvas);
-            double hoverNormX = hoverPt.X / page.DisplayWidth;
-            double hoverNormY = hoverPt.Y / page.DisplayHeight;
+            double hoverNormX = hoverPt.X / page.UnrotatedDisplayWidth;
+            double hoverNormY = hoverPt.Y / page.UnrotatedDisplayHeight;
             var hitSegment = page.FindClosestSegment(new Point(hoverNormX, hoverNormY), maxDistance: 0.025);
 
             canvas.Cursor = hitSegment != null ? Cursors.IBeam : null;
@@ -1066,10 +1066,10 @@ public partial class MainWindow : Window
                 height = Math.Max(10, Math.Abs(endPoint.Y - _annotStartPoint.Y));
             }
 
-            double normX = Math.Max(0, left / page.DisplayWidth);
-            double normY = Math.Max(0, top / page.DisplayHeight);
-            double normW = Math.Min(1 - normX, width / page.DisplayWidth);
-            double normH = Math.Min(1 - normY, height / page.DisplayHeight);
+            double normX = Math.Max(0, left / page.UnrotatedDisplayWidth);
+            double normY = Math.Max(0, top / page.UnrotatedDisplayHeight);
+            double normW = Math.Min(1 - normX, width / page.UnrotatedDisplayWidth);
+            double normH = Math.Min(1 - normY, height / page.UnrotatedDisplayHeight);
 
             bool bigEnough = isInk
                 ? _currentInkPoints.Count > 1 && (width > 4 || height > 4)
@@ -1102,7 +1102,7 @@ public partial class MainWindow : Window
                     annot.InkStrokes = new System.Collections.Generic.List<System.Collections.Generic.List<Point>>
                     {
                         _currentInkPoints
-                            .Select(p => new Point(p.X / page.DisplayWidth, p.Y / page.DisplayHeight))
+                            .Select(p => new Point(p.X / page.UnrotatedDisplayWidth, p.Y / page.UnrotatedDisplayHeight))
                             .ToList()
                     };
                 }
@@ -1130,10 +1130,10 @@ public partial class MainWindow : Window
             canvas.ReleaseMouseCapture();
 
             var currentPoint = e.GetPosition(canvas);
-            double startNormX = Math.Max(0, Math.Min(1, _textSelectStartPoint.X / page.DisplayWidth));
-            double startNormY = Math.Max(0, Math.Min(1, _textSelectStartPoint.Y / page.DisplayHeight));
-            double currNormX = Math.Max(0, Math.Min(1, currentPoint.X / page.DisplayWidth));
-            double currNormY = Math.Max(0, Math.Min(1, currentPoint.Y / page.DisplayHeight));
+            double startNormX = Math.Max(0, Math.Min(1, _textSelectStartPoint.X / page.UnrotatedDisplayWidth));
+            double startNormY = Math.Max(0, Math.Min(1, _textSelectStartPoint.Y / page.UnrotatedDisplayHeight));
+            double currNormX = Math.Max(0, Math.Min(1, currentPoint.X / page.UnrotatedDisplayWidth));
+            double currNormY = Math.Max(0, Math.Min(1, currentPoint.Y / page.UnrotatedDisplayHeight));
 
             // If user simply clicked on an empty area without dragging, clear selection
             double dx = Math.Abs(currentPoint.X - _textSelectStartPoint.X);
