@@ -291,6 +291,15 @@ public partial class MainViewModel : ObservableObject
     public ICommandHistory CommandHistory { get; }
 
     /// <summary>
+    /// How much rendered-page memory this document may retain. Set by whoever is dividing the
+    /// shared budget between open documents.
+    /// </summary>
+    public void SetPageCacheCeiling(long bytes) => _cache.SetByteCeiling(bytes);
+
+    /// <summary>Rendered-page memory this document is currently holding. Diagnostics only.</summary>
+    public long PageCacheBytes => _cache.CurrentBytes;
+
+    /// <summary>
     /// Text acquisition for a page: reads the embedded text layer, and falls back to real
     /// Windows optical recognition for scanned pages that have none. Null only when the
     /// Windows OCR runtime is unavailable on this machine, in which case scanned pages
@@ -317,7 +326,10 @@ public partial class MainViewModel : ObservableObject
         CommandHistory = new CommandHistory(featureGate: FeatureGate);
 
         _docService = PdfDocumentServiceFactory.CreateService(SecurityPolicy);
-        _cache = new LruPageCache(60);
+        // Bounded by bytes, not just by entry count: a rendered page runs from a few megabytes
+        // at 150 DPI to around 33 MB at the 300 DPI used past 2x zoom, so sixty entries alone
+        // said nothing useful about how much memory this would hold.
+        _cache = new LruPageCache(60, LruPageCache.DefaultTotalByteCeiling);
         _renderer = new AsyncPageRenderer(_docService, _cache);
 
         // Compose text acquisition: embedded text layer first, real Windows OCR for pages
