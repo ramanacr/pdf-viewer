@@ -131,6 +131,10 @@
                           Command="{Binding ShowDocumentSafetyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Shows what this document carries: script, launch actions, embedded files and external links." />
+                <MenuItem Header="Save _Clean Copy..."
+                          Command="{Binding SaveCleanCopyCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified." />
                 <MenuItem Header="Verify Digital _Signatures..."
                           Command="{Binding VerifySignaturesCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"

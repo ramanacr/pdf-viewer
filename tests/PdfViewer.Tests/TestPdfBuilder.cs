@@ -299,6 +299,86 @@ public static class TestPdfBuilder
         return filePath;
     }
 
+    /// <summary>
+    /// A document carrying an embedded file attachment, plus a file-attachment annotation on
+    /// the page. Attachments are the delivery half of the PDF threat model - the payload
+    /// rides inside the document and the script or the user launches it - so sanitization has
+    /// to be proven against both the document-level name tree and the page annotation.
+    /// </summary>
+    public static string CreateAttachmentPdf(string filePath, string payload = "payload contents")
+    {
+        var dir = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+        using var writer = new StreamWriter(fs, Encoding.ASCII);
+
+        var offsets = new List<long>();
+        void WriteObj(int objNum, string content)
+        {
+            writer.Flush();
+            offsets.Add(fs.Position);
+            writer.WriteLine($"{objNum} 0 obj");
+            writer.WriteLine(content);
+            writer.WriteLine("endobj");
+        }
+
+        writer.WriteLine("%PDF-1.7");
+        writer.WriteLine("%\xAA\xBB\xCC\xDD");
+
+        const int catalogObj = 1;
+        const int pagesObj = 2;
+        const int pageObj = 3;
+        const int contentObj = 4;
+        const int fileSpecObj = 5;
+        const int embeddedStreamObj = 6;
+        const int attachAnnotObj = 7;
+
+        WriteObj(catalogObj,
+            $"<< /Type /Catalog /Pages {pagesObj} 0 R " +
+            $"/Names << /EmbeddedFiles << /Names [(payload.txt) {fileSpecObj} 0 R] >> >> >>");
+
+        WriteObj(pagesObj, $"<< /Type /Pages /Kids [{pageObj} 0 R] /Count 1 >>");
+
+        WriteObj(pageObj,
+            $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] " +
+            $"/Contents {contentObj} 0 R /Annots [{attachAnnotObj} 0 R] >>");
+
+        string stream = "BT /F1 12 Tf 50 700 Td (Attachment carrier) Tj ET";
+        WriteObj(contentObj, $"<< /Length {stream.Length} >>\nstream\n{stream}\nendstream");
+
+        WriteObj(fileSpecObj,
+            $"<< /Type /Filespec /F (payload.txt) /UF (payload.txt) " +
+            $"/EF << /F {embeddedStreamObj} 0 R >> >>");
+
+        WriteObj(embeddedStreamObj,
+            $"<< /Type /EmbeddedFile /Length {payload.Length} >>\nstream\n{payload}\nendstream");
+
+        // A file-attachment annotation: the same payload reachable straight from the page.
+        WriteObj(attachAnnotObj,
+            $"<< /Type /Annot /Subtype /FileAttachment /Rect [50 600 70 620] " +
+            $"/FS {fileSpecObj} 0 R >>");
+
+        writer.Flush();
+        long startXref = fs.Position;
+        writer.WriteLine("xref");
+        writer.WriteLine($"0 {offsets.Count + 1}");
+        writer.WriteLine("0000000000 65535 f ");
+        foreach (var off in offsets)
+        {
+            writer.WriteLine($"{off:D10} 00000 n ");
+        }
+
+        writer.WriteLine("trailer");
+        writer.WriteLine($"<< /Size {offsets.Count + 1} /Root {catalogObj} 0 R >>");
+        writer.WriteLine("startxref");
+        writer.WriteLine(startXref);
+        writer.WriteLine("%%EOF");
+        writer.Flush();
+
+        return filePath;
+    }
+
     public static string CreateNonLatinPdf(string filePath)
     {
         return CreateSimplePdf(filePath, 2, "UnicodeTest");

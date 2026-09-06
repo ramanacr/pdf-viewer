@@ -149,6 +149,15 @@ public static class PdfiumNativeBridge
     public const int FPDF_ANNOT_POPUP = 16;
     public const int FPDF_ANNOT_WIDGET = 20;
 
+    // Subtypes that embed or launch a payload rather than just marking up the page. These
+    // are what a sanitized copy must not keep.
+    public const int FPDF_ANNOT_FILEATTACHMENT = 17;
+    public const int FPDF_ANNOT_SOUND = 18;
+    public const int FPDF_ANNOT_MOVIE = 19;
+    public const int FPDF_ANNOT_SCREEN = 21;
+    public const int FPDF_ANNOT_THREED = 25;
+    public const int FPDF_ANNOT_RICHMEDIA = 26;
+
     // Annotation color types
     public const int FPDFANNOT_COLORTYPE_Color = 0;
     public const int FPDFANNOT_COLORTYPE_InteriorColor = 1;
@@ -300,6 +309,9 @@ public static class PdfiumNativeBridge
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint FPDFAttachment_GetName(IntPtr attachment, byte[]? buffer, uint buflen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFDoc_DeleteAttachment(SafeDocumentHandle document, int index);
 
     // Link/annotation actions (fpdf_doc.h)
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

@@ -1531,8 +1531,95 @@ public partial class MainViewModel : ObservableObject
         report.AppendLine("This reader has no JavaScript engine and never executes document script,");
         report.AppendLine("follows launch actions, or opens embedded files on your behalf.");
 
+        if (!DocumentSafety.IsClean)
+        {
+            report.AppendLine();
+            report.AppendLine("To keep the pages without the active content, use");
+            report.AppendLine("Tools → Save Clean Copy. The original is never modified.");
+        }
+
         ShowAlert(report.ToString().TrimEnd(), "Document Safety", MessageBoxButton.OK,
             DocumentSafety.IsClean ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
+    /// <summary>
+    /// Writes a copy of the open document with its executable content removed.
+    ///
+    /// Deliberately not behind the feature gate. Both major competitors put sanitization in a
+    /// paid tier; being able to defuse a document you have been sent is a safety property of
+    /// this reader, not an upsell.
+    /// </summary>
+    [RelayCommand]
+    public async Task SaveCleanCopyAsync()
+    {
+        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
+
+        string sourcePath = _docService.CurrentFilePath;
+        var target = new SaveFileDialog
+        {
+            Filter = "PDF Files (*.pdf)|*.pdf",
+            Title = "Save clean copy as",
+            FileName = $"{Path.GetFileNameWithoutExtension(sourcePath)}_clean.pdf",
+            InitialDirectory = Path.GetDirectoryName(sourcePath) ?? string.Empty
+        };
+        if (target.ShowDialog() != true) return;
+
+        StatusText = "Removing active content...";
+        try
+        {
+            PdfEngine.Safety.SanitizationResult result;
+            using (var engine = new PdfEngine.Pdfium.PdfiumEngine())
+            await using (var doc = await engine.OpenDocumentAsync(sourcePath))
+            {
+                var sanitizer = new PdfEngine.Pdfium.Adapters.PdfiumSanitizer();
+                result = await sanitizer.SanitizeAsync(doc, target.FileName);
+            }
+
+            var summary = new StringBuilder();
+            summary.AppendLine(result.RemovedAnything
+                ? $"A clean copy of {result.PageCount} page(s) was saved to:"
+                : $"This document carried no active content. A copy of {result.PageCount} page(s) was saved to:");
+            summary.AppendLine(result.OutputPath);
+
+            if (result.RemovedAnything)
+            {
+                summary.AppendLine();
+                foreach (var change in result.Changes)
+                {
+                    summary.AppendLine($"• {change.Description}");
+                }
+            }
+
+            if (result.SideEffects.Count > 0)
+            {
+                summary.AppendLine();
+                summary.AppendLine("What the copy does not carry across:");
+                foreach (var effect in result.SideEffects)
+                {
+                    summary.AppendLine($"• {effect}");
+                }
+            }
+
+            summary.AppendLine();
+            summary.AppendLine("The copy was re-inspected after writing and reports no active content.");
+            summary.AppendLine("Your original file is unchanged.");
+
+            StatusText = result.RemovedAnything
+                ? $"Clean copy saved - removed {result.TotalRemoved} item(s)."
+                : "Clean copy saved - nothing needed removing.";
+
+            ShowAlert(summary.ToString().TrimEnd(), "Save Clean Copy",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            // Sanitization fails loudly, including when the copy it produced failed its own
+            // verification. Reporting partial success here would be the one outcome worse
+            // than not offering the feature.
+            StatusText = $"Clean copy failed: {ex.Message}";
+            ShowAlert($"No clean copy was produced.\n\n{ex.Message}\n\nYour original file is unchanged.",
+                "Save Clean Copy", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     /// <summary>
