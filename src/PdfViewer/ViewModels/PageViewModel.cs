@@ -89,9 +89,16 @@ public partial class PageViewModel : ObservableObject
     /// </summary>
     public Action<int, string>? RenderRefused { get; set; }
 
-    public async Task LoadImageAsync(AsyncPageRenderer renderer, int dpi, int rotation, CancellationToken ct = default)
+    private bool _renderedNightMode;
+
+    public async Task LoadImageAsync(
+        AsyncPageRenderer renderer, int dpi, int rotation, bool nightMode = false, CancellationToken ct = default)
     {
-        if (RenderedImage != null && RotationAngle == rotation && _renderedDpi == dpi) return;
+        if (RenderedImage != null && RotationAngle == rotation && _renderedDpi == dpi
+            && _renderedNightMode == nightMode)
+        {
+            return;
+        }
 
         IsLoading = true;
         try
@@ -99,8 +106,11 @@ public partial class PageViewModel : ObservableObject
             var bitmap = await renderer.GetOrRenderPageAsync(PageNumber, dpi, rotation, ct);
             if (!ct.IsCancellationRequested && bitmap != null)
             {
-                RenderedImage = bitmap;
+                // Inverted here rather than in the renderer, so the shared page cache keeps
+                // one copy of the page that both modes are derived from.
+                RenderedImage = nightMode ? NightModeImage.Invert(bitmap) : bitmap;
                 _renderedDpi = dpi;
+                _renderedNightMode = nightMode;
                 RenderErrorMessage = string.Empty;
             }
         }
@@ -123,6 +133,7 @@ public partial class PageViewModel : ObservableObject
     {
         RenderedImage = null;
         _renderedDpi = 0;
+        _renderedNightMode = false;
         IsLoading = false;
     }
 

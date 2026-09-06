@@ -29,9 +29,12 @@ public partial class ThumbnailViewModel : ObservableObject
         PageNumber = pageNumber;
     }
 
-    public async Task LoadThumbnailAsync(AsyncPageRenderer renderer, int rotation, CancellationToken ct)
+    private bool _renderedNightMode;
+
+    public async Task LoadThumbnailAsync(
+        AsyncPageRenderer renderer, int rotation, bool nightMode, CancellationToken ct)
     {
-        if (ThumbnailImage != null) return;
+        if (ThumbnailImage != null && _renderedNightMode == nightMode) return;
 
         IsLoading = true;
         try
@@ -40,7 +43,10 @@ public partial class ThumbnailViewModel : ObservableObject
             var thumb = await renderer.GetOrRenderPageAsync(PageNumber, 50, rotation, ct);
             if (!ct.IsCancellationRequested && thumb != null)
             {
-                ThumbnailImage = thumb;
+                // Thumbnails follow the page. A sidebar of white thumbnails beside an inverted
+                // document is the same mismatch night mode exists to remove.
+                ThumbnailImage = nightMode ? NightModeImage.Invert(thumb) : thumb;
+                _renderedNightMode = nightMode;
             }
         }
         catch (OperationCanceledException) { }
@@ -54,6 +60,7 @@ public partial class ThumbnailViewModel : ObservableObject
     public void UnloadThumbnail()
     {
         ThumbnailImage = null;
+        _renderedNightMode = false;
         IsLoading = false;
     }
 }

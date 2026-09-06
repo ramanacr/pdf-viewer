@@ -28,6 +28,7 @@
         <KeyBinding Modifiers="Ctrl" Key="O" Command="{Binding OpenFileDialogCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="P" Command="{Binding PrintCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="S" Command="{Binding SaveCommand}" />
+        <KeyBinding Modifiers="Ctrl+Shift" Key="N" Command="{Binding ToggleNightModeCommand}" />
         <KeyBinding Modifiers="Ctrl+Shift" Key="S" Command="{Binding SaveAnnotatedAsCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="C" Command="{Binding CopySelectedTextCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="A" Command="{Binding SelectAllTextCommand}" />
@@ -139,6 +140,10 @@
                 <Separator />
                 <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen}" />
                 <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}"><MenuItem.Icon><Path Data="{StaticResource IconTheme}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Night Mode (Invert Pages)" Command="{Binding ToggleNightModeCommand}"
+                          IsCheckable="True" IsChecked="{Binding IsNightMode, Mode=OneWay}"
+                          InputGestureText="Ctrl+Shift+N"
+                          ToolTip="Inverts the pages themselves for reading in the dark. Separate from the window theme." />
             </MenuItem>
 
             <MenuItem Header="_Tools">

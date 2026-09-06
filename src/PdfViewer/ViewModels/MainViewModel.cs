@@ -677,7 +677,7 @@ public partial class MainViewModel : ObservableObject
             SingleCurrentPage = Pages[CurrentPageNumber - 1];
             if (ViewMode == ViewLayoutMode.SinglePage)
             {
-                _ = SingleCurrentPage.LoadImageAsync(_renderer, GetCurrentDpi(), RotationAngle, CancellationToken.None);
+                _ = SingleCurrentPage.LoadImageAsync(_renderer, GetCurrentDpi(), RotationAngle, IsNightMode, CancellationToken.None);
                 _ = SingleCurrentPage.LoadTextSegmentsAsync(_docService, CancellationToken.None);
             }
         }
@@ -814,19 +814,55 @@ public partial class MainViewModel : ObservableObject
         OnRotationChanged();
     }
 
+    /// <summary>
+    /// Inverts the pages themselves, not just the window around them.
+    ///
+    /// Separate from the light/dark theme on purpose: plenty of people want dark chrome with
+    /// a normal page for accurate colour, and plenty want an inverted page while working in a
+    /// light desktop. Tying the two together would take that choice away.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isNightMode;
+
+    partial void OnIsNightModeChanged(bool value)
+    {
+        StatusText = value ? "Night mode on." : "Night mode off.";
+
+        // Nothing about the page geometry changes, only its pixels, so this is the same
+        // reload rotation already does.
+        ReloadRenderedPages();
+    }
+
+    [RelayCommand]
+    public void ToggleNightMode() => IsNightMode = !IsNightMode;
+
     private void OnRotationChanged()
     {
         foreach (var page in Pages)
         {
             page.UpdateRotation(RotationAngle);
+        }
+
+        RaiseLayoutChanged();
+        ReloadRenderedPages();
+    }
+
+    /// <summary>
+    /// Throws away every rendered page and thumbnail and asks for them again. Used whenever
+    /// what the pixels should look like changes but the document has not.
+    /// </summary>
+    private void ReloadRenderedPages()
+    {
+        foreach (var page in Pages)
+        {
             page.UnloadImage();
         }
         foreach (var thumb in Thumbnails)
         {
             thumb.UnloadThumbnail();
         }
+
         _cache.Clear();
-        RaiseLayoutChanged();
         _ = RenderVisiblePagesAsync();
         _ = RenderThumbnailsAsync();
     }
@@ -1072,7 +1108,7 @@ public partial class MainViewModel : ObservableObject
                 var page = Pages[i];
                 if (page.RenderedImage == null && !page.IsLoading)
                 {
-                    _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
+                    _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
                 }
                 if (!page.IsTextExtracted && !page.IsExtractingText)
                 {
@@ -1092,7 +1128,7 @@ public partial class MainViewModel : ObservableObject
         {
             if (SingleCurrentPage != null)
             {
-                await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
+                await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
                 _ = SingleCurrentPage.LoadTextSegmentsAsync(_docService, CancellationToken.None);
             }
             return;
@@ -1113,7 +1149,7 @@ public partial class MainViewModel : ObservableObject
         {
             if (Pages[idx].RenderedImage == null && !Pages[idx].IsLoading)
             {
-                _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, CancellationToken.None);
+                _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
             }
             if (!Pages[idx].IsTextExtracted && !Pages[idx].IsExtractingText)
             {
@@ -1133,7 +1169,7 @@ public partial class MainViewModel : ObservableObject
             var page = Pages[i];
             if (page.RenderedImage == null && !page.IsLoading)
             {
-                await page.LoadImageAsync(_renderer, dpi, rotation, CancellationToken.None);
+                await page.LoadImageAsync(_renderer, dpi, rotation, IsNightMode, CancellationToken.None);
                 await Task.Delay(25); // Gentle yield to maintain smooth 60 FPS UI
             }
             if (!page.IsTextExtracted && !page.IsExtractingText)
@@ -1153,7 +1189,7 @@ public partial class MainViewModel : ObservableObject
             var thumb = Thumbnails[i];
             if (thumb.ThumbnailImage == null)
             {
-                await thumb.LoadThumbnailAsync(_renderer, RotationAngle, CancellationToken.None);
+                await thumb.LoadThumbnailAsync(_renderer, RotationAngle, IsNightMode, CancellationToken.None);
                 await Task.Delay(15);
             }
         }
