@@ -98,6 +98,22 @@ public class NormalizedCoordinateConverter : IMultiValueConverter
 }
 
 /// <summary>
+/// True when two bindings resolve to the same object.
+///
+/// Used to mark the active tab. Reference identity rather than equality on purpose: two
+/// documents opened from the same path would still be different tabs, and only the one the
+/// shell is actually showing should look selected.
+/// </summary>
+public class SameInstanceConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) =>
+        values.Length >= 2 && values[0] != null && ReferenceEquals(values[0], values[1]);
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
 /// Converts SearchMatch.IsCurrentMatch to Lime-Green (#6632CD32) or Gold (#99FFD700) background brush.
 /// </summary>
 public class SearchHighlightBackgroundConverter : IValueConverter

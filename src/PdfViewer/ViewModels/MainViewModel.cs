@@ -360,6 +360,16 @@ public partial class MainViewModel : ObservableObject
 
     #region Document Loading & Handling
 
+    /// <summary>
+    /// Where a file the user asked to open should go. The shell sets this so an open lands in
+    /// a tab rather than replacing the document already in this one. Left null outside the
+    /// shell - in tests and anywhere holding a single view model, loading in place is right.
+    /// </summary>
+    public Func<string, Task>? RequestOpenDocumentAsync { get; set; }
+
+    private Task OpenRequestedDocumentAsync(string filePath) =>
+        RequestOpenDocumentAsync?.Invoke(filePath) ?? LoadDocumentAsync(filePath);
+
     [RelayCommand]
     public async Task OpenFileDialogAsync()
     {
@@ -371,7 +381,7 @@ public partial class MainViewModel : ObservableObject
 
         if (dialog.ShowDialog() == true)
         {
-            await LoadDocumentAsync(dialog.FileName);
+            await OpenRequestedDocumentAsync(dialog.FileName);
         }
     }
 
@@ -383,7 +393,7 @@ public partial class MainViewModel : ObservableObject
         {
             samplePath = SamplePdfGenerator.GenerateSamplePdf(samplePath);
         }
-        await LoadDocumentAsync(samplePath);
+        await OpenRequestedDocumentAsync(samplePath);
     }
 
     private static string FindSampleDocumentPath()
@@ -405,7 +415,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
         {
-            await LoadDocumentAsync(filePath);
+            await OpenRequestedDocumentAsync(filePath);
         }
         else if (!string.IsNullOrEmpty(filePath))
         {
@@ -496,6 +506,7 @@ public partial class MainViewModel : ObservableObject
                 var pageVm = new PageViewModel(i, w, h);
                 pageVm.UpdateScale(ZoomLevel);
                 pageVm.RenderRefused = OnRenderRefusedByPolicy;
+                pageVm.Owner = this;
 
                 // Attach annotations on this page
                 foreach (var a in existingAnnots)
@@ -1610,6 +1621,7 @@ public partial class MainViewModel : ObservableObject
         if (Metadata == null)
         {
             WindowTitle = "PDF Viewer";
+            OnPropertyChanged(nameof(TabTitle));
             return;
         }
 
@@ -1617,6 +1629,18 @@ public partial class MainViewModel : ObservableObject
         WindowTitle = HasUnsavedChanges
             ? $"*{Metadata.FileName} - PDF Viewer"
             : $"{Metadata.FileName} - PDF Viewer";
+
+        OnPropertyChanged(nameof(TabTitle));
+    }
+
+    /// <summary>What this document is called on its tab.</summary>
+    public string TabTitle
+    {
+        get
+        {
+            if (Metadata == null) return "No document";
+            return HasUnsavedChanges ? $"*{Metadata.FileName}" : Metadata.FileName;
+        }
     }
 
     [RelayCommand]

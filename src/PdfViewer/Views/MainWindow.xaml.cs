@@ -15,62 +15,134 @@ namespace PdfViewer.Views;
 
 public partial class MainWindow : Window
 {
-    private readonly MainViewModel _vm;
+    private readonly ShellViewModel _shell;
     private Point _panStartPoint;
     private double _panStartHOffset;
     private double _panStartVOffset;
     private bool _isMousePanning;
     private GridLength _savedSidebarWidth = new GridLength(280);
 
+    /// <summary>
+    /// The document currently on screen. A property rather than a field because the window
+    /// now shows one of several open documents, and every handler below should act on
+    /// whichever that is.
+    /// </summary>
+    private MainViewModel _vm => _shell.ActiveDocument!;
+
     public MainWindow()
     {
         InitializeComponent();
 
-        _vm = (MainViewModel)DataContext;
-        _vm.RequestPasswordFunc = PromptForPasswordAsync;
-        _vm.ShowPropertiesAction = ShowPropertiesDialog;
-        _vm.ShowFormFieldsFunc = ShowFormFieldsDialog;
-        _vm.ShowExportDialogFunc = ShowExportImagesDialog;
-        _vm.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
-        _vm.ShowPrintDialogFunc = ShowPrintPreviewDialog;
-        _vm.ShowOrganizePagesFunc = ShowOrganizePagesDialog;
-        _vm.ShowAttachmentsFunc = ShowAttachmentsDialog;
-        _vm.ConfirmFunc = ConfirmDialog;
-        _vm.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
-        _vm.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
-        _vm.ScrollToPageAction = ScrollToPage;
-        _vm.ScrollToMatchAction = ScrollToMatch;
-        _vm.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+        _shell = (ShellViewModel)DataContext;
+
+        // Each tab needs its own wiring to this window's dialogs, so a document opened in a
+        // new tab is not left unable to ask for a password or show a save dialog.
+        foreach (var document in _shell.Documents) AttachToWindow(document);
+        _shell.Documents.CollectionChanged += (s, e) =>
+        {
+            foreach (var added in e.NewItems?.OfType<MainViewModel>() ?? Enumerable.Empty<MainViewModel>())
+            {
+                AttachToWindow(added);
+            }
+        };
+
+        _shell.ActiveDocumentChanged += OnActiveDocumentChanged;
 
         Loaded += MainWindow_Loaded;
-        SizeChanged += (s, e) =>
-        {
-            if (_vm.IsDocumentLoaded && _vm.FitMode != PageFitMode.Custom)
-            {
-                _vm.ApplyFitMode();
-            }
-        };
+        SizeChanged += (s, e) => ReapplyFitMode();
+        DocumentScrollViewer.SizeChanged += (s, e) => ReapplyFitMode();
+    }
 
-        DocumentScrollViewer.SizeChanged += (s, e) =>
+    private void ReapplyFitMode()
+    {
+        if (_shell.ActiveDocument is { IsDocumentLoaded: true, FitMode: not PageFitMode.Custom } document)
         {
-            if (_vm.IsDocumentLoaded && _vm.FitMode != PageFitMode.Custom)
-            {
-                _vm.ApplyFitMode();
-            }
-        };
+            document.ApplyFitMode();
+        }
+    }
 
-        _vm.PropertyChanged += (s, e) =>
+    /// <summary>Gives one document the callbacks it needs to reach this window.</summary>
+    private void AttachToWindow(MainViewModel document)
+    {
+        document.RequestPasswordFunc = PromptForPasswordAsync;
+        document.ShowPropertiesAction = ShowPropertiesDialog;
+        document.ShowFormFieldsFunc = ShowFormFieldsDialog;
+        document.ShowExportDialogFunc = ShowExportImagesDialog;
+        document.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
+        document.ShowPrintDialogFunc = ShowPrintPreviewDialog;
+        document.ShowOrganizePagesFunc = ShowOrganizePagesDialog;
+        document.ShowAttachmentsFunc = ShowAttachmentsDialog;
+        document.ConfirmFunc = ConfirmDialog;
+        document.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
+        document.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
+        document.ScrollToPageAction = ScrollToPage;
+        document.ScrollToMatchAction = ScrollToMatch;
+        document.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+
+        document.PropertyChanged += (s, e) =>
         {
+            // Only the document on screen may drive the window's chrome; a background tab
+            // toggling its sidebar must not move the visible one's.
+            if (!ReferenceEquals(s, _shell.ActiveDocument)) return;
+
             if (e.PropertyName == nameof(MainViewModel.IsSidebarOpen))
             {
-                UpdateSidebarColumnVisibility(_vm.IsSidebarOpen);
+                UpdateSidebarColumnVisibility(document.IsSidebarOpen);
             }
             else if (e.PropertyName == nameof(MainViewModel.ActiveAnnotationTool) ||
                      e.PropertyName == nameof(MainViewModel.IsPanningEnabled))
             {
                 ResetPageCanvasCursors();
             }
+            else if (e.PropertyName == nameof(MainViewModel.WindowTitle))
+            {
+                Title = document.WindowTitle;
+            }
         };
+    }
+
+    /// <summary>
+    /// Remembers where the outgoing document was scrolled to and restores the incoming one's
+    /// position, so switching tabs returns you to where you were rather than to page one.
+    /// </summary>
+    private void OnActiveDocumentChanged(MainViewModel? outgoing, MainViewModel? incoming)
+    {
+        if (outgoing != null) _scrollOffsets[outgoing] = DocumentScrollViewer.VerticalOffset;
+
+        if (incoming == null) return;
+
+        Title = incoming.WindowTitle;
+        UpdateSidebarColumnVisibility(incoming.IsSidebarOpen);
+
+        // The new document's pages have to be laid out before an offset means anything.
+        Dispatcher.InvokeAsync(() =>
+        {
+            double offset = _scrollOffsets.TryGetValue(incoming, out double saved) ? saved : 0;
+            DocumentScrollViewer.ScrollToVerticalOffset(offset);
+            incoming.RenderPagesInViewport(offset, DocumentScrollViewer.ViewportHeight);
+            ResetPageCanvasCursors();
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private readonly Dictionary<MainViewModel, double> _scrollOffsets = new();
+
+    private void DocumentTab_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MainViewModel document })
+        {
+            _shell.ActiveDocument = document;
+        }
+    }
+
+    private async void CloseDocumentTab_Click(object sender, RoutedEventArgs e)
+    {
+        // Stops the click also selecting the tab that is on its way out.
+        e.Handled = true;
+
+        if (sender is FrameworkElement { DataContext: MainViewModel document })
+        {
+            await _shell.CloseDocumentAsync(document);
+        }
     }
 
     private void UpdateSidebarColumnVisibility(bool isOpen)
@@ -105,7 +177,7 @@ public partial class MainWindow : Window
     {
         if (!string.IsNullOrEmpty(App.StartupPdfPath) && File.Exists(App.StartupPdfPath))
         {
-            await _vm.LoadDocumentAsync(App.StartupPdfPath);
+            await _shell.OpenDocumentAsync(App.StartupPdfPath);
         }
 
         // The first launch asks before anything touches the network; afterwards the stored
@@ -306,13 +378,15 @@ public partial class MainWindow : Window
     {
         base.OnClosing(e);
 
-        if (_closeConfirmed || !_vm.HasUnsavedChanges) return;
+        // Every open document is asked about, not just the one on screen - closing the window
+        // takes them all with it.
+        if (_closeConfirmed || !_shell.Documents.Any(d => d.HasUnsavedChanges)) return;
 
         // The prompt is async and Closing is not, so the first pass always cancels the close
         // and the answer decides whether to ask the window to close again.
         e.Cancel = true;
 
-        if (await _vm.ConfirmDiscardChangesAsync())
+        if (await _shell.ConfirmCloseAllAsync())
         {
             _closeConfirmed = true;
             Close();
@@ -321,9 +395,9 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        // Silence Read Aloud before the window goes, so the application does not carry on
-        // talking through its own shutdown.
-        _vm.ShutdownReadAloud();
+        // Silence Read Aloud and release every open document, so the application does not
+        // carry on talking through its own shutdown or leave native buffers held.
+        _shell.ShutdownAll();
         base.OnClosed(e);
     }
 
@@ -547,7 +621,7 @@ public partial class MainWindow : Window
                 string firstPdf = files.FirstOrDefault(f => f.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) ?? files[0];
                 if (File.Exists(firstPdf))
                 {
-                    await _vm.LoadDocumentAsync(firstPdf);
+                    await _shell.OpenDocumentAsync(firstPdf);
                 }
             }
         }

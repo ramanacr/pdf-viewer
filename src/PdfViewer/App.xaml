@@ -17,6 +17,7 @@
             <converters:EnumToBoolConverter x:Key="EnumToBool" />
             <converters:EnumToVisibilityConverter x:Key="EnumToVis" />
             <converters:NormalizedCoordinateConverter x:Key="NormalizedCoordConverter" />
+            <converters:SameInstanceConverter x:Key="SameInstanceConverter" />
             <converters:SearchHighlightBackgroundConverter x:Key="SearchHighlightBgConverter" />
             <converters:SearchHighlightBorderConverter x:Key="SearchHighlightBorderConverter" />
             <converters:HexToBrushConverter x:Key="HexToBrushConverter" />

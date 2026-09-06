@@ -53,6 +53,17 @@ public partial class PageViewModel : ObservableObject
     public double DisplayWidth => (RotationAngle == 90 || RotationAngle == 270 ? HeightPt : WidthPt) * DisplayScale;
     public double DisplayHeight => (RotationAngle == 90 || RotationAngle == 270 ? WidthPt : HeightPt) * DisplayScale;
 
+    /// <summary>
+    /// The document this page belongs to.
+    ///
+    /// Exists because a ContextMenu is hosted in its own popup, not in the window's visual
+    /// tree, so a binding that walks up to an ancestor Window from inside one silently
+    /// resolves to nothing. The page's context menu commands were bound that way and had
+    /// therefore never worked: the menu opened and every item did nothing. Reaching the
+    /// document through the page is the binding that actually connects.
+    /// </summary>
+    public MainViewModel? Owner { get; set; }
+
     public PageViewModel(int pageNumber, double widthPt, double heightPt)
     {
         PageNumber = pageNumber;
