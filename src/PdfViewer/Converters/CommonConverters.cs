@@ -185,3 +185,42 @@ public class HexToBrushConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         throw new NotImplementedException();
 }
+
+/// <summary>
+/// Turns an annotation's freehand strokes into a drawable geometry.
+///
+/// Nothing bound to the ink before this existed, so a pen stroke was recorded and then never
+/// drawn - the drawing vanished the moment the pen was lifted. One figure per stroke keeps
+/// separate strokes separate instead of joining them with a line across the page.
+///
+/// The points stay in the page's normalized space and the shape is drawn with Stretch="Fill"
+/// inside the annotation's own box, which is the bounding box of the strokes.
+/// </summary>
+public class InkStrokesConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        var geometry = new System.Windows.Media.StreamGeometry();
+        if (value is not System.Collections.Generic.IEnumerable<System.Collections.Generic.List<Point>> strokes)
+        {
+            return geometry;
+        }
+
+        using (var context = geometry.Open())
+        {
+            foreach (var stroke in strokes)
+            {
+                if (stroke == null || stroke.Count < 2) continue;
+
+                context.BeginFigure(stroke[0], isFilled: false, isClosed: false);
+                context.PolyLineTo(stroke.GetRange(1, stroke.Count - 1), isStroked: true, isSmoothJoin: true);
+            }
+        }
+
+        geometry.Freeze();
+        return geometry;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        throw new NotImplementedException();
+}

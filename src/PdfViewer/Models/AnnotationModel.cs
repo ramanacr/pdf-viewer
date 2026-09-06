@@ -91,13 +91,22 @@ public partial class AnnotationModel : ObservableObject
     [ObservableProperty]
     private DateTime _creationDate = DateTime.Now;
 
+    /// <summary>When this annotation was last changed - the PDF's /M entry.</summary>
+    [ObservableProperty]
+    private DateTime _modifiedDate = DateTime.Now;
+
     [ObservableProperty]
     private bool _isSelected;
 
     /// <summary>
-    /// Normalized coordinate points (0.0 to 1.0) for freehand ink drawings.
+    /// Freehand ink, as one list of normalized (0.0 to 1.0) points per stroke.
+    ///
+    /// A PDF ink annotation carries an /InkList of several strokes - lifting the pen and
+    /// carrying on is one annotation, not several. Keeping only a single stroke meant that
+    /// opening someone else's multi-stroke drawing and saving threw away everything after
+    /// the first stroke, silently.
     /// </summary>
-    public List<Point> InkPoints { get; set; } = new();
+    public List<List<Point>> InkStrokes { get; set; } = new();
 
     public string DisplaySummary => $"{Type} on Page {PageNumber}" +
         (!string.IsNullOrWhiteSpace(Contents) ? $": \"{Contents}\"" : string.Empty);

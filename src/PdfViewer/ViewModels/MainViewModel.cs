@@ -1288,12 +1288,19 @@ public partial class MainViewModel : ObservableObject
             {
                 page.LoadTextSegmentsAsync(_docService).ContinueWith(_ =>
                 {
-                    Application.Current?.Dispatcher.Invoke(() =>
+                    void Apply()
                     {
                         page.SelectAllText();
                         UpdateSelectionFromPages();
-                    });
-                });
+                    }
+
+                    // Marshalling through Application.Current dropped the selection entirely
+                    // whenever there was no Application to marshal through - the null-conditional
+                    // swallowed the whole continuation. Fall back to running it here instead.
+                    var dispatcher = Application.Current?.Dispatcher;
+                    if (dispatcher != null && !dispatcher.CheckAccess()) dispatcher.Invoke(Apply);
+                    else Apply();
+                }, TaskScheduler.Default);
             }
             else
             {
@@ -1668,6 +1675,22 @@ public partial class MainViewModel : ObservableObject
         StatusText = $"Removed annotation from page {annot.PageNumber}";
     }
 
+    /// <summary>
+    /// Records that an existing annotation was edited in place.
+    ///
+    /// Editing a comment used to change only the model: the title bar showed no asterisk,
+    /// Save stayed greyed out, and closing asked nothing - so a rewritten comment was thrown
+    /// away without a word. Only adding and removing counted as work.
+    /// </summary>
+    public void NoteAnnotationEdited(AnnotationModel annot)
+    {
+        if (annot == null) return;
+
+        annot.ModifiedDate = DateTime.Now;
+        HasUnsavedChanges = true;
+        StatusText = $"Edited annotation on page {annot.PageNumber}";
+    }
+
     [RelayCommand]
     public void ClearAllAnnotations()
     {
@@ -1775,7 +1798,12 @@ public partial class MainViewModel : ObservableObject
     {
         if (!HasUnsavedChanges || Metadata == null) return true;
 
-        bool? answer = ConfirmSaveBeforeClosingFunc?.Invoke(Metadata.FileName);
+        // No prompt wired means there is nobody to ask, which is not the same as being told
+        // to stop. Treating it as a cancellation made the window impossible to close at all -
+        // every close would be refused by a question that was never put to anyone.
+        if (ConfirmSaveBeforeClosingFunc == null) return true;
+
+        bool? answer = ConfirmSaveBeforeClosingFunc(Metadata.FileName);
 
         if (answer == null) return false;      // cancelled
         if (answer == false) return true;      // discard

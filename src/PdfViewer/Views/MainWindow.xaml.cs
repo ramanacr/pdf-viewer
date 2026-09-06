@@ -692,7 +692,11 @@ public partial class MainWindow : Window
 
     private void ExitMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        Application.Current.Shutdown();
+        // Close, not Application.Shutdown. Shutdown tears the application down without
+        // raising the window's Closing event, so File > Exit skipped the unsaved-changes
+        // prompt entirely and annotations went with it, silently. Closing the window runs
+        // the same path as the title bar's close button.
+        Close();
     }
 
     private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
@@ -762,6 +766,9 @@ public partial class MainWindow : Window
     #region Interactive Annotation Drawing
 
     private Point _annotStartPoint;
+    /// <summary>A sticky note's footprint on the page, in PDF points - about a 24pt square.</summary>
+    private const double NoteSizePoints = 24.0;
+
     private bool _isDrawingAnnotation;
     private System.Windows.Shapes.Shape? _previewShape;
     private readonly System.Collections.Generic.List<Point> _currentInkPoints = new();
@@ -795,8 +802,13 @@ public partial class MainWindow : Window
                     Type = AnnotationType.Note,
                     X = normX,
                     Y = normY,
-                    Width = 24.0 / page.DisplayWidth,
-                    Height = 24.0 / page.DisplayHeight,
+
+                    // A sticky note is a fixed size on the page, not a fixed size on screen.
+                    // Dividing 24 screen pixels by the zoomed width baked the current zoom
+                    // into the stored box: a note dropped at 400% ended up a quarter of the
+                    // size, with a hit area far smaller than the icon drawn over it.
+                    Width = NoteSizePoints / Math.Max(1.0, page.OrientedWidthPt),
+                    Height = NoteSizePoints / Math.Max(1.0, page.OrientedHeightPt),
                     ColorHex = _vm.SelectedAnnotationColor,
                     Author = _vm.SelectedAnnotationAuthor,
                     Title = "Sticky Note",
@@ -1032,17 +1044,38 @@ public partial class MainWindow : Window
             }
 
             var endPoint = e.GetPosition(canvas);
-            double left = Math.Min(_annotStartPoint.X, endPoint.X);
-            double top = Math.Min(_annotStartPoint.Y, endPoint.Y);
-            double width = Math.Max(10, Math.Abs(endPoint.X - _annotStartPoint.X));
-            double height = Math.Max(10, Math.Abs(endPoint.Y - _annotStartPoint.Y));
+            bool isInk = _vm.ActiveAnnotationTool == AnnotationType.Ink;
+
+            // A freehand stroke is not the rectangle between where the drag started and where
+            // it ended - a loop starts and finishes in nearly the same place. Its box has to
+            // come from the stroke itself, or the drawing sits outside the box that carries it
+            // and a horizontal line gets thrown away for being less than 4 pixels tall.
+            double left, top, width, height;
+            if (isInk && _currentInkPoints.Count > 1)
+            {
+                left = _currentInkPoints.Min(p => p.X);
+                top = _currentInkPoints.Min(p => p.Y);
+                width = Math.Max(1, _currentInkPoints.Max(p => p.X) - left);
+                height = Math.Max(1, _currentInkPoints.Max(p => p.Y) - top);
+            }
+            else
+            {
+                left = Math.Min(_annotStartPoint.X, endPoint.X);
+                top = Math.Min(_annotStartPoint.Y, endPoint.Y);
+                width = Math.Max(10, Math.Abs(endPoint.X - _annotStartPoint.X));
+                height = Math.Max(10, Math.Abs(endPoint.Y - _annotStartPoint.Y));
+            }
 
             double normX = Math.Max(0, left / page.DisplayWidth);
             double normY = Math.Max(0, top / page.DisplayHeight);
             double normW = Math.Min(1 - normX, width / page.DisplayWidth);
             double normH = Math.Min(1 - normY, height / page.DisplayHeight);
 
-            if (_vm.ActiveAnnotationTool.HasValue && width > 4 && height > 4)
+            bool bigEnough = isInk
+                ? _currentInkPoints.Count > 1 && (width > 4 || height > 4)
+                : width > 4 && height > 4;
+
+            if (_vm.ActiveAnnotationTool.HasValue && bigEnough)
             {
                 var annot = new AnnotationModel
                 {
@@ -1056,14 +1089,22 @@ public partial class MainWindow : Window
                     StrokeThickness = _vm.SelectedAnnotationThickness,
                     Author = _vm.SelectedAnnotationAuthor,
                     Title = _vm.ActiveAnnotationTool.Value.ToString(),
-                    Contents = string.Empty
+                    Contents = string.Empty,
+
+                    // A highlight has to let the text through; a pen stroke or a shape does
+                    // not. The model's 0.5 default was drawing both at half strength, and it
+                    // is also the alpha that gets written into the file.
+                    Opacity = _vm.ActiveAnnotationTool.Value == AnnotationType.Highlight ? 0.4 : 1.0
                 };
 
                 if (_vm.ActiveAnnotationTool.Value == AnnotationType.Ink && _currentInkPoints.Count > 1)
                 {
-                    annot.InkPoints = _currentInkPoints
-                        .Select(p => new Point(p.X / page.DisplayWidth, p.Y / page.DisplayHeight))
-                        .ToList();
+                    annot.InkStrokes = new System.Collections.Generic.List<System.Collections.Generic.List<Point>>
+                    {
+                        _currentInkPoints
+                            .Select(p => new Point(p.X / page.DisplayWidth, p.Y / page.DisplayHeight))
+                            .ToList()
+                    };
                 }
 
                 if (_vm.ActiveAnnotationTool.Value == AnnotationType.FreeText)
@@ -1117,8 +1158,7 @@ public partial class MainWindow : Window
             // If user is currently drawing with an active tool, let canvas handle it
             if (_vm.ActiveAnnotationTool != null) return;
 
-            var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
-            dialog.ShowDialog();
+            EditExistingAnnotation(annot);
             e.Handled = true;
         }
     }
@@ -1129,8 +1169,7 @@ public partial class MainWindow : Window
         {
             _vm.CurrentPageNumber = annot.PageNumber;
             ScrollToPage(annot.PageNumber);
-            var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
-            dialog.ShowDialog();
+            EditExistingAnnotation(annot);
             e.Handled = true;
         }
     }
@@ -1141,9 +1180,22 @@ public partial class MainWindow : Window
         {
             _vm.CurrentPageNumber = annot.PageNumber;
             ScrollToPage(annot.PageNumber);
-            var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
-            dialog.ShowDialog();
+            EditExistingAnnotation(annot);
             e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Opens the comment editor and, if the edit is confirmed, tells the document that it now
+    /// has work that is not on disk. Every route into this dialog used to skip that, so an
+    /// edited comment left no asterisk, no enabled Save, and no prompt on the way out.
+    /// </summary>
+    private void EditExistingAnnotation(AnnotationModel annot)
+    {
+        var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
+        if (dialog.ShowDialog() == true && dialog.IsConfirmed)
+        {
+            _vm.NoteAnnotationEdited(annot);
         }
     }
 

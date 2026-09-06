@@ -251,6 +251,22 @@ public class SaveInPlaceTests : IDisposable
         Assert.Equal(firstPath, vm.Metadata!.FilePath);
     }
 
+    /// <summary>
+    /// No prompt wired means there is nobody to ask, not that someone said stop. Treating the
+    /// two the same made the window impossible to close: every attempt was refused by a
+    /// question that had never been put to anyone.
+    /// </summary>
+    [Fact]
+    public async Task TestWithNoPromptWiredClosingIsNotBlockedForever()
+    {
+        var (vm, _) = await LoadedViewModel();
+        vm.AddAnnotation(Highlight());
+
+        vm.ConfirmSaveBeforeClosingFunc = null;
+
+        Assert.True(await vm.ConfirmDiscardChangesAsync());
+    }
+
     [Fact]
     public async Task TestClosingTheDocumentClearsTheUnsavedMarker()
     {

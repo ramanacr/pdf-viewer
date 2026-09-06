@@ -168,11 +168,14 @@ public class AnnotationWorkflowEventTests : IDisposable
             PageNumber = 1,
             Type = AnnotationType.Ink,
             ColorHex = "#FF0000",
-            InkPoints = new System.Collections.Generic.List<Point>
+            InkStrokes = new System.Collections.Generic.List<System.Collections.Generic.List<Point>>
             {
-                new Point(0.1, 0.1),
-                new Point(0.15, 0.18),
-                new Point(0.2, 0.25)
+                new System.Collections.Generic.List<Point>
+                {
+                    new Point(0.1, 0.1),
+                    new Point(0.15, 0.18),
+                    new Point(0.2, 0.25)
+                }
             }
         };
 
@@ -181,6 +184,6 @@ public class AnnotationWorkflowEventTests : IDisposable
         Assert.Single(vm.AllAnnotations);
         var added = vm.AllAnnotations.First();
         Assert.Equal(AnnotationType.Ink, added.Type);
-        Assert.Equal(3, added.InkPoints?.Count);
+        Assert.Equal(3, added.InkStrokes.Single().Count);
     }
 }

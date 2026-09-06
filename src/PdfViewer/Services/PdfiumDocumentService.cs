@@ -838,10 +838,10 @@ public class PdfiumDocumentService : IPdfDocumentService
                     if (PdfiumNativeBridge.FPDFAnnot_GetColor(annot, PdfiumNativeBridge.FPDFANNOT_COLORTYPE_Color, out uint r, out uint g, out uint b, out uint a) != 0)
                     {
                         colorHex = $"#{r:X2}{g:X2}{b:X2}";
-                        if (a > 0 && a <= 255)
-                        {
-                            opacity = a / 255.0;
-                        }
+
+                        // Straight through, including zero. The old "a > 0" guard turned a
+                        // fully transparent annotation opaque, and saving wrote that back.
+                        opacity = Math.Clamp(a / 255.0, 0.0, 1.0);
                     }
 
                     string contents = ReadAnnotString(annot, "Contents");
@@ -849,6 +849,19 @@ public class PdfiumDocumentService : IPdfDocumentService
                     if (string.IsNullOrEmpty(author)) author = "Author";
                     string title = ReadAnnotString(annot, "Subj");
                     if (string.IsNullOrEmpty(title)) title = type.ToString();
+
+                    // The document's own date, not the moment it happened to be opened. Every
+                    // loaded comment used to claim it had just been created.
+                    DateTime created = ParsePdfDate(ReadAnnotString(annot, "CreationDate"))
+                                       ?? ParsePdfDate(ReadAnnotString(annot, "M"))
+                                       ?? DateTime.Now;
+
+                    double thickness = 2.0;
+                    if (PdfiumNativeBridge.FPDFAnnot_GetBorder(annot, out _, out _, out float borderWidth) != 0
+                        && borderWidth > 0)
+                    {
+                        thickness = borderWidth;
+                    }
 
                     var model = new AnnotationModel
                     {
@@ -860,28 +873,29 @@ public class PdfiumDocumentService : IPdfDocumentService
                         Height = normH,
                         ColorHex = colorHex,
                         Opacity = opacity,
+                        StrokeThickness = thickness,
                         Contents = contents,
                         Author = author,
-                        Title = title
+                        Title = title,
+                        CreationDate = created
                     };
 
-                    // Load ink points if Ink annotation
+                    // Load ink strokes if Ink annotation. Every path in the /InkList, not just
+                    // the first: reading one and saving back used to drop the rest.
                     if (type == AnnotationType.Ink)
                     {
                         int pathCount = PdfiumNativeBridge.FPDFAnnot_GetInkListCount(annot);
-                        if (pathCount > 0)
+                        for (int path = 0; path < pathCount; path++)
                         {
-                            int ptCount = PdfiumNativeBridge.FPDFAnnot_GetInkListPath(annot, 0, null, 0);
-                            if (ptCount > 0)
-                            {
-                                var ptBuf = new FS_POINTF[ptCount];
-                                if (PdfiumNativeBridge.FPDFAnnot_GetInkListPath(annot, 0, ptBuf, ptCount) > 0)
-                                {
-                                    model.InkPoints = ptBuf
-                                        .Select(pt => new Point(Math.Max(0, pt.x / pageWidth), Math.Max(0, 1.0 - (pt.y / pageHeight))))
-                                        .ToList();
-                                }
-                            }
+                            int ptCount = PdfiumNativeBridge.FPDFAnnot_GetInkListPath(annot, path, null, 0);
+                            if (ptCount <= 0) continue;
+
+                            var ptBuf = new FS_POINTF[ptCount];
+                            if (PdfiumNativeBridge.FPDFAnnot_GetInkListPath(annot, path, ptBuf, ptCount) <= 0) continue;
+
+                            model.InkStrokes.Add(ptBuf
+                                .Select(pt => new Point(Math.Max(0, pt.x / pageWidth), Math.Max(0, 1.0 - (pt.y / pageHeight))))
+                                .ToList());
                         }
                     }
 
@@ -890,6 +904,64 @@ public class PdfiumDocumentService : IPdfDocumentService
             }
         }
         return list;
+    }
+
+    /// <summary>
+    /// The annotation subtypes this application reads and writes. Anything else on the page -
+    /// links, form fields, popups, and markup kinds this viewer does not understand - belongs
+    /// to the document and is left exactly where it is.
+    /// </summary>
+    private static readonly int[] ManagedAnnotationSubtypes =
+    {
+        PdfiumNativeBridge.FPDF_ANNOT_HIGHLIGHT,
+        PdfiumNativeBridge.FPDF_ANNOT_UNDERLINE,
+        PdfiumNativeBridge.FPDF_ANNOT_STRIKEOUT,
+        PdfiumNativeBridge.FPDF_ANNOT_TEXT,
+        PdfiumNativeBridge.FPDF_ANNOT_FREETEXT,
+        PdfiumNativeBridge.FPDF_ANNOT_SQUARE,
+        PdfiumNativeBridge.FPDF_ANNOT_CIRCLE,
+        PdfiumNativeBridge.FPDF_ANNOT_INK
+    };
+
+    /// <summary>
+    /// Clears the page of the annotations this application owns, so that what gets written
+    /// afterwards is exactly the current set rather than the current set piled on top of the
+    /// old one. Walks backwards because removing an entry renumbers everything after it.
+    /// </summary>
+    private static void RemoveManagedAnnotations(SafePageHandle page)
+    {
+        for (int i = PdfiumNativeBridge.FPDFPage_GetAnnotCount(page) - 1; i >= 0; i--)
+        {
+            int subtype;
+            using (var existing = PdfiumNativeBridge.FPDFPage_GetAnnot(page, i))
+            {
+                if (existing == null || existing.IsInvalid) continue;
+                subtype = PdfiumNativeBridge.FPDFAnnot_GetSubtype(existing);
+            }
+
+            // The handle is closed before removing: PDFium frees the annotation object here,
+            // and disposing the wrapper afterwards would close it a second time.
+            if (Array.IndexOf(ManagedAnnotationSubtypes, subtype) >= 0)
+            {
+                PdfiumNativeBridge.FPDFPage_RemoveAnnot(page, i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// PDF date syntax, as in "D:20260906143000+05'30'". Anything else is ignored by other
+    /// viewers, which is why the date column was blank for annotations this app wrote.
+    /// </summary>
+    internal static string FormatPdfDate(DateTime value)
+    {
+        var offset = TimeZoneInfo.Local.GetUtcOffset(value);
+        char sign = offset < TimeSpan.Zero ? '-' : '+';
+        var magnitude = offset.Duration();
+
+        return string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            "D:{0:yyyyMMddHHmmss}{1}{2:00}'{3:00}'",
+            value, sign, magnitude.Hours, magnitude.Minutes);
     }
 
     private static string ReadAnnotString(SafeAnnotHandle annot, string key)
@@ -968,68 +1040,126 @@ public class PdfiumDocumentService : IPdfDocumentService
                     if (saveDoc == null || saveDoc.IsInvalid)
                         throw new InvalidOperationException("Failed to instantiate document copy for saving.");
 
-                // Apply annotations
-                foreach (var annot in annotations)
+                // The set handed in is the whole truth about this document's annotations, so
+                // the copy has to start without the ones it was loaded with. Adding on top of
+                // them meant every save duplicated what was already in the file, and deleting
+                // an annotation never reached disk at all - the "deleted" one was still in the
+                // bytes being copied, so it came back on the next open.
+                int savePageCount = PdfiumNativeBridge.FPDF_GetPageCount(saveDoc);
+                var annotationsByPage = annotations
+                    .Where(a => a.PageNumber >= 1 && a.PageNumber <= savePageCount)
+                    .GroupBy(a => a.PageNumber)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                for (int pageIndex = 0; pageIndex < savePageCount; pageIndex++)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (annot.PageNumber < 1 || annot.PageNumber > PdfiumNativeBridge.FPDF_GetPageCount(saveDoc)) continue;
 
-                    using var page = PdfiumNativeBridge.FPDF_LoadPage(saveDoc, annot.PageNumber - 1);
+                    using var page = PdfiumNativeBridge.FPDF_LoadPage(saveDoc, pageIndex);
                     if (page == null || page.IsInvalid) continue;
 
-                    if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(saveDoc, annot.PageNumber - 1, out var size) == 0) continue;
-                    double pageWidth = size.width > 0 ? size.width : 612;
-                    double pageHeight = size.height > 0 ? size.height : 792;
+                    RemoveManagedAnnotations(page);
 
-                    int subtype = annot.Type switch
+                    if (!annotationsByPage.TryGetValue(pageIndex + 1, out var pageAnnotations)) continue;
+
+                    if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(saveDoc, pageIndex, out var size) == 0) continue;
+
+                    // Annotation rectangles are in UNROTATED page space, which is not what
+                    // FPDF_GetPageSizeByIndexF reports for a page carrying /Rotate 90 or 270.
+                    // Loading already corrected for this; saving did not, so a round trip on a
+                    // rotated page moved and stretched every annotation, compounding each time.
+                    GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
+                    if (pageWidth <= 0) pageWidth = 612;
+                    if (pageHeight <= 0) pageHeight = 792;
+
+                    foreach (var annot in pageAnnotations)
                     {
-                        AnnotationType.Highlight => PdfiumNativeBridge.FPDF_ANNOT_HIGHLIGHT,
-                        AnnotationType.Underline => PdfiumNativeBridge.FPDF_ANNOT_UNDERLINE,
-                        AnnotationType.StrikeOut => PdfiumNativeBridge.FPDF_ANNOT_STRIKEOUT,
-                        AnnotationType.Note => PdfiumNativeBridge.FPDF_ANNOT_TEXT,
-                        AnnotationType.FreeText => PdfiumNativeBridge.FPDF_ANNOT_FREETEXT,
-                        AnnotationType.Rectangle => PdfiumNativeBridge.FPDF_ANNOT_SQUARE,
-                        AnnotationType.Ellipse => PdfiumNativeBridge.FPDF_ANNOT_CIRCLE,
-                        AnnotationType.Ink => PdfiumNativeBridge.FPDF_ANNOT_INK,
-                        _ => PdfiumNativeBridge.FPDF_ANNOT_HIGHLIGHT
-                    };
+                        ct.ThrowIfCancellationRequested();
 
-                    using var nativeAnnot = PdfiumNativeBridge.FPDFPage_CreateAnnot(page, subtype);
-                    if (nativeAnnot == null || nativeAnnot.IsInvalid) continue;
+                        int subtype = annot.Type switch
+                        {
+                            AnnotationType.Highlight => PdfiumNativeBridge.FPDF_ANNOT_HIGHLIGHT,
+                            AnnotationType.Underline => PdfiumNativeBridge.FPDF_ANNOT_UNDERLINE,
+                            AnnotationType.StrikeOut => PdfiumNativeBridge.FPDF_ANNOT_STRIKEOUT,
+                            AnnotationType.Note => PdfiumNativeBridge.FPDF_ANNOT_TEXT,
+                            AnnotationType.FreeText => PdfiumNativeBridge.FPDF_ANNOT_FREETEXT,
+                            AnnotationType.Rectangle => PdfiumNativeBridge.FPDF_ANNOT_SQUARE,
+                            AnnotationType.Ellipse => PdfiumNativeBridge.FPDF_ANNOT_CIRCLE,
+                            AnnotationType.Ink => PdfiumNativeBridge.FPDF_ANNOT_INK,
+                            _ => PdfiumNativeBridge.FPDF_ANNOT_HIGHLIGHT
+                        };
 
-                    float left = (float)(annot.X * pageWidth);
-                    float bottom = (float)((1.0 - (annot.Y + annot.Height)) * pageHeight);
-                    float right = (float)((annot.X + annot.Width) * pageWidth);
-                    float top = (float)((1.0 - annot.Y) * pageHeight);
+                        using var nativeAnnot = PdfiumNativeBridge.FPDFPage_CreateAnnot(page, subtype);
+                        if (nativeAnnot == null || nativeAnnot.IsInvalid) continue;
 
-                    var rect = new FS_RECTF { left = left, bottom = bottom, right = right, top = top };
-                    PdfiumNativeBridge.FPDFAnnot_SetRect(nativeAnnot, ref rect);
+                        float left = (float)(annot.X * pageWidth);
+                        float bottom = (float)((1.0 - (annot.Y + annot.Height)) * pageHeight);
+                        float right = (float)((annot.X + annot.Width) * pageWidth);
+                        float top = (float)((1.0 - annot.Y) * pageHeight);
 
-                    // Parse color
-                    ParseHexColor(annot.ColorHex, out uint r, out uint g, out uint b);
-                    uint alpha = (uint)Math.Clamp((int)(annot.Opacity * 255), 0, 255);
-                    PdfiumNativeBridge.FPDFAnnot_SetColor(nativeAnnot, PdfiumNativeBridge.FPDFANNOT_COLORTYPE_Color, r, g, b, alpha);
+                        var rect = new FS_RECTF { left = left, bottom = bottom, right = right, top = top };
+                        PdfiumNativeBridge.FPDFAnnot_SetRect(nativeAnnot, ref rect);
 
-                    if (!string.IsNullOrEmpty(annot.Contents))
-                    {
-                        PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "Contents", PdfiumNativeBridge.StringToUtf16NullTerminated(annot.Contents));
-                    }
-                    if (!string.IsNullOrEmpty(annot.Author))
-                    {
-                        PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "T", PdfiumNativeBridge.StringToUtf16NullTerminated(annot.Author));
-                    }
-                    if (!string.IsNullOrEmpty(annot.Title))
-                    {
-                        PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "Subj", PdfiumNativeBridge.StringToUtf16NullTerminated(annot.Title));
-                    }
+                        // Parse color
+                        ParseHexColor(annot.ColorHex, out uint r, out uint g, out uint b);
+                        uint alpha = (uint)Math.Clamp((int)(annot.Opacity * 255), 0, 255);
+                        PdfiumNativeBridge.FPDFAnnot_SetColor(nativeAnnot, PdfiumNativeBridge.FPDFANNOT_COLORTYPE_Color, r, g, b, alpha);
 
-                    // Add ink stroke points if Ink
-                    if (annot.Type == AnnotationType.Ink && annot.InkPoints != null && annot.InkPoints.Count > 1)
-                    {
-                        var pts = annot.InkPoints
-                            .Select(p => new FS_POINTF { x = (float)(p.X * pageWidth), y = (float)((1.0 - p.Y) * pageHeight) })
-                            .ToArray();
-                        PdfiumNativeBridge.FPDFAnnot_AddInkStroke(nativeAnnot, pts, pts.Length);
+                        // A text markup annotation is drawn from its /QuadPoints, not its
+                        // /Rect. Written without them, every highlight, underline and
+                        // strikeout this application produced was invisible in Acrobat,
+                        // Foxit and Edge - it was only ever visible in this viewer.
+                        if (annot.Type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
+                        {
+                            var quad = new FS_QUADPOINTSF
+                            {
+                                x1 = left,  y1 = top,
+                                x2 = right, y2 = top,
+                                x3 = left,  y3 = bottom,
+                                x4 = right, y4 = bottom
+                            };
+                            PdfiumNativeBridge.FPDFAnnot_AppendAttachmentPoints(nativeAnnot, ref quad);
+                        }
+
+                        // The line width a shape or a pen stroke is drawn with. Without /BS
+                        // everything came back at the default width however it was drawn.
+                        if (annot.StrokeThickness > 0)
+                        {
+                            PdfiumNativeBridge.FPDFAnnot_SetBorder(nativeAnnot, 0f, 0f, (float)annot.StrokeThickness);
+                        }
+
+                        if (!string.IsNullOrEmpty(annot.Contents))
+                        {
+                            PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "Contents", PdfiumNativeBridge.StringToUtf16NullTerminated(annot.Contents));
+                        }
+                        if (!string.IsNullOrEmpty(annot.Author))
+                        {
+                            PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "T", PdfiumNativeBridge.StringToUtf16NullTerminated(annot.Author));
+                        }
+                        if (!string.IsNullOrEmpty(annot.Title))
+                        {
+                            PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "Subj", PdfiumNativeBridge.StringToUtf16NullTerminated(annot.Title));
+                        }
+
+                        // Every viewer shows a comment as "who, when". Without these the date
+                        // column was empty everywhere else and reset to today here.
+                        string created = FormatPdfDate(annot.CreationDate);
+                        PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "CreationDate", PdfiumNativeBridge.StringToUtf16NullTerminated(created));
+                        PdfiumNativeBridge.FPDFAnnot_SetStringValue(nativeAnnot, "M", PdfiumNativeBridge.StringToUtf16NullTerminated(FormatPdfDate(DateTime.Now)));
+
+                        // Add ink strokes if Ink - all of them, not just the first.
+                        if (annot.Type == AnnotationType.Ink && annot.InkStrokes != null)
+                        {
+                            foreach (var stroke in annot.InkStrokes)
+                            {
+                                if (stroke == null || stroke.Count < 2) continue;
+
+                                var pts = stroke
+                                    .Select(p => new FS_POINTF { x = (float)(p.X * pageWidth), y = (float)((1.0 - p.Y) * pageHeight) })
+                                    .ToArray();
+                                PdfiumNativeBridge.FPDFAnnot_AddInkStroke(nativeAnnot, pts, pts.Length);
+                            }
+                        }
                     }
 
                     PdfiumNativeBridge.FPDFPage_GenerateContent(page);

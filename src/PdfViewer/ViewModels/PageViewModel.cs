@@ -50,8 +50,16 @@ public partial class PageViewModel : ObservableObject
     [ObservableProperty]
     private bool _isExtractingText;
 
-    public double DisplayWidth => (RotationAngle == 90 || RotationAngle == 270 ? HeightPt : WidthPt) * DisplayScale;
-    public double DisplayHeight => (RotationAngle == 90 || RotationAngle == 270 ? WidthPt : HeightPt) * DisplayScale;
+    /// <summary>
+    /// The page's size in points as it is currently oriented, with zoom left out. Anything
+    /// that has to be a fixed size on the page rather than a fixed size on screen - a sticky
+    /// note icon, for one - measures against this instead of against DisplayWidth.
+    /// </summary>
+    public double OrientedWidthPt => RotationAngle == 90 || RotationAngle == 270 ? HeightPt : WidthPt;
+    public double OrientedHeightPt => RotationAngle == 90 || RotationAngle == 270 ? WidthPt : HeightPt;
+
+    public double DisplayWidth => OrientedWidthPt * DisplayScale;
+    public double DisplayHeight => OrientedHeightPt * DisplayScale;
 
     /// <summary>
     /// The document this page belongs to.

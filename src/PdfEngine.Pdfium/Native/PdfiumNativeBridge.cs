@@ -527,6 +527,17 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFAnnot_AddInkStroke(SafeAnnotHandle annot, [In] FS_POINTF[] points, int point_count);
 
+    /// <summary>
+    /// Writes the annotation's /BS border. The third argument is the line width, which is what
+    /// a pen stroke or a shape outline is drawn with - without it every reopened ink line and
+    /// rectangle came back at the default width regardless of what it was drawn at.
+    /// </summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFAnnot_SetBorder(SafeAnnotHandle annot, float horizontal_radius, float vertical_radius, float border_width);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFAnnot_GetBorder(SafeAnnotHandle annot, out float horizontal_radius, out float vertical_radius, out float border_width);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFAnnot_GetInkListCount(SafeAnnotHandle annot);
 

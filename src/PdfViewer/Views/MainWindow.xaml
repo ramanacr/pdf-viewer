@@ -155,7 +155,7 @@
                     <MenuItem.ItemContainerStyle>
                         <Style TargetType="MenuItem">
                             <Setter Property="Header" Value="{Binding}" />
-                            <Setter Property="Command" Value="{Binding DataContext.ActiveDocument.OpenRecentFileCommand, RelativeSource={RelativeSource AncestorType=Menu}}" />
+                            <Setter Property="Command" Value="{Binding DataContext.OpenRecentFileCommand, RelativeSource={RelativeSource AncestorType=Menu}}" />
                             <Setter Property="CommandParameter" Value="{Binding}" />
                         </Style>
                     </MenuItem.ItemContainerStyle>
@@ -899,7 +899,7 @@
                                                         <Path Data="{StaticResource IconText}" Fill="{DynamicResource TextSecondaryBrush}" Width="12" Height="12" Stretch="Uniform" />
                                                     </Button>
                                                     <Button Style="{StaticResource ToolbarIconButton}"
-                                                            Command="{Binding DataContext.ActiveDocument.DeleteAnnotationCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                            Command="{Binding DataContext.DeleteAnnotationCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
                                                             CommandParameter="{Binding}"
                                                             ToolTip="Delete Annotation">
                                                         <Path Data="{StaticResource IconDelete}" Fill="#D83B01" Width="12" Height="12" Stretch="Uniform" />
@@ -1074,7 +1074,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="X" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1082,7 +1082,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Y" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1090,7 +1090,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Width" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1098,7 +1098,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Height" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1130,7 +1130,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="X" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1138,7 +1138,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Y" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1146,7 +1146,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Width" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1154,7 +1154,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Height" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1185,7 +1185,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="X" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1193,7 +1193,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Y" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1201,7 +1201,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Width" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1209,7 +1209,7 @@
                                                             <Setter.Value>
                                                                 <MultiBinding Converter="{StaticResource NormalizedCoordConverter}">
                                                                     <Binding Path="Height" />
-                                                                    <Binding Path="DataContext.ActiveDocument.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    <Binding Path="DataContext.DisplayHeight" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                 </MultiBinding>
                                                             </Setter.Value>
                                                         </Setter>
@@ -1274,6 +1274,18 @@
                                                                      StrokeThickness="{Binding StrokeThickness}"
                                                                      Fill="Transparent"
                                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}" />
+
+                                                            <!-- Freehand Ink. Without this the pen tool stored a stroke
+                                                                 that was never drawn: the drawing disappeared on mouse-up. -->
+                                                            <Path Data="{Binding InkStrokes, Converter={StaticResource InkStrokesConverter}}"
+                                                                  Stretch="Fill"
+                                                                  Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                  StrokeThickness="{Binding StrokeThickness}"
+                                                                  StrokeLineJoin="Round"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  Opacity="{Binding Opacity}"
+                                                                  Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}" />
                                                         </Grid>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
@@ -1561,6 +1573,17 @@
                                                          StrokeThickness="{Binding StrokeThickness}"
                                                          Fill="Transparent"
                                                          Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}" />
+
+                                                <!-- Freehand Ink -->
+                                                <Path Data="{Binding InkStrokes, Converter={StaticResource InkStrokesConverter}}"
+                                                      Stretch="Fill"
+                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                      StrokeThickness="{Binding StrokeThickness}"
+                                                      StrokeLineJoin="Round"
+                                                      StrokeStartLineCap="Round"
+                                                      StrokeEndLineCap="Round"
+                                                      Opacity="{Binding Opacity}"
+                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}" />
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -1577,23 +1600,23 @@
                                         MouseLeave="PageCanvas_MouseLeave">
                                     <Canvas.ContextMenu>
                                         <ContextMenu>
-                                            <MenuItem Header="_Copy Text" Command="{Binding Owner.CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding Owner.HasTextSelection}">
+                                            <MenuItem Header="_Copy Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}">
                                                 <MenuItem.Icon>
                                                     <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="_Highlight Selection" Command="{Binding Owner.HighlightSelectedTextCommand}" IsEnabled="{Binding Owner.HasTextSelection}">
+                                            <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}">
                                                 <MenuItem.Icon>
                                                     <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                             <Separator />
-                                            <MenuItem Header="Select _All Text on Page" Command="{Binding Owner.SelectAllTextCommand}" InputGestureText="Ctrl+A">
+                                            <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A">
                                                 <MenuItem.Icon>
                                                     <Path Data="{StaticResource IconSelectAll}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="_Deselect All" Command="{Binding Owner.ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding Owner.HasTextSelection}" />
+                                            <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}" />
                                         </ContextMenu>
                                     </Canvas.ContextMenu>
                                 </Canvas>

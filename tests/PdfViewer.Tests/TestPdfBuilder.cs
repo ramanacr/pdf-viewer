@@ -118,6 +118,65 @@ public static class TestPdfBuilder
     }
 
     /// <summary>
+    /// Creates a single-page PDF carrying a /Link annotation that belongs to the document
+    /// rather than to this application, for checking that saving comments does not quietly
+    /// take the document's own hyperlinks with it.
+    /// </summary>
+    public static string CreatePdfWithLinkAnnotation(string filePath)
+    {
+        var dir = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+        using var writer = new StreamWriter(fs, Encoding.ASCII);
+
+        var offsets = new List<long>();
+        void WriteObj(int objNum, string content)
+        {
+            writer.Flush();
+            offsets.Add(fs.Position);
+            writer.WriteLine($"{objNum} 0 obj");
+            writer.WriteLine(content);
+            writer.WriteLine("endobj");
+        }
+
+        writer.WriteLine("%PDF-1.7");
+        writer.WriteLine("%\xAA\xBB\xCC\xDD");
+
+        WriteObj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+        WriteObj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+        WriteObj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R " +
+                    "/Annots [5 0 R] /Resources << /Font << /F1 6 0 R >> >> >>");
+
+        const string streamText = "BT\n/F1 16 Tf\n50 700 Td\n(A page with a hyperlink on it.) Tj\nET";
+        WriteObj(4, $"<< /Length {Encoding.ASCII.GetByteCount(streamText)} >>\nstream\n{streamText}\nendstream");
+
+        WriteObj(5, "<< /Type /Annot /Subtype /Link /Rect [50 690 300 715] /Border [0 0 1] " +
+                    "/A << /Type /Action /S /URI /URI (https://example.invalid/) >> >>");
+
+        WriteObj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        writer.Flush();
+        long startXref = fs.Position;
+        writer.WriteLine("xref");
+        writer.WriteLine($"0 {offsets.Count + 1}");
+        writer.WriteLine("0000000000 65535 f ");
+        foreach (var off in offsets)
+        {
+            writer.WriteLine($"{off:D10} 00000 n ");
+        }
+
+        writer.WriteLine("trailer");
+        writer.WriteLine($"<< /Size {offsets.Count + 1} /Root 1 0 R >>");
+        writer.WriteLine("startxref");
+        writer.WriteLine(startXref);
+        writer.WriteLine("%%EOF");
+        writer.Flush();
+
+        return filePath;
+    }
+
+    /// <summary>
     /// Creates a single-page PDF with a real AcroForm containing a text field, a checkbox
     /// and a combo box, for exercising form discovery and field writes.
     /// </summary>

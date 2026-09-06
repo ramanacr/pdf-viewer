@@ -996,12 +996,15 @@ public class PdfServiceTests : IDisposable
                 Width = 0.5,
                 Height = 0.5,
                 ColorHex = "#FF0000FF",
-                InkPoints = new List<System.Windows.Point>
+                InkStrokes = new List<List<System.Windows.Point>>
                 {
-                    new System.Windows.Point(0.1, 0.1),
-                    new System.Windows.Point(0.2, 0.3),
-                    new System.Windows.Point(0.4, 0.2),
-                    new System.Windows.Point(0.5, 0.5)
+                    new List<System.Windows.Point>
+                    {
+                        new System.Windows.Point(0.1, 0.1),
+                        new System.Windows.Point(0.2, 0.3),
+                        new System.Windows.Point(0.4, 0.2),
+                        new System.Windows.Point(0.5, 0.5)
+                    }
                 }
             }
         };
@@ -1016,8 +1019,8 @@ public class PdfServiceTests : IDisposable
         Assert.NotEmpty(loadedAnnots);
         var loadedInk = loadedAnnots.FirstOrDefault(a => a.Type == AnnotationType.Ink);
         Assert.NotNull(loadedInk);
-        Assert.NotNull(loadedInk.InkPoints);
-        Assert.True(loadedInk.InkPoints.Count >= 4);
+        Assert.NotNull(loadedInk.InkStrokes);
+        Assert.True(loadedInk.InkStrokes.Single().Count >= 4);
     }
 
     [Fact]

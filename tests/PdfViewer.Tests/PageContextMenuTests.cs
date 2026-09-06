@@ -146,6 +146,10 @@ public class PageContextMenuTests : IDisposable
             Text = "Selectable", X = 0.1, Y = 0.1, Width = 0.3, Height = 0.05, SegmentIndex = 0
         });
 
+        // Stand in for extraction having finished. Without this the real extraction is still
+        // pending, Select All takes its asynchronous branch, and the assertions below race it.
+        page.IsTextExtracted = true;
+
         // Select All, then Copy, then Deselect - the menu's three working verbs.
         vm.SelectAllTextCommand.Execute(null);
         Assert.True(vm.HasTextSelection);
