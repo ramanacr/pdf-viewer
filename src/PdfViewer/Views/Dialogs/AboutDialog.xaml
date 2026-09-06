@@ -81,7 +81,7 @@
         <!-- Info Grid -->
         <StackPanel Grid.Row="2" Margin="0,0,0,20">
             <!-- Engine Info Box -->
-            <Border Background="{DynamicResource HeaderBgBrush}"
+            <Border Background="{DynamicResource SurfaceAltBgBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="1"
                     CornerRadius="6"

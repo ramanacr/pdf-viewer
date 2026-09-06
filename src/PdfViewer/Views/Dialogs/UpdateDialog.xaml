@@ -134,7 +134,7 @@
 
                     <!-- Release Notes -->
                     <TextBlock Text="Release Notes &amp; Changelog:" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,6" />
-                    <Border Background="{DynamicResource HeaderBgBrush}"
+                    <Border Background="{DynamicResource SurfaceAltBgBrush}"
                             BorderBrush="{DynamicResource BorderBrush}"
                             BorderThickness="1"
                             CornerRadius="4"
