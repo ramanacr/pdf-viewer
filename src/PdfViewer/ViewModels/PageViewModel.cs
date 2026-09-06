@@ -88,6 +88,31 @@ public partial class PageViewModel : ObservableObject
     public double OverlayRotationAngle => (IntrinsicRotation + RotationAngle) % 360;
 
     /// <summary>
+    /// Moves a normalized point from unrotated page space into the page as it appears on
+    /// screen, both measured 0..1 from the top-left of their own frame.
+    ///
+    /// This is the same turn the overlay layers get from their LayoutTransform, in arithmetic
+    /// form, for the callers that need a number rather than a laid-out element - scrolling to
+    /// a search match, for one, which otherwise aimed at where the match would have been if
+    /// the page had never been turned.
+    /// </summary>
+    public (double X, double Y) ToDisplayNormalized(double x, double y)
+    {
+        // Anything that is not a quarter turn is not something this viewer can produce, and
+        // guessing at one would move the point somewhere arbitrary. Leave it where it is.
+        int quarterTurns = (int)Math.Round(OverlayRotationAngle / 90.0);
+        if (Math.Abs(OverlayRotationAngle - quarterTurns * 90.0) > 0.01) return (x, y);
+
+        return ((quarterTurns % 4 + 4) % 4) switch
+        {
+            1 => (1.0 - y, x),          // 90 clockwise: the top-left corner swings to the top-right
+            2 => (1.0 - x, 1.0 - y),
+            3 => (y, 1.0 - x),
+            _ => (x, y)
+        };
+    }
+
+    /// <summary>
     /// The document this page belongs to.
     ///
     /// Exists because a ContextMenu is hosted in its own popup, not in the window's visual

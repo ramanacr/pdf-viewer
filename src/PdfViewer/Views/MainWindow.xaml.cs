@@ -461,13 +461,19 @@ public partial class MainWindow : Window
     {
         if (pageNumber < 1 || pageNumber > _vm.Pages.Count) return;
 
+        // A match is reported in unrotated page space, the same as a text box or an annotation
+        // rectangle. The scroll offsets are in the page as it is drawn, so the point has to be
+        // turned first - otherwise jumping to a match on a rotated page landed wherever that
+        // match would have been had the page never been turned.
         if (_vm.IsMultiPageLayout)
         {
             var page = _vm.Pages[pageNumber - 1];
-            double matchTop = _vm.GetPageOffset(pageNumber) + (normY * page.DisplayHeight);
+            var (displayX, displayY) = page.ToDisplayNormalized(normX, normY);
+
+            double matchTop = _vm.GetPageOffset(pageNumber) + (displayY * page.DisplayHeight);
             double targetVOffset = Math.Max(0, matchTop - (DocumentScrollViewer.ViewportHeight / 3.0));
 
-            double matchLeft = normX * page.DisplayWidth;
+            double matchLeft = displayX * page.DisplayWidth;
             double targetHOffset = Math.Max(0, matchLeft - (DocumentScrollViewer.ViewportWidth / 4.0));
 
             DocumentScrollViewer.ScrollToVerticalOffset(targetVOffset);
@@ -476,12 +482,14 @@ public partial class MainWindow : Window
         }
         else
         {
-            if (_vm.SingleCurrentPage != null)
+            if (_vm.SingleCurrentPage is { } singlePage)
             {
-                double matchTop = normY * _vm.SingleCurrentPage.DisplayHeight;
+                var (displayX, displayY) = singlePage.ToDisplayNormalized(normX, normY);
+
+                double matchTop = displayY * singlePage.DisplayHeight;
                 double targetVOffset = Math.Max(0, matchTop - (DocumentScrollViewer.ViewportHeight / 3.0));
 
-                double matchLeft = normX * _vm.SingleCurrentPage.DisplayWidth;
+                double matchLeft = displayX * singlePage.DisplayWidth;
                 double targetHOffset = Math.Max(0, matchLeft - (DocumentScrollViewer.ViewportWidth / 4.0));
 
                 DocumentScrollViewer.ScrollToVerticalOffset(targetVOffset);
