@@ -387,6 +387,56 @@ public class AnnotationFidelityTests : IDisposable
         Assert.Equal(first.Height, last.Height, 3);
     }
 
+    /// <summary>
+    /// A highlight made over a word has to stay over that word. Text positions and annotation
+    /// rectangles are read and written through separate conversions, so this checks the two
+    /// agree - on a rotated page as well as a plain one, where they most easily drift apart.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(270)]
+    public async Task TestAHighlightStaysOverTheWordItWasMadeFrom(int rotation)
+    {
+        string path = Path.Combine(_testDir, $"overtext_{rotation}.pdf");
+        TestPdfBuilder.CreateRotatedPdf(path, rotation);
+
+        var vm = new MainViewModel();
+        await vm.LoadDocumentAsync(path);
+
+        var page = vm.Pages[0];
+        await page.LoadTextSegmentsAsync(vm.DocumentService);
+        Assert.NotEmpty(page.TextSegments);
+
+        var word = page.TextSegments[0];
+        vm.AddAnnotation(new AnnotationModel
+        {
+            PageNumber = 1,
+            Type = AnnotationType.Highlight,
+            X = word.X,
+            Y = word.Y,
+            Width = word.Width,
+            Height = word.Height,
+            ColorHex = "#FFFF00",
+            Opacity = 0.4
+        });
+        await vm.SaveAsync();
+
+        var reopened = new MainViewModel();
+        await reopened.LoadDocumentAsync(path);
+
+        var reloadedPage = reopened.Pages[0];
+        await reloadedPage.LoadTextSegmentsAsync(reopened.DocumentService);
+
+        var sameWord = reloadedPage.TextSegments[0];
+        var annotation = Assert.Single(reopened.AllAnnotations);
+
+        Assert.Equal(sameWord.X, annotation.X, 2);
+        Assert.Equal(sameWord.Y, annotation.Y, 2);
+        Assert.Equal(sameWord.Width, annotation.Width, 2);
+        Assert.Equal(sameWord.Height, annotation.Height, 2);
+    }
+
     // ---------------------------------------------------------------------------------
     // Opacity.
     // ---------------------------------------------------------------------------------
