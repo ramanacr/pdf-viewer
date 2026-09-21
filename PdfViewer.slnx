@@ -1,9 +1,12 @@
 <Solution>
   <Project Path="src/PdfEngine.Abstractions/PdfEngine.Abstractions.csproj" />
   <Project Path="src/PdfEngine.Pdfium/PdfEngine.Pdfium.csproj" />
+  <Project Path="src/PdfEngine.Vector/PdfEngine.Vector.csproj" />
+  <Project Path="src/PdfEngine.Vector.Windows/PdfEngine.Vector.Windows.csproj" />
   <Project Path="src/PdfViewer.Core/PdfViewer.Core.csproj" />
   <Project Path="src/PdfViewer/PdfViewer.csproj" />
   <Project Path="src/Installer/PdfViewerInstaller.csproj" />
   <Project Path="tests/PdfViewer.Tests/PdfViewer.Tests.csproj" />
+  <Project Path="tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj" />
   <Project Path="benchmarks/PdfViewer.Benchmarks/PdfViewer.Benchmarks.csproj" />
 </Solution>

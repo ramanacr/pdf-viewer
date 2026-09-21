@@ -1,0 +1,27 @@
+{
+  "bundle": "pdf-viewer-vector-migration",
+  "version": "1.0",
+  "date": "2026-09-21",
+  "repository": "ramanacr/pdf-viewer",
+  "strategy": "Own PDF core + vector IR + Direct2D/DirectWrite; temporary PDFium fallback/oracle; eventual PDFium-free production",
+  "documents": [
+    "00_README.md",
+    "01_DECISIONS_AND_SCOPE.md",
+    "02_CURRENT_TO_TARGET_ARCHITECTURE.md",
+    "03_REPOSITORY_CHANGE_PLAN.md",
+    "04_VECTOR_IR_AND_RENDERING_CONTRACT.md",
+    "05_PDF_CORE_IMPLEMENTATION_PLAN.md",
+    "06_PDFIUM_FALLBACK_AND_EXIT_PLAN.md",
+    "07_TEST_CORPUS_AND_VERIFICATION.md",
+    "08_PERFORMANCE_MEMORY_BUDGETS.md",
+    "09_SECURITY_ROBUSTNESS.md",
+    "10_MIGRATION_MILESTONES.md",
+    "11_CODING_AGENT_EXECUTION.md",
+    "12_ACCEPTANCE_AND_RELEASE_GATES.md",
+    "13_RISK_REGISTER.md",
+    "14_ADRS.md",
+    "15_BACKLOG.md",
+    "16_REFERENCE_AND_STANDARDS.md",
+    "17_IMPLEMENTATION_CHECKLIST.md"
+  ]
+}

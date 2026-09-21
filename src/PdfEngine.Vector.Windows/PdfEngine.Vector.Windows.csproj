@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>PdfEngine.Vector.Windows</RootNamespace>
+    <AssemblyName>PdfEngine.Vector.Windows</AssemblyName>
+    <Description>Windows Direct2D, DirectWrite, and hardware-accelerated vector rendering backend for PDF engine.</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
+    <InternalsVisibleTo Include="PdfViewer.Tests" />
+  </ItemGroup>
+
+</Project>

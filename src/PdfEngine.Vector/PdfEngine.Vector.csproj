@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PdfEngine.Vector</RootNamespace>
+    <AssemblyName>PdfEngine.Vector</AssemblyName>
+    <Description>Native vector-first PDF core parsing, document model, and content stream interpreter.</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
+    <InternalsVisibleTo Include="PdfViewer.Tests" />
+  </ItemGroup>
+
+</Project>
