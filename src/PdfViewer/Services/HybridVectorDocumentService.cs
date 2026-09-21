@@ -154,8 +154,44 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return bitmap;
     }
 
-    public ObservableCollection<BookmarkItem> ExtractBookmarks() =>
-        _pdfiumService.ExtractBookmarks();
+    public ObservableCollection<BookmarkItem> ExtractBookmarks()
+    {
+        if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium)
+        {
+            try
+            {
+                var vectorBookmarks = _vectorDoc.GetBookmarksAsync().GetAwaiter().GetResult();
+                if (vectorBookmarks.Count > 0)
+                {
+                    var col = new ObservableCollection<BookmarkItem>();
+                    foreach (var b in vectorBookmarks)
+                    {
+                        col.Add(ConvertBookmark(b));
+                    }
+                    return col;
+                }
+            }
+            catch
+            {
+                // Fallback to PDFium
+            }
+        }
+        return _pdfiumService.ExtractBookmarks();
+    }
+
+    private static BookmarkItem ConvertBookmark(PdfEngine.Documents.BookmarkItem item)
+    {
+        var model = new BookmarkItem
+        {
+            Title = item.Title,
+            TargetPageNumber = item.TargetPageNumber
+        };
+        foreach (var child in item.Children)
+        {
+            model.Children.Add(ConvertBookmark(child));
+        }
+        return model;
+    }
 
     public Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default) =>
         _pdfiumService.SearchTextAsync(query, matchCase, ct);
