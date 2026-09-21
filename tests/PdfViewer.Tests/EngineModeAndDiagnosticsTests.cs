@@ -78,4 +78,50 @@ public class EngineModeAndDiagnosticsTests
         Assert.Equal(PdfEngineMode.Auto, vm.CurrentEngineMode);
         Assert.True(vm.IsAutoEngineMode);
     }
+
+    [Fact]
+    public async Task EngineShowcasePdf_ExhibitsVectorAndFallbackAcrossPages()
+    {
+        string samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../samples/EngineShowcase.pdf"));
+        if (!Directory.Exists(Path.GetDirectoryName(samplePath)))
+        {
+            samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../samples/EngineShowcase.pdf"));
+        }
+        TestPdfBuilder.CreateEngineShowcasePdf(samplePath);
+
+        Assert.True(File.Exists(samplePath));
+        Assert.True(new FileInfo(samplePath).Length > 500);
+
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        var meta = await service.OpenDocumentAsync(samplePath);
+        Assert.Equal(3, meta.PageCount);
+
+        // Page 1: Native Vector
+        var p1 = await service.RenderPageAsync(1, 150);
+        Assert.NotNull(p1);
+        var r1 = service.GetPageEngineReport(1);
+        Assert.NotNull(r1);
+        Assert.True(r1.Engine == PdfEngineMode.Vector);
+        Assert.False(r1.IsFallback);
+        Assert.Contains("Vector", r1.BadgeText);
+
+        // Page 2: Triggers fallback due to 'ri'
+        var p2 = await service.RenderPageAsync(2, 150);
+        Assert.NotNull(p2);
+        var r2 = service.GetPageEngineReport(2);
+        Assert.NotNull(r2);
+        Assert.Equal(PdfEngineMode.Pdfium, r2.Engine);
+        Assert.True(r2.IsFallback);
+        Assert.Contains("PDFium (Fallback)", r2.BadgeText);
+        Assert.Contains(r2.FallbackReasons, r => r.Contains("ri"));
+
+        // Page 3: Native Vector
+        var p3 = await service.RenderPageAsync(3, 150);
+        Assert.NotNull(p3);
+        var r3 = service.GetPageEngineReport(3);
+        Assert.NotNull(r3);
+        Assert.Equal(PdfEngineMode.Vector, r3.Engine);
+        Assert.False(r3.IsFallback);
+        Assert.Contains("Vector", r3.BadgeText);
+    }
 }

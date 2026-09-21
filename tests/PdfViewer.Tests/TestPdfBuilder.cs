@@ -438,6 +438,146 @@ public static class TestPdfBuilder
         return filePath;
     }
 
+    public static string CreateEngineShowcasePdf(string filePath)
+    {
+        var dir = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+        using var writer = new StreamWriter(fs, Encoding.ASCII);
+
+        var offsets = new List<long>();
+        void WriteObj(int objNum, string content)
+        {
+            writer.Flush();
+            offsets.Add(fs.Position);
+            writer.WriteLine($"{objNum} 0 obj");
+            writer.WriteLine(content);
+            writer.WriteLine("endobj");
+        }
+
+        writer.WriteLine("%PDF-1.7");
+        writer.WriteLine("%\xAA\xBB\xCC\xDD");
+
+        int currentObj = 1;
+        int catalogObj = currentObj++;   // 1
+        int pagesObj = currentObj++;     // 2
+        int page1Obj = currentObj++;     // 3
+        int content1Obj = currentObj++;  // 4
+        int page2Obj = currentObj++;     // 5
+        int content2Obj = currentObj++;  // 6
+        int page3Obj = currentObj++;     // 7
+        int content3Obj = currentObj++;  // 8
+        int fontObj = currentObj++;      // 9
+        int outlinesObj = currentObj++;  // 10
+        int outline1Obj = currentObj++;  // 11
+        int outline2Obj = currentObj++;  // 12
+        int outline3Obj = currentObj++;  // 13
+        int infoObj = currentObj++;      // 14
+
+        // 1. Catalog
+        WriteObj(catalogObj, $"<< /Type /Catalog /Pages {pagesObj} 0 R /Outlines {outlinesObj} 0 R >>");
+
+        // 2. Pages
+        WriteObj(pagesObj, $"<< /Type /Pages /Kids [{page1Obj} 0 R {page2Obj} 0 R {page3Obj} 0 R] /Count 3 >>");
+
+        // Page 1: Pure Native Vector
+        WriteObj(page1Obj, $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] /Contents {content1Obj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
+        string stream1 =
+            "BT\n/F1 22 Tf\n0.12 0.35 0.85 rg\n50 735 Td\n(Page 1: Native Vector Pipeline) Tj\nET\n" +
+            "BT\n/F1 12 Tf\n0.25 0.25 0.25 rg\n50 710 Td\n(Rendered natively via DirectX and DirectWrite with infinite zoom sharpness) Tj\nET\n" +
+            "0.2 0.5 0.9 rg\n0.1 0.25 0.6 RG\n2 w\n100 580 m\n120 520 l\n180 520 l\n130 480 l\n150 420 l\n100 460 l\n50 420 l\n70 480 l\n20 520 l\n80 520 l\nh\nB\n" +
+            "0.9 0.4 0.1 RG\n3 w\n240 560 m\n280 620 340 500 380 560 c\n420 620 480 500 520 560 c\nS\n" +
+            "0.1 0.7 0.4 RG\n3 w\n240 510 m\n280 450 340 570 380 510 c\n420 450 480 570 520 510 c\nS\n" +
+            "0.8 0.2 0.5 RG\n3 w\n240 460 m\n280 520 340 400 380 460 c\n420 520 480 400 520 460 c\nS\n" +
+            "0.15 0.15 0.15 RG\n6 w\n1 J\n1 j\n70 340 m 130 400 l S\n70 400 m 130 340 l S\n" +
+            "BT\n/F1 15 Tf\n0.1 0.1 0.1 rg\n200 380 Td\n[(V) 50 (e) 20 (c) 10 (t) 10 (o) 10 (r) 20 ( ) 20 (K) 40 (e) 10 (r) 10 (n) 10 (i) 10 (n) 10 (g) 20 ( ) 20 (T) 60 (e) 10 (s) 10 (t)] TJ\nET\n" +
+            "BT\n/F1 11 Tf\n0.3 0.3 0.3 rg\n200 355 Td\n(Exact glyph positioning from PDF font metrics & DirectWrite layout) Tj\nET\n" +
+            "0.94 0.96 1.0 rg\n0.2 0.4 0.85 RG\n1.5 w\n50 180 512 110 re\nB\n" +
+            "BT\n/F1 12 Tf\n0.1 0.25 0.7 rg\n70 260 Td\n(ENGINE STATUS: 100% Native Vector) Tj\nET\n" +
+            "BT\n/F1 10 Tf\n0.2 0.2 0.2 rg\n70 238 Td\n(o In Auto mode: Status bar displays lightning badge 'Vector'.) Tj\n0 -16 Td\n(o Visual sharpness: Zoom into this page up to 500% - lines and curves stay pin-sharp!) Tj\n0 -16 Td\n(o Zero raster artifacts: Geometry is tessellated directly on the GPU.) Tj\nET\n";
+        byte[] b1 = Encoding.ASCII.GetBytes(stream1);
+        WriteObj(content1Obj, $"<< /Length {b1.Length} >>\nstream\n{stream1}\nendstream");
+
+        // Page 2: Hybrid Fallback
+        WriteObj(page2Obj, $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] /Contents {content2Obj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
+        string stream2 =
+            "BT\n/F1 22 Tf\n0.85 0.25 0.15 rg\n50 735 Td\n(Page 2: Hybrid Fallback Pipeline) Tj\nET\n" +
+            "BT\n/F1 12 Tf\n0.25 0.25 0.25 rg\n50 710 Td\n(Automatic Fallback: Unsupported operators trigger Google PDFium with 0% truncation) Tj\nET\n" +
+            "0.99 0.94 0.94 rg\n0.85 0.3 0.3 RG\n1.5 w\n50 580 512 90 re\nB\n" +
+            "BT\n/F1 12 Tf\n0.75 0.1 0.1 rg\n70 640 Td\n(NOTICE: This page contains an unsupported PDF operator - 'ri' / Rendering Intent) Tj\nET\n" +
+            "BT\n/F1 10 Tf\n0.3 0.1 0.1 rg\n70 618 Td\n(The Vector Engine classifies this construct during display list generation) Tj\n0 -15 Td\n(and gracefully delegates the entire page to Google PDFium.) Tj\nET\n" +
+            "/RelativeColorimetric ri\n" +
+            "0.2 0.55 0.35 rg\n50 420 220 110 re\nf\n" +
+            "BT\n/F1 14 Tf\n1 1 1 rg\n70 485 Td\n(Rendered via PDFium) Tj\n0 -22 Td\n(100% Visual Fidelity) Tj\nET\n" +
+            "0.3 0.4 0.7 rg\n300 420 262 110 re\nf\n" +
+            "BT\n/F1 14 Tf\n1 1 1 rg\n320 485 Td\n(Zero Truncation) Tj\n0 -22 Td\n(Safe Content Delivery) Tj\nET\n" +
+            "0.96 0.96 0.96 rg\n0.5 0.5 0.5 RG\n1.5 w\n50 180 512 180 re\nB\n" +
+            "BT\n/F1 12 Tf\n0.2 0.2 0.2 rg\n70 330 Td\n(HOW TO VERIFY FALLBACK DIAGNOSTICS:) Tj\nET\n" +
+            "BT\n/F1 10 Tf\n0.25 0.25 0.25 rg\n70 305 Td\n(1. Look at the bottom-right status bar: it displays 'PDFium (Fallback)'.) Tj\n0 -18 Td\n(2. Hover your mouse over the badge: the tooltip displays the exact reason:) Tj\n0 -18 Td\n(   'Unsupported PDF operator: ri'.) Tj\n0 -18 Td\n(3. Switch to 'PDFium Only' in View -> Rendering Engine: renders via standard PDFium.) Tj\n0 -18 Td\n(4. Switch to 'Vector Only' in View -> Rendering Engine: observes strict vector refusal.) Tj\n0 -18 Td\n(5. Return to 'Auto': transparent fallback is restored instantly.) Tj\nET\n";
+        byte[] b2 = Encoding.ASCII.GetBytes(stream2);
+        WriteObj(content2Obj, $"<< /Length {b2.Length} >>\nstream\n{stream2}\nendstream");
+
+        // Page 3: Real-Time Engine Comparison
+        WriteObj(page3Obj, $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] /Contents {content3Obj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
+        string stream3 =
+            "BT\n/F1 22 Tf\n0.15 0.65 0.4 rg\n50 735 Td\n(Page 3: Real-Time Engine Switching) Tj\nET\n" +
+            "BT\n/F1 12 Tf\n0.25 0.25 0.25 rg\n50 710 Td\n(Directly compare Windows ClearType vs FreeType antialiasing at all scales) Tj\nET\n" +
+            "BT\n/F1 7 Tf\n0.2 0.2 0.2 rg\n50 670 Td\n(7pt: The quick brown fox jumps over the lazy dog 1234567890 - Subpixel Font Hinting) Tj\nET\n" +
+            "BT\n/F1 9 Tf\n0.2 0.2 0.2 rg\n50 650 Td\n(9pt: The quick brown fox jumps over the lazy dog 1234567890 - Subpixel Font Hinting) Tj\nET\n" +
+            "BT\n/F1 11 Tf\n0.2 0.2 0.2 rg\n50 625 Td\n(11pt: The quick brown fox jumps over the lazy dog 1234567890 - Subpixel Font Hinting) Tj\nET\n" +
+            "BT\n/F1 14 Tf\n0.15 0.15 0.15 rg\n50 595 Td\n(14pt: Windows DirectWrite vs FreeType Software Rasterizer) Tj\nET\n" +
+            "BT\n/F1 20 Tf\n0.1 0.2 0.4 rg\n50 560 Td\n(20pt: Direct2D Hardware Acceleration) Tj\nET\n" +
+            "BT\n/F1 28 Tf\n0.15 0.45 0.3 rg\n50 515 Td\n(28pt: High-DPI Scalability) Tj\nET\n" +
+            "q\n0.2 0.45 0.85 rg\n50 360 160 100 re\nf\nQ\n" +
+            "q\n0.85 0.3 0.2 rg\n140 330 160 100 re\nf\nQ\n" +
+            "q\n0.25 0.75 0.45 rg\n230 380 160 80 re\nf\nQ\n" +
+            "q\n0.85 0.65 0.1 rg\n320 340 160 90 re\nf\nQ\n" +
+            "0.95 0.98 0.96 rg\n0.2 0.6 0.4 RG\n1.5 w\n50 160 512 130 re\nB\n" +
+            "BT\n/F1 12 Tf\n0.1 0.45 0.25 rg\n70 260 Td\n(INTERACTIVE TEST EXPERIMENT:) Tj\nET\n" +
+            "BT\n/F1 10 Tf\n0.25 0.25 0.25 rg\n70 235 Td\n(1. Open the top menu: View -> Rendering Engine.) Tj\n0 -17 Td\n(2. Switch between 'Auto' (Vector) and 'PDFium Only' (Raster).) Tj\n0 -17 Td\n(3. Observe how the page instantly re-renders in real time.) Tj\n0 -17 Td\n(4. Notice subtle differences in font smoothing, stroke weights, and GPU compositing.) Tj\n0 -17 Td\n(5. Check the status bar: the badge updates dynamically to match the active engine!) Tj\nET\n";
+        byte[] b3 = Encoding.ASCII.GetBytes(stream3);
+        WriteObj(content3Obj, $"<< /Length {b3.Length} >>\nstream\n{stream3}\nendstream");
+
+        // 9. Font
+        WriteObj(fontObj, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        // 10. Outlines
+        WriteObj(outlinesObj, $"<< /Type /Outlines /First {outline1Obj} 0 R /Last {outline3Obj} 0 R /Count 3 >>");
+
+        // 11. Outline 1
+        WriteObj(outline1Obj, $"<< /Title (1. Pure Native Vector) /Parent {outlinesObj} 0 R /Next {outline2Obj} 0 R /Dest [{page1Obj} 0 R /Fit] >>");
+
+        // 12. Outline 2
+        WriteObj(outline2Obj, $"<< /Title (2. Hybrid Fallback) /Parent {outlinesObj} 0 R /Prev {outline1Obj} 0 R /Next {outline3Obj} 0 R /Dest [{page2Obj} 0 R /Fit] >>");
+
+        // 13. Outline 3
+        WriteObj(outline3Obj, $"<< /Title (3. Real-Time Comparison) /Parent {outlinesObj} 0 R /Prev {outline2Obj} 0 R /Dest [{page3Obj} 0 R /Fit] >>");
+
+        // 14. Info
+        WriteObj(infoObj, "<< /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>");
+
+        // Xref & Trailer
+        writer.Flush();
+        long startXref = fs.Position;
+        writer.WriteLine("xref");
+        writer.WriteLine($"0 {offsets.Count + 1}");
+        writer.WriteLine("0000000000 65535 f ");
+        foreach (var off in offsets)
+        {
+            writer.WriteLine($"{off:D10} 00000 n ");
+        }
+
+        writer.WriteLine("trailer");
+        writer.WriteLine($"<< /Size {offsets.Count + 1} /Root {catalogObj} 0 R /Info {infoObj} 0 R >>");
+        writer.WriteLine("startxref");
+        writer.WriteLine(startXref);
+        writer.WriteLine("%%EOF");
+        writer.Flush();
+
+        return filePath;
+    }
+
     public static string CreateNonLatinPdf(string filePath)
     {
         return CreateSimplePdf(filePath, 2, "UnicodeTest");

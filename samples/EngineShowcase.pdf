@@ -1,0 +1,333 @@
+%PDF-1.7
+%????
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1383 >>
+stream
+BT
+/F1 22 Tf
+0.12 0.35 0.85 rg
+50 735 Td
+(Page 1: Native Vector Pipeline) Tj
+ET
+BT
+/F1 12 Tf
+0.25 0.25 0.25 rg
+50 710 Td
+(Rendered natively via DirectX and DirectWrite with infinite zoom sharpness) Tj
+ET
+0.2 0.5 0.9 rg
+0.1 0.25 0.6 RG
+2 w
+100 580 m
+120 520 l
+180 520 l
+130 480 l
+150 420 l
+100 460 l
+50 420 l
+70 480 l
+20 520 l
+80 520 l
+h
+B
+0.9 0.4 0.1 RG
+3 w
+240 560 m
+280 620 340 500 380 560 c
+420 620 480 500 520 560 c
+S
+0.1 0.7 0.4 RG
+3 w
+240 510 m
+280 450 340 570 380 510 c
+420 450 480 570 520 510 c
+S
+0.8 0.2 0.5 RG
+3 w
+240 460 m
+280 520 340 400 380 460 c
+420 520 480 400 520 460 c
+S
+0.15 0.15 0.15 RG
+6 w
+1 J
+1 j
+70 340 m 130 400 l S
+70 400 m 130 340 l S
+BT
+/F1 15 Tf
+0.1 0.1 0.1 rg
+200 380 Td
+[(V) 50 (e) 20 (c) 10 (t) 10 (o) 10 (r) 20 ( ) 20 (K) 40 (e) 10 (r) 10 (n) 10 (i) 10 (n) 10 (g) 20 ( ) 20 (T) 60 (e) 10 (s) 10 (t)] TJ
+ET
+BT
+/F1 11 Tf
+0.3 0.3 0.3 rg
+200 355 Td
+(Exact glyph positioning from PDF font metrics & DirectWrite layout) Tj
+ET
+0.94 0.96 1.0 rg
+0.2 0.4 0.85 RG
+1.5 w
+50 180 512 110 re
+B
+BT
+/F1 12 Tf
+0.1 0.25 0.7 rg
+70 260 Td
+(ENGINE STATUS: 100% Native Vector) Tj
+ET
+BT
+/F1 10 Tf
+0.2 0.2 0.2 rg
+70 238 Td
+(o In Auto mode: Status bar displays lightning badge 'Vector'.) Tj
+0 -16 Td
+(o Visual sharpness: Zoom into this page up to 500% - lines and curves stay pin-sharp!) Tj
+0 -16 Td
+(o Zero raster artifacts: Geometry is tessellated directly on the GPU.) Tj
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+6 0 obj
+<< /Length 1562 >>
+stream
+BT
+/F1 22 Tf
+0.85 0.25 0.15 rg
+50 735 Td
+(Page 2: Hybrid Fallback Pipeline) Tj
+ET
+BT
+/F1 12 Tf
+0.25 0.25 0.25 rg
+50 710 Td
+(Automatic Fallback: Unsupported operators trigger Google PDFium with 0% truncation) Tj
+ET
+0.99 0.94 0.94 rg
+0.85 0.3 0.3 RG
+1.5 w
+50 580 512 90 re
+B
+BT
+/F1 12 Tf
+0.75 0.1 0.1 rg
+70 640 Td
+(NOTICE: This page contains an unsupported PDF operator - 'ri' / Rendering Intent) Tj
+ET
+BT
+/F1 10 Tf
+0.3 0.1 0.1 rg
+70 618 Td
+(The Vector Engine classifies this construct during display list generation) Tj
+0 -15 Td
+(and gracefully delegates the entire page to Google PDFium.) Tj
+ET
+/RelativeColorimetric ri
+0.2 0.55 0.35 rg
+50 420 220 110 re
+f
+BT
+/F1 14 Tf
+1 1 1 rg
+70 485 Td
+(Rendered via PDFium) Tj
+0 -22 Td
+(100% Visual Fidelity) Tj
+ET
+0.3 0.4 0.7 rg
+300 420 262 110 re
+f
+BT
+/F1 14 Tf
+1 1 1 rg
+320 485 Td
+(Zero Truncation) Tj
+0 -22 Td
+(Safe Content Delivery) Tj
+ET
+0.96 0.96 0.96 rg
+0.5 0.5 0.5 RG
+1.5 w
+50 180 512 180 re
+B
+BT
+/F1 12 Tf
+0.2 0.2 0.2 rg
+70 330 Td
+(HOW TO VERIFY FALLBACK DIAGNOSTICS:) Tj
+ET
+BT
+/F1 10 Tf
+0.25 0.25 0.25 rg
+70 305 Td
+(1. Look at the bottom-right status bar: it displays 'PDFium (Fallback)'.) Tj
+0 -18 Td
+(2. Hover your mouse over the badge: the tooltip displays the exact reason:) Tj
+0 -18 Td
+(   'Unsupported PDF operator: ri'.) Tj
+0 -18 Td
+(3. Switch to 'PDFium Only' in View -> Rendering Engine: renders via standard PDFium.) Tj
+0 -18 Td
+(4. Switch to 'Vector Only' in View -> Rendering Engine: observes strict vector refusal.) Tj
+0 -18 Td
+(5. Return to 'Auto': transparent fallback is restored instantly.) Tj
+ET
+
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+8 0 obj
+<< /Length 1603 >>
+stream
+BT
+/F1 22 Tf
+0.15 0.65 0.4 rg
+50 735 Td
+(Page 3: Real-Time Engine Switching) Tj
+ET
+BT
+/F1 12 Tf
+0.25 0.25 0.25 rg
+50 710 Td
+(Directly compare Windows ClearType vs FreeType antialiasing at all scales) Tj
+ET
+BT
+/F1 7 Tf
+0.2 0.2 0.2 rg
+50 670 Td
+(7pt: The quick brown fox jumps over the lazy dog 1234567890 - Subpixel Font Hinting) Tj
+ET
+BT
+/F1 9 Tf
+0.2 0.2 0.2 rg
+50 650 Td
+(9pt: The quick brown fox jumps over the lazy dog 1234567890 - Subpixel Font Hinting) Tj
+ET
+BT
+/F1 11 Tf
+0.2 0.2 0.2 rg
+50 625 Td
+(11pt: The quick brown fox jumps over the lazy dog 1234567890 - Subpixel Font Hinting) Tj
+ET
+BT
+/F1 14 Tf
+0.15 0.15 0.15 rg
+50 595 Td
+(14pt: Windows DirectWrite vs FreeType Software Rasterizer) Tj
+ET
+BT
+/F1 20 Tf
+0.1 0.2 0.4 rg
+50 560 Td
+(20pt: Direct2D Hardware Acceleration) Tj
+ET
+BT
+/F1 28 Tf
+0.15 0.45 0.3 rg
+50 515 Td
+(28pt: High-DPI Scalability) Tj
+ET
+q
+0.2 0.45 0.85 rg
+50 360 160 100 re
+f
+Q
+q
+0.85 0.3 0.2 rg
+140 330 160 100 re
+f
+Q
+q
+0.25 0.75 0.45 rg
+230 380 160 80 re
+f
+Q
+q
+0.85 0.65 0.1 rg
+320 340 160 90 re
+f
+Q
+0.95 0.98 0.96 rg
+0.2 0.6 0.4 RG
+1.5 w
+50 160 512 130 re
+B
+BT
+/F1 12 Tf
+0.1 0.45 0.25 rg
+70 260 Td
+(INTERACTIVE TEST EXPERIMENT:) Tj
+ET
+BT
+/F1 10 Tf
+0.25 0.25 0.25 rg
+70 235 Td
+(1. Open the top menu: View -> Rendering Engine.) Tj
+0 -17 Td
+(2. Switch between 'Auto' (Vector) and 'PDFium Only' (Raster).) Tj
+0 -17 Td
+(3. Observe how the page instantly re-renders in real time.) Tj
+0 -17 Td
+(4. Notice subtle differences in font smoothing, stroke weights, and GPU compositing.) Tj
+0 -17 Td
+(5. Check the status bar: the badge updates dynamically to match the active engine!) Tj
+ET
+
+endstream
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+10 0 obj
+<< /Type /Outlines /First 11 0 R /Last 13 0 R /Count 3 >>
+endobj
+11 0 obj
+<< /Title (1. Pure Native Vector) /Parent 10 0 R /Next 12 0 R /Dest [3 0 R /Fit] >>
+endobj
+12 0 obj
+<< /Title (2. Hybrid Fallback) /Parent 10 0 R /Prev 11 0 R /Next 13 0 R /Dest [5 0 R /Fit] >>
+endobj
+13 0 obj
+<< /Title (3. Real-Time Comparison) /Parent 10 0 R /Prev 12 0 R /Dest [7 0 R /Fit] >>
+endobj
+14 0 obj
+<< /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>
+endobj
+xref
+0 15
+0000000000 65535 f 
+0000000017 00000 n 
+0000000086 00000 n 
+0000000158 00000 n 
+0000000287 00000 n 
+0000001725 00000 n 
+0000001854 00000 n 
+0000003471 00000 n 
+0000003600 00000 n 
+0000005258 00000 n 
+0000005331 00000 n 
+0000005408 00000 n 
+0000005511 00000 n 
+0000005624 00000 n 
+0000005729 00000 n 
+trailer
+<< /Size 15 /Root 1 0 R /Info 14 0 R >>
+startxref
+5857
+%%EOF
