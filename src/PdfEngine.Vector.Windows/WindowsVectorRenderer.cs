@@ -124,6 +124,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             // Replay draw commands
             int clipDepth = 0;
             int transformDepth = 0;
+            int transparencyDepth = 0;
 
             foreach (var cmd in displayList.Commands)
             {
@@ -201,14 +202,32 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                     case DrawFallbackRegion dfr:
                         // Draw fallback region bounds or placeholder
                         var fbRect = dfr.Bounds ?? dfr.Token.Bounds;
-                        var fbBrush = new SolidColorBrush(Color.FromArgb(40, 255, 165, 0));
+                        var fbBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
                         fbBrush.Freeze();
                         dc.DrawRectangle(fbBrush, new Pen(Brushes.Orange, 1), new Rect(fbRect.X, fbRect.Y, fbRect.Width, fbRect.Height));
+                        break;
+
+                    case BeginTransparencyGroup btg:
+                        dc.PushOpacity(Math.Clamp(btg.Alpha, 0.0, 1.0));
+                        transparencyDepth++;
+                        break;
+
+                    case EndTransparencyGroup:
+                        if (transparencyDepth > 0)
+                        {
+                            dc.Pop();
+                            transparencyDepth--;
+                        }
+                        break;
+
+                    case DrawShading ds:
+                        RenderShading(dc, ds.Shading, ds.Bounds, displayList.PageSize);
                         break;
                 }
             }
 
-            // Unwind any remaining open transforms/clips
+            // Unwind any remaining open transforms/clips/transparency
+            while (transparencyDepth-- > 0) dc.Pop();
             while (transformDepth-- > 0) dc.Pop();
             while (clipDepth-- > 0) dc.Pop();
 
@@ -307,7 +326,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
         byte r = (byte)Math.Clamp((int)(paint.Color.R * 255), 0, 255);
         byte g = (byte)Math.Clamp((int)(paint.Color.G * 255), 0, 255);
         byte b = (byte)Math.Clamp((int)(paint.Color.B * 255), 0, 255);
-        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(a, r, g, b));
         brush.Freeze();
         return brush;
     }
@@ -441,6 +460,59 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 
         FontCache.Value[fontName] = family;
         return family;
+    }
+
+    private static void RenderShading(DrawingContext dc, PdfShading shading, PdfRect? bounds, PdfSize pageSize)
+    {
+        var rect = bounds.HasValue && !bounds.Value.IsEmpty
+            ? new Rect(bounds.Value.X, bounds.Value.Y, bounds.Value.Width, bounds.Value.Height)
+            : new Rect(0, 0, pageSize.Width, pageSize.Height);
+
+        switch (shading)
+        {
+            case PdfAxialShading axial:
+                {
+                    var startColor = ConvertColor(axial.StartColor);
+                    var endColor = ConvertColor(axial.EndColor);
+                    var brush = new LinearGradientBrush(
+                        startColor,
+                        endColor,
+                        new Point(axial.StartPoint.X, axial.StartPoint.Y),
+                        new Point(axial.EndPoint.X, axial.EndPoint.Y))
+                    {
+                        MappingMode = BrushMappingMode.Absolute
+                    };
+                    brush.Freeze();
+                    dc.DrawRectangle(brush, null, rect);
+                }
+                break;
+
+            case PdfRadialShading radial:
+                {
+                    var startColor = ConvertColor(radial.StartColor);
+                    var endColor = ConvertColor(radial.EndColor);
+                    var brush = new RadialGradientBrush(startColor, endColor)
+                    {
+                        Center = new Point(radial.EndCenter.X, radial.EndCenter.Y),
+                        GradientOrigin = new Point(radial.StartCenter.X, radial.StartCenter.Y),
+                        RadiusX = Math.Max(0.1, radial.EndRadius),
+                        RadiusY = Math.Max(0.1, radial.EndRadius),
+                        MappingMode = BrushMappingMode.Absolute
+                    };
+                    brush.Freeze();
+                    dc.DrawRectangle(brush, null, rect);
+                }
+                break;
+        }
+    }
+
+    private static System.Windows.Media.Color ConvertColor(PdfColor color)
+    {
+        byte a = (byte)Math.Clamp((int)(color.A * 255), 0, 255);
+        byte r = (byte)Math.Clamp((int)(color.R * 255), 0, 255);
+        byte g = (byte)Math.Clamp((int)(color.G * 255), 0, 255);
+        byte b = (byte)Math.Clamp((int)(color.B * 255), 0, 255);
+        return System.Windows.Media.Color.FromArgb(a, r, g, b);
     }
 
     public void Dispose() { }

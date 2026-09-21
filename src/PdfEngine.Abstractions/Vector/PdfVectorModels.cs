@@ -191,3 +191,32 @@ public sealed record PdfImageRef(
     bool HasAlpha,
     ReadOnlyMemory<byte> ImageData,
     string? Filter = null);
+
+/// <summary>
+/// Base record for smooth shading specifications (ISO 32000-2 Clause 8.7).
+/// </summary>
+public abstract record PdfShading(string ShadingType);
+
+/// <summary>
+/// Type 2 Axial (Linear) Shading defined along an axis between two points.
+/// </summary>
+public sealed record PdfAxialShading(
+    PdfPoint StartPoint,
+    PdfPoint EndPoint,
+    PdfColor StartColor,
+    PdfColor EndColor,
+    bool ExtendStart = true,
+    bool ExtendEnd = true) : PdfShading("Axial");
+
+/// <summary>
+/// Type 3 Radial Shading defined between two circles with centers and radii.
+/// </summary>
+public sealed record PdfRadialShading(
+    PdfPoint StartCenter,
+    double StartRadius,
+    PdfPoint EndCenter,
+    double EndRadius,
+    PdfColor StartColor,
+    PdfColor EndColor,
+    bool ExtendStart = true,
+    bool ExtendEnd = true) : PdfShading("Radial");

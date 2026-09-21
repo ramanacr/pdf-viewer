@@ -9,7 +9,8 @@ using PdfEngine.Vector.Streams;
 namespace PdfEngine.Vector.Fonts;
 
 /// <summary>
-/// Resolves font resources from page dictionaries, resolving embedded font descriptors and ToUnicode CMaps.
+/// Resolves font resources from page dictionaries, resolving embedded font descriptors,
+/// Type0 composite fonts, CID width tables, and ToUnicode CMaps.
 /// </summary>
 public sealed class PdfFontResolver
 {
@@ -54,7 +55,7 @@ public sealed class PdfFontResolver
         int firstChar = (int)(fontObj.GetInteger("FirstChar") ?? 0);
         int lastChar = (int)(fontObj.GetInteger("LastChar") ?? 255);
 
-        // Resolve Widths array
+        // Resolve Widths array for simple fonts
         List<double>? widths = null;
         var widthsObj = _resolver.Resolve(fontObj["Widths"]);
         if (widthsObj is PdfArray wArr)
@@ -87,6 +88,35 @@ public sealed class PdfFontResolver
             }
         }
 
+        // Handle Type0 Composite Fonts and CIDFont descendant
+        Dictionary<int, double>? cidWidths = null;
+        double defaultWidth = 1000.0;
+
+        if (subtype == "Type0")
+        {
+            var descendantsObj = _resolver.Resolve(fontObj["DescendantFonts"]);
+            if (descendantsObj is PdfArray descArr && descArr.Count > 0)
+            {
+                var cidFont = _resolver.Resolve(descArr[0]) as PdfDictionary;
+                if (cidFont != null)
+                {
+                    defaultWidth = cidFont.GetNumber("DW") ?? 1000.0;
+                    cidWidths = ParseCidWidths(cidFont["W"]);
+
+                    var cidDesc = _resolver.Resolve(cidFont["FontDescriptor"]) as PdfDictionary;
+                    if (cidDesc != null && embeddedFontBytes == null)
+                    {
+                        var fontFile = _resolver.Resolve(cidDesc["FontFile2"] ?? cidDesc["FontFile3"] ?? cidDesc["FontFile"]) as PdfStream;
+                        if (fontFile != null)
+                        {
+                            var decoder = new PdfStreamDecoder();
+                            embeddedFontBytes = decoder.DecodeStream(fontFile);
+                        }
+                    }
+                }
+            }
+        }
+
         var resolvedFont = new PdfFont(
             fontResourceName,
             baseFont,
@@ -94,12 +124,58 @@ public sealed class PdfFontResolver
             firstChar,
             lastChar,
             widths,
+            cidWidths,
             missingWidth: 500.0,
+            defaultWidth,
             toUnicodeMap,
             embeddedFontBytes);
 
         _fontCache[fontResourceName] = resolvedFont;
         return resolvedFont;
+    }
+
+    private Dictionary<int, double> ParseCidWidths(PdfObject? wObj)
+    {
+        var map = new Dictionary<int, double>();
+        var resolved = _resolver.Resolve(wObj);
+        if (resolved is not PdfArray arr)
+            return map;
+
+        int i = 0;
+        while (i < arr.Count)
+        {
+            if (i + 1 >= arr.Count) break;
+
+            int c = (int)(arr[i].TryGetInteger(out long cVal) ? cVal : 0);
+            var next = _resolver.Resolve(arr[i + 1]);
+
+            if (next is PdfArray widthsArr)
+            {
+                // Format: c [w1 w2 w3 ...]
+                for (int j = 0; j < widthsArr.Count; j++)
+                {
+                    double w = widthsArr[j].TryGetNumber(out double wv) ? wv : 1000.0;
+                    map[c + j] = w;
+                }
+                i += 2;
+            }
+            else if (i + 2 < arr.Count && next is PdfInteger cLastInt && arr[i + 2].TryGetNumber(out double constWidth))
+            {
+                // Format: cFirst cLast width
+                int cLast = (int)cLastInt.Value;
+                for (int code = c; code <= cLast; code++)
+                {
+                    map[code] = constWidth;
+                }
+                i += 3;
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return map;
     }
 
     private Dictionary<int, string> ParseToUnicodeCMap(PdfStream stream)

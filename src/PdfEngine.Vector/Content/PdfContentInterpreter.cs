@@ -169,56 +169,108 @@ public sealed class PdfContentInterpreter
                         }
                         break;
 
-                    // Color
+                    // Color & Color Space
+                    case "cs":
+                        if (operands.Count >= 1)
+                        {
+                            string csName = PopName(operands);
+                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.Resolve(new PdfName(csName), _resolver, page.Resources);
+                        }
+                        break;
+
+                    case "CS":
+                        if (operands.Count >= 1)
+                        {
+                            string csName = PopName(operands);
+                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.Resolve(new PdfName(csName), _resolver, page.Resources);
+                        }
+                        break;
+
+                    case "sc":
+                    case "scn":
+                        {
+                            int count = currentState.FillColorSpace.NumberOfComponents;
+                            var comps = PopNumbers(operands, count);
+                            currentState.FillColor = currentState.FillColorSpace.ToRgbColor(comps, (float)currentState.FillAlpha);
+                        }
+                        break;
+
+                    case "SC":
+                    case "SCN":
+                        {
+                            int count = currentState.StrokeColorSpace.NumberOfComponents;
+                            var comps = PopNumbers(operands, count);
+                            currentState.StrokeColor = currentState.StrokeColorSpace.ToRgbColor(comps, (float)currentState.StrokeAlpha);
+                        }
+                        break;
+
                     case "g":
                         if (operands.Count >= 1)
-                            currentState.FillColor = PdfColor.FromGray((float)PopNum(operands));
+                        {
+                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceGray;
+                            currentState.FillColor = PdfColor.FromGray((float)PopNum(operands), (float)currentState.FillAlpha);
+                        }
                         break;
 
                     case "G":
                         if (operands.Count >= 1)
-                            currentState.StrokeColor = PdfColor.FromGray((float)PopNum(operands));
+                        {
+                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceGray;
+                            currentState.StrokeColor = PdfColor.FromGray((float)PopNum(operands), (float)currentState.StrokeAlpha);
+                        }
                         break;
 
                     case "rg":
                         if (operands.Count >= 3)
                         {
+                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceRgb;
                             float r = (float)PopNum(operands);
                             float g = (float)PopNum(operands);
                             float b = (float)PopNum(operands);
-                            currentState.FillColor = PdfColor.FromRgb(r, g, b);
+                            currentState.FillColor = PdfColor.FromRgb(r, g, b, (float)currentState.FillAlpha);
                         }
                         break;
 
                     case "RG":
                         if (operands.Count >= 3)
                         {
+                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceRgb;
                             float r = (float)PopNum(operands);
                             float g = (float)PopNum(operands);
                             float b = (float)PopNum(operands);
-                            currentState.StrokeColor = PdfColor.FromRgb(r, g, b);
+                            currentState.StrokeColor = PdfColor.FromRgb(r, g, b, (float)currentState.StrokeAlpha);
                         }
                         break;
 
                     case "k":
                         if (operands.Count >= 4)
                         {
+                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceCmyk;
                             float c = (float)PopNum(operands);
                             float m = (float)PopNum(operands);
                             float y = (float)PopNum(operands);
                             float k = (float)PopNum(operands);
-                            currentState.FillColor = PdfColor.FromCmyk(c, m, y, k);
+                            currentState.FillColor = PdfColor.FromCmyk(c, m, y, k, (float)currentState.FillAlpha);
                         }
                         break;
 
                     case "K":
                         if (operands.Count >= 4)
                         {
+                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceCmyk;
                             float c = (float)PopNum(operands);
                             float m = (float)PopNum(operands);
                             float y = (float)PopNum(operands);
                             float k = (float)PopNum(operands);
-                            currentState.StrokeColor = PdfColor.FromCmyk(c, m, y, k);
+                            currentState.StrokeColor = PdfColor.FromCmyk(c, m, y, k, (float)currentState.StrokeAlpha);
+                        }
+                        break;
+
+                    case "sh":
+                        if (operands.Count >= 1)
+                        {
+                            string shName = PopName(operands);
+                            EmitShading(commands, shName, page.Resources, currentState, ref features);
                         }
                         break;
 
@@ -587,16 +639,31 @@ public sealed class PdfContentInterpreter
         var span = textString.RawBytes.Span;
         double currentX = 0;
 
-        for (int i = 0; i < span.Length; i++)
+        if (font.IsComposite)
         {
-            int charCode = span[i];
-            double width = font.GetGlyphWidth(charCode);
-            double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
-            if (charCode == 32) advance += state.WordSpacing;
+            for (int i = 0; i + 1 < span.Length; i += 2)
+            {
+                int cid = (span[i] << 8) | span[i + 1];
+                double width = font.GetGlyphWidth(cid);
+                double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
+                string unicode = font.MapToUnicode(cid);
+                glyphs.Add(new PdfGlyph((ushort)cid, advance, 0, currentX, 0, unicode));
+                currentX += advance;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                int charCode = span[i];
+                double width = font.GetGlyphWidth(charCode);
+                double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
+                if (charCode == 32) advance += state.WordSpacing;
 
-            string unicode = font.MapToUnicode(charCode);
-            glyphs.Add(new PdfGlyph((ushort)charCode, advance, 0, currentX, 0, unicode));
-            currentX += advance;
+                string unicode = font.MapToUnicode(charCode);
+                glyphs.Add(new PdfGlyph((ushort)charCode, advance, 0, currentX, 0, unicode));
+                currentX += advance;
+            }
         }
 
         // Compute effective transform
@@ -637,16 +704,31 @@ public sealed class PdfContentInterpreter
             if (item is PdfString str)
             {
                 var span = str.RawBytes.Span;
-                for (int i = 0; i < span.Length; i++)
+                if (font.IsComposite)
                 {
-                    int charCode = span[i];
-                    double width = font.GetGlyphWidth(charCode);
-                    double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
-                    if (charCode == 32) advance += state.WordSpacing;
+                    for (int i = 0; i + 1 < span.Length; i += 2)
+                    {
+                        int cid = (span[i] << 8) | span[i + 1];
+                        double width = font.GetGlyphWidth(cid);
+                        double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
+                        string unicode = font.MapToUnicode(cid);
+                        glyphs.Add(new PdfGlyph((ushort)cid, advance, 0, currentX, 0, unicode));
+                        currentX += advance;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < span.Length; i++)
+                    {
+                        int charCode = span[i];
+                        double width = font.GetGlyphWidth(charCode);
+                        double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
+                        if (charCode == 32) advance += state.WordSpacing;
 
-                    string unicode = font.MapToUnicode(charCode);
-                    glyphs.Add(new PdfGlyph((ushort)charCode, advance, 0, currentX, 0, unicode));
-                    currentX += advance;
+                        string unicode = font.MapToUnicode(charCode);
+                        glyphs.Add(new PdfGlyph((ushort)charCode, advance, 0, currentX, 0, unicode));
+                        currentX += advance;
+                    }
                 }
             }
             else if (item.TryGetNumber(out double kern))
@@ -783,6 +865,134 @@ public sealed class PdfContentInterpreter
         {
             state.LineJoin = (PdfLineJoin)(int)lj;
         }
+
+        if (gsDict.TryGetValue("BM", out var bmObj) && bmObj is not null)
+        {
+            var resolvedBm = _resolver.Resolve(bmObj);
+            if (resolvedBm is PdfName bmName)
+            {
+                state.BlendMode = bmName.Value;
+                features |= PdfFeatureSet.Transparency;
+            }
+        }
+
+        if (gsDict.TryGetValue("SMask", out var sMaskObj) && sMaskObj is not null)
+        {
+            features |= PdfFeatureSet.Transparency;
+        }
+    }
+
+    private void EmitShading(
+        List<PdfDrawCommand> commands,
+        string shName,
+        PdfDictionary? resources,
+        GraphicsState state,
+        ref PdfFeatureSet features)
+    {
+        if (resources == null || !resources.TryGetValue("Shading", out var shDictObj))
+            return;
+
+        var shMap = _resolver.Resolve(shDictObj) as PdfDictionary;
+        if (shMap == null || !shMap.TryGetValue(shName, out var shRef))
+            return;
+
+        var shDict = _resolver.Resolve(shRef) as PdfDictionary;
+        if (shDict == null) return;
+
+        features |= PdfFeatureSet.Shading;
+        long shadingType = shDict.GetInteger("ShadingType") ?? 2;
+
+        bool extendStart = true;
+        bool extendEnd = true;
+        if (shDict.TryGetValue("Extend", out var extendObj) && _resolver.Resolve(extendObj) is PdfArray extArr && extArr.Count >= 2)
+        {
+            extendStart = extArr[0].TryGetBoolean(out bool e0) ? e0 : true;
+            extendEnd = extArr[1].TryGetBoolean(out bool e1) ? e1 : true;
+        }
+
+        var cs = PdfEngine.Vector.Color.PdfColorSpace.Resolve(shDict["ColorSpace"], _resolver, resources);
+
+        PdfColor startColor = state.FillColor;
+        PdfColor endColor = PdfColor.White;
+
+        if (shDict.TryGetValue("Function", out var fnObj))
+        {
+            var fnResolved = _resolver.Resolve(fnObj);
+            if (fnResolved is PdfDictionary fnDict)
+            {
+                if (fnDict.TryGetValue("C0", out var c0Obj) && _resolver.Resolve(c0Obj) is PdfArray c0Arr)
+                {
+                    var c0Comps = new double[c0Arr.Count];
+                    for (int i = 0; i < c0Arr.Count; i++)
+                        c0Comps[i] = c0Arr[i].TryGetNumber(out double v) ? v : 0.0;
+                    startColor = cs.ToRgbColor(c0Comps, (float)state.FillAlpha);
+                }
+                if (fnDict.TryGetValue("C1", out var c1Obj) && _resolver.Resolve(c1Obj) is PdfArray c1Arr)
+                {
+                    var c1Comps = new double[c1Arr.Count];
+                    for (int i = 0; i < c1Arr.Count; i++)
+                        c1Comps[i] = c1Arr[i].TryGetNumber(out double v) ? v : 1.0;
+                    endColor = cs.ToRgbColor(c1Comps, (float)state.FillAlpha);
+                }
+            }
+        }
+
+        if (shadingType == 2)
+        {
+            // Axial shading: Coords = [x0, y0, x1, y1]
+            if (shDict.TryGetValue("Coords", out var coordsObj) && _resolver.Resolve(coordsObj) is PdfArray coordsArr && coordsArr.Count >= 4)
+            {
+                double x0 = coordsArr[0].TryGetNumber(out double cx0) ? cx0 : 0;
+                double y0 = coordsArr[1].TryGetNumber(out double cy0) ? cy0 : 0;
+                double x1 = coordsArr[2].TryGetNumber(out double cx1) ? cx1 : 0;
+                double y1 = coordsArr[3].TryGetNumber(out double cy1) ? cy1 : 0;
+
+                var axial = new PdfAxialShading(
+                    new PdfPoint(x0, y0),
+                    new PdfPoint(x1, y1),
+                    startColor,
+                    endColor,
+                    extendStart,
+                    extendEnd);
+
+                commands.Add(new DrawShading(axial));
+            }
+        }
+        else if (shadingType == 3)
+        {
+            // Radial shading: Coords = [x0, y0, r0, x1, y1, r1]
+            if (shDict.TryGetValue("Coords", out var coordsObj) && _resolver.Resolve(coordsObj) is PdfArray coordsArr && coordsArr.Count >= 6)
+            {
+                double x0 = coordsArr[0].TryGetNumber(out double cx0) ? cx0 : 0;
+                double y0 = coordsArr[1].TryGetNumber(out double cy0) ? cy0 : 0;
+                double r0 = coordsArr[2].TryGetNumber(out double cr0) ? cr0 : 0;
+                double x1 = coordsArr[3].TryGetNumber(out double cx1) ? cx1 : 0;
+                double y1 = coordsArr[4].TryGetNumber(out double cy1) ? cy1 : 0;
+                double r1 = coordsArr[5].TryGetNumber(out double cr1) ? cr1 : 0;
+
+                var radial = new PdfRadialShading(
+                    new PdfPoint(x0, y0),
+                    r0,
+                    new PdfPoint(x1, y1),
+                    r1,
+                    startColor,
+                    endColor,
+                    extendStart,
+                    extendEnd);
+
+                commands.Add(new DrawShading(radial));
+            }
+        }
+    }
+
+    private static double[] PopNumbers(List<PdfObject> operands, int count)
+    {
+        var result = new double[count];
+        for (int i = 0; i < count; i++)
+        {
+            result[i] = PopNum(operands);
+        }
+        return result;
     }
 
     private byte[] ConcatenateContentStreams(IReadOnlyList<PdfStream> streams)

@@ -66,3 +66,7 @@ public sealed record BeginTransparencyGroup(
 
 /// <summary>Ends a transparency group and composites it onto the parent surface.</summary>
 public sealed record EndTransparencyGroup() : PdfDrawCommand;
+
+/// <summary>Draws a smooth shading (axial or radial gradient) filling the bounds or current clip.</summary>
+public sealed record DrawShading(PdfShading Shading, PdfRect? Bounds = null)
+    : PdfDrawCommand(Bounds);

@@ -35,6 +35,12 @@ public abstract record PdfObject
         value = string.Empty;
         return false;
     }
+
+    public virtual bool TryGetBoolean(out bool value)
+    {
+        value = false;
+        return false;
+    }
 }
 
 /// <summary>Boolean object (ISO 32000-2 7.3.2).</summary>
@@ -42,6 +48,13 @@ public sealed record PdfBoolean(bool Value) : PdfObject
 {
     public static readonly PdfBoolean True = new(true);
     public static readonly PdfBoolean False = new(false);
+
+    public override bool TryGetBoolean(out bool value)
+    {
+        value = Value;
+        return true;
+    }
+
     public override string ToString() => Value ? "true" : "false";
 }
 

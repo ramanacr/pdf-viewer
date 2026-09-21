@@ -19,8 +19,11 @@ public sealed class GraphicsState
 
     public PdfColor StrokeColor { get; set; } = PdfColor.Black;
     public PdfColor FillColor { get; set; } = PdfColor.Black;
+    public PdfEngine.Vector.Color.PdfColorSpace StrokeColorSpace { get; set; } = PdfEngine.Vector.Color.PdfColorSpace.DeviceGray;
+    public PdfEngine.Vector.Color.PdfColorSpace FillColorSpace { get; set; } = PdfEngine.Vector.Color.PdfColorSpace.DeviceGray;
     public double StrokeAlpha { get; set; } = 1.0;
     public double FillAlpha { get; set; } = 1.0;
+    public string BlendMode { get; set; } = "Normal";
 
     public PdfPath? ClipPath { get; set; }
     public PdfFillRule ClipRule { get; set; } = PdfFillRule.NonZero;
@@ -51,8 +54,11 @@ public sealed class GraphicsState
             DashPhase = DashPhase,
             StrokeColor = StrokeColor,
             FillColor = FillColor,
+            StrokeColorSpace = StrokeColorSpace,
+            FillColorSpace = FillColorSpace,
             StrokeAlpha = StrokeAlpha,
             FillAlpha = FillAlpha,
+            BlendMode = BlendMode,
             ClipPath = ClipPath,
             ClipRule = ClipRule,
             CurrentFontResource = CurrentFontResource,
