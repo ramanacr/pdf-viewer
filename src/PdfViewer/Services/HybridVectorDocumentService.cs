@@ -345,10 +345,13 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     /// Extracts one <see cref="PageTextSegment"/> per glyph from the vector display list,
     /// giving true per-character selection precision in vector/hybrid mode.
     ///
-    /// PDF text matrices are column-major affine matrices where (x', y') = (A*x + C*y + E, B*x + D*y + F).
-    /// The text matrix encodes the glyph run origin in unflipped PDF page space (y increases upward).
-    /// We transform each glyph's X offset through the text matrix to get page-space coordinates,
-    /// then normalize into [0, 1] top-left space expected by the hit-test overlay.
+    /// Coordinate conventions:
+    ///   - <see cref="PdfGlyph.OffsetX"/>  is the cumulative glyph-left position in text space,
+    ///     already fully scaled by (width/1000 * fontSize * hScale) inside PdfContentInterpreter.
+    ///   - <see cref="PdfGlyph.AdvanceX"/> is also in text space, already fully scaled.
+    ///   - <see cref="PdfGlyphRun.TextMatrix"/> transforms text-space coordinates into PDF
+    ///     page space (y-up, origin at bottom-left of the page MediaBox).
+    ///   - We normalize to [0, 1] screen space by dividing by page size and flipping y.
     /// </summary>
     private static List<PageTextSegment> ExtractCharSegmentsFromDisplayList(IPdfDisplayList displayList)
     {
@@ -364,65 +367,54 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             if (cmd is not DrawGlyphRun dgr) continue;
 
             var run = dgr.Run;
-            if (string.IsNullOrEmpty(run.FullText) || run.Glyphs.Count == 0) continue;
+            if (run.Glyphs.Count == 0) continue;
 
-            // The text matrix encodes the run origin in PDF page space.
-            // glyph OffsetX is in unscaled glyph space; scale by FontSize and HorizontalScaling.
-            double hScale = run.HorizontalScaling / 100.0;
+            var m = run.TextMatrix;
             double fontSize = run.FontSize;
 
-            // Estimate glyph height from the font size; use FontSize as the cap-height approximation.
-            // A reasonable ascent/descent split: ascent ~0.7, descent ~0.3 of fontSize.
-            double ascentEst = fontSize * 0.75;
-            double descentEst = fontSize * 0.25;
+            // Ascent / descent in text-space units (already scaled by fontSize)
+            double ascent  = fontSize * 0.75;
+            double descent = fontSize * 0.25;
 
-            double runningX = 0.0; // accumulates in glyph-space X
-
-            for (int i = 0; i < run.Glyphs.Count; i++)
+            foreach (var glyph in run.Glyphs)
             {
-                var glyph = run.Glyphs[i];
                 if (string.IsNullOrEmpty(glyph.Unicode) || glyph.Unicode == " ")
-                {
-                    runningX += glyph.AdvanceX * fontSize * hScale + run.CharacterSpacing;
                     continue;
-                }
 
-                // Transform glyph left edge through text matrix into PDF page space
-                // TextMatrix: x' = A*x + C*y + E,  y' = B*x + D*y + F
-                // At baseline y=0, glyph left edge x=runningX
-                var m = run.TextMatrix;
-                double glyphPageX = m.A * runningX + m.E;
-                double glyphPageY = m.B * runningX + m.F;
+                // glyph.OffsetX is the glyph's left edge in text space (fully scaled).
+                // glyph.AdvanceX is the glyph width in text space (fully scaled).
+                // Transform left and right edges through the text matrix to PDF page space.
+                double leftX  = glyph.OffsetX;
+                double rightX = glyph.OffsetX + glyph.AdvanceX;
 
-                // Glyph advance in page space (includes font size scaling and horizontal scaling)
-                double advanceScaled = glyph.AdvanceX * fontSize * hScale;
+                // Page-space corners (y=0 is baseline, ascent goes up, descent goes down)
+                double pxLeft  = m.A * leftX  + m.E;
+                double pyLeft  = m.B * leftX  + m.F;
+                double pxRight = m.A * rightX + m.E;
 
-                // Glyph right edge in page space
-                double glyphPageX2 = m.A * (runningX + advanceScaled) + m.E;
-                double glyphPageY2 = m.B * (runningX + advanceScaled) + m.F;
+                // Vertical extent: apply ascent/descent along the text matrix's y-axis (column C, D)
+                double pxTop    = pxLeft + m.C * ascent;
+                double pyTop    = pyLeft + m.D * ascent;
+                double pyBottom = pyLeft - m.D * descent;
 
-                // Bounding box top/bottom: ascent/descent applied along the matrix D/C axis
-                double topY = glyphPageY + m.D * ascentEst - m.C * ascentEst;
-                double bottomY = glyphPageY - m.D * descentEst + m.C * descentEst;
+                // Axis-aligned bounding box in PDF page space
+                double minX = Math.Min(pxLeft, pxRight);
+                double maxX = Math.Max(pxLeft, pxRight);
+                double minY = Math.Min(pyBottom, pyTop);
+                double maxY = Math.Max(pyBottom, pyTop);
 
-                // Build axis-aligned bounding box in PDF page space
-                double minX = Math.Min(glyphPageX, glyphPageX2);
-                double maxX = Math.Max(glyphPageX, glyphPageX2);
-                double minY = Math.Min(bottomY, topY);
-                double maxY = Math.Max(bottomY, topY);
+                // Guard: ensure non-zero width for hit-testing of narrow glyphs (e.g. 'i', '1', '.')
+                if (maxX - minX < 1.0) maxX = minX + Math.Max(1.0, fontSize * 0.25);
 
-                // Ensure minimum glyph width for hit-testing (single-pixel chars)
-                if (maxX - minX < 0.5) maxX = minX + fontSize * 0.5;
-
-                // Normalize to [0, 1]: X left-to-right, Y top-to-bottom (PDF y flipped)
-                double normX = Math.Max(0, minX / pageW);
-                double normY = Math.Max(0, 1.0 - (maxY / pageH));  // flip y: PDF bottom-left → screen top-left
+                // Normalize to [0, 1] screen coordinates (flip y: PDF y-up → screen y-down)
+                double normX = Math.Max(0.0, minX / pageW);
+                double normY = Math.Max(0.0, 1.0 - maxY / pageH);
                 double normW = Math.Max(0.001, (maxX - minX) / pageW);
                 double normH = Math.Max(0.001, (maxY - minY) / pageH);
 
-                // Clamp to page bounds
-                normX = Math.Min(normX, 1.0 - normW);
-                normY = Math.Min(normY, 1.0 - normH);
+                // Clamp inside page
+                if (normX + normW > 1.0) normX = Math.Max(0.0, 1.0 - normW);
+                if (normY + normH > 1.0) normY = Math.Max(0.0, 1.0 - normH);
 
                 list.Add(new PageTextSegment
                 {
@@ -434,9 +426,6 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                     Height = normH,
                     SegmentIndex = segIndex++
                 });
-
-                runningX += advanceScaled + run.CharacterSpacing;
-                if (glyph.Unicode == " ") runningX += run.WordSpacing;
             }
         }
 
