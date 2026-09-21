@@ -224,6 +224,24 @@
                           IsCheckable="True" IsChecked="{Binding IsNightMode, Mode=OneWay}"
                           InputGestureText="Ctrl+Shift+N"
                           ToolTip="Inverts the pages themselves for reading in the dark. Separate from the window theme." />
+                <Separator />
+                <MenuItem Header="Rendering _Engine" ToolTip="Select the active PDF rendering engine">
+                    <MenuItem Header="_Auto (Hybrid Vector + Fallback)"
+                              Command="{Binding SetEngineModeAutoCommand}"
+                              IsCheckable="True"
+                              IsChecked="{Binding IsAutoEngineMode, Mode=OneWay}"
+                              ToolTip="DirectX vector rendering where supported, with seamless PDFium fallback." />
+                    <MenuItem Header="_Vector Only (Native DirectX/WPF)"
+                              Command="{Binding SetEngineModeVectorCommand}"
+                              IsCheckable="True"
+                              IsChecked="{Binding IsVectorEngineMode, Mode=OneWay}"
+                              ToolTip="Force 100% native vector rendering." />
+                    <MenuItem Header="_PDFium Only (Google PDFium Rasterizer)"
+                              Command="{Binding SetEngineModePdfiumCommand}"
+                              IsCheckable="True"
+                              IsChecked="{Binding IsPdfiumEngineMode, Mode=OneWay}"
+                              ToolTip="Force Google PDFium rasterizer for all pages." />
+                </MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Tools">
@@ -1699,6 +1717,17 @@
                             Visibility="{Binding IsUpdateAvailable, Converter={StaticResource BoolToVis}}">
                         <TextBlock Text="{Binding AvailableUpdateVersion, StringFormat='⬆ v{0} available'}"
                                    Foreground="#E8910B"
+                                   FontWeight="SemiBold"
+                                   FontSize="11" />
+                    </Border>
+                    <Border Background="{DynamicResource AccentLightBrush}"
+                            CornerRadius="3"
+                            Padding="6,1"
+                            Margin="0,0,10,0"
+                            Cursor="Help"
+                            ToolTip="{Binding CurrentPageEngineTooltip}">
+                        <TextBlock Text="{Binding CurrentPageEngineBadge}"
+                                   Foreground="{DynamicResource AccentBrush}"
                                    FontWeight="SemiBold"
                                    FontSize="11" />
                     </Border>

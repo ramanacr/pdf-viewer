@@ -20,6 +20,7 @@ using PdfViewer.Core.Security;
 using PdfViewer.Core.Session;
 using PdfViewer.Models;
 using PdfViewer.Services;
+using PdfEngine.Vector;
 
 namespace PdfViewer.ViewModels;
 
@@ -73,6 +74,12 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private DocumentMetadata? _metadata;
+
+    [ObservableProperty]
+    private string _currentPageEngineBadge = "⚡ Vector";
+
+    [ObservableProperty]
+    private string _currentPageEngineTooltip = "Vector-first rendering engine";
 
     [ObservableProperty]
     private int _currentPageNumber = 1;
@@ -541,6 +548,7 @@ public partial class MainViewModel : ObservableObject
 
             // Trigger asynchronous render
             await RenderVisiblePagesAsync();
+            UpdateCurrentPageEngineStatus();
             _ = RenderThumbnailsAsync();
 
             // Inspect what the document carries. Done after the first render so opening
@@ -587,6 +595,7 @@ public partial class MainViewModel : ObservableObject
         ClearNavigationHistory();
         WindowTitle = "PDF Viewer";
         StatusText = "Ready";
+        UpdateCurrentPageEngineStatus();
     }
 
     #endregion
@@ -605,6 +614,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         UpdateSingleCurrentPage();
+        UpdateCurrentPageEngineStatus();
     }
 
     public void SetCurrentPageFromScroll(int centerPage)
@@ -734,6 +744,85 @@ public partial class MainViewModel : ObservableObject
         if (bookmark != null && bookmark.TargetPageNumber >= 1 && bookmark.TargetPageNumber <= PageCount)
         {
             NavigateToPage(bookmark.TargetPageNumber);
+        }
+    }
+
+    #endregion
+
+    #region Rendering Engine
+
+    public PdfEngineMode CurrentEngineMode
+    {
+        get => _docService.EngineMode;
+        set
+        {
+            if (_docService.EngineMode != value)
+            {
+                _docService.EngineMode = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsAutoEngineMode));
+                OnPropertyChanged(nameof(IsVectorEngineMode));
+                OnPropertyChanged(nameof(IsPdfiumEngineMode));
+                _ = SwitchEngineModeAsync(value);
+            }
+        }
+    }
+
+    public bool IsAutoEngineMode => CurrentEngineMode == PdfEngineMode.Auto;
+    public bool IsVectorEngineMode => CurrentEngineMode == PdfEngineMode.Vector;
+    public bool IsPdfiumEngineMode => CurrentEngineMode == PdfEngineMode.Pdfium;
+
+    [RelayCommand]
+    public void SetEngineModeAuto() => CurrentEngineMode = PdfEngineMode.Auto;
+
+    [RelayCommand]
+    public void SetEngineModeVector() => CurrentEngineMode = PdfEngineMode.Vector;
+
+    [RelayCommand]
+    public void SetEngineModePdfium() => CurrentEngineMode = PdfEngineMode.Pdfium;
+
+    private async Task SwitchEngineModeAsync(PdfEngineMode mode)
+    {
+        if (!IsDocumentLoaded)
+        {
+            UpdateCurrentPageEngineStatus();
+            return;
+        }
+
+        _cache.Clear();
+        foreach (var page in Pages)
+        {
+            page.UnloadImage();
+        }
+
+        await RenderVisiblePagesAsync();
+        UpdateCurrentPageEngineStatus();
+    }
+
+    public void UpdateCurrentPageEngineStatus()
+    {
+        if (!IsDocumentLoaded || CurrentPageNumber < 1)
+        {
+            CurrentPageEngineBadge = CurrentEngineMode switch
+            {
+                PdfEngineMode.Vector => "⚡ Vector",
+                PdfEngineMode.Pdfium => "🖼️ PDFium",
+                _ => "⚡ Vector (Auto)"
+            };
+            CurrentPageEngineTooltip = "No document loaded";
+            return;
+        }
+
+        var report = _docService.GetPageEngineReport(CurrentPageNumber);
+        if (report != null)
+        {
+            CurrentPageEngineBadge = report.BadgeText;
+            CurrentPageEngineTooltip = report.Tooltip;
+        }
+        else
+        {
+            CurrentPageEngineBadge = CurrentEngineMode == PdfEngineMode.Pdfium ? "🖼️ PDFium" : "⚡ Vector";
+            CurrentPageEngineTooltip = "Page engine report pending render...";
         }
     }
 
@@ -1156,6 +1245,7 @@ public partial class MainViewModel : ObservableObject
             {
                 await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
                 _ = SingleCurrentPage.LoadTextSegmentsAsync(_docService, CancellationToken.None);
+                UpdateCurrentPageEngineStatus();
             }
             return;
         }
@@ -1185,6 +1275,7 @@ public partial class MainViewModel : ObservableObject
 
         // Start gentle background prefetch for remaining pages
         _ = PrefetchAllPagesAsync(dpi, RotationAngle);
+        UpdateCurrentPageEngineStatus();
     }
 
     private async Task PrefetchAllPagesAsync(int dpi, int rotation)

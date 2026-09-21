@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -25,9 +27,43 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 {
     private readonly PdfiumDocumentService _pdfiumService;
     private readonly WindowsVectorRenderer _vectorRenderer;
+    private readonly ConcurrentDictionary<int, PageEngineReport> _pageEngineReports = new();
     private PdfVectorDocument? _vectorDoc;
-    private readonly PdfEngineMode _mode;
+    private PdfEngineMode _mode;
     private bool _disposed;
+
+    public PdfEngineMode EngineMode
+    {
+        get => _mode;
+        set => _mode = value;
+    }
+
+    public PageEngineReport? GetPageEngineReport(int pageNumber)
+    {
+        if (_pageEngineReports.TryGetValue(pageNumber, out var report))
+        {
+            return report;
+        }
+
+        if (_mode == PdfEngineMode.Pdfium)
+        {
+            return new PageEngineReport(
+                pageNumber,
+                PdfEngineMode.Pdfium,
+                IsFallback: false,
+                FallbackReasons: Array.Empty<string>(),
+                BadgeText: "🖼️ PDFium",
+                Tooltip: "Rendered via Google PDFium software rasterizer [Mode: PDFium]");
+        }
+
+        return new PageEngineReport(
+            pageNumber,
+            _mode,
+            IsFallback: false,
+            FallbackReasons: Array.Empty<string>(),
+            BadgeText: _mode == PdfEngineMode.Vector ? "⚡ Vector" : "⚡ Vector (Auto)",
+            Tooltip: "DirectX/WPF Vector Engine (Pending rendering or cached)");
+    }
 
     public bool IsDocumentLoaded => _vectorDoc != null || _pdfiumService.IsDocumentLoaded;
     public string CurrentFilePath => _pdfiumService.CurrentFilePath;
@@ -69,6 +105,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public void CloseDocument()
     {
+        _pageEngineReports.Clear();
         _vectorDoc?.Dispose();
         _vectorDoc = null;
         _pdfiumService.CloseDocument();
@@ -109,9 +146,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     {
         if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium)
         {
+            IPdfDisplayList? displayList = null;
             try
             {
-                var displayList = await _vectorDoc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+                displayList = await _vectorDoc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
 
                 // If strict vector mode or page has zero fallback constructs and valid commands, render natively!
                 if (_mode == PdfEngineMode.Vector || (!displayList.HasFallback && displayList.Commands.Count > 0))
@@ -127,14 +165,65 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                     using var renderedPage = await _vectorRenderer.RenderDisplayListAsync(displayList, request, null, ct).ConfigureAwait(false);
                     if (renderedPage != null)
                     {
+                        _pageEngineReports[pageNumber] = new PageEngineReport(
+                            pageNumber,
+                            PdfEngineMode.Vector,
+                            IsFallback: false,
+                            FallbackReasons: Array.Empty<string>(),
+                            BadgeText: "⚡ Vector",
+                            Tooltip: $"Rendered natively with Windows Vector Engine (DirectX / WPF DirectWrite)\nCommands: {displayList.Commands.Count}");
                         return CreateBitmapSource(renderedPage);
                     }
                 }
             }
-            catch when (_mode != PdfEngineMode.Vector)
+            catch (Exception ex) when (_mode != PdfEngineMode.Vector)
             {
                 // Fallback to PDFium on rendering failure in hybrid mode
+                _pageEngineReports[pageNumber] = new PageEngineReport(
+                    pageNumber,
+                    PdfEngineMode.Pdfium,
+                    IsFallback: true,
+                    FallbackReasons: new[] { $"Vector rendering error: {ex.Message}" },
+                    BadgeText: "🖼️ PDFium (Fallback)",
+                    Tooltip: $"Rendered with Google PDFium (Raster) due to error in vector renderer:\n• {ex.Message}");
+                return await _pdfiumService.RenderPageAsync(pageNumber, dpi, rotationAngle, ct).ConfigureAwait(false);
             }
+
+            if (displayList != null && displayList.HasFallback)
+            {
+                var reasons = displayList.FallbackTokens
+                    .Select(t => $"• {t.Reason}: {t.Description}")
+                    .Distinct()
+                    .ToList();
+
+                _pageEngineReports[pageNumber] = new PageEngineReport(
+                    pageNumber,
+                    PdfEngineMode.Pdfium,
+                    IsFallback: true,
+                    FallbackReasons: reasons,
+                    BadgeText: "🖼️ PDFium (Fallback)",
+                    Tooltip: $"Rendered with Google PDFium (Raster) due to fallback:\n{string.Join("\n", reasons)}");
+            }
+            else if (displayList != null && displayList.Commands.Count == 0)
+            {
+                _pageEngineReports[pageNumber] = new PageEngineReport(
+                    pageNumber,
+                    PdfEngineMode.Pdfium,
+                    IsFallback: true,
+                    FallbackReasons: new[] { "Empty vector display list" },
+                    BadgeText: "🖼️ PDFium (Fallback)",
+                    Tooltip: "Rendered with Google PDFium (Raster) because page content stream produced 0 vector commands.");
+            }
+        }
+        else if (_mode == PdfEngineMode.Pdfium)
+        {
+            _pageEngineReports[pageNumber] = new PageEngineReport(
+                pageNumber,
+                PdfEngineMode.Pdfium,
+                IsFallback: false,
+                FallbackReasons: Array.Empty<string>(),
+                BadgeText: "🖼️ PDFium",
+                Tooltip: "Rendered via Google PDFium software rasterizer [Mode: PDFium]");
         }
 
         // PDFium fallback / default path

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using PdfEngine.Vector;
 using PdfViewer.Models;
 
 namespace PdfViewer.Services;
@@ -15,6 +16,16 @@ namespace PdfViewer.Services;
 /// </summary>
 public interface IPdfDocumentService : IDisposable
 {
+    /// <summary>
+    /// Gets or sets the active engine processing mode (Auto, Vector, Pdfium).
+    /// </summary>
+    PdfEngineMode EngineMode { get; set; }
+
+    /// <summary>
+    /// Gets the diagnostic report of how the specified page was rendered (Vector vs. PDFium fallback).
+    /// </summary>
+    PageEngineReport? GetPageEngineReport(int pageNumber);
+
     /// <summary>
     /// Gets whether a document is currently loaded.
     /// </summary>

@@ -12,6 +12,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using PdfEngine.Vector;
 using PdfViewer.Core.Security;
 using PdfViewer.Models;
 
@@ -22,6 +23,23 @@ namespace PdfViewer.Services;
 /// </summary>
 public class PdfiumDocumentService : IPdfDocumentService
 {
+    public PdfEngineMode EngineMode
+    {
+        get => PdfEngineMode.Pdfium;
+        set { /* PdfiumDocumentService only operates in Pdfium mode */ }
+    }
+
+    public PageEngineReport? GetPageEngineReport(int pageNumber)
+    {
+        return new PageEngineReport(
+            pageNumber,
+            PdfEngineMode.Pdfium,
+            IsFallback: false,
+            FallbackReasons: Array.Empty<string>(),
+            BadgeText: "🖼️ PDFium",
+            Tooltip: "Rendered via Google PDFium software rasterizer");
+    }
+
     private SafeDocumentHandle? _document;
     // The process-wide PDFium lock, not a private one. PDFium's font/codec/render-device
     // state is global, so serializing only this service still raced the PdfEngine.Pdfium
