@@ -364,6 +364,30 @@ end";
         Assert.Equal(600.0 / 1000.0 * 12.0, run.Glyphs[1].AdvanceX);
     }
 
+    [Fact]
+    public async Task VectorRenderer_ClosedSubpath_RendersCompleteClosedStroke()
+    {
+        string contentStream = "0 0 1 RG 2 w 10 10 m 50 80 l 90 10 l h B";
+        byte[] pdfBytes = BuildPdf(
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [ 0 0 100 100 ] /Contents 4 0 R >>",
+            $"<< /Length {contentStream.Length} >>\nstream\n{contentStream}\nendstream"
+        );
+
+        using var doc = await PdfVectorDocument.OpenAsync(pdfBytes);
+        var displayList = await doc.GetPageDisplayListAsync(1);
+        Assert.NotNull(displayList);
+        Assert.Contains(displayList.Commands, cmd => cmd is StrokePath);
+
+        using var renderer = new WindowsVectorRenderer();
+        var request = new RenderRequest { PageNumber = 1, Dpi = 96.0 };
+        using var rendered = await renderer.RenderDisplayListAsync(displayList, request);
+        Assert.NotNull(rendered);
+        Assert.True(rendered.WidthPixels > 0);
+        Assert.True(rendered.HeightPixels > 0);
+    }
+
     private static byte[] BuildPdf(params string[] objects)
     {
         var sb = new StringBuilder();

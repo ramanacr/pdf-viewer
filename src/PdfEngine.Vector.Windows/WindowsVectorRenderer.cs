@@ -269,54 +269,69 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 
         using (var ctx = geom.Open())
         {
-            bool figureStarted = false;
+            int i = 0;
+            int count = path.Segments.Count;
             Point currentPt = new Point(0, 0);
 
-            foreach (var seg in path.Segments)
+            while (i < count)
             {
-                switch (seg)
+                Point startPt = currentPt;
+                if (path.Segments[i] is PdfMoveTo m)
                 {
-                    case PdfMoveTo m:
-                        if (figureStarted)
-                        {
-                            // Close current figure if open
-                        }
-                        currentPt = new Point(m.Point.X, m.Point.Y);
-                        ctx.BeginFigure(currentPt, isFilled: true, isClosed: false);
-                        figureStarted = true;
-                        break;
+                    startPt = new Point(m.Point.X, m.Point.Y);
+                    currentPt = startPt;
+                    i++;
+                }
 
-                    case PdfLineTo l:
-                        if (!figureStarted)
-                        {
-                            ctx.BeginFigure(currentPt, isFilled: true, isClosed: false);
-                            figureStarted = true;
-                        }
-                        currentPt = new Point(l.Point.X, l.Point.Y);
-                        ctx.LineTo(currentPt, isStroked: true, isSmoothJoin: false);
+                // Scan forward to determine the end of this subpath and whether it is closed
+                int subpathEnd = i;
+                bool isClosed = false;
+                while (subpathEnd < count)
+                {
+                    var seg = path.Segments[subpathEnd];
+                    if (seg is PdfMoveTo)
+                    {
                         break;
+                    }
+                    if (seg is PdfCloseSubpath)
+                    {
+                        isClosed = true;
+                        subpathEnd++; // Include close segment in this subpath
+                        break;
+                    }
+                    subpathEnd++;
+                }
 
-                    case PdfCubicBezierTo c:
-                        if (!figureStarted)
-                        {
-                            ctx.BeginFigure(currentPt, isFilled: true, isClosed: false);
-                            figureStarted = true;
-                        }
-                        currentPt = new Point(c.EndPoint.X, c.EndPoint.Y);
-                        ctx.BezierTo(
-                            new Point(c.Control1.X, c.Control1.Y),
-                            new Point(c.Control2.X, c.Control2.Y),
-                            currentPt,
-                            isStroked: true,
-                            isSmoothJoin: false);
-                        break;
+                // If there are segments to draw or the figure is closed, begin figure
+                if (subpathEnd > i || isClosed)
+                {
+                    ctx.BeginFigure(startPt, isFilled: true, isClosed: isClosed);
 
-                    case PdfCloseSubpath:
-                        if (figureStarted)
+                    while (i < subpathEnd)
+                    {
+                        var seg = path.Segments[i++];
+                        switch (seg)
                         {
-                            figureStarted = false;
+                            case PdfLineTo l:
+                                currentPt = new Point(l.Point.X, l.Point.Y);
+                                ctx.LineTo(currentPt, isStroked: true, isSmoothJoin: false);
+                                break;
+
+                            case PdfCubicBezierTo c:
+                                currentPt = new Point(c.EndPoint.X, c.EndPoint.Y);
+                                ctx.BezierTo(
+                                    new Point(c.Control1.X, c.Control1.Y),
+                                    new Point(c.Control2.X, c.Control2.Y),
+                                    currentPt,
+                                    isStroked: true,
+                                    isSmoothJoin: false);
+                                break;
+
+                            case PdfCloseSubpath:
+                                currentPt = startPt;
+                                break;
                         }
-                        break;
+                    }
                 }
             }
         }
