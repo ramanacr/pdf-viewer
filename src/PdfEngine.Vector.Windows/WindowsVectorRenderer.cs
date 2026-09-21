@@ -115,9 +115,9 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             }
 
             // PDF origin is bottom-left; WPF origin is top-left.
-            // Invert Y axis to correctly render PDF coordinates
+            // Invert Y axis to correctly render PDF coordinates: Y' = (pageHeight - y) * scale
             rootTransformGroup.Children.Add(new ScaleTransform(scale, -scale));
-            rootTransformGroup.Children.Add(new TranslateTransform(0, -pageHeight));
+            rootTransformGroup.Children.Add(new TranslateTransform(0, pageHeight * scale));
 
             dc.PushTransform(rootTransformGroup);
 
