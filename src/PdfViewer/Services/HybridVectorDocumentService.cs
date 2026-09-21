@@ -288,11 +288,160 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default) =>
         _pdfiumService.SearchTextAsync(query, matchCase, ct);
 
-    public List<PageTextSegment> ExtractPageTextSegments(int pageNumber) =>
-        _pdfiumService.ExtractPageTextSegments(pageNumber);
+    public List<PageTextSegment> ExtractPageTextSegments(int pageNumber)
+    {
+        if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium && IsPageVectorRendered(pageNumber))
+        {
+            try
+            {
+                var displayList = _vectorDoc.GetPageDisplayListAsync(pageNumber).GetAwaiter().GetResult();
+                if (!displayList.HasFallback && displayList.Features.HasFlag(PdfFeatureSet.Text))
+                {
+                    var segments = ExtractCharSegmentsFromDisplayList(displayList);
+                    if (segments.Count > 0) return segments;
+                }
+            }
+            catch { }
+        }
+        return _pdfiumService.ExtractPageTextSegments(pageNumber);
+    }
 
-    public Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default) =>
-        _pdfiumService.ExtractPageTextSegmentsAsync(pageNumber, ct);
+    public async Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default)
+    {
+        if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium && IsPageVectorRendered(pageNumber))
+        {
+            try
+            {
+                var displayList = await _vectorDoc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+                if (!displayList.HasFallback && displayList.Features.HasFlag(PdfFeatureSet.Text))
+                {
+                    var segments = ExtractCharSegmentsFromDisplayList(displayList);
+                    if (segments.Count > 0) return segments;
+                }
+            }
+            catch { }
+        }
+        return await _pdfiumService.ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns true when the given page has an existing engine report confirming it was
+    /// rendered natively by the vector pipeline (not a PDFium fallback).
+    /// In Vector-only mode we always trust the display list; in Auto/Hybrid mode we require
+    /// an explicit render to have happened so we know the page is vector-clean.
+    /// </summary>
+    private bool IsPageVectorRendered(int pageNumber)
+    {
+        if (_mode == PdfEngineMode.Vector)
+            return true; // always use vector char extraction in strict vector mode
+
+        if (_pageEngineReports.TryGetValue(pageNumber, out var report))
+            return report.Engine == PdfEngineMode.Vector && !report.IsFallback;
+
+        return false; // page not yet rendered — use PDFium word-level segments for safety
+    }
+
+    /// <summary>
+    /// Extracts one <see cref="PageTextSegment"/> per glyph from the vector display list,
+    /// giving true per-character selection precision in vector/hybrid mode.
+    ///
+    /// PDF text matrices are column-major affine matrices where (x', y') = (A*x + C*y + E, B*x + D*y + F).
+    /// The text matrix encodes the glyph run origin in unflipped PDF page space (y increases upward).
+    /// We transform each glyph's X offset through the text matrix to get page-space coordinates,
+    /// then normalize into [0, 1] top-left space expected by the hit-test overlay.
+    /// </summary>
+    private static List<PageTextSegment> ExtractCharSegmentsFromDisplayList(IPdfDisplayList displayList)
+    {
+        var list = new List<PageTextSegment>();
+        double pageW = displayList.PageSize.Width;
+        double pageH = displayList.PageSize.Height;
+        if (pageW <= 0 || pageH <= 0) return list;
+
+        int segIndex = 0;
+
+        foreach (var cmd in displayList.Commands)
+        {
+            if (cmd is not DrawGlyphRun dgr) continue;
+
+            var run = dgr.Run;
+            if (string.IsNullOrEmpty(run.FullText) || run.Glyphs.Count == 0) continue;
+
+            // The text matrix encodes the run origin in PDF page space.
+            // glyph OffsetX is in unscaled glyph space; scale by FontSize and HorizontalScaling.
+            double hScale = run.HorizontalScaling / 100.0;
+            double fontSize = run.FontSize;
+
+            // Estimate glyph height from the font size; use FontSize as the cap-height approximation.
+            // A reasonable ascent/descent split: ascent ~0.7, descent ~0.3 of fontSize.
+            double ascentEst = fontSize * 0.75;
+            double descentEst = fontSize * 0.25;
+
+            double runningX = 0.0; // accumulates in glyph-space X
+
+            for (int i = 0; i < run.Glyphs.Count; i++)
+            {
+                var glyph = run.Glyphs[i];
+                if (string.IsNullOrEmpty(glyph.Unicode) || glyph.Unicode == " ")
+                {
+                    runningX += glyph.AdvanceX * fontSize * hScale + run.CharacterSpacing;
+                    continue;
+                }
+
+                // Transform glyph left edge through text matrix into PDF page space
+                // TextMatrix: x' = A*x + C*y + E,  y' = B*x + D*y + F
+                // At baseline y=0, glyph left edge x=runningX
+                var m = run.TextMatrix;
+                double glyphPageX = m.A * runningX + m.E;
+                double glyphPageY = m.B * runningX + m.F;
+
+                // Glyph advance in page space (includes font size scaling and horizontal scaling)
+                double advanceScaled = glyph.AdvanceX * fontSize * hScale;
+
+                // Glyph right edge in page space
+                double glyphPageX2 = m.A * (runningX + advanceScaled) + m.E;
+                double glyphPageY2 = m.B * (runningX + advanceScaled) + m.F;
+
+                // Bounding box top/bottom: ascent/descent applied along the matrix D/C axis
+                double topY = glyphPageY + m.D * ascentEst - m.C * ascentEst;
+                double bottomY = glyphPageY - m.D * descentEst + m.C * descentEst;
+
+                // Build axis-aligned bounding box in PDF page space
+                double minX = Math.Min(glyphPageX, glyphPageX2);
+                double maxX = Math.Max(glyphPageX, glyphPageX2);
+                double minY = Math.Min(bottomY, topY);
+                double maxY = Math.Max(bottomY, topY);
+
+                // Ensure minimum glyph width for hit-testing (single-pixel chars)
+                if (maxX - minX < 0.5) maxX = minX + fontSize * 0.5;
+
+                // Normalize to [0, 1]: X left-to-right, Y top-to-bottom (PDF y flipped)
+                double normX = Math.Max(0, minX / pageW);
+                double normY = Math.Max(0, 1.0 - (maxY / pageH));  // flip y: PDF bottom-left → screen top-left
+                double normW = Math.Max(0.001, (maxX - minX) / pageW);
+                double normH = Math.Max(0.001, (maxY - minY) / pageH);
+
+                // Clamp to page bounds
+                normX = Math.Min(normX, 1.0 - normW);
+                normY = Math.Min(normY, 1.0 - normH);
+
+                list.Add(new PageTextSegment
+                {
+                    PageNumber = displayList.PageNumber,
+                    Text = glyph.Unicode!,
+                    X = normX,
+                    Y = normY,
+                    Width = normW,
+                    Height = normH,
+                    SegmentIndex = segIndex++
+                });
+
+                runningX += advanceScaled + run.CharacterSpacing;
+                if (glyph.Unicode == " ") runningX += run.WordSpacing;
+            }
+        }
+
+        return list;
+    }
 
     public Task ExportPagesToImagesAsync(
         string outputDirectory,

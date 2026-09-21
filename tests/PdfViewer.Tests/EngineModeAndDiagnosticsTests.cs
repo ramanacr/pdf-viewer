@@ -124,4 +124,47 @@ public class EngineModeAndDiagnosticsTests
         Assert.False(r3.IsFallback);
         Assert.Contains("Vector", r3.BadgeText);
     }
+
+    [Fact]
+    public async Task HybridVectorDocumentService_ExtractPageTextSegments_ReturnsPerCharacterSegmentsInVectorMode()
+    {
+        string samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../samples/EngineShowcase.pdf"));
+        if (!Directory.Exists(Path.GetDirectoryName(samplePath)))
+        {
+            samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../samples/EngineShowcase.pdf"));
+        }
+        TestPdfBuilder.CreateEngineShowcasePdf(samplePath);
+
+        // --- Vector mode: should produce per-character segments ---
+        using var vectorService = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Vector);
+        await vectorService.OpenDocumentAsync(samplePath);
+        var vectorSegments = await vectorService.ExtractPageTextSegmentsAsync(1);
+
+        Assert.NotEmpty(vectorSegments);
+
+        // In vector mode every segment should be exactly ONE character
+        foreach (var seg in vectorSegments)
+        {
+            Assert.Equal(1, seg.Text.Length);
+            Assert.InRange(seg.X, 0.0, 1.0);
+            Assert.InRange(seg.Y, 0.0, 1.0);
+            Assert.InRange(seg.Width, 0.0, 1.0);
+            Assert.InRange(seg.Height, 0.0, 1.0);
+        }
+
+        // Reconstructed text should contain words from the page
+        string reconstructed = string.Concat(vectorSegments.Select(s => s.Text));
+        Assert.Contains("Vector", reconstructed);
+
+        // --- PDFium mode: word-grouped segments (each segment may contain multiple characters) ---
+        using var pdfiumService = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Pdfium);
+        await pdfiumService.OpenDocumentAsync(samplePath);
+        var pdfiumSegments = await pdfiumService.ExtractPageTextSegmentsAsync(1);
+
+        Assert.NotEmpty(pdfiumSegments);
+
+        // Vector char segments should be >= PDFium word segments (finer granularity)
+        Assert.True(vectorSegments.Count >= pdfiumSegments.Count,
+            $"Expected vector char segments ({vectorSegments.Count}) >= PDFium word segments ({pdfiumSegments.Count})");
+    }
 }
