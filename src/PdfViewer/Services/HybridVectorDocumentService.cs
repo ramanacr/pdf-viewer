@@ -113,8 +113,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             {
                 var displayList = await _vectorDoc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
 
-                // If strict vector mode or page has zero fallback constructs, render natively!
-                if (_mode == PdfEngineMode.Vector || !displayList.HasFallback)
+                // If strict vector mode or page has zero fallback constructs and valid commands, render natively!
+                if (_mode == PdfEngineMode.Vector || (!displayList.HasFallback && displayList.Commands.Count > 0))
                 {
                     var rot = (PageRotation)rotationAngle;
                     var request = new RenderRequest
@@ -125,7 +125,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                     };
 
                     using var renderedPage = await _vectorRenderer.RenderDisplayListAsync(displayList, request, null, ct).ConfigureAwait(false);
-                    return CreateBitmapSource(renderedPage);
+                    if (renderedPage != null)
+                    {
+                        return CreateBitmapSource(renderedPage);
+                    }
                 }
             }
             catch when (_mode != PdfEngineMode.Vector)

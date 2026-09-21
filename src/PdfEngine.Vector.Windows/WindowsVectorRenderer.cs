@@ -99,8 +99,18 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             // Clear background to opaque white
             dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, pixelW, pixelH));
 
+            double minX = displayList.CropBox.X;
+            double minY = displayList.CropBox.Y;
+
             // Setup viewport scaling and orientation
             var rootTransformGroup = new TransformGroup();
+
+            // PDF origin is bottom-left (minX, minY); WPF origin is top-left (0, 0).
+            // First translate by (-minX, -(minY + pageHeight)), then scale by (scale, -scale):
+            // X' = (x - minX) * scale
+            // Y' = (minY + pageHeight - y) * scale
+            rootTransformGroup.Children.Add(new TranslateTransform(-minX, -(minY + pageHeight)));
+            rootTransformGroup.Children.Add(new ScaleTransform(scale, -scale));
 
             // Apply user rotation if requested
             if (userRotation != 0)
@@ -114,17 +124,11 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 }
             }
 
-            // PDF origin is bottom-left; WPF origin is top-left.
-            // Invert Y axis to correctly render PDF coordinates: Y' = (pageHeight - y) * scale
-            rootTransformGroup.Children.Add(new ScaleTransform(scale, -scale));
-            rootTransformGroup.Children.Add(new TranslateTransform(0, pageHeight * scale));
-
             dc.PushTransform(rootTransformGroup);
 
-            // Replay draw commands
-            int clipDepth = 0;
-            int transformDepth = 0;
-            int transparencyDepth = 0;
+            // Replay draw commands with robust LIFO state tracking
+            var pushStack = new Stack<DrawingPushKind>();
+            var stateFrameStack = new Stack<int>();
 
             foreach (var cmd in displayList.Commands)
             {
@@ -133,19 +137,18 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 switch (cmd)
                 {
                     case SaveState:
-                        // Save state marker
+                        stateFrameStack.Push(pushStack.Count);
                         break;
 
                     case RestoreState:
-                        if (transformDepth > 0)
+                        if (stateFrameStack.Count > 0)
                         {
-                            dc.Pop();
-                            transformDepth--;
-                        }
-                        if (clipDepth > 0)
-                        {
-                            dc.Pop();
-                            clipDepth--;
+                            int targetDepth = stateFrameStack.Pop();
+                            while (pushStack.Count > targetDepth)
+                            {
+                                dc.Pop();
+                                pushStack.Pop();
+                            }
                         }
                         break;
 
@@ -153,7 +156,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                         var m = ct.Matrix;
                         var matrix = new Matrix(m.A, m.B, m.C, m.D, m.E, m.F);
                         dc.PushTransform(new MatrixTransform(matrix));
-                        transformDepth++;
+                        pushStack.Push(DrawingPushKind.Transform);
                         break;
 
                     case FillPath fp:
@@ -179,15 +182,15 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                         if (clipGeom != null)
                         {
                             dc.PushClip(clipGeom);
-                            clipDepth++;
+                            pushStack.Push(DrawingPushKind.Clip);
                         }
                         break;
 
                     case PopClip:
-                        if (clipDepth > 0)
+                        if (pushStack.Count > 0 && pushStack.Peek() == DrawingPushKind.Clip)
                         {
                             dc.Pop();
-                            clipDepth--;
+                            pushStack.Pop();
                         }
                         break;
 
@@ -209,14 +212,14 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 
                     case BeginTransparencyGroup btg:
                         dc.PushOpacity(Math.Clamp(btg.Alpha, 0.0, 1.0));
-                        transparencyDepth++;
+                        pushStack.Push(DrawingPushKind.Opacity);
                         break;
 
                     case EndTransparencyGroup:
-                        if (transparencyDepth > 0)
+                        if (pushStack.Count > 0 && pushStack.Peek() == DrawingPushKind.Opacity)
                         {
                             dc.Pop();
-                            transparencyDepth--;
+                            pushStack.Pop();
                         }
                         break;
 
@@ -227,9 +230,11 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             }
 
             // Unwind any remaining open transforms/clips/transparency
-            while (transparencyDepth-- > 0) dc.Pop();
-            while (transformDepth-- > 0) dc.Pop();
-            while (clipDepth-- > 0) dc.Pop();
+            while (pushStack.Count > 0)
+            {
+                dc.Pop();
+                pushStack.Pop();
+            }
 
             // Unwind root viewport transform
             dc.Pop();
@@ -370,8 +375,8 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
     private static void RenderGlyphRun(DrawingContext dc, PdfGlyphRun run, PdfPaint paint)
     {
         var textMatrix = run.TextMatrix;
-        // Invert Y in text space because PDF text coordinates are Y-up
-        var wpMatrix = new Matrix(textMatrix.A, -textMatrix.B, -textMatrix.C, textMatrix.D, textMatrix.E, textMatrix.F);
+        // Invert Y locally in text space so FormattedText (which renders top-down) renders upright in PDF Y-up space
+        var wpMatrix = new Matrix(textMatrix.A, textMatrix.B, -textMatrix.C, -textMatrix.D, textMatrix.E, textMatrix.F);
 
         dc.PushTransform(new MatrixTransform(wpMatrix));
 
@@ -393,7 +398,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 brush,
                 1.0);
 
-            dc.DrawText(ft, new Point(glyph.OffsetX, -run.FontSize));
+            dc.DrawText(ft, new Point(glyph.OffsetX, -ft.Baseline));
         }
 
         dc.Pop();
@@ -513,6 +518,13 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
         byte g = (byte)Math.Clamp((int)(color.G * 255), 0, 255);
         byte b = (byte)Math.Clamp((int)(color.B * 255), 0, 255);
         return System.Windows.Media.Color.FromArgb(a, r, g, b);
+    }
+
+    private enum DrawingPushKind
+    {
+        Transform,
+        Clip,
+        Opacity
     }
 
     public void Dispose() { }

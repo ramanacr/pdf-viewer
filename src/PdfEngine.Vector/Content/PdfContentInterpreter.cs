@@ -558,6 +558,27 @@ public sealed class PdfContentInterpreter
                             ExecuteXObject(commands, xobjName, page.Resources, currentState, ref features, fallbackTokens, page.PageNumber, depth: 0);
                         }
                         break;
+
+                    // Marked Content & Compatibility Blocks
+                    case "BMC":
+                    case "BDC":
+                    case "EMC":
+                    case "MP":
+                    case "DP":
+                    case "BX":
+                    case "EX":
+                        // Semantic markup wrapper - safe to consume without fallback
+                        break;
+
+                    default:
+                        // Unrecognized / unsupported operator: trigger fallback for safety
+                        var unkToken = new PdfFallbackToken(
+                            page.PageNumber,
+                            page.CropBox,
+                            PdfFallbackReason.UnknownOperator,
+                            $"Unsupported PDF operator: '{op}'");
+                        fallbackTokens.Add(unkToken);
+                        break;
                 }
 
                 operands.Clear();
