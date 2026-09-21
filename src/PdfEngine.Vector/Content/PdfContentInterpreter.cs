@@ -689,6 +689,7 @@ public sealed class PdfContentInterpreter
 
         // Compute effective transform
         var paint = state.TextRenderingMode == 1 ? state.CreateStrokePaint() : state.CreateFillPaint();
+        string fullText = string.Concat(glyphs.Select(g => g.Unicode));
         var run = new PdfGlyphRun(
             state.CurrentFontResource,
             state.FontSize,
@@ -698,7 +699,9 @@ public sealed class PdfContentInterpreter
             state.CharacterSpacing,
             state.WordSpacing,
             state.TextRise,
-            state.TextRenderingMode);
+            state.TextRenderingMode,
+            FontFamilyName: font.BaseFont,
+            FullText: fullText);
 
         commands.Add(new DrawGlyphRun(run, paint, new PdfRect(0, 0, currentX, state.FontSize)));
 
@@ -717,14 +720,16 @@ public sealed class PdfContentInterpreter
         var font = _fontResolver.ResolveFont(state.CurrentFontResource, resources);
         features |= PdfFeatureSet.Text;
 
-        var glyphs = new List<PdfGlyph>();
         double currentX = 0;
 
         foreach (var item in tjArray)
         {
             if (item is PdfString str)
             {
+                var glyphs = new List<PdfGlyph>();
                 var span = str.RawBytes.Span;
+                double chunkStartX = currentX;
+
                 if (font.IsComposite)
                 {
                     for (int i = 0; i + 1 < span.Length; i += 2)
@@ -751,6 +756,27 @@ public sealed class PdfContentInterpreter
                         currentX += advance;
                     }
                 }
+
+                if (glyphs.Count > 0)
+                {
+                    var paint = state.TextRenderingMode == 1 ? state.CreateStrokePaint() : state.CreateFillPaint();
+                    var chunkMatrix = PdfMatrix.CreateTranslation(chunkStartX, 0) * state.TextMatrix;
+                    string fullText = string.Concat(glyphs.Select(g => g.Unicode));
+                    var run = new PdfGlyphRun(
+                        state.CurrentFontResource,
+                        state.FontSize,
+                        glyphs,
+                        chunkMatrix,
+                        state.HorizontalScaling,
+                        state.CharacterSpacing,
+                        state.WordSpacing,
+                        state.TextRise,
+                        state.TextRenderingMode,
+                        FontFamilyName: font.BaseFont,
+                        FullText: fullText);
+
+                    commands.Add(new DrawGlyphRun(run, paint, new PdfRect(0, 0, currentX - chunkStartX, state.FontSize)));
+                }
             }
             else if (item.TryGetNumber(out double kern))
             {
@@ -760,21 +786,7 @@ public sealed class PdfContentInterpreter
             }
         }
 
-        var paint = state.TextRenderingMode == 1 ? state.CreateStrokePaint() : state.CreateFillPaint();
-        var run = new PdfGlyphRun(
-            state.CurrentFontResource,
-            state.FontSize,
-            glyphs,
-            state.TextMatrix,
-            state.HorizontalScaling,
-            state.CharacterSpacing,
-            state.WordSpacing,
-            state.TextRise,
-            state.TextRenderingMode);
-
-        commands.Add(new DrawGlyphRun(run, paint, new PdfRect(0, 0, currentX, state.FontSize)));
-
-        // Advance text matrix
+        // Advance text matrix by total currentX
         var advanceMatrix = PdfMatrix.CreateTranslation(currentX, 0);
         state.TextMatrix = advanceMatrix * state.TextMatrix;
     }

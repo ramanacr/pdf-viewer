@@ -177,7 +177,9 @@ public sealed record PdfGlyphRun(
     double CharacterSpacing = 0.0,
     double WordSpacing = 0.0,
     double TextRise = 0.0,
-    int RenderingMode = 0);
+    int RenderingMode = 0,
+    string? FontFamilyName = null,
+    string? FullText = null);
 
 /// <summary>
 /// Reference to an embedded image or image XObject.

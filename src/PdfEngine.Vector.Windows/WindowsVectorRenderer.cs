@@ -380,17 +380,15 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 
         dc.PushTransform(new MatrixTransform(wpMatrix));
 
-        var fontFamily = ResolveFontFamily(run.FontResourceName);
+        string fontName = !string.IsNullOrEmpty(run.FontFamilyName) ? run.FontFamilyName : run.FontResourceName;
+        var fontFamily = ResolveFontFamily(fontName);
         var typeface = new Typeface(fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
         var brush = CreateBrush(paint);
 
-        foreach (var glyph in run.Glyphs)
+        if (!string.IsNullOrEmpty(run.FullText))
         {
-            if (string.IsNullOrEmpty(glyph.Unicode) || glyph.Unicode == " ")
-                continue;
-
             var ft = new FormattedText(
-                glyph.Unicode,
+                run.FullText,
                 CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight,
                 typeface,
@@ -398,7 +396,26 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 brush,
                 1.0);
 
-            dc.DrawText(ft, new Point(glyph.OffsetX, -ft.Baseline));
+            dc.DrawText(ft, new Point(0, -ft.Baseline));
+        }
+        else
+        {
+            foreach (var glyph in run.Glyphs)
+            {
+                if (string.IsNullOrEmpty(glyph.Unicode) || glyph.Unicode == " ")
+                    continue;
+
+                var ft = new FormattedText(
+                    glyph.Unicode,
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    typeface,
+                    run.FontSize,
+                    brush,
+                    1.0);
+
+                dc.DrawText(ft, new Point(glyph.OffsetX, -ft.Baseline));
+            }
         }
 
         dc.Pop();
@@ -458,7 +475,9 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             family = new FontFamily("Courier New");
         else if (clean.Contains("Times", StringComparison.OrdinalIgnoreCase))
             family = new FontFamily("Times New Roman");
-        else if (clean.Contains("Arial", StringComparison.OrdinalIgnoreCase))
+        else if (clean.Contains("Arial", StringComparison.OrdinalIgnoreCase) ||
+                 clean.Contains("Helvetica", StringComparison.OrdinalIgnoreCase) ||
+                 clean.Contains("Sans", StringComparison.OrdinalIgnoreCase))
             family = new FontFamily("Arial");
         else
             family = new FontFamily("Segoe UI");
