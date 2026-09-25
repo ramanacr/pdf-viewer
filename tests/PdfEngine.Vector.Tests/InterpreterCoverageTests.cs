@@ -214,6 +214,25 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
+    public async Task XrefOffsetPointingAtAnotherObject_TriggersRebuildInsteadOfWrongObject()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("1 0 0 rg 10 10 50 50 re f");
+        byte[] pdf = b.Build();
+        // Swap the xref offsets of objects 2 and 3 (pages node and page content): a writer bug.
+        string text = System.Text.Encoding.Latin1.GetString(pdf);
+        var lines = text.Split('\n');
+        int xref = Array.IndexOf(lines, "xref");
+        (lines[xref + 4], lines[xref + 5]) = (lines[xref + 5], lines[xref + 4]);
+        pdf = System.Text.Encoding.Latin1.GetBytes(string.Join('\n', lines));
+
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        Assert.Equal(1, doc.PageCount);
+        Assert.True(doc.WasRepaired);
+        Assert.Single((await doc.GetPageDisplayListAsync(1)).Commands.OfType<FillPath>());
+    }
+
+    [Fact]
     public async Task OptionalContent_OffGroup_IsNotPainted()
     {
         var b = new VectorPdfBuilder();

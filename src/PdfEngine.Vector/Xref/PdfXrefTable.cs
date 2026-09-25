@@ -259,6 +259,12 @@ public sealed class PdfXrefTable
     }
 
     /// <summary>
+    /// Discards the loaded table and rebuilds it by scanning. Called when an xref offset turns out to
+    /// point at a different object than it claims (a common writer bug PDFium also repairs).
+    /// </summary>
+    public void Rebuild(IPdfByteSource source) => Reconstruct(source);
+
+    /// <summary>
     /// Rebuilds the table by scanning for object headers. Later definitions win (incremental updates
     /// append). The trailer is taken from the last parseable <c>trailer</c> dictionary, or synthesized
     /// from a /Type /Catalog object. Objects inside object streams are registered afterwards.

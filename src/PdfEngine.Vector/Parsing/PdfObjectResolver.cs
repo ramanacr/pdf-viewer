@@ -78,15 +78,29 @@ public sealed class PdfObjectResolver
                     _source.Position = entry.ByteOffset;
                     var lexer = new PdfLexer(_source, _limits);
 
-                    lexer.NextToken(); // object number
+                    var objNumToken = lexer.NextToken();
                     lexer.NextToken(); // generation
                     var objKeyword = lexer.NextToken();
 
-                    if (objKeyword.Type == PdfTokenType.Keyword && objKeyword.TextValue == "obj")
+                    bool headerMatches = objNumToken.Type == PdfTokenType.Integer && objNumToken.IntValue == objectNumber &&
+                                         objKeyword.Type == PdfTokenType.Keyword && objKeyword.TextValue == "obj";
+                    if (!headerMatches)
                     {
-                        var parser = new PdfParser(_limits);
-                        resolved = parser.ParseObject(lexer);
+                        // The xref points somewhere else than it claims. Rebuild once and retry; never
+                        // hand back a different object under this number.
+                        if (!_xrefTable.WasReconstructed)
+                        {
+                            _resolving.Remove(objectNumber);
+                            _xrefTable.Rebuild(_source);
+                            _resolvedCache.Clear();
+                            _objectStreams.Clear();
+                            return Resolve(objectNumber);
+                        }
+                        return null;
                     }
+
+                    var parser = new PdfParser(_limits);
+                    resolved = parser.ParseObject(lexer);
                 }
 
                 if (resolved is PdfStream stream)
