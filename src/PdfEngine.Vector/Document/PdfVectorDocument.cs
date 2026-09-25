@@ -124,7 +124,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         pageTree.Load(catalog);
 
         // Resolve basic metadata
-        var meta = ExtractMetadata(xref.Trailer, resolver, filePath, source.Length, pageTree.Count);
+        var meta = ExtractMetadata(xref.Trailer!, resolver, filePath, source.Length, pageTree.Count);
 
         return new PdfVectorDocument(source, filePath, meta, xref, resolver, pageTree, catalog, limits);
     }

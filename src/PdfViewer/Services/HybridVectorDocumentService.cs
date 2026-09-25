@@ -40,6 +40,9 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     private readonly ConcurrentDictionary<int, PageEngineReport> _pageEngineReports = new();
     private PdfEngineMetrics _metrics = new();
     private PdfVectorDocument? _vectorDoc;
+    private bool _vectorOpenAttempted;
+    private bool _openedWithPassword;
+    private readonly SemaphoreSlim _vectorOpenGate = new(1, 1);
     private PdfEngineMode _mode;
     private bool _disposed;
 
@@ -116,14 +119,23 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         var meta = await _pdfiumService.OpenDocumentAsync(filePath, password, ct).ConfigureAwait(false);
         _metrics = new PdfEngineMetrics();
         _fallbackProvider.Reset();
+        _vectorOpenAttempted = false;
+        _openedWithPassword = !string.IsNullOrEmpty(password);
 
         if (_mode == PdfEngineMode.Pdfium)
-            return meta;
+            return meta; // opened lazily if the user later switches to Auto/Vector
 
-        if (!string.IsNullOrEmpty(password))
+        await OpenVectorDocumentAsync(filePath, ct).ConfigureAwait(false);
+        return meta;
+    }
+
+    private async Task OpenVectorDocumentAsync(string filePath, CancellationToken ct)
+    {
+        _vectorOpenAttempted = true;
+        if (_openedWithPassword)
         {
             _metrics.DocumentFallbackReason = nameof(PdfFallbackReason.EncryptedContent);
-            return meta;
+            return;
         }
 
         try
@@ -144,12 +156,12 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             _vectorDoc = null;
             _metrics.DocumentFallbackReason = ex is PdfVectorException pve ? pve.Kind.ToString() : nameof(PdfFallbackReason.MalformedContentRecovery);
         }
-
-        return meta;
     }
 
     public void CloseDocument()
     {
+        _vectorOpenAttempted = false;
+        _openedWithPassword = false;
         _pageEngineReports.Clear();
         _fallbackProvider.Reset();
         _vectorDoc?.Dispose();
@@ -190,6 +202,21 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         int rotationAngle = 0,
         CancellationToken ct = default)
     {
+        if (_mode != PdfEngineMode.Pdfium && _vectorDoc == null && !_vectorOpenAttempted && _pdfiumService.IsDocumentLoaded)
+        {
+            // The document was opened in PDFium mode and the user switched engines since.
+            await _vectorOpenGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                if (_vectorDoc == null && !_vectorOpenAttempted)
+                    await OpenVectorDocumentAsync(_pdfiumService.CurrentFilePath, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                _vectorOpenGate.Release();
+            }
+        }
+
         var doc = _vectorDoc;
         if (_mode == PdfEngineMode.Pdfium || doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
         {

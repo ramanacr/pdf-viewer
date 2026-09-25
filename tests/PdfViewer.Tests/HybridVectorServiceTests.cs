@@ -104,6 +104,21 @@ public class HybridVectorServiceTests : IDisposable
         Assert.True(first.Y + first.Height > word.Y && first.Y < word.Y + word.Height, "character box overlaps the word box vertically");
     }
 
+    [Fact]
+    public async Task SwitchingFromPdfiumToAuto_OpensTheVectorDocumentLazily()
+    {
+        string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "switch.pdf"), 1);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Pdfium);
+        await service.OpenDocumentAsync(path);
+        Assert.False(service.IsVectorDocumentOpen);
+
+        service.EngineMode = PdfEngineMode.Auto;
+        await service.RenderPageAsync(1, 72);
+
+        Assert.True(service.IsVectorDocumentOpen);
+        Assert.Equal(PdfEngineMode.Vector, service.GetPageEngineReport(1)!.Engine);
+    }
+
     private static double MeanDifference(BitmapSource a, BitmapSource b)
     {
         var fa = new FormatConvertedBitmap(a, System.Windows.Media.PixelFormats.Bgra32, null, 0);
