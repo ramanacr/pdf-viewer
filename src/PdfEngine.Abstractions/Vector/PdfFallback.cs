@@ -28,7 +28,13 @@ public enum PdfFallbackReason
     EncryptedContent,
     UnsupportedAnnotationAppearance,
     UnknownOperator,
-    InternalCompatibilityGuard
+    InternalCompatibilityGuard,
+    /// <summary>Text rendering modes 4–7 (glyph outlines added to the clip).</summary>
+    TextClipping,
+    /// <summary>A hostile-input ceiling (commands, pixels, recursion) was reached.</summary>
+    ResourceLimit,
+    /// <summary>Image data could not be decoded (corrupt or truncated samples).</summary>
+    ImageDecode
 }
 
 /// <summary>
@@ -61,6 +67,7 @@ public enum PdfEngineMode
 /// Stable token identifying a region requiring fallback rendering.
 /// Contains no PDFium types or handles.
 /// </summary>
+/// <param name="Bounds">Conservative region in default user space (PDF points, y-up, before /Rotate).</param>
 public sealed record PdfFallbackToken(
     int PageNumber,
     PdfRect Bounds,

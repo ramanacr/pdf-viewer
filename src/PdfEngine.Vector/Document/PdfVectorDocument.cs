@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using PdfEngine.Documents;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Content;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
@@ -27,7 +28,9 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     private readonly PdfContentInterpreter _interpreter;
     private readonly PdfDictionary _catalog;
     private readonly Dictionary<PdfDictionary, int> _pageDictToNumber = new(ReferenceEqualityComparer.Instance);
-    private readonly ConcurrentDictionary<int, IPdfDisplayList> _displayListCache = new();
+    private readonly DisplayListCache _displayListCache;
+    // Resolver, font cache and byte source are not re-entrant across threads: one page builds at a time.
+    private readonly SemaphoreSlim _buildGate = new(1, 1);
     private bool _disposed;
 
     public string FilePath { get; }
@@ -37,6 +40,9 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
 
     public PdfObjectResolver Resolver => _resolver;
     public PdfXrefTable XrefTable => _xrefTable;
+
+    /// <summary>True when the xref was rebuilt by scanning a damaged file.</summary>
+    public bool WasRepaired => _xrefTable.WasReconstructed;
     public PdfPageTree PageTree => _pageTree;
 
     public static async ValueTask<PdfVectorDocument> OpenAsync(
@@ -78,6 +84,13 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
 
         var resolver = new PdfObjectResolver(source, xref, limits);
 
+        // No security handler yet (05_PDF_CORE "Encryption"): strings and streams would decode to
+        // ciphertext and render as garbage, so refuse with a typed error and let the host fall back.
+        if (xref.Trailer != null && xref.Trailer.ContainsKey("Encrypt"))
+        {
+            throw new PdfEncryptedDocumentException();
+        }
+
         if (xref.Trailer == null || !xref.Trailer.TryGetValue("Root", out var rootRef))
         {
             throw new InvalidDataException("PDF document contains no valid trailer or /Root catalog.");
@@ -117,6 +130,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         _catalog = catalog;
         _limits = limits;
         _interpreter = new PdfContentInterpreter(_resolver, null, _limits);
+        _displayListCache = new DisplayListCache(limits.MaxCachedDisplayListCommands);
 
         for (int i = 0; i < pageTree.Pages.Count; i++)
         {
@@ -286,12 +300,12 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return System.Text.Encoding.Latin1.GetString(span);
     }
 
-    public ValueTask<IPdfDisplayList> GetPageDisplayListAsync(int pageNumber, CancellationToken cancellationToken = default)
+    public async ValueTask<IPdfDisplayList> GetPageDisplayListAsync(int pageNumber, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (_displayListCache.TryGetValue(pageNumber, out var cached))
+        if (_displayListCache.TryGet(pageNumber, out var cached))
         {
-            return ValueTask.FromResult(cached);
+            return cached;
         }
 
         int idx = pageNumber - 1;
@@ -300,10 +314,81 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
             throw new ArgumentOutOfRangeException(nameof(pageNumber));
         }
 
-        var pageNode = _pageTree.Pages[idx];
-        var displayList = _interpreter.BuildDisplayList(pageNode);
-        _displayListCache[pageNumber] = displayList;
-        return ValueTask.FromResult(displayList);
+        // Interpretation is CPU-bound; never run it on the caller's (possibly UI) thread.
+        await _buildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_displayListCache.TryGet(pageNumber, out cached))
+                return cached;
+
+            var pageNode = _pageTree.Pages[idx];
+            var displayList = await Task.Run(() => _interpreter.BuildDisplayList(pageNode, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+            _displayListCache.Add(pageNumber, displayList);
+            return displayList;
+        }
+        finally
+        {
+            _buildGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// LRU cache of page display lists bounded by total command count (08_PERFORMANCE: the
+    /// display-list cache has its own complexity budget). The most recent page is always kept.
+    /// </summary>
+    private sealed class DisplayListCache
+    {
+        private readonly long _maxCommands;
+        private readonly LinkedList<(int Page, IPdfDisplayList List)> _lru = new();
+        private readonly Dictionary<int, LinkedListNode<(int Page, IPdfDisplayList List)>> _map = new();
+        private long _commands;
+
+        public DisplayListCache(long maxCommands) => _maxCommands = Math.Max(1, maxCommands);
+
+        public bool TryGet(int page, out IPdfDisplayList list)
+        {
+            lock (_lru)
+            {
+                if (_map.TryGetValue(page, out var node))
+                {
+                    _lru.Remove(node);
+                    _lru.AddFirst(node);
+                    list = node.Value.List;
+                    return true;
+                }
+            }
+            list = null!;
+            return false;
+        }
+
+        public void Add(int page, IPdfDisplayList list)
+        {
+            lock (_lru)
+            {
+                if (_map.ContainsKey(page))
+                    return;
+                _map[page] = _lru.AddFirst((page, list));
+                _commands += list.Commands.Count;
+                while (_commands > _maxCommands && _lru.Count > 1)
+                {
+                    var last = _lru.Last!;
+                    _lru.RemoveLast();
+                    _map.Remove(last.Value.Page);
+                    _commands -= last.Value.List.Commands.Count;
+                }
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_lru)
+            {
+                _lru.Clear();
+                _map.Clear();
+                _commands = 0;
+            }
+        }
     }
 
     private static DocumentMetadata ExtractMetadata(

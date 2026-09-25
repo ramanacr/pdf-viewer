@@ -5,6 +5,12 @@ namespace PdfEngine.Vector;
 /// <summary>
 /// Base class for all immutable drawing commands within a PDF display list.
 /// </summary>
+/// <remarks>
+/// Geometry inside a command is in the current user space established by the preceding
+/// <see cref="ConcatTransform"/> commands. <see cref="Bounds"/>, when present, is a conservative
+/// box in default user space (page space) so renderers can cull without replaying transforms.
+/// Unknown bounds (null) means "always draw".
+/// </remarks>
 public abstract record PdfDrawCommand
 {
     public PdfRect? Bounds { get; init; }

@@ -1,11 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Color;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Fonts;
+using PdfEngine.Vector.Functions;
 using PdfEngine.Vector.Graphics;
+using PdfEngine.Vector.Images;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
@@ -14,14 +22,30 @@ using PdfEngine.Vector.Streams;
 namespace PdfEngine.Vector.Content;
 
 /// <summary>
-/// Interprets PDF page content streams into an immutable display list of vector commands.
+/// Interprets PDF page content streams into an immutable display list of vector commands
+/// (ISO 32000-2 clauses 8 and 9).
 /// </summary>
+/// <remarks>
+/// Anything the vector path cannot reproduce faithfully is emitted as a classified
+/// <see cref="DrawFallbackRegion"/> with conservative page-space bounds instead of being
+/// silently dropped or approximated (06_PDFIUM_FALLBACK_AND_EXIT_PLAN, 11 "Error policy").
+/// </remarks>
 public sealed class PdfContentInterpreter
 {
     private readonly PdfObjectResolver _resolver;
     private readonly PdfFontResolver _fontResolver;
     private readonly PdfSecurityLimits _limits;
     private readonly PdfStreamDecoder _streamDecoder;
+    private readonly ConditionalWeakTable<PdfFont, PdfFontFace> _faces = new();
+
+    /// <summary>Optional-content groups that are OFF in the default configuration (never painted).</summary>
+    public IReadOnlySet<PdfDictionary>? HiddenOptionalContentGroups { get; init; }
+
+    /// <summary>Stable prefix for backend cache keys of resources from this document.</summary>
+    public string DocumentKey { get; init; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>Render annotation normal appearances, matching the PDFium path's FPDF_ANNOT flag.</summary>
+    public bool RenderAnnotations { get; init; } = true;
 
     public PdfContentInterpreter(
         PdfObjectResolver resolver,
@@ -31,1050 +55,1980 @@ public sealed class PdfContentInterpreter
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _fontResolver = fontResolver ?? new PdfFontResolver(_resolver);
         _limits = limits ?? PdfSecurityLimits.Default;
-        _streamDecoder = new PdfStreamDecoder(_limits);
+        _streamDecoder = new PdfStreamDecoder(_limits, o => _resolver.Resolve(o));
     }
 
-    public IPdfDisplayList BuildDisplayList(PdfPageNode page)
+    public IPdfDisplayList BuildDisplayList(PdfPageNode page) => BuildDisplayList(page, CancellationToken.None);
+
+    public IPdfDisplayList BuildDisplayList(PdfPageNode page, CancellationToken cancellationToken)
     {
-        var commands = new List<PdfDrawCommand>();
-        var stateStack = new Stack<GraphicsState>();
-        var currentState = new GraphicsState();
+        ArgumentNullException.ThrowIfNull(page);
+        return new PageRun(this, page, cancellationToken).Build();
+    }
 
-        var activePathSegments = new List<PdfPathSegment>();
-        PdfPoint currentPoint = PdfPoint.Zero;
-        bool clipPending = false;
-        PdfFillRule pendingClipRule = PdfFillRule.NonZero;
-
-        var features = PdfFeatureSet.None;
-        var fallbackTokens = new List<PdfFallbackToken>();
-
-        // Concatenate all page content streams
-        byte[] contentBytes = ConcatenateContentStreams(page.Contents);
-        if (contentBytes.Length == 0)
+    internal PdfFontFace FaceFor(PdfFont font)
+    {
+        return _faces.GetValue(font, static f =>
         {
-            return new PdfDisplayList(
-                page.PageNumber,
-                page.PageSize,
-                page.MediaBox,
-                page.CropBox,
-                page.RotationDegrees,
-                commands,
-                features);
+            byte[]? program = f.EmbeddedFontData;
+            var format = f.EmbeddedProgramKind switch
+            {
+                PdfFontProgramKind.TrueType => PdfFontProgramFormat.TrueType,
+                PdfFontProgramKind.OpenType => program is { Length: >= 4 } && program[0] == 'O' && program[1] == 'T' && program[2] == 'T' && program[3] == 'O'
+                    ? PdfFontProgramFormat.OpenTypeCff
+                    : PdfFontProgramFormat.TrueType,
+                PdfFontProgramKind.None => PdfFontProgramFormat.None,
+                _ => PdfFontProgramFormat.Unsupported,
+            };
+
+            string key = program is { Length: > 0 }
+                ? "fontprog:" + Convert.ToHexString(SHA256.HashData(program), 0, 12)
+                : "fontsub:" + (f.PostScriptName ?? f.BaseFont);
+
+            return new PdfFontFace(
+                key,
+                f.PostScriptName ?? f.BaseFont,
+                format,
+                format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff ? program : ReadOnlyMemory<byte>.Empty,
+                f.IsBold,
+                f.IsItalic,
+                f.IsSerif,
+                f.IsFixedPitch,
+                f.IsSymbolic,
+                NormalizeEm(f.Ascent, 0.8),
+                NormalizeEm(f.Descent, -0.2));
+        });
+    }
+
+    private static double NormalizeEm(double value, double fallback)
+    {
+        if (double.IsNaN(value) || value == 0) return fallback;
+        return Math.Abs(value) > 2 ? value / 1000.0 : value;
+    }
+
+    /// <summary>Per-page interpretation state. Not thread-safe; one instance per build.</summary>
+    private sealed class PageRun
+    {
+        private readonly PdfContentInterpreter _owner;
+        private readonly PdfPageNode _page;
+        private readonly CancellationToken _ct;
+        private readonly PdfObjectResolver _resolver;
+        private readonly PdfSecurityLimits _limits;
+        private readonly PdfParser _parser;
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+
+        private readonly List<PdfDrawCommand> _commands = new();
+        private readonly List<PdfFallbackToken> _fallbacks = new();
+        private readonly HashSet<PdfStream> _activeForms = new(ReferenceEqualityComparer.Instance);
+        private PdfFeatureSet _features;
+
+        private long _operators;
+        private long _segments;
+        private long _glyphs;
+        private long _imagePixels;
+        private int _imageSerial;
+
+        public PageRun(PdfContentInterpreter owner, PdfPageNode page, CancellationToken ct)
+        {
+            _owner = owner;
+            _page = page;
+            _ct = ct;
+            _resolver = owner._resolver;
+            _limits = owner._limits;
+            _parser = new PdfParser(_limits);
         }
 
-        using var memSource = new MemoryByteSource(contentBytes);
-        var lexer = new PdfLexer(memSource, _limits);
-        var operands = new List<PdfObject>();
+        private PdfRect Crop => _page.CropBox;
 
-        while (true)
+        public IPdfDisplayList Build()
         {
-            long tokenPos = memSource.Position;
-            var token = lexer.NextToken();
-            if (token.Type == PdfTokenType.EndOfFile)
-                break;
+            var gs = new GraphicsState { ClipBoundsPage = Crop };
 
-            if (commands.Count > _limits.MaxCommandsPerPage)
+            try
             {
-                // Hit maximum commands limit; produce fallback for remainder of page
-                var tokenItem = new PdfFallbackToken(
-                    page.PageNumber,
-                    page.CropBox,
-                    PdfFallbackReason.InternalCompatibilityGuard,
-                    $"Page exceeded maximum draw command count ({_limits.MaxCommandsPerPage})");
-                fallbackTokens.Add(tokenItem);
-                commands.Add(new DrawFallbackRegion(tokenItem, page.CropBox));
-                break;
+                byte[] content = ConcatenateContentStreams(_page.Contents);
+                if (content.Length > 0)
+                {
+                    Execute(content, _page.Resources, gs, new ContentContext(PdfMatrix.Identity, 0, 0, false));
+                }
+
+                if (_owner.RenderAnnotations)
+                {
+                    AppendAnnotationAppearances();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (PdfResourceLimitException ex)
+            {
+                PageFallback(PdfFallbackReason.ResourceLimit, $"Resource limit reached: {ex.LimitName}");
+            }
+            catch (PdfUnsupportedFeatureException ex)
+            {
+                PageFallback(ex.Reason, ex.Message);
+            }
+            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
+                                           or IndexOutOfRangeException or ArgumentException or OverflowException
+                                           or InvalidOperationException)
+            {
+                PageFallback(PdfFallbackReason.MalformedContentRecovery, $"Content interpretation failed ({ex.GetType().Name})");
             }
 
-            if (token.Type == PdfTokenType.Keyword)
+            return new PdfDisplayList(
+                _page.PageNumber,
+                _page.PageSize,
+                _page.MediaBox,
+                _page.CropBox,
+                _page.RotationDegrees,
+                _commands,
+                _features,
+                _fallbacks);
+        }
+
+        // ------------------------------------------------------------------ content execution
+
+        private readonly record struct ContentContext(
+            PdfMatrix PatternBase,
+            int FormDepth,
+            int Type3Depth,
+            bool UncoloredGlyph);
+
+        private sealed class PathState
+        {
+            public readonly List<PdfPathSegment> Segments = new();
+            public PdfPoint Current;
+            public PdfPoint SubpathStart;
+            public bool ClipPending;
+            public PdfFillRule ClipRule;
+        }
+
+        private void Execute(ReadOnlyMemory<byte> content, PdfDictionary? resources, GraphicsState gs, ContentContext ctx)
+        {
+            resources ??= _page.Resources;
+            var stack = new Stack<GraphicsState>();
+            var path = new PathState();
+            var operands = new List<PdfObject>(8);
+            var ocStack = new Stack<bool>();
+            int hiddenDepth = 0;
+            int compatDepth = 0;
+            PdfRect? textClip = null;
+            bool inText = false;
+
+            using var src = new MemoryByteSource(content);
+            var lexer = new PdfLexer(src, _limits);
+
+            while (true)
             {
+                long tokenPos = src.Position;
+                var token = lexer.NextToken();
+                if (token.Type == PdfTokenType.EndOfFile)
+                    break;
+
+                if (token.Type != PdfTokenType.Keyword)
+                {
+                    src.Position = tokenPos;
+                    var obj = _parser.ParseObject(lexer);
+                    if (obj != null)
+                    {
+                        if (operands.Count >= 64)
+                            operands.RemoveAt(0); // bounded recovery for runaway operand lists
+                        operands.Add(obj);
+                    }
+                    else if (src.Position == tokenPos)
+                    {
+                        src.Position = tokenPos + 1; // never stall on an unparsable byte
+                    }
+                    continue;
+                }
+
                 string op = token.TextValue;
+                // true/false/null are operands, not operators.
+                if (op is "true" or "false" or "null")
+                {
+                    operands.Add(op == "null" ? PdfNull.Instance : op == "true" ? PdfBoolean.True : PdfBoolean.False);
+                    continue;
+                }
+
+                Tick();
+                bool hidden = hiddenDepth > 0;
 
                 switch (op)
                 {
-                    // Graphics State
+                    // ---------------------------------------------------------- graphics state
                     case "q":
-                        stateStack.Push(currentState.Clone());
-                        commands.Add(new SaveState());
+                        if (stack.Count < _limits.MaxGraphicsStateDepth)
+                        {
+                            stack.Push(gs.Clone());
+                            _commands.Add(new SaveState());
+                        }
                         break;
 
                     case "Q":
-                        if (stateStack.Count > 0)
+                        if (stack.Count > 0)
                         {
-                            currentState = stateStack.Pop();
-                            commands.Add(new RestoreState());
+                            var restored = stack.Pop();
+                            CopyInto(restored, gs);
+                            _commands.Add(new RestoreState());
                         }
                         break;
 
                     case "cm":
-                        if (operands.Count >= 6)
+                        if (TryNumbers(operands, 6, out var cm))
                         {
-                            double a = PopNum(operands);
-                            double b = PopNum(operands);
-                            double c = PopNum(operands);
-                            double d = PopNum(operands);
-                            double e = PopNum(operands);
-                            double f = PopNum(operands);
-                            var m = new PdfMatrix(a, b, c, d, e, f);
-                            currentState.CTM = m * currentState.CTM;
-                            commands.Add(new ConcatTransform(m));
+                            var m = new PdfMatrix(cm[0], cm[1], cm[2], cm[3], cm[4], cm[5]);
+                            gs.CTM = m * gs.CTM;
+                            _commands.Add(new ConcatTransform(m));
                         }
                         break;
 
                     case "w":
-                        if (operands.Count >= 1)
-                            currentState.LineWidth = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var w)) gs.LineWidth = Math.Max(0, w[0]);
                         break;
-
                     case "J":
-                        if (operands.Count >= 1)
-                            currentState.LineCap = (PdfLineCap)(int)PopNum(operands);
+                        if (TryNumbers(operands, 1, out var cap)) gs.LineCap = (PdfLineCap)Math.Clamp((int)cap[0], 0, 2);
                         break;
-
                     case "j":
-                        if (operands.Count >= 1)
-                            currentState.LineJoin = (PdfLineJoin)(int)PopNum(operands);
+                        if (TryNumbers(operands, 1, out var join)) gs.LineJoin = (PdfLineJoin)Math.Clamp((int)join[0], 0, 2);
                         break;
-
                     case "M":
-                        if (operands.Count >= 1)
-                            currentState.MiterLimit = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var ml)) gs.MiterLimit = Math.Max(1, ml[0]);
                         break;
-
                     case "d":
-                        if (operands.Count >= 2)
+                        if (operands.Count >= 2 && operands[^2] is PdfArray dashArr && operands[^1].TryGetNumber(out double phase))
                         {
-                            double phase = PopNum(operands);
-                            var arrObj = operands[operands.Count - 1];
-                            operands.RemoveAt(operands.Count - 1);
-                            if (arrObj is PdfArray dashArr)
-                            {
-                                var dList = new List<double>();
-                                foreach (var item in dashArr)
-                                {
-                                    if (item.TryGetNumber(out double dv))
-                                        dList.Add(dv);
-                                }
-                                currentState.DashArray = dList;
-                                currentState.DashPhase = phase;
-                            }
+                            SetDash(gs, dashArr, phase);
                         }
                         break;
+                    case "ri":
+                    case "i":
+                        break; // rendering intent / flatness: device-dependent, no visual contract here
 
                     case "gs":
-                        if (operands.Count >= 1)
-                        {
-                            string gsName = PopName(operands);
-                            ApplyExtGState(gsName, page.Resources, currentState, ref features);
-                        }
+                        if (LastName(operands) is string gsName)
+                            ApplyExtGState(gsName, resources, gs);
                         break;
 
-                    // Color & Color Space
-                    case "cs":
-                        if (operands.Count >= 1)
-                        {
-                            string csName = PopName(operands);
-                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.Resolve(new PdfName(csName), _resolver, page.Resources);
-                        }
-                        break;
-
+                    // ---------------------------------------------------------- colour
                     case "CS":
-                        if (operands.Count >= 1)
-                        {
-                            string csName = PopName(operands);
-                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.Resolve(new PdfName(csName), _resolver, page.Resources);
-                        }
-                        break;
-
-                    case "sc":
-                    case "scn":
-                        {
-                            int count = currentState.FillColorSpace.NumberOfComponents;
-                            var comps = PopNumbers(operands, count);
-                            currentState.FillColor = currentState.FillColorSpace.ToRgbColor(comps, (float)currentState.FillAlpha);
-                        }
+                    case "cs":
+                        if (!ctx.UncoloredGlyph && LastName(operands) is string csName)
+                            SetColorSpace(gs, op == "CS", csName, resources);
                         break;
 
                     case "SC":
                     case "SCN":
-                        {
-                            int count = currentState.StrokeColorSpace.NumberOfComponents;
-                            var comps = PopNumbers(operands, count);
-                            currentState.StrokeColor = currentState.StrokeColorSpace.ToRgbColor(comps, (float)currentState.StrokeAlpha);
-                        }
-                        break;
-
-                    case "g":
-                        if (operands.Count >= 1)
-                        {
-                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceGray;
-                            currentState.FillColor = PdfColor.FromGray((float)PopNum(operands), (float)currentState.FillAlpha);
-                        }
+                    case "sc":
+                    case "scn":
+                        if (!ctx.UncoloredGlyph)
+                            SetColor(gs, stroke: op[0] == 'S', operands, resources);
                         break;
 
                     case "G":
-                        if (operands.Count >= 1)
-                        {
-                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceGray;
-                            currentState.StrokeColor = PdfColor.FromGray((float)PopNum(operands), (float)currentState.StrokeAlpha);
-                        }
+                    case "g":
+                        if (!ctx.UncoloredGlyph && TryNumbers(operands, 1, out var gray))
+                            SetDeviceColor(gs, op == "G", PdfColorSpace.DeviceGray, gray);
                         break;
-
-                    case "rg":
-                        if (operands.Count >= 3)
-                        {
-                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceRgb;
-                            float r = (float)PopNum(operands);
-                            float g = (float)PopNum(operands);
-                            float b = (float)PopNum(operands);
-                            currentState.FillColor = PdfColor.FromRgb(r, g, b, (float)currentState.FillAlpha);
-                        }
-                        break;
-
                     case "RG":
-                        if (operands.Count >= 3)
-                        {
-                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceRgb;
-                            float r = (float)PopNum(operands);
-                            float g = (float)PopNum(operands);
-                            float b = (float)PopNum(operands);
-                            currentState.StrokeColor = PdfColor.FromRgb(r, g, b, (float)currentState.StrokeAlpha);
-                        }
+                    case "rg":
+                        if (!ctx.UncoloredGlyph && TryNumbers(operands, 3, out var rgb))
+                            SetDeviceColor(gs, op == "RG", PdfColorSpace.DeviceRgb, rgb);
                         break;
-
-                    case "k":
-                        if (operands.Count >= 4)
-                        {
-                            currentState.FillColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceCmyk;
-                            float c = (float)PopNum(operands);
-                            float m = (float)PopNum(operands);
-                            float y = (float)PopNum(operands);
-                            float k = (float)PopNum(operands);
-                            currentState.FillColor = PdfColor.FromCmyk(c, m, y, k, (float)currentState.FillAlpha);
-                        }
-                        break;
-
                     case "K":
-                        if (operands.Count >= 4)
-                        {
-                            currentState.StrokeColorSpace = PdfEngine.Vector.Color.PdfColorSpace.DeviceCmyk;
-                            float c = (float)PopNum(operands);
-                            float m = (float)PopNum(operands);
-                            float y = (float)PopNum(operands);
-                            float k = (float)PopNum(operands);
-                            currentState.StrokeColor = PdfColor.FromCmyk(c, m, y, k, (float)currentState.StrokeAlpha);
-                        }
+                    case "k":
+                        if (!ctx.UncoloredGlyph && TryNumbers(operands, 4, out var cmyk))
+                            SetDeviceColor(gs, op == "K", PdfColorSpace.DeviceCmyk, cmyk);
                         break;
 
                     case "sh":
-                        if (operands.Count >= 1)
-                        {
-                            string shName = PopName(operands);
-                            EmitShading(commands, shName, page.Resources, currentState, ref features);
-                        }
+                        if (!hidden && LastName(operands) is string shName)
+                            PaintShadingOperator(shName, resources, gs);
                         break;
 
-                    // Path Construction
+                    // ---------------------------------------------------------- path construction
                     case "m":
-                        if (operands.Count >= 2)
+                        if (TryNumbers(operands, 2, out var mv))
                         {
-                            double x = PopNum(operands);
-                            double y = PopNum(operands);
-                            currentPoint = new PdfPoint(x, y);
-                            activePathSegments.Add(new PdfMoveTo(currentPoint));
+                            path.Current = new PdfPoint(mv[0], mv[1]);
+                            path.SubpathStart = path.Current;
+                            AddSegment(path, new PdfMoveTo(path.Current));
                         }
                         break;
-
                     case "l":
-                        if (operands.Count >= 2)
+                        if (TryNumbers(operands, 2, out var lv))
                         {
-                            double x = PopNum(operands);
-                            double y = PopNum(operands);
-                            currentPoint = new PdfPoint(x, y);
-                            activePathSegments.Add(new PdfLineTo(currentPoint));
+                            path.Current = new PdfPoint(lv[0], lv[1]);
+                            AddSegment(path, new PdfLineTo(path.Current));
                         }
                         break;
-
                     case "c":
-                        if (operands.Count >= 6)
+                        if (TryNumbers(operands, 6, out var cv))
                         {
-                            double x1 = PopNum(operands);
-                            double y1 = PopNum(operands);
-                            double x2 = PopNum(operands);
-                            double y2 = PopNum(operands);
-                            double x3 = PopNum(operands);
-                            double y3 = PopNum(operands);
-                            currentPoint = new PdfPoint(x3, y3);
-                            activePathSegments.Add(new PdfCubicBezierTo(new(x1, y1), new(x2, y2), currentPoint));
+                            var end = new PdfPoint(cv[4], cv[5]);
+                            AddSegment(path, new PdfCubicBezierTo(new(cv[0], cv[1]), new(cv[2], cv[3]), end));
+                            path.Current = end;
                         }
                         break;
-
                     case "v":
-                        if (operands.Count >= 4)
+                        if (TryNumbers(operands, 4, out var vv))
                         {
-                            double x2 = PopNum(operands);
-                            double y2 = PopNum(operands);
-                            double x3 = PopNum(operands);
-                            double y3 = PopNum(operands);
-                            activePathSegments.Add(new PdfCubicBezierTo(currentPoint, new(x2, y2), new(x3, y3)));
-                            currentPoint = new PdfPoint(x3, y3);
+                            var end = new PdfPoint(vv[2], vv[3]);
+                            AddSegment(path, new PdfCubicBezierTo(path.Current, new(vv[0], vv[1]), end));
+                            path.Current = end;
                         }
                         break;
-
                     case "y":
-                        if (operands.Count >= 4)
+                        if (TryNumbers(operands, 4, out var yv))
                         {
-                            double x1 = PopNum(operands);
-                            double y1 = PopNum(operands);
-                            double x3 = PopNum(operands);
-                            double y3 = PopNum(operands);
-                            currentPoint = new PdfPoint(x3, y3);
-                            activePathSegments.Add(new PdfCubicBezierTo(new(x1, y1), currentPoint, currentPoint));
+                            var end = new PdfPoint(yv[2], yv[3]);
+                            AddSegment(path, new PdfCubicBezierTo(new(yv[0], yv[1]), end, end));
+                            path.Current = end;
                         }
                         break;
-
                     case "h":
-                        activePathSegments.Add(new PdfCloseSubpath());
-                        break;
-
-                    case "re":
-                        if (operands.Count >= 4)
+                        if (path.Segments.Count > 0)
                         {
-                            double x = PopNum(operands);
-                            double y = PopNum(operands);
-                            double w = PopNum(operands);
-                            double h = PopNum(operands);
-                            activePathSegments.Add(new PdfMoveTo(new(x, y)));
-                            activePathSegments.Add(new PdfLineTo(new(x + w, y)));
-                            activePathSegments.Add(new PdfLineTo(new(x + w, y + h)));
-                            activePathSegments.Add(new PdfLineTo(new(x, y + h)));
-                            activePathSegments.Add(new PdfCloseSubpath());
-                            currentPoint = new PdfPoint(x, y);
+                            AddSegment(path, new PdfCloseSubpath());
+                            path.Current = path.SubpathStart;
+                        }
+                        break;
+                    case "re":
+                        if (TryNumbers(operands, 4, out var re))
+                        {
+                            double x = re[0], y = re[1], rw = re[2], rh = re[3];
+                            AddSegment(path, new PdfMoveTo(new(x, y)));
+                            AddSegment(path, new PdfLineTo(new(x + rw, y)));
+                            AddSegment(path, new PdfLineTo(new(x + rw, y + rh)));
+                            AddSegment(path, new PdfLineTo(new(x, y + rh)));
+                            AddSegment(path, new PdfCloseSubpath());
+                            path.Current = path.SubpathStart = new PdfPoint(x, y);
                         }
                         break;
 
-                    // Path Painting & Clipping
-                    case "S":
-                    case "s":
-                        if (op == "s") activePathSegments.Add(new PdfCloseSubpath());
-                        EmitStrokePath(commands, activePathSegments, currentState, ref features);
-                        HandlePendingClip(commands, activePathSegments, ref clipPending, pendingClipRule);
-                        activePathSegments.Clear();
-                        break;
-
+                    // ---------------------------------------------------------- painting / clipping
+                    case "S": PaintPath(path, gs, resources, ctx, hidden, fill: false, stroke: true, PdfFillRule.NonZero, close: false); break;
+                    case "s": PaintPath(path, gs, resources, ctx, hidden, fill: false, stroke: true, PdfFillRule.NonZero, close: true); break;
                     case "f":
-                    case "F":
-                        EmitFillPath(commands, activePathSegments, currentState, PdfFillRule.NonZero, ref features);
-                        HandlePendingClip(commands, activePathSegments, ref clipPending, pendingClipRule);
-                        activePathSegments.Clear();
-                        break;
-
-                    case "f*":
-                        EmitFillPath(commands, activePathSegments, currentState, PdfFillRule.EvenOdd, ref features);
-                        HandlePendingClip(commands, activePathSegments, ref clipPending, pendingClipRule);
-                        activePathSegments.Clear();
-                        break;
-
-                    case "B":
-                    case "b":
-                        if (op == "b") activePathSegments.Add(new PdfCloseSubpath());
-                        EmitFillPath(commands, activePathSegments, currentState, PdfFillRule.NonZero, ref features);
-                        EmitStrokePath(commands, activePathSegments, currentState, ref features);
-                        HandlePendingClip(commands, activePathSegments, ref clipPending, pendingClipRule);
-                        activePathSegments.Clear();
-                        break;
-
-                    case "B*":
-                    case "b*":
-                        if (op == "b*") activePathSegments.Add(new PdfCloseSubpath());
-                        EmitFillPath(commands, activePathSegments, currentState, PdfFillRule.EvenOdd, ref features);
-                        EmitStrokePath(commands, activePathSegments, currentState, ref features);
-                        HandlePendingClip(commands, activePathSegments, ref clipPending, pendingClipRule);
-                        activePathSegments.Clear();
-                        break;
-
-                    case "n":
-                        HandlePendingClip(commands, activePathSegments, ref clipPending, pendingClipRule);
-                        activePathSegments.Clear();
-                        break;
-
+                    case "F": PaintPath(path, gs, resources, ctx, hidden, fill: true, stroke: false, PdfFillRule.NonZero, close: false); break;
+                    case "f*": PaintPath(path, gs, resources, ctx, hidden, fill: true, stroke: false, PdfFillRule.EvenOdd, close: false); break;
+                    case "B": PaintPath(path, gs, resources, ctx, hidden, fill: true, stroke: true, PdfFillRule.NonZero, close: false); break;
+                    case "B*": PaintPath(path, gs, resources, ctx, hidden, fill: true, stroke: true, PdfFillRule.EvenOdd, close: false); break;
+                    case "b": PaintPath(path, gs, resources, ctx, hidden, fill: true, stroke: true, PdfFillRule.NonZero, close: true); break;
+                    case "b*": PaintPath(path, gs, resources, ctx, hidden, fill: true, stroke: true, PdfFillRule.EvenOdd, close: true); break;
+                    case "n": PaintPath(path, gs, resources, ctx, hidden, fill: false, stroke: false, PdfFillRule.NonZero, close: false); break;
                     case "W":
-                        clipPending = true;
-                        pendingClipRule = PdfFillRule.NonZero;
-                        features |= PdfFeatureSet.Clipping;
+                        path.ClipPending = true;
+                        path.ClipRule = PdfFillRule.NonZero;
                         break;
-
                     case "W*":
-                        clipPending = true;
-                        pendingClipRule = PdfFillRule.EvenOdd;
-                        features |= PdfFeatureSet.Clipping;
+                        path.ClipPending = true;
+                        path.ClipRule = PdfFillRule.EvenOdd;
                         break;
 
-                    // Text Objects & State
+                    // ---------------------------------------------------------- text objects & state
                     case "BT":
-                        currentState.TextMatrix = PdfMatrix.Identity;
-                        currentState.TextLineMatrix = PdfMatrix.Identity;
-                        features |= PdfFeatureSet.Text;
+                        inText = true;
+                        gs.TextMatrix = PdfMatrix.Identity;
+                        gs.TextLineMatrix = PdfMatrix.Identity;
+                        textClip = null;
                         break;
 
                     case "ET":
+                        inText = false;
+                        if (textClip is PdfRect tc)
+                        {
+                            EndTextClip(gs, tc);
+                        }
+                        textClip = null;
                         break;
 
                     case "Tf":
-                        if (operands.Count >= 2)
+                        if (operands.Count >= 2 && operands[^2].TryGetName(out string fontName) && operands[^1].TryGetNumber(out double size))
                         {
-                            currentState.CurrentFontResource = PopName(operands);
-                            currentState.FontSize = PopNum(operands);
+                            gs.CurrentFontResource = fontName;
+                            gs.FontSize = size;
+                            gs.Font = _owner._fontResolver.ResolveFont(fontName, resources);
                         }
                         break;
-
                     case "Tc":
-                        if (operands.Count >= 1) currentState.CharacterSpacing = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var tcv)) gs.CharacterSpacing = tcv[0];
                         break;
-
                     case "Tw":
-                        if (operands.Count >= 1) currentState.WordSpacing = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var twv)) gs.WordSpacing = twv[0];
                         break;
-
                     case "Tz":
-                        if (operands.Count >= 1) currentState.HorizontalScaling = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var tzv)) gs.HorizontalScaling = tzv[0];
                         break;
-
                     case "TL":
-                        if (operands.Count >= 1) currentState.Leading = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var tlv)) gs.Leading = tlv[0];
                         break;
-
                     case "Tr":
-                        if (operands.Count >= 1) currentState.TextRenderingMode = (int)PopNum(operands);
+                        if (TryNumbers(operands, 1, out var trv)) gs.TextRenderingMode = Math.Clamp((int)trv[0], 0, 7);
                         break;
-
                     case "Ts":
-                        if (operands.Count >= 1) currentState.TextRise = PopNum(operands);
+                        if (TryNumbers(operands, 1, out var tsv)) gs.TextRise = tsv[0];
                         break;
-
                     case "Td":
-                        if (operands.Count >= 2)
-                        {
-                            double tx = PopNum(operands);
-                            double ty = PopNum(operands);
-                            var tMat = PdfMatrix.CreateTranslation(tx, ty);
-                            currentState.TextLineMatrix = tMat * currentState.TextLineMatrix;
-                            currentState.TextMatrix = currentState.TextLineMatrix;
-                        }
+                        if (TryNumbers(operands, 2, out var td))
+                            MoveTextLine(gs, td[0], td[1]);
                         break;
-
                     case "TD":
-                        if (operands.Count >= 2)
+                        if (TryNumbers(operands, 2, out var tdd))
                         {
-                            double tx = PopNum(operands);
-                            double ty = PopNum(operands);
-                            currentState.Leading = -ty;
-                            var tMat = PdfMatrix.CreateTranslation(tx, ty);
-                            currentState.TextLineMatrix = tMat * currentState.TextLineMatrix;
-                            currentState.TextMatrix = currentState.TextLineMatrix;
+                            gs.Leading = -tdd[1];
+                            MoveTextLine(gs, tdd[0], tdd[1]);
                         }
                         break;
-
                     case "Tm":
-                        if (operands.Count >= 6)
+                        if (TryNumbers(operands, 6, out var tm))
                         {
-                            double a = PopNum(operands);
-                            double b = PopNum(operands);
-                            double c = PopNum(operands);
-                            double d = PopNum(operands);
-                            double e = PopNum(operands);
-                            double f = PopNum(operands);
-                            currentState.TextMatrix = new PdfMatrix(a, b, c, d, e, f);
-                            currentState.TextLineMatrix = currentState.TextMatrix;
+                            gs.TextMatrix = new PdfMatrix(tm[0], tm[1], tm[2], tm[3], tm[4], tm[5]);
+                            gs.TextLineMatrix = gs.TextMatrix;
                         }
                         break;
-
                     case "T*":
-                        var nextLine = PdfMatrix.CreateTranslation(0, -currentState.Leading);
-                        currentState.TextLineMatrix = nextLine * currentState.TextLineMatrix;
-                        currentState.TextMatrix = currentState.TextLineMatrix;
+                        MoveTextLine(gs, 0, -gs.Leading);
                         break;
 
                     case "Tj":
-                        if (operands.Count >= 1)
-                        {
-                            var strObj = operands[operands.Count - 1] as PdfString;
-                            operands.RemoveAt(operands.Count - 1);
-                            if (strObj != null)
-                            {
-                                EmitGlyphRun(commands, strObj, currentState, page.Resources, ref features);
-                            }
-                        }
+                        if (operands.Count >= 1 && operands[^1] is PdfString tj)
+                            ShowText(gs, resources, ctx, hidden, ref textClip, tj, null);
                         break;
-
                     case "'":
-                        // Move to next line and show string
-                        var nl = PdfMatrix.CreateTranslation(0, -currentState.Leading);
-                        currentState.TextLineMatrix = nl * currentState.TextLineMatrix;
-                        currentState.TextMatrix = currentState.TextLineMatrix;
-                        if (operands.Count >= 1 && operands[operands.Count - 1] is PdfString primeStr)
-                        {
-                            operands.RemoveAt(operands.Count - 1);
-                            EmitGlyphRun(commands, primeStr, currentState, page.Resources, ref features);
-                        }
+                        MoveTextLine(gs, 0, -gs.Leading);
+                        if (operands.Count >= 1 && operands[^1] is PdfString q1)
+                            ShowText(gs, resources, ctx, hidden, ref textClip, q1, null);
                         break;
-
                     case "\"":
-                        // Set word spacing, char spacing, move to next line and show string
-                        if (operands.Count >= 3)
+                        if (operands.Count >= 3 && operands[^3].TryGetNumber(out double aw) &&
+                            operands[^2].TryGetNumber(out double ac) && operands[^1] is PdfString q2)
                         {
-                            double aw = PopNum(operands);
-                            double ac = PopNum(operands);
-                            currentState.WordSpacing = aw;
-                            currentState.CharacterSpacing = ac;
-                            var nld = PdfMatrix.CreateTranslation(0, -currentState.Leading);
-                            currentState.TextLineMatrix = nld * currentState.TextLineMatrix;
-                            currentState.TextMatrix = currentState.TextLineMatrix;
-                            if (operands[operands.Count - 1] is PdfString quoteStr)
-                            {
-                                operands.RemoveAt(operands.Count - 1);
-                                EmitGlyphRun(commands, quoteStr, currentState, page.Resources, ref features);
-                            }
+                            gs.WordSpacing = aw;
+                            gs.CharacterSpacing = ac;
+                            MoveTextLine(gs, 0, -gs.Leading);
+                            ShowText(gs, resources, ctx, hidden, ref textClip, q2, null);
                         }
                         break;
-
                     case "TJ":
-                        if (operands.Count >= 1)
-                        {
-                            var tjArray = operands[operands.Count - 1] as PdfArray;
-                            operands.RemoveAt(operands.Count - 1);
-                            if (tjArray != null)
-                            {
-                                EmitGlyphRunTJ(commands, tjArray, currentState, page.Resources, ref features);
-                            }
-                        }
+                        if (operands.Count >= 1 && operands[^1] is PdfArray tjArr)
+                            ShowText(gs, resources, ctx, hidden, ref textClip, null, tjArr);
                         break;
 
-                    // XObjects
+                    // ---------------------------------------------------------- Type3 glyph metrics
+                    case "d0":
+                        break;
+                    case "d1":
+                        // Uncoloured glyph: colour operators inside the procedure are ignored (9.6.4).
+                        ctx = ctx with { UncoloredGlyph = true };
+                        break;
+
+                    // ---------------------------------------------------------- XObjects & inline images
                     case "Do":
-                        if (operands.Count >= 1)
-                        {
-                            string xobjName = PopName(operands);
-                            ExecuteXObject(commands, xobjName, page.Resources, currentState, ref features, fallbackTokens, page.PageNumber, depth: 0);
-                        }
+                        if (LastName(operands) is string xName)
+                            DoXObject(xName, resources, gs, ctx, hidden);
                         break;
 
-                    // Marked Content & Compatibility Blocks
+                    case "BI":
+                        operands.Clear();
+                        ReadInlineImage(src, lexer, resources, gs, hidden);
+                        break;
+
+                    // ---------------------------------------------------------- marked content
                     case "BMC":
+                        ocStack.Push(false);
+                        break;
                     case "BDC":
+                    {
+                        bool isHidden = false;
+                        if (operands.Count >= 2 && operands[^2].TryGetName(out string tag) && tag == "OC")
+                        {
+                            var props = operands[^1] is PdfName pn ? LookupResource(resources, "Properties", pn.Value) : _resolver.Resolve(operands[^1]);
+                            isHidden = IsOptionalContentHidden(props);
+                        }
+                        ocStack.Push(isHidden);
+                        if (isHidden) hiddenDepth++;
+                        break;
+                    }
                     case "EMC":
+                        if (ocStack.Count > 0 && ocStack.Pop())
+                            hiddenDepth--;
+                        break;
                     case "MP":
                     case "DP":
+                        break;
                     case "BX":
+                        compatDepth++;
+                        break;
                     case "EX":
-                        // Semantic markup wrapper - safe to consume without fallback
+                        if (compatDepth > 0) compatDepth--;
                         break;
 
                     default:
-                        // Unrecognized / unsupported operator: trigger fallback for safety
-                        var unkToken = new PdfFallbackToken(
-                            page.PageNumber,
-                            page.CropBox,
-                            PdfFallbackReason.UnknownOperator,
-                            $"Unsupported PDF operator: '{op}'");
-                        fallbackTokens.Add(unkToken);
+                        // Unknown operators inside BX/EX must be ignored (7.8.2). Elsewhere they mean
+                        // content we do not understand: classify rather than guess.
+                        if (compatDepth == 0)
+                        {
+                            AddFallback(PdfFallbackReason.UnknownOperator,
+                                $"Unsupported PDF operator '{Sanitize(op)}'", gs.ClipBoundsPage);
+                        }
                         break;
                 }
 
                 operands.Clear();
+                _ = inText;
+            }
+
+            // Content streams must balance q/Q; unwind what the stream left open so the display
+            // list stays balanced for the replaying backend.
+            while (stack.Count > 0)
+            {
+                CopyInto(stack.Pop(), gs);
+                _commands.Add(new RestoreState());
+            }
+        }
+
+        private void Tick()
+        {
+            _operators++;
+            if ((_operators & 0xFF) == 0)
+            {
+                _ct.ThrowIfCancellationRequested();
+                if (_clock.Elapsed > _limits.MaxPageBuildTime)
+                    throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxPageBuildTime), "Page interpretation exceeded its time budget.");
+            }
+            if (_operators > _limits.MaxOperatorsPerPage)
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxOperatorsPerPage), "Page exceeded the operator budget.");
+            if (_commands.Count > _limits.MaxCommandsPerPage)
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxCommandsPerPage), "Page exceeded the draw-command budget.");
+        }
+
+        private void AddSegment(PathState path, PdfPathSegment segment)
+        {
+            if (++_segments > _limits.MaxPathSegmentsPerPage)
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxPathSegmentsPerPage), "Page exceeded the path-segment budget.");
+            path.Segments.Add(segment);
+        }
+
+        private static void CopyInto(GraphicsState from, GraphicsState to)
+        {
+            // Q restores everything except the text matrices, which are not part of the gstate stack
+            // in a way that survives outside BT/ET anyway; copying the whole state is the spec behaviour.
+            var clone = from.Clone();
+            to.CTM = clone.CTM;
+            to.LineWidth = clone.LineWidth;
+            to.LineCap = clone.LineCap;
+            to.LineJoin = clone.LineJoin;
+            to.MiterLimit = clone.MiterLimit;
+            to.DashArray = clone.DashArray;
+            to.DashPhase = clone.DashPhase;
+            to.StrokeColor = clone.StrokeColor;
+            to.FillColor = clone.FillColor;
+            to.StrokeColorSpace = clone.StrokeColorSpace;
+            to.FillColorSpace = clone.FillColorSpace;
+            to.FillPattern = clone.FillPattern;
+            to.StrokePattern = clone.StrokePattern;
+            to.StrokeAlpha = clone.StrokeAlpha;
+            to.FillAlpha = clone.FillAlpha;
+            to.BlendMode = clone.BlendMode;
+            to.SoftMaskActive = clone.SoftMaskActive;
+            to.AlphaIsShape = clone.AlphaIsShape;
+            to.ClipPath = clone.ClipPath;
+            to.ClipRule = clone.ClipRule;
+            to.ClipBoundsPage = clone.ClipBoundsPage;
+            to.CurrentFontResource = clone.CurrentFontResource;
+            to.Font = clone.Font;
+            to.FontSize = clone.FontSize;
+            to.CharacterSpacing = clone.CharacterSpacing;
+            to.WordSpacing = clone.WordSpacing;
+            to.HorizontalScaling = clone.HorizontalScaling;
+            to.Leading = clone.Leading;
+            to.TextRenderingMode = clone.TextRenderingMode;
+            to.TextRise = clone.TextRise;
+            to.TextMatrix = clone.TextMatrix;
+            to.TextLineMatrix = clone.TextLineMatrix;
+        }
+
+        // ------------------------------------------------------------------ operands
+
+        private static bool TryNumbers(List<PdfObject> operands, int count, out double[] values)
+        {
+            values = Array.Empty<double>();
+            if (operands.Count < count)
+                return false;
+            var result = new double[count];
+            int start = operands.Count - count;
+            for (int i = 0; i < count; i++)
+            {
+                if (!operands[start + i].TryGetNumber(out double v) || double.IsNaN(v) || double.IsInfinity(v))
+                    return false;
+                result[i] = v;
+            }
+            values = result;
+            return true;
+        }
+
+        private static string? LastName(List<PdfObject> operands) =>
+            operands.Count >= 1 && operands[^1].TryGetName(out string name) ? name : null;
+
+        private static string Sanitize(string op) => op.Length > 16 ? op[..16] : op;
+
+        private PdfObject? LookupResource(PdfDictionary? resources, string category, string name)
+        {
+            if (resources == null || !resources.TryGetValue(category, out var catObj))
+                return null;
+            if (_resolver.Resolve(catObj) is not PdfDictionary cat || !cat.TryGetValue(name, out var entry))
+                return null;
+            return _resolver.Resolve(entry);
+        }
+
+        // ------------------------------------------------------------------ bounds & fallback
+
+        private static PdfRect Intersect(PdfRect a, PdfRect b)
+        {
+            double x0 = Math.Max(a.Left, b.Left), y0 = Math.Max(a.Top, b.Top);
+            double x1 = Math.Min(a.Right, b.Right), y1 = Math.Min(a.Bottom, b.Bottom);
+            return x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : PdfRect.Empty;
+        }
+
+        private static PdfRect Union(PdfRect a, PdfRect b)
+        {
+            if (a.IsEmpty) return b;
+            if (b.IsEmpty) return a;
+            double x0 = Math.Min(a.Left, b.Left), y0 = Math.Min(a.Top, b.Top);
+            double x1 = Math.Max(a.Right, b.Right), y1 = Math.Max(a.Bottom, b.Bottom);
+            return new PdfRect(x0, y0, x1 - x0, y1 - y0);
+        }
+
+        private static PdfRect Inflate(PdfRect r, double d) =>
+            new(r.X - d, r.Y - d, r.Width + 2 * d, r.Height + 2 * d);
+
+        /// <summary>User-space box → conservative page-space box, clipped to the current clip.</summary>
+        private static PdfRect ToPage(GraphicsState gs, PdfRect userRect, double inflate = 0)
+        {
+            var r = gs.CTM.Transform(inflate > 0 ? Inflate(userRect, inflate) : userRect);
+            // Zero-area geometry (hairlines, degenerate rects) still paints a device pixel.
+            if (r.Width <= 0 || r.Height <= 0)
+                r = Inflate(r, 0.5);
+            return Intersect(r, gs.ClipBoundsPage);
+        }
+
+        private void AddFallback(PdfFallbackReason reason, string description, PdfRect pageBounds,
+            IReadOnlyDictionary<string, string>? metadata = null)
+        {
+            // Anti-aliasing bleeds a little beyond geometric bounds.
+            var bounds = Intersect(Inflate(pageBounds, 1.0), Crop);
+            if (bounds.IsEmpty)
+                return;
+            var token = new PdfFallbackToken(_page.PageNumber, bounds, reason, description, metadata);
+            _fallbacks.Add(token);
+            _commands.Add(new DrawFallbackRegion(token, bounds));
+            _features |= PdfFeatureSet.Fallback;
+        }
+
+        private void PageFallback(PdfFallbackReason reason, string description) =>
+            AddFallback(reason, description, Crop);
+
+        private static PdfFallbackReason? PaintUnsupported(GraphicsState gs, bool stroke)
+        {
+            if (gs.SoftMaskActive) return PdfFallbackReason.SoftMask;
+            if (!gs.IsNormalBlend) return PdfFallbackReason.BlendMode;
+            var cs = stroke ? gs.StrokeColorSpace : gs.FillColorSpace;
+            if (cs.IsPattern) return null; // handled by the pattern paint path
+            return cs.UnsupportedReason;
+        }
+
+        // ------------------------------------------------------------------ paths
+
+        private void PaintPath(PathState path, GraphicsState gs, PdfDictionary resources, ContentContext ctx,
+            bool hidden, bool fill, bool stroke, PdfFillRule rule, bool close)
+        {
+            if (close && path.Segments.Count > 0)
+                AddSegment(path, new PdfCloseSubpath());
+
+            if (path.Segments.Count == 0)
+            {
+                path.ClipPending = false;
+                return;
+            }
+
+            var pdfPath = new PdfPath(path.Segments.ToArray());
+
+            if (!hidden && (fill || stroke))
+            {
+                _features |= PdfFeatureSet.Paths;
+                double strokeExpand = stroke ? StrokeExpansion(gs) : 0;
+                var pageBounds = ToPage(gs, pdfPath.Bounds, strokeExpand);
+
+                if (!pageBounds.IsEmpty)
+                {
+                    if (fill)
+                        PaintFill(pdfPath, rule, gs, resources, pageBounds);
+                    if (stroke)
+                        PaintStroke(pdfPath, gs, pageBounds);
+                }
+            }
+
+            if (path.ClipPending)
+            {
+                _features |= PdfFeatureSet.Clipping;
+                _commands.Add(new PushClip(pdfPath, path.ClipRule, ToPage(gs, pdfPath.Bounds)));
+                gs.ClipBoundsPage = Intersect(gs.ClipBoundsPage, gs.CTM.Transform(pdfPath.Bounds));
+                path.ClipPending = false;
+            }
+
+            path.Segments.Clear();
+        }
+
+        private static double StrokeExpansion(GraphicsState gs)
+        {
+            double half = Math.Max(gs.LineWidth, 1.0) / 2.0;
+            if (gs.LineJoin == PdfLineJoin.Miter)
+                half *= Math.Max(1.0, gs.MiterLimit);
+            else if (gs.LineCap == PdfLineCap.Square)
+                half *= Math.Sqrt(2);
+            return half;
+        }
+
+        private void PaintFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfDictionary resources, PdfRect pageBounds)
+        {
+            if (PaintUnsupported(gs, stroke: false) is PdfFallbackReason reason)
+            {
+                AddFallback(reason, "Fill uses an unsupported paint", pageBounds);
+                return;
+            }
+
+            if (gs.FillColorSpace.IsPattern)
+            {
+                PaintPatternFill(pdfPath, rule, gs, pageBounds);
+                return;
+            }
+
+            _commands.Add(new FillPath(pdfPath, gs.CreateFillPaint(), rule, pageBounds));
+        }
+
+        private void PaintStroke(PdfPath pdfPath, GraphicsState gs, PdfRect pageBounds)
+        {
+            if (PaintUnsupported(gs, stroke: true) is PdfFallbackReason reason)
+            {
+                AddFallback(reason, "Stroke uses an unsupported paint", pageBounds);
+                return;
+            }
+
+            if (gs.StrokeColorSpace.IsPattern)
+            {
+                AddFallback(PdfFallbackReason.Pattern, "Pattern stroke", pageBounds);
+                return;
+            }
+
+            _commands.Add(new StrokePath(pdfPath, gs.CreateStroke(), gs.CreateStrokePaint(), pageBounds));
+        }
+
+        private void PaintPatternFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfRect pageBounds)
+        {
+            _features |= PdfFeatureSet.Patterns;
+            var pattern = gs.FillPattern;
+            var patternDict = pattern switch
+            {
+                PdfStream ps => ps.Dictionary,
+                PdfDictionary pd => pd,
+                _ => null,
+            };
+
+            if (patternDict == null)
+            {
+                // Unresolvable pattern: PDF viewers paint nothing; say so instead of guessing a colour.
+                AddFallback(PdfFallbackReason.Pattern, "Unresolvable pattern", pageBounds);
+                return;
+            }
+
+            long patternType = patternDict.GetInteger("PatternType") ?? 0;
+            if (patternType != 2)
+            {
+                AddFallback(PdfFallbackReason.Pattern, "Tiling pattern", pageBounds);
+                return;
+            }
+
+            var shadingDict = _resolver.Resolve(patternDict["Shading"]) switch
+            {
+                PdfStream s => s.Dictionary,
+                PdfDictionary d => d,
+                _ => null,
+            };
+            if (shadingDict == null || BuildShading(shadingDict, out var reason) is not PdfShading shading)
+            {
+                AddFallback(PdfFallbackReason.Shading, "Unsupported shading pattern", pageBounds);
+                return;
+            }
+            _ = reason;
+
+            if (_resolver.Resolve(patternDict["ExtGState"]) is PdfDictionary)
+            {
+                AddFallback(PdfFallbackReason.Pattern, "Shading pattern with its own graphics state", pageBounds);
+                return;
+            }
+
+            // Pattern space maps to the default space of the pattern's parent stream (8.7.2), not the CTM.
+            var patternMatrix = ReadMatrix(patternDict["Matrix"]) ?? PdfMatrix.Identity;
+            var target = patternMatrix * _currentPatternBase;
+            if (!gs.CTM.TryInvert(out var invCtm))
+                return;
+
+            _features |= PdfFeatureSet.Shading;
+            _commands.Add(new SaveState());
+            _commands.Add(new PushClip(pdfPath, rule, pageBounds));
+            _commands.Add(new ConcatTransform(target * invCtm));
+            bool group = gs.FillAlpha < 1.0;
+            if (group) _commands.Add(new BeginTransparencyGroup(pageBounds, gs.FillAlpha));
+            _commands.Add(new DrawShading(shading, pageBounds));
+            if (group) _commands.Add(new EndTransparencyGroup());
+            _commands.Add(new RestoreState());
+        }
+
+        private PdfMatrix _currentPatternBase = PdfMatrix.Identity;
+
+        private PdfMatrix? ReadMatrix(PdfObject? obj)
+        {
+            if (_resolver.Resolve(obj) is not PdfArray arr || arr.Count < 6)
+                return null;
+            var v = new double[6];
+            for (int i = 0; i < 6; i++)
+            {
+                if (!_resolver.Resolve(arr[i])!.TryGetNumber(out v[i]) || double.IsNaN(v[i]) || double.IsInfinity(v[i]))
+                    return null;
+            }
+            return new PdfMatrix(v[0], v[1], v[2], v[3], v[4], v[5]);
+        }
+
+        private PdfRect? ReadRect(PdfObject? obj)
+        {
+            if (_resolver.Resolve(obj) is not PdfArray arr || arr.Count < 4)
+                return null;
+            var v = new double[4];
+            for (int i = 0; i < 4; i++)
+            {
+                if (!(_resolver.Resolve(arr[i])?.TryGetNumber(out v[i]) ?? false))
+                    return null;
+            }
+            double x0 = Math.Min(v[0], v[2]), x1 = Math.Max(v[0], v[2]);
+            double y0 = Math.Min(v[1], v[3]), y1 = Math.Max(v[1], v[3]);
+            return new PdfRect(x0, y0, x1 - x0, y1 - y0);
+        }
+
+        private static PdfPath RectPath(PdfRect r) => new(new PdfPathSegment[]
+        {
+            new PdfMoveTo(new(r.Left, r.Top)),
+            new PdfLineTo(new(r.Right, r.Top)),
+            new PdfLineTo(new(r.Right, r.Bottom)),
+            new PdfLineTo(new(r.Left, r.Bottom)),
+            new PdfCloseSubpath(),
+        });
+
+        /// <summary>Page-space rectangle expressed as a (possibly skewed) path in current user space.</summary>
+        private static PdfPath? PageRectInUserSpace(GraphicsState gs, PdfRect pageRect)
+        {
+            if (!gs.CTM.TryInvert(out var inv))
+                return null;
+            var p0 = inv.Transform(pageRect.Left, pageRect.Top);
+            var p1 = inv.Transform(pageRect.Right, pageRect.Top);
+            var p2 = inv.Transform(pageRect.Right, pageRect.Bottom);
+            var p3 = inv.Transform(pageRect.Left, pageRect.Bottom);
+            return new PdfPath(new PdfPathSegment[]
+            {
+                new PdfMoveTo(p0), new PdfLineTo(p1), new PdfLineTo(p2), new PdfLineTo(p3), new PdfCloseSubpath(),
+            });
+        }
+
+        private static void SetDash(GraphicsState gs, PdfArray dashArr, double phase)
+        {
+            var list = new List<double>(dashArr.Count);
+            double total = 0;
+            foreach (var item in dashArr)
+            {
+                if (item.TryGetNumber(out double dv) && dv >= 0 && !double.IsInfinity(dv))
+                {
+                    list.Add(dv);
+                    total += dv;
+                }
+            }
+            // An all-zero dash array is invalid (8.4.3.6); treat it as a solid line.
+            gs.DashArray = list.Count == 0 || total <= 0 ? null : list;
+            gs.DashPhase = phase;
+        }
+
+        // ------------------------------------------------------------------ colour
+
+        private void SetColorSpace(GraphicsState gs, bool stroke, string name, PdfDictionary resources)
+        {
+            PdfColorSpace cs = name == "Pattern"
+                ? PdfColorSpace.Resolve(new PdfName("Pattern"), _resolver, resources)
+                : PdfColorSpace.Resolve(new PdfName(name), _resolver, resources);
+            var initial = cs.InitialComponents;
+            var color = cs.IsPattern ? PdfColor.Black : cs.ToRgbColor(initial, 1f);
+            if (stroke)
+            {
+                gs.StrokeColorSpace = cs;
+                gs.StrokeColor = color;
+                gs.StrokePattern = null;
             }
             else
             {
-                // Push operand object onto operand stack
-                memSource.Position = tokenPos;
-                var parser = new PdfParser(_limits);
-                var obj = parser.ParseObject(lexer);
-                if (obj != null)
+                gs.FillColorSpace = cs;
+                gs.FillColor = color;
+                gs.FillPattern = null;
+            }
+        }
+
+        private void SetColor(GraphicsState gs, bool stroke, List<PdfObject> operands, PdfDictionary resources)
+        {
+            var cs = stroke ? gs.StrokeColorSpace : gs.FillColorSpace;
+            if (cs.IsPattern)
+            {
+                if (LastName(operands) is string patternName)
                 {
-                    operands.Add(obj);
+                    var pattern = LookupResource(resources, "Pattern", patternName);
+                    if (stroke) gs.StrokePattern = pattern; else gs.FillPattern = pattern;
+                }
+                return;
+            }
+
+            int n = cs.NumberOfComponents;
+            var comps = new double[n];
+            int available = 0;
+            for (int i = operands.Count - 1; i >= 0 && available < n; i--)
+            {
+                if (!operands[i].TryGetNumber(out double v)) break;
+                comps[n - 1 - available] = v;
+                available++;
+            }
+            if (available < n)
+                return; // malformed: keep the previous colour
+
+            var color = cs.ToRgbColor(comps, 1f);
+            if (stroke) gs.StrokeColor = color; else gs.FillColor = color;
+        }
+
+        private static void SetDeviceColor(GraphicsState gs, bool stroke, PdfColorSpace cs, double[] comps)
+        {
+            var color = cs.ToRgbColor(comps, 1f);
+            if (stroke)
+            {
+                gs.StrokeColorSpace = cs;
+                gs.StrokeColor = color;
+                gs.StrokePattern = null;
+            }
+            else
+            {
+                gs.FillColorSpace = cs;
+                gs.FillColor = color;
+                gs.FillPattern = null;
+            }
+        }
+
+        // ------------------------------------------------------------------ ExtGState
+
+        private void ApplyExtGState(string gsName, PdfDictionary resources, GraphicsState gs)
+        {
+            if (LookupResource(resources, "ExtGState", gsName) is not PdfDictionary d)
+                return;
+
+            foreach (var (key, raw) in d.Entries)
+            {
+                var value = _resolver.Resolve(raw);
+                if (value == null) continue;
+                switch (key)
+                {
+                    case "LW": if (value.TryGetNumber(out double lw)) gs.LineWidth = Math.Max(0, lw); break;
+                    case "LC": if (value.TryGetInteger(out long lc)) gs.LineCap = (PdfLineCap)Math.Clamp((int)lc, 0, 2); break;
+                    case "LJ": if (value.TryGetInteger(out long lj)) gs.LineJoin = (PdfLineJoin)Math.Clamp((int)lj, 0, 2); break;
+                    case "ML": if (value.TryGetNumber(out double mlv)) gs.MiterLimit = Math.Max(1, mlv); break;
+                    case "D":
+                        if (value is PdfArray da && da.Count >= 2 && _resolver.Resolve(da[0]) is PdfArray dashes && da[1].TryGetNumber(out double ph))
+                            SetDash(gs, dashes, ph);
+                        break;
+                    case "CA":
+                        if (value.TryGetNumber(out double ca)) { gs.StrokeAlpha = Math.Clamp(ca, 0, 1); if (ca < 1) _features |= PdfFeatureSet.Transparency; }
+                        break;
+                    case "ca":
+                        if (value.TryGetNumber(out double cas)) { gs.FillAlpha = Math.Clamp(cas, 0, 1); if (cas < 1) _features |= PdfFeatureSet.Transparency; }
+                        break;
+                    case "BM":
+                        // Blend mode may be an array; the first recognised mode applies (11.3.5).
+                        string? bm = value is PdfArray bmArr && bmArr.Count > 0 && bmArr[0].TryGetName(out string first) ? first
+                                   : value.TryGetName(out string single) ? single : null;
+                        if (bm != null)
+                        {
+                            gs.BlendMode = bm;
+                            if (!gs.IsNormalBlend) _features |= PdfFeatureSet.Transparency;
+                        }
+                        break;
+                    case "SMask":
+                        gs.SoftMaskActive = !(value is PdfName n && n.Value == "None");
+                        if (gs.SoftMaskActive) _features |= PdfFeatureSet.Transparency;
+                        break;
+                    case "AIS":
+                        gs.AlphaIsShape = value.TryGetBoolean(out bool ais) && ais;
+                        break;
+                    case "Font":
+                        if (value is PdfArray fa && fa.Count >= 2 && _resolver.Resolve(fa[0]) is PdfDictionary fontDict && fa[1].TryGetNumber(out double fsz))
+                        {
+                            gs.Font = _owner._fontResolver.ResolveFont(fontDict, gsName + "#Font");
+                            gs.FontSize = fsz;
+                        }
+                        break;
                 }
             }
         }
 
-        return new PdfDisplayList(
-            page.PageNumber,
-            page.PageSize,
-            page.MediaBox,
-            page.CropBox,
-            page.RotationDegrees,
-            commands,
-            features,
-            fallbackTokens);
-    }
+        // ------------------------------------------------------------------ text
 
-    private void HandlePendingClip(
-        List<PdfDrawCommand> commands,
-        List<PdfPathSegment> segments,
-        ref bool clipPending,
-        PdfFillRule rule)
-    {
-        if (clipPending && segments.Count > 0)
+        private static void MoveTextLine(GraphicsState gs, double tx, double ty)
         {
-            var clipPath = new PdfPath(new List<PdfPathSegment>(segments));
-            commands.Add(new PushClip(clipPath, rule, clipPath.Bounds));
-            clipPending = false;
+            gs.TextLineMatrix = PdfMatrix.CreateTranslation(tx, ty) * gs.TextLineMatrix;
+            gs.TextMatrix = gs.TextLineMatrix;
         }
-    }
 
-    private static void EmitStrokePath(
-        List<PdfDrawCommand> commands,
-        List<PdfPathSegment> segments,
-        GraphicsState state,
-        ref PdfFeatureSet features)
-    {
-        if (segments.Count == 0) return;
-        features |= PdfFeatureSet.Paths;
-        var path = new PdfPath(new List<PdfPathSegment>(segments));
-        commands.Add(new StrokePath(path, state.CreateStroke(), state.CreateStrokePaint(), path.Bounds));
-    }
-
-    private static void EmitFillPath(
-        List<PdfDrawCommand> commands,
-        List<PdfPathSegment> segments,
-        GraphicsState state,
-        PdfFillRule rule,
-        ref PdfFeatureSet features)
-    {
-        if (segments.Count == 0) return;
-        features |= PdfFeatureSet.Paths;
-        var path = new PdfPath(new List<PdfPathSegment>(segments));
-        commands.Add(new FillPath(path, state.CreateFillPaint(), rule, path.Bounds));
-    }
-
-    private void EmitGlyphRun(
-        List<PdfDrawCommand> commands,
-        PdfString textString,
-        GraphicsState state,
-        PdfDictionary? resources,
-        ref PdfFeatureSet features)
-    {
-        var font = _fontResolver.ResolveFont(state.CurrentFontResource, resources);
-        features |= PdfFeatureSet.Text;
-
-        var glyphs = new List<PdfGlyph>();
-        var span = textString.RawBytes.Span;
-        double currentX = 0;
-
-        if (font.IsComposite)
+        private void ShowText(GraphicsState gs, PdfDictionary resources, ContentContext ctx, bool hidden,
+            ref PdfRect? textClip, PdfString? single, PdfArray? tj)
         {
-            for (int i = 0; i + 1 < span.Length; i += 2)
+            _features |= PdfFeatureSet.Text;
+            var font = gs.Font ??= _owner._fontResolver.ResolveFont(gs.CurrentFontResource, resources);
+
+            if (font.IsType3)
             {
-                int cid = (span[i] << 8) | span[i + 1];
-                double width = font.GetGlyphWidth(cid);
-                double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
-                string unicode = font.MapToUnicode(cid);
-                glyphs.Add(new PdfGlyph((ushort)cid, advance, 0, currentX, 0, unicode));
-                currentX += advance;
+                ShowType3Text(gs, resources, ctx, hidden, ref textClip, font, single, tj);
+                return;
             }
-        }
-        else
-        {
-            for (int i = 0; i < span.Length; i++)
+
+            double fs = gs.FontSize;
+            double th = gs.HorizontalScaling / 100.0;
+            var glyphs = new List<PdfGlyph>();
+            var text = new StringBuilder();
+            double x = 0;
+            double minX = double.MaxValue, maxX = double.MinValue;
+            bool allGlyphIdsKnown = true;
+            var face = _owner.FaceFor(font);
+            bool faceHasProgram = face.Format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff;
+
+            void AddString(PdfString s)
             {
-                int charCode = span[i];
-                double width = font.GetGlyphWidth(charCode);
-                double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
-                if (charCode == 32) advance += state.WordSpacing;
-
-                string unicode = font.MapToUnicode(charCode);
-                glyphs.Add(new PdfGlyph((ushort)charCode, advance, 0, currentX, 0, unicode));
-                currentX += advance;
-            }
-        }
-
-        // Compute effective transform
-        var paint = state.TextRenderingMode == 1 ? state.CreateStrokePaint() : state.CreateFillPaint();
-        string fullText = string.Concat(glyphs.Select(g => g.Unicode));
-        var run = new PdfGlyphRun(
-            state.CurrentFontResource,
-            state.FontSize,
-            glyphs,
-            state.TextMatrix,
-            state.HorizontalScaling,
-            state.CharacterSpacing,
-            state.WordSpacing,
-            state.TextRise,
-            state.TextRenderingMode,
-            FontFamilyName: font.BaseFont,
-            FullText: fullText);
-
-        commands.Add(new DrawGlyphRun(run, paint, new PdfRect(0, 0, currentX, state.FontSize)));
-
-        // Advance text matrix by currentX
-        var advanceMatrix = PdfMatrix.CreateTranslation(currentX, 0);
-        state.TextMatrix = advanceMatrix * state.TextMatrix;
-    }
-
-    private void EmitGlyphRunTJ(
-        List<PdfDrawCommand> commands,
-        PdfArray tjArray,
-        GraphicsState state,
-        PdfDictionary? resources,
-        ref PdfFeatureSet features)
-    {
-        var font = _fontResolver.ResolveFont(state.CurrentFontResource, resources);
-        features |= PdfFeatureSet.Text;
-
-        double currentX = 0;
-
-        foreach (var item in tjArray)
-        {
-            if (item is PdfString str)
-            {
-                var glyphs = new List<PdfGlyph>();
-                var span = str.RawBytes.Span;
-                double chunkStartX = currentX;
-
-                if (font.IsComposite)
+                var bytes = s.RawBytes.Span;
+                int pos = 0;
+                while (pos < bytes.Length)
                 {
-                    for (int i = 0; i + 1 < span.Length; i += 2)
+                    int consumed = font.ReadCode(bytes, pos, out int code, out int cid);
+                    if (consumed <= 0) consumed = 1;
+                    pos += consumed;
+
+                    if (++_glyphs > _limits.MaxGlyphsPerPage)
+                        throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxGlyphsPerPage), "Page exceeded the glyph budget.");
+
+                    double w0 = font.GetGlyphWidth(font.IsComposite ? cid : code) / 1000.0;
+                    double tw = font.IsWordSpaceCode(code, consumed) ? gs.WordSpacing : 0;
+                    double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
+
+                    int gid = faceHasProgram ? font.GetGlyphId(code, cid) : -1;
+                    if (faceHasProgram && gid < 0) allGlyphIdsKnown = false;
+                    string unicode = font.MapToUnicode(code);
+
+                    glyphs.Add(new PdfGlyph(
+                        (ushort)Math.Clamp(gid >= 0 ? gid : cid, 0, ushort.MaxValue),
+                        advance, 0, x, 0, unicode, code));
+                    text.Append(unicode);
+
+                    minX = Math.Min(minX, Math.Min(x, x + advance));
+                    maxX = Math.Max(maxX, Math.Max(x, x + advance));
+                    x += advance;
+                }
+            }
+
+            if (single != null)
+            {
+                AddString(single);
+            }
+            else if (tj != null)
+            {
+                foreach (var item in tj)
+                {
+                    if (item is PdfString s)
+                        AddString(s);
+                    else if (item.TryGetNumber(out double adj) && !double.IsNaN(adj) && !double.IsInfinity(adj))
+                        x -= adj / 1000.0 * fs * th; // TJ numbers are thousandths of text space, subtracted (9.4.3)
+                }
+            }
+
+            var runStart = gs.TextMatrix;
+            gs.TextMatrix = PdfMatrix.CreateTranslation(x, 0) * gs.TextMatrix;
+
+            if (glyphs.Count == 0)
+                return;
+
+            // Glyph box in text space → page space.
+            double ascent = face.Ascent * Math.Abs(fs), descent = face.Descent * Math.Abs(fs);
+            var textBox = new PdfRect(minX, gs.TextRise + Math.Min(ascent, descent), Math.Max(0, maxX - minX), Math.Abs(ascent - descent));
+            var textToPage = runStart * gs.CTM;
+            int mode = gs.TextRenderingMode;
+            bool strokes = mode is 1 or 2 or 5 or 6;
+            double inflate = strokes ? StrokeExpansion(gs) : 0;
+            var pageBounds = Intersect(textToPage.Transform(Inflate(textBox, inflate)), gs.ClipBoundsPage);
+
+            PdfFallbackReason? reason = font.UnsupportedReason;
+            if (reason == null && font.IsVertical)
+                reason = PdfFallbackReason.UnsupportedCMap;
+            bool paints = mode is not 3 and not 7;
+            if (reason == null && paints)
+            {
+                bool fills = mode is 0 or 2 or 4 or 6;
+                reason = (fills ? PaintUnsupported(gs, false) : null) ?? (strokes ? PaintUnsupported(gs, true) : null);
+                if (reason == null && ((fills && gs.FillColorSpace.IsPattern) || (strokes && gs.StrokeColorSpace.IsPattern)))
+                    reason = PdfFallbackReason.Pattern;
+            }
+
+            var effectiveFace = faceHasProgram && !allGlyphIdsKnown
+                ? face with { Format = PdfFontProgramFormat.None, ProgramData = ReadOnlyMemory<byte>.Empty }
+                : face;
+
+            bool drawVisible = !hidden && paints && reason == null;
+            var run = new PdfGlyphRun(
+                gs.CurrentFontResource,
+                fs,
+                glyphs,
+                runStart,
+                gs.HorizontalScaling,
+                gs.CharacterSpacing,
+                gs.WordSpacing,
+                gs.TextRise,
+                drawVisible ? mode : 3,
+                FontFamilyName: font.BaseFont,
+                FullText: text.ToString())
+            {
+                TextToPage = textToPage,
+                Face = effectiveFace,
+                StrokePaint = strokes ? gs.CreateStrokePaint() : null,
+                Stroke = strokes ? gs.CreateStroke() : null,
+            };
+
+            // Invisible runs are kept: selection, search and copy work on them (OCR layers use mode 3).
+            _commands.Add(new DrawGlyphRun(run, gs.CreateFillPaint(), pageBounds));
+
+            if (!hidden && paints && reason is PdfFallbackReason r && !pageBounds.IsEmpty)
+            {
+                AddFallback(r, "Text uses an unsupported font or paint", pageBounds,
+                    new Dictionary<string, string> { ["font"] = font.PostScriptName ?? font.BaseFont, ["subtype"] = font.Subtype });
+            }
+
+            if (mode >= 4)
+            {
+                _features |= PdfFeatureSet.Clipping;
+                textClip = Union(textClip ?? PdfRect.Empty, pageBounds);
+            }
+        }
+
+        /// <summary>
+        /// Text rendering modes 4–7 add glyph outlines to the clip at ET. The IR has no glyph-outline
+        /// clip, so the clipped area is classified as fallback and later content is confined to the
+        /// text's bounding box (a conservative superset of the true clip).
+        /// </summary>
+        private void EndTextClip(GraphicsState gs, PdfRect clipBounds)
+        {
+            AddFallback(PdfFallbackReason.TextClipping, "Text rendering mode adds glyphs to the clip", clipBounds);
+            var userPath = PageRectInUserSpace(gs, clipBounds);
+            if (userPath != null)
+            {
+                _commands.Add(new PushClip(userPath, PdfFillRule.NonZero, clipBounds));
+            }
+            gs.ClipBoundsPage = Intersect(gs.ClipBoundsPage, clipBounds);
+        }
+
+        private void ShowType3Text(GraphicsState gs, PdfDictionary resources, ContentContext ctx, bool hidden,
+            ref PdfRect? textClip, PdfFont font, PdfString? single, PdfArray? tj)
+        {
+            if (ctx.Type3Depth >= _limits.MaxType3Depth)
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxType3Depth), "Type3 glyph procedures nest too deeply.");
+
+            double fs = gs.FontSize;
+            double th = gs.HorizontalScaling / 100.0;
+            var fontMatrix = font.FontMatrix;
+            var charProcs = font.CharProcs;
+            var glyphResources = font.Type3Resources ?? resources;
+            int mode = gs.TextRenderingMode;
+            bool paints = mode is not 3 and not 7;
+            var glyphs = new List<PdfGlyph>();
+            var text = new StringBuilder();
+            var runStart = gs.TextMatrix;
+            double x = 0;
+            var pageBounds = PdfRect.Empty;
+
+            if (mode >= 4)
+            {
+                // Type3 glyphs as clip: classify the whole show operation.
+                textClip = Union(textClip ?? PdfRect.Empty, gs.ClipBoundsPage);
+            }
+
+            void ShowGlyph(int code)
+            {
+                if (++_glyphs > _limits.MaxGlyphsPerPage)
+                    throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxGlyphsPerPage), "Page exceeded the glyph budget.");
+
+                double w0 = font.GetGlyphWidth(code) / 1000.0;
+                double tw = code == 32 ? gs.WordSpacing : 0;
+                double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
+
+                // glyph space → text space → user space (9.6.4)
+                var glyphToUser = fontMatrix
+                                  * new PdfMatrix(fs * th, 0, 0, fs, 0, gs.TextRise)
+                                  * PdfMatrix.CreateTranslation(x, 0)
+                                  * runStart;
+
+                string? glyphName = font.GetGlyphName(code);
+                if (paints && !hidden && glyphName != null && charProcs != null &&
+                    _resolver.Resolve(charProcs[glyphName]) is PdfStream proc)
+                {
+                    var glyphState = gs.Clone();
+                    glyphState.CTM = glyphToUser * gs.CTM;
+                    // Text state inside a glyph procedure starts fresh.
+                    glyphState.TextMatrix = PdfMatrix.Identity;
+                    glyphState.TextLineMatrix = PdfMatrix.Identity;
+                    glyphState.TextRenderingMode = 0;
+                    _commands.Add(new SaveState());
+                    _commands.Add(new ConcatTransform(glyphToUser));
+                    int before = _commands.Count;
+                    Execute(_owner._streamDecoder.DecodeStream(proc), glyphResources, glyphState,
+                        ctx with { Type3Depth = ctx.Type3Depth + 1, UncoloredGlyph = false });
+                    for (int i = before; i < _commands.Count; i++)
                     {
-                        int cid = (span[i] << 8) | span[i + 1];
-                        double width = font.GetGlyphWidth(cid);
-                        double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
-                        string unicode = font.MapToUnicode(cid);
-                        glyphs.Add(new PdfGlyph((ushort)cid, advance, 0, currentX, 0, unicode));
-                        currentX += advance;
+                        if (_commands[i].Bounds is PdfRect b) pageBounds = Union(pageBounds, b);
                     }
+                    _commands.Add(new RestoreState());
+                }
+
+                glyphs.Add(new PdfGlyph((ushort)Math.Clamp(code, 0, ushort.MaxValue), advance, 0, x, 0, font.MapToUnicode(code), code));
+                text.Append(font.MapToUnicode(code));
+                x += advance;
+            }
+
+            void AddString(PdfString s)
+            {
+                foreach (byte b in s.RawBytes.Span)
+                    ShowGlyph(b);
+            }
+
+            if (single != null)
+            {
+                AddString(single);
+            }
+            else if (tj != null)
+            {
+                foreach (var item in tj)
+                {
+                    if (item is PdfString s) AddString(s);
+                    else if (item.TryGetNumber(out double adj) && !double.IsNaN(adj)) x -= adj / 1000.0 * fs * th;
+                }
+            }
+
+            gs.TextMatrix = PdfMatrix.CreateTranslation(x, 0) * runStart;
+            if (glyphs.Count == 0)
+                return;
+
+            var textToPage = runStart * gs.CTM;
+            var box = new PdfRect(0, gs.TextRise - 0.2 * Math.Abs(fs), Math.Max(0, x), Math.Abs(fs));
+            var semanticBounds = Intersect(textToPage.Transform(box), gs.ClipBoundsPage);
+
+            // Semantic run (never painted — the procedures above are the glyph shapes).
+            _commands.Add(new DrawGlyphRun(
+                new PdfGlyphRun(gs.CurrentFontResource, fs, glyphs, runStart, gs.HorizontalScaling,
+                    gs.CharacterSpacing, gs.WordSpacing, gs.TextRise, 3, font.BaseFont, text.ToString())
+                {
+                    TextToPage = textToPage,
+                },
+                gs.CreateFillPaint(),
+                Union(semanticBounds, pageBounds)));
+        }
+
+        // ------------------------------------------------------------------ shading
+
+        private void PaintShadingOperator(string name, PdfDictionary resources, GraphicsState gs)
+        {
+            _features |= PdfFeatureSet.Shading;
+            var shObj = LookupResource(resources, "Shading", name);
+            var shDict = shObj switch
+            {
+                PdfStream s => s.Dictionary,
+                PdfDictionary d => d,
+                _ => null,
+            };
+            if (shDict == null)
+                return;
+
+            var bounds = gs.ClipBoundsPage;
+            if (ReadRect(shDict["BBox"]) is PdfRect bbox)
+                bounds = Intersect(bounds, gs.CTM.Transform(bbox));
+            if (bounds.IsEmpty)
+                return;
+
+            if (PaintUnsupported(gs, stroke: false) is PdfFallbackReason paintReason && paintReason != PdfFallbackReason.UnsupportedColorSpace)
+            {
+                AddFallback(paintReason, "Shading painted with unsupported transparency", bounds);
+                return;
+            }
+
+            if (BuildShading(shDict, out var reason) is not PdfShading shading)
+            {
+                AddFallback(reason, "Unsupported shading type", bounds);
+                return;
+            }
+
+            bool group = gs.FillAlpha < 1.0;
+            bool clipBox = ReadRect(shDict["BBox"]) is not null;
+            if (clipBox)
+            {
+                _commands.Add(new SaveState());
+                _commands.Add(new PushClip(RectPath(ReadRect(shDict["BBox"])!.Value), PdfFillRule.NonZero, bounds));
+            }
+            if (group) _commands.Add(new BeginTransparencyGroup(bounds, gs.FillAlpha));
+            _commands.Add(new DrawShading(shading, bounds));
+            if (group) _commands.Add(new EndTransparencyGroup());
+            if (clipBox) _commands.Add(new RestoreState());
+        }
+
+        /// <summary>
+        /// Axial and the radial cases a gradient brush reproduces exactly (point or concentric start
+        /// circle). Colours are sampled from the shading function into stops.
+        /// </summary>
+        private PdfShading? BuildShading(PdfDictionary sh, out PdfFallbackReason reason)
+        {
+            reason = PdfFallbackReason.Shading;
+            long type = sh.GetInteger("ShadingType") ?? 0;
+            if (type is not 2 and not 3)
+                return null;
+
+            var cs = PdfColorSpace.Resolve(sh["ColorSpace"], _resolver, _page.Resources);
+            if (cs.UnsupportedReason is PdfFallbackReason csReason || cs.IsPattern)
+            {
+                reason = cs.IsPattern ? PdfFallbackReason.Shading : csReason;
+                return null;
+            }
+
+            var coords = _resolver.Resolve(sh["Coords"]) as PdfArray;
+            int need = type == 2 ? 4 : 6;
+            if (coords == null || coords.Count < need)
+                return null;
+            var c = new double[need];
+            for (int i = 0; i < need; i++)
+            {
+                if (!(_resolver.Resolve(coords[i])?.TryGetNumber(out c[i]) ?? false))
+                    return null;
+            }
+
+            double t0 = 0, t1 = 1;
+            if (_resolver.Resolve(sh["Domain"]) is PdfArray dom && dom.Count >= 2)
+            {
+                dom[0].TryGetNumber(out t0);
+                dom[1].TryGetNumber(out t1);
+            }
+
+            bool extendStart = false, extendEnd = false;
+            if (_resolver.Resolve(sh["Extend"]) is PdfArray ext && ext.Count >= 2)
+            {
+                ext[0].TryGetBoolean(out extendStart);
+                ext[1].TryGetBoolean(out extendEnd);
+            }
+
+            IReadOnlyList<PdfGradientStop> stops;
+            try
+            {
+                stops = SampleStops(sh["Function"], cs, t0, t1);
+            }
+            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or IndexOutOfRangeException or ArgumentException)
+            {
+                return null;
+            }
+            if (stops.Count == 0)
+                return null;
+
+            if (type == 2)
+            {
+                return new PdfAxialShading(new(c[0], c[1]), new(c[2], c[3]), stops[0].Color, stops[^1].Color, extendStart, extendEnd)
+                {
+                    Stops = stops,
+                };
+            }
+
+            double x0 = c[0], y0 = c[1], r0 = c[2], x1 = c[3], y1 = c[4], r1 = c[5];
+            if (r0 < 0 || r1 <= 0)
+                return null;
+            bool concentric = Math.Abs(x0 - x1) < 1e-9 && Math.Abs(y0 - y1) < 1e-9 && r1 > r0;
+            bool focalPoint = r0 < 1e-9 && Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) < r1;
+            if (!concentric && !focalPoint)
+                return null;
+            if (concentric && r0 > 0 && !extendStart)
+                return null; // would need an unpainted hole inside r0
+
+            // Brushes interpolate from the focal point (offset 0) to the end circle (offset 1):
+            // remap stops so offset reflects the radius r(t) = r0 + t (r1 - r0).
+            if (concentric && r0 > 0)
+            {
+                var remapped = new List<PdfGradientStop>(stops.Count + 1) { new(0, stops[0].Color) };
+                foreach (var s in stops)
+                    remapped.Add(new((r0 + s.Offset * (r1 - r0)) / r1, s.Color));
+                stops = remapped;
+            }
+
+            return new PdfRadialShading(new(x0, y0), r0, new(x1, y1), r1, stops[0].Color, stops[^1].Color, extendStart, extendEnd)
+            {
+                Stops = stops,
+            };
+        }
+
+        private IReadOnlyList<PdfGradientStop> SampleStops(PdfObject? fnObj, PdfColorSpace cs, double t0, double t1)
+        {
+            var resolved = _resolver.Resolve(fnObj);
+            var functions = new List<PdfFunction>();
+            if (resolved is PdfArray arr)
+            {
+                foreach (var f in arr)
+                    functions.Add(PdfFunction.Parse(f, _resolver, _limits));
+            }
+            else if (resolved != null)
+            {
+                functions.Add(PdfFunction.Parse(resolved, _resolver, _limits));
+            }
+            else
+            {
+                return Array.Empty<PdfGradientStop>();
+            }
+
+            const int Samples = 33;
+            int n = cs.NumberOfComponents;
+            var stops = new List<PdfGradientStop>(Samples);
+            var input = new double[1];
+            var comps = new double[Math.Max(n, 1)];
+            for (int i = 0; i < Samples; i++)
+            {
+                double u = i / (double)(Samples - 1);
+                input[0] = t0 + u * (t1 - t0);
+                if (functions.Count == 1)
+                {
+                    var outBuf = new double[Math.Max(functions[0].OutputCount, n)];
+                    functions[0].Evaluate(input, outBuf);
+                    Array.Copy(outBuf, comps, Math.Min(outBuf.Length, comps.Length));
                 }
                 else
                 {
-                    for (int i = 0; i < span.Length; i++)
+                    var one = new double[1];
+                    for (int k = 0; k < functions.Count && k < comps.Length; k++)
                     {
-                        int charCode = span[i];
-                        double width = font.GetGlyphWidth(charCode);
-                        double advance = (width / 1000.0 * state.FontSize + state.CharacterSpacing) * (state.HorizontalScaling / 100.0);
-                        if (charCode == 32) advance += state.WordSpacing;
+                        functions[k].Evaluate(input, one);
+                        comps[k] = one[0];
+                    }
+                }
+                stops.Add(new PdfGradientStop(u, cs.ToRgbColor(comps, 1f)));
+            }
+            return stops;
+        }
 
-                        string unicode = font.MapToUnicode(charCode);
-                        glyphs.Add(new PdfGlyph((ushort)charCode, advance, 0, currentX, 0, unicode));
-                        currentX += advance;
+        // ------------------------------------------------------------------ XObjects
+
+        private void DoXObject(string name, PdfDictionary resources, GraphicsState gs, ContentContext ctx, bool hidden)
+        {
+            if (LookupResource(resources, "XObject", name) is not PdfStream xobj)
+                return;
+
+            if (IsOptionalContentHidden(_resolver.Resolve(xobj.Dictionary["OC"])))
+                hidden = true;
+
+            switch (xobj.Dictionary.GetName("Subtype"))
+            {
+                case "Image":
+                    if (!hidden)
+                        PaintImage(xobj, xobj.Dictionary, gs, resources, isInline: false, ImageKey(xobj));
+                    break;
+                case "Form":
+                    ExecuteForm(xobj, resources, gs, ctx, hidden);
+                    break;
+            }
+        }
+
+        private string ImageKey(PdfStream stream) =>
+            $"{_owner.DocumentKey}:img:{stream.StreamOffset}:{stream.StreamLength}";
+
+        private void ExecuteForm(PdfStream form, PdfDictionary parentResources, GraphicsState gs, ContentContext ctx, bool hidden)
+        {
+            _features |= PdfFeatureSet.Forms;
+            var dict = form.Dictionary;
+            var matrix = ReadMatrix(dict["Matrix"]) ?? PdfMatrix.Identity;
+            var bbox = ReadRect(dict["BBox"]);
+            var formCtm = matrix * gs.CTM;
+            var formBounds = bbox is PdfRect bb ? Intersect(formCtm.Transform(bb), gs.ClipBoundsPage) : gs.ClipBoundsPage;
+
+            if (ctx.FormDepth >= _limits.MaxFormXObjectDepth)
+            {
+                if (!hidden) AddFallback(PdfFallbackReason.ResourceLimit, "Form XObject nesting too deep", formBounds);
+                return;
+            }
+            if (!_activeForms.Add(form))
+            {
+                return; // a form that paints itself: recursion guard (09_SECURITY "cycle detection")
+            }
+
+            try
+            {
+                if (formBounds.IsEmpty)
+                    return;
+
+                var groupDict = _resolver.Resolve(dict["Group"]) as PdfDictionary;
+                bool isTransparencyGroup = groupDict?.GetName("S") == "Transparency";
+
+                if (isTransparencyGroup && !hidden)
+                {
+                    _features |= PdfFeatureSet.Transparency;
+                    bool knockout = groupDict!.TryGetValue("K", out var k) && k != null && k.TryGetBoolean(out bool kb) && kb;
+                    if (knockout || gs.SoftMaskActive || !gs.IsNormalBlend)
+                    {
+                        AddFallback(knockout ? PdfFallbackReason.TransparencyGroup : gs.SoftMaskActive ? PdfFallbackReason.SoftMask : PdfFallbackReason.BlendMode,
+                            "Transparency group composited with unsupported parameters", formBounds);
+                        return;
                     }
                 }
 
-                if (glyphs.Count > 0)
-                {
-                    var paint = state.TextRenderingMode == 1 ? state.CreateStrokePaint() : state.CreateFillPaint();
-                    var chunkMatrix = PdfMatrix.CreateTranslation(chunkStartX, 0) * state.TextMatrix;
-                    string fullText = string.Concat(glyphs.Select(g => g.Unicode));
-                    var run = new PdfGlyphRun(
-                        state.CurrentFontResource,
-                        state.FontSize,
-                        glyphs,
-                        chunkMatrix,
-                        state.HorizontalScaling,
-                        state.CharacterSpacing,
-                        state.WordSpacing,
-                        state.TextRise,
-                        state.TextRenderingMode,
-                        FontFamilyName: font.BaseFont,
-                        FullText: fullText);
+                byte[] content = _owner._streamDecoder.DecodeStream(form);
+                var formResources = _resolver.Resolve(dict["Resources"]) as PdfDictionary ?? parentResources;
 
-                    commands.Add(new DrawGlyphRun(run, paint, new PdfRect(0, 0, currentX - chunkStartX, state.FontSize)));
+                var inner = gs.Clone();
+                inner.CTM = formCtm;
+                if (bbox is PdfRect clipBox)
+                    inner.ClipBoundsPage = formBounds;
+
+                _commands.Add(new SaveState());
+                _commands.Add(new ConcatTransform(matrix));
+                if (bbox is PdfRect clip)
+                    _commands.Add(new PushClip(RectPath(clip), PdfFillRule.NonZero, formBounds));
+
+                bool group = isTransparencyGroup && !hidden && gs.FillAlpha < 1.0;
+                if (isTransparencyGroup)
+                {
+                    // The group's elements start with alpha 1, Normal blend, no soft mask; the group
+                    // result is composited with the alpha in effect at Do (11.6.6).
+                    inner.FillAlpha = 1;
+                    inner.StrokeAlpha = 1;
+                    inner.BlendMode = "Normal";
+                    inner.SoftMaskActive = false;
+                }
+                if (group)
+                {
+                    bool isolated = groupDict!.TryGetValue("I", out var iso) && iso != null && iso.TryGetBoolean(out bool ib) && ib;
+                    _commands.Add(new BeginTransparencyGroup(formBounds, gs.FillAlpha, "Normal", isolated, false));
+                }
+
+                var savedBase = _currentPatternBase;
+                _currentPatternBase = formCtm;
+                try
+                {
+                    ExecuteNested(content, formResources, inner, ctx with { FormDepth = ctx.FormDepth + 1 }, hidden);
+                }
+                finally
+                {
+                    _currentPatternBase = savedBase;
+                }
+
+                if (group) _commands.Add(new EndTransparencyGroup());
+                _commands.Add(new RestoreState());
+            }
+            finally
+            {
+                _activeForms.Remove(form);
+            }
+        }
+
+        private void ExecuteNested(byte[] content, PdfDictionary resources, GraphicsState gs, ContentContext ctx, bool hidden)
+        {
+            if (!hidden)
+            {
+                Execute(content, resources, gs, ctx);
+                return;
+            }
+
+            // Hidden by optional content: interpret for state balance but discard painting output.
+            int mark = _commands.Count;
+            int fallbackMark = _fallbacks.Count;
+            Execute(content, resources, gs, ctx);
+            _commands.RemoveRange(mark, _commands.Count - mark);
+            _fallbacks.RemoveRange(fallbackMark, _fallbacks.Count - fallbackMark);
+        }
+
+        // ------------------------------------------------------------------ images
+
+        private static readonly HashSet<string> NativeImageFilters = new(StringComparer.Ordinal)
+        {
+            "FlateDecode", "Fl", "LZWDecode", "LZW", "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85",
+            "RunLengthDecode", "RL", "DCTDecode", "DCT", "Crypt",
+        };
+
+        private void PaintImage(PdfStream stream, PdfDictionary dict, GraphicsState gs, PdfDictionary resources, bool isInline, string key)
+        {
+            _features |= PdfFeatureSet.Images;
+            var unit = new PdfRect(0, 0, 1, 1);
+            var pageBounds = ToPage(gs, unit);
+            if (pageBounds.IsEmpty)
+                return;
+
+            long width = dict.GetInteger("Width") ?? 0;
+            long height = dict.GetInteger("Height") ?? 0;
+            if (width <= 0 || height <= 0)
+                return;
+            long pixels = width * height;
+            if (pixels > _limits.MaxImagePixels || (_imagePixels += pixels) > _limits.MaxImagePixelsPerPage)
+            {
+                AddFallback(PdfFallbackReason.ResourceLimit, "Image exceeds the pixel budget", pageBounds);
+                return;
+            }
+
+            bool isMask = _resolver.Resolve(dict["ImageMask"]) is PdfBoolean { Value: true };
+
+            foreach (string filter in FilterNames(dict))
+            {
+                if (!NativeImageFilters.Contains(filter))
+                {
+                    AddFallback(PdfFallbackReason.UnsupportedImageFilter, $"Image filter {Sanitize(filter)}", pageBounds,
+                        new Dictionary<string, string> { ["filter"] = filter });
+                    return;
                 }
             }
-            else if (item.TryGetNumber(out double kern))
+
+            if (PaintUnsupported(gs, stroke: false) is PdfFallbackReason paintReason &&
+                (isMask || paintReason is PdfFallbackReason.SoftMask or PdfFallbackReason.BlendMode))
             {
-                // Negative kerning moves right, positive moves left
-                double kernAdvance = (-kern / 1000.0 * state.FontSize) * (state.HorizontalScaling / 100.0);
-                currentX += kernAdvance;
+                AddFallback(paintReason, "Image painted with unsupported transparency or paint", pageBounds);
+                return;
             }
-        }
-
-        // Advance text matrix by total currentX
-        var advanceMatrix = PdfMatrix.CreateTranslation(currentX, 0);
-        state.TextMatrix = advanceMatrix * state.TextMatrix;
-    }
-
-    private void ExecuteXObject(
-        List<PdfDrawCommand> commands,
-        string xobjName,
-        PdfDictionary? resources,
-        GraphicsState state,
-        ref PdfFeatureSet features,
-        List<PdfFallbackToken> fallbackTokens,
-        int pageNumber,
-        int depth)
-    {
-        if (depth > _limits.MaxFormXObjectDepth)
-            return;
-
-        if (resources == null || !resources.TryGetValue("XObject", out var xobjDictObj))
-            return;
-
-        var xobjsDict = _resolver.Resolve(xobjDictObj) as PdfDictionary;
-        if (xobjsDict == null || !xobjsDict.TryGetValue(xobjName, out var xobjRef))
-            return;
-
-        var streamObj = _resolver.Resolve(xobjRef) as PdfStream;
-        if (streamObj == null) return;
-
-        string subtype = streamObj.Dictionary.GetName("Subtype") ?? string.Empty;
-
-        if (subtype == "Image")
-        {
-            features |= PdfFeatureSet.Images;
-            int width = (int)(streamObj.Dictionary.GetInteger("Width") ?? 0);
-            int height = (int)(streamObj.Dictionary.GetInteger("Height") ?? 0);
-            int bpc = (int)(streamObj.Dictionary.GetInteger("BitsPerComponent") ?? 8);
-            string cs = streamObj.Dictionary.GetName("ColorSpace") ?? "DeviceRGB";
-
-            byte[] decodedBytes = _streamDecoder.DecodeStream(streamObj);
-            var imgRef = new PdfImageRef(xobjName, width, height, bpc, cs, HasAlpha: false, decodedBytes);
-            commands.Add(new DrawImage(imgRef, state.CTM, new PdfRect(0, 0, width, height)));
-        }
-        else if (subtype == "Form")
-        {
-            features |= PdfFeatureSet.Forms;
-            commands.Add(new SaveState());
-            var formState = state.Clone();
-
-            // Form Matrix
-            var matrixObj = streamObj.Dictionary["Matrix"];
-            if (matrixObj is PdfArray mArr && mArr.Count >= 6)
+            if (isMask && gs.FillColorSpace.IsPattern)
             {
-                double a = mArr[0].TryGetNumber(out double ma) ? ma : 1;
-                double b = mArr[1].TryGetNumber(out double mb) ? mb : 0;
-                double c = mArr[2].TryGetNumber(out double mc) ? mc : 0;
-                double d = mArr[3].TryGetNumber(out double md) ? md : 1;
-                double e = mArr[4].TryGetNumber(out double me) ? me : 0;
-                double f = mArr[5].TryGetNumber(out double mf) ? mf : 0;
-                var formMatrix = new PdfMatrix(a, b, c, d, e, f);
-                formState.CTM = formMatrix * formState.CTM;
-                commands.Add(new ConcatTransform(formMatrix));
+                AddFallback(PdfFallbackReason.Pattern, "Stencil mask painted with a pattern", pageBounds);
+                return;
             }
 
-            // Interpret Form stream
-            byte[] formContent = _streamDecoder.DecodeStream(streamObj);
-            var formResources = _resolver.Resolve(streamObj.Dictionary["Resources"]) as PdfDictionary ?? resources;
-
-            // Run sub-interpreter on form content
-            using var formMem = new MemoryByteSource(formContent);
-            // Execute nested form stream
-            commands.Add(new RestoreState());
-        }
-    }
-
-    private void ApplyExtGState(string gsName, PdfDictionary? resources, GraphicsState state, ref PdfFeatureSet features)
-    {
-        if (resources == null || !resources.TryGetValue("ExtGState", out var gsDictObj))
-            return;
-
-        var extGStates = _resolver.Resolve(gsDictObj) as PdfDictionary;
-        if (extGStates == null || !extGStates.TryGetValue(gsName, out var gsRef))
-            return;
-
-        var gsDict = _resolver.Resolve(gsRef) as PdfDictionary;
-        if (gsDict == null) return;
-
-        if (gsDict.TryGetValue("CA", out var caObj) && caObj is not null && caObj.TryGetNumber(out double ca))
-        {
-            state.StrokeAlpha = Math.Clamp(ca, 0.0, 1.0);
-            features |= PdfFeatureSet.Transparency;
-        }
-
-        if (gsDict.TryGetValue("ca", out var caSmallObj) && caSmallObj is not null && caSmallObj.TryGetNumber(out double caSmall))
-        {
-            state.FillAlpha = Math.Clamp(caSmall, 0.0, 1.0);
-            features |= PdfFeatureSet.Transparency;
-        }
-
-        if (gsDict.TryGetValue("LW", out var lwObj) && lwObj is not null && lwObj.TryGetNumber(out double lw))
-        {
-            state.LineWidth = Math.Max(0.0, lw);
-        }
-
-        if (gsDict.TryGetValue("LC", out var lcObj) && lcObj is not null && lcObj.TryGetInteger(out long lc))
-        {
-            state.LineCap = (PdfLineCap)(int)lc;
-        }
-
-        if (gsDict.TryGetValue("LJ", out var ljObj) && ljObj is not null && ljObj.TryGetInteger(out long lj))
-        {
-            state.LineJoin = (PdfLineJoin)(int)lj;
-        }
-
-        if (gsDict.TryGetValue("BM", out var bmObj) && bmObj is not null)
-        {
-            var resolvedBm = _resolver.Resolve(bmObj);
-            if (resolvedBm is PdfName bmName)
+            PdfColorSpace? cs = null;
+            if (!isMask)
             {
-                state.BlendMode = bmName.Value;
-                features |= PdfFeatureSet.Transparency;
-            }
-        }
-
-        if (gsDict.TryGetValue("SMask", out var sMaskObj) && sMaskObj is not null)
-        {
-            features |= PdfFeatureSet.Transparency;
-        }
-    }
-
-    private void EmitShading(
-        List<PdfDrawCommand> commands,
-        string shName,
-        PdfDictionary? resources,
-        GraphicsState state,
-        ref PdfFeatureSet features)
-    {
-        if (resources == null || !resources.TryGetValue("Shading", out var shDictObj))
-            return;
-
-        var shMap = _resolver.Resolve(shDictObj) as PdfDictionary;
-        if (shMap == null || !shMap.TryGetValue(shName, out var shRef))
-            return;
-
-        var shDict = _resolver.Resolve(shRef) as PdfDictionary;
-        if (shDict == null) return;
-
-        features |= PdfFeatureSet.Shading;
-        long shadingType = shDict.GetInteger("ShadingType") ?? 2;
-
-        bool extendStart = true;
-        bool extendEnd = true;
-        if (shDict.TryGetValue("Extend", out var extendObj) && _resolver.Resolve(extendObj) is PdfArray extArr && extArr.Count >= 2)
-        {
-            extendStart = extArr[0].TryGetBoolean(out bool e0) ? e0 : true;
-            extendEnd = extArr[1].TryGetBoolean(out bool e1) ? e1 : true;
-        }
-
-        var cs = PdfEngine.Vector.Color.PdfColorSpace.Resolve(shDict["ColorSpace"], _resolver, resources);
-
-        PdfColor startColor = state.FillColor;
-        PdfColor endColor = PdfColor.White;
-
-        if (shDict.TryGetValue("Function", out var fnObj))
-        {
-            var fnResolved = _resolver.Resolve(fnObj);
-            if (fnResolved is PdfDictionary fnDict)
-            {
-                if (fnDict.TryGetValue("C0", out var c0Obj) && _resolver.Resolve(c0Obj) is PdfArray c0Arr)
+                var csObj = dict["ColorSpace"];
+                if (csObj == null)
                 {
-                    var c0Comps = new double[c0Arr.Count];
-                    for (int i = 0; i < c0Arr.Count; i++)
-                        c0Comps[i] = c0Arr[i].TryGetNumber(out double v) ? v : 0.0;
-                    startColor = cs.ToRgbColor(c0Comps, (float)state.FillAlpha);
+                    AddFallback(PdfFallbackReason.UnsupportedColorSpace, "Image without colour space", pageBounds);
+                    return;
                 }
-                if (fnDict.TryGetValue("C1", out var c1Obj) && _resolver.Resolve(c1Obj) is PdfArray c1Arr)
+                cs = PdfColorSpace.Resolve(csObj, _resolver, resources);
+                if (cs.UnsupportedReason is PdfFallbackReason csReason || cs.IsPattern)
                 {
-                    var c1Comps = new double[c1Arr.Count];
-                    for (int i = 0; i < c1Arr.Count; i++)
-                        c1Comps[i] = c1Arr[i].TryGetNumber(out double v) ? v : 1.0;
-                    endColor = cs.ToRgbColor(c1Comps, (float)state.FillAlpha);
+                    AddFallback(cs.IsPattern ? PdfFallbackReason.UnsupportedColorSpace : csReason, "Image colour space unsupported", pageBounds);
+                    return;
                 }
             }
+
+            // Soft mask / explicit mask streams must use supported filters too.
+            foreach (var maskKey in new[] { "SMask", "Mask" })
+            {
+                if (_resolver.Resolve(dict[maskKey]) is PdfStream maskStream)
+                {
+                    foreach (string filter in FilterNames(maskStream.Dictionary))
+                    {
+                        if (!NativeImageFilters.Contains(filter))
+                        {
+                            AddFallback(PdfFallbackReason.UnsupportedImageFilter, $"Mask filter {Sanitize(filter)}", pageBounds);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            var source = new PdfImageSource(
+                key + (isMask ? $":mask:{gs.FillColor.R:F3},{gs.FillColor.G:F3},{gs.FillColor.B:F3}" : string.Empty),
+                stream,
+                cs,
+                isMask ? gs.FillColor : PdfColor.Black,
+                _resolver,
+                _owner._streamDecoder,
+                _limits,
+                resources);
+
+            bool interpolate = _resolver.Resolve(dict["Interpolate"]) is PdfBoolean { Value: true };
+            var imageRef = new PdfImageRef(
+                key + ":" + (++_imageSerial).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                (int)width,
+                (int)height,
+                (int)(dict.GetInteger("BitsPerComponent") ?? (isMask ? 1 : 8)),
+                cs?.Name ?? "ImageMask",
+                HasAlpha: isMask || dict.ContainsKey("SMask") || dict.ContainsKey("Mask"),
+                ReadOnlyMemory<byte>.Empty,
+                FilterNames(dict) is { Count: > 0 } f ? string.Join(",", f) : null)
+            {
+                Source = source,
+                Interpolate = interpolate,
+                Opacity = gs.FillAlpha,
+            };
+
+            _commands.Add(new DrawImage(imageRef, PdfMatrix.Identity, pageBounds));
         }
 
-        if (shadingType == 2)
+        private List<string> FilterNames(PdfDictionary dict)
         {
-            // Axial shading: Coords = [x0, y0, x1, y1]
-            if (shDict.TryGetValue("Coords", out var coordsObj) && _resolver.Resolve(coordsObj) is PdfArray coordsArr && coordsArr.Count >= 4)
+            var names = new List<string>();
+            var filter = _resolver.Resolve(dict["Filter"] ?? dict["F"]);
+            if (filter is PdfName n)
             {
-                double x0 = coordsArr[0].TryGetNumber(out double cx0) ? cx0 : 0;
-                double y0 = coordsArr[1].TryGetNumber(out double cy0) ? cy0 : 0;
-                double x1 = coordsArr[2].TryGetNumber(out double cx1) ? cx1 : 0;
-                double y1 = coordsArr[3].TryGetNumber(out double cy1) ? cy1 : 0;
+                names.Add(n.Value);
+            }
+            else if (filter is PdfArray arr)
+            {
+                foreach (var item in arr)
+                {
+                    if (_resolver.Resolve(item) is PdfName an)
+                        names.Add(an.Value);
+                }
+            }
+            return names;
+        }
 
-                var axial = new PdfAxialShading(
-                    new PdfPoint(x0, y0),
-                    new PdfPoint(x1, y1),
-                    startColor,
-                    endColor,
-                    extendStart,
-                    extendEnd);
+        private static readonly Dictionary<string, string> InlineKeys = new(StringComparer.Ordinal)
+        {
+            ["BPC"] = "BitsPerComponent", ["CS"] = "ColorSpace", ["D"] = "Decode", ["DP"] = "DecodeParms",
+            ["F"] = "Filter", ["H"] = "Height", ["IM"] = "ImageMask", ["I"] = "Interpolate", ["W"] = "Width",
+            ["L"] = "Length",
+        };
 
-                commands.Add(new DrawShading(axial));
+        private static readonly Dictionary<string, string> InlineNames = new(StringComparer.Ordinal)
+        {
+            ["G"] = "DeviceGray", ["RGB"] = "DeviceRGB", ["CMYK"] = "DeviceCMYK", ["I"] = "Indexed",
+            ["AHx"] = "ASCIIHexDecode", ["A85"] = "ASCII85Decode", ["LZW"] = "LZWDecode", ["Fl"] = "FlateDecode",
+            ["RL"] = "RunLengthDecode", ["CCF"] = "CCITTFaxDecode", ["DCT"] = "DCTDecode",
+        };
+
+        private static PdfObject ExpandInline(PdfObject value) => value switch
+        {
+            PdfName n when InlineNames.TryGetValue(n.Value, out var full) => new PdfName(full),
+            PdfArray a => new PdfArray(a.Select(ExpandInline).ToList()),
+            _ => value,
+        };
+
+        /// <summary>BI … ID &lt;data&gt; EI (8.9.7).</summary>
+        private void ReadInlineImage(MemoryByteSource src, PdfLexer lexer, PdfDictionary resources, GraphicsState gs, bool hidden)
+        {
+            var entries = new Dictionary<string, PdfObject>(StringComparer.Ordinal);
+            while (true)
+            {
+                long pos = src.Position;
+                var tok = lexer.NextToken();
+                if (tok.Type == PdfTokenType.EndOfFile)
+                    return;
+                if (tok.Type == PdfTokenType.Keyword && tok.TextValue == "ID")
+                    break;
+                if (tok.Type != PdfTokenType.Name)
+                    continue; // bounded recovery: skip junk
+                var value = _parser.ParseObject(lexer);
+                if (value == null)
+                    continue;
+                string key = InlineKeys.TryGetValue(tok.TextValue, out var full) ? full : tok.TextValue;
+                entries[key] = ExpandInline(value);
+                _ = pos;
+            }
+
+            // Exactly one whitespace byte separates ID from the data.
+            int ws = src.ReadByte();
+            if (ws >= 0 && !PdfLexer.IsWhitespace((byte)ws))
+                src.Position -= 1;
+
+            var dict = new PdfDictionary(entries);
+            long dataStart = src.Position;
+            long dataLength = -1;
+
+            if (dict.GetInteger("Length") is long explicitLength && explicitLength >= 0)
+            {
+                dataLength = explicitLength;
+            }
+            else if (FilterNames(dict).Count == 0)
+            {
+                // Unfiltered: the size is fully determined by the image parameters.
+                long w = dict.GetInteger("Width") ?? 0, h = dict.GetInteger("Height") ?? 0;
+                long bpc = dict.GetInteger("BitsPerComponent") ?? 1;
+                bool mask = dict["ImageMask"] is PdfBoolean { Value: true };
+                int comps = mask ? 1 : InlineComponents(dict["ColorSpace"], resources);
+                if (w > 0 && h > 0 && comps > 0)
+                    dataLength = checked((w * comps * bpc + 7) / 8 * h);
+            }
+
+            if (dataLength < 0 || dataStart + dataLength > src.Length)
+            {
+                dataLength = ScanForEi(src, dataStart);
+            }
+
+            if (dataLength > _limits.MaxTokenLength)
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxTokenLength), "Inline image data too large.");
+
+            var data = src.ReadMemory(dataStart, (int)Math.Max(0, dataLength)).ToArray();
+            src.Position = dataStart + Math.Max(0, dataLength);
+
+            // Consume up to and including EI.
+            long guard = src.Position;
+            while (true)
+            {
+                var tok = lexer.NextToken();
+                if (tok.Type == PdfTokenType.EndOfFile || (tok.Type == PdfTokenType.Keyword && tok.TextValue == "EI"))
+                    break;
+                if (src.Position - guard > 64)
+                    break;
+            }
+
+            if (hidden)
+                return;
+
+            var stream = new PdfStream(dict, 0, data.Length, null, data);
+            PaintImage(stream, dict, gs, resources, isInline: true, $"{_owner.DocumentKey}:inline:{_page.PageNumber}:{dataStart}");
+        }
+
+        private int InlineComponents(PdfObject? csObj, PdfDictionary resources)
+        {
+            if (csObj == null) return 1;
+            try
+            {
+                return PdfColorSpace.Resolve(csObj, _resolver, resources).NumberOfComponents;
+            }
+            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException)
+            {
+                return -1;
             }
         }
-        else if (shadingType == 3)
+
+        private static long ScanForEi(MemoryByteSource src, long start)
         {
-            // Radial shading: Coords = [x0, y0, r0, x1, y1, r1]
-            if (shDict.TryGetValue("Coords", out var coordsObj) && _resolver.Resolve(coordsObj) is PdfArray coordsArr && coordsArr.Count >= 6)
+            var span = src.ReadMemory(start, (int)Math.Min(int.MaxValue, src.Length - start)).Span;
+            for (int i = 0; i + 1 < span.Length; i++)
             {
-                double x0 = coordsArr[0].TryGetNumber(out double cx0) ? cx0 : 0;
-                double y0 = coordsArr[1].TryGetNumber(out double cy0) ? cy0 : 0;
-                double r0 = coordsArr[2].TryGetNumber(out double cr0) ? cr0 : 0;
-                double x1 = coordsArr[3].TryGetNumber(out double cx1) ? cx1 : 0;
-                double y1 = coordsArr[4].TryGetNumber(out double cy1) ? cy1 : 0;
-                double r1 = coordsArr[5].TryGetNumber(out double cr1) ? cr1 : 0;
+                if (span[i] == 'E' && span[i + 1] == 'I' &&
+                    (i == 0 || PdfLexer.IsWhitespace(span[i - 1])) &&
+                    (i + 2 >= span.Length || PdfLexer.IsWhitespace(span[i + 2]) || PdfLexer.IsDelimiter(span[i + 2])))
+                {
+                    int end = i;
+                    if (end > 0 && PdfLexer.IsWhitespace(span[end - 1])) end--;
+                    return end;
+                }
+            }
+            return span.Length;
+        }
 
-                var radial = new PdfRadialShading(
-                    new PdfPoint(x0, y0),
-                    r0,
-                    new PdfPoint(x1, y1),
-                    r1,
-                    startColor,
-                    endColor,
-                    extendStart,
-                    extendEnd);
+        // ------------------------------------------------------------------ optional content
 
-                commands.Add(new DrawShading(radial));
+        private bool IsOptionalContentHidden(PdfObject? oc)
+        {
+            var hiddenSet = _owner.HiddenOptionalContentGroups;
+            if (oc is not PdfDictionary dict || hiddenSet == null || hiddenSet.Count == 0)
+                return false;
+
+            if (dict.GetName("Type") == "OCMD")
+            {
+                var ocgs = new List<PdfDictionary>();
+                var ocgsObj = _resolver.Resolve(dict["OCGs"]);
+                if (ocgsObj is PdfDictionary single) ocgs.Add(single);
+                else if (ocgsObj is PdfArray arr)
+                {
+                    foreach (var item in arr)
+                        if (_resolver.Resolve(item) is PdfDictionary g) ocgs.Add(g);
+                }
+                if (ocgs.Count == 0)
+                    return false;
+
+                int on = 0;
+                foreach (var g in ocgs)
+                    if (!hiddenSet.Contains(g)) on++;
+
+                // /VE expressions are not evaluated; /P governs (8.11.2.2).
+                return (dict.GetName("P") ?? "AnyOn") switch
+                {
+                    "AllOn" => on != ocgs.Count,
+                    "AnyOff" => on == ocgs.Count,
+                    "AllOff" => on != 0,
+                    _ => on == 0,
+                };
+            }
+
+            return hiddenSet.Contains(dict);
+        }
+
+        // ------------------------------------------------------------------ annotations
+
+        /// <summary>
+        /// Paints annotation normal appearances like the PDFium path (FPDF_ANNOT), using the
+        /// appearance-to-rectangle algorithm of ISO 32000-2 12.5.5.
+        /// </summary>
+        private void AppendAnnotationAppearances()
+        {
+            if (_resolver.Resolve(_page.Dictionary["Annots"]) is not PdfArray annots)
+                return;
+
+            foreach (var annotRef in annots)
+            {
+                if (_resolver.Resolve(annotRef) is not PdfDictionary annot)
+                    continue;
+                string? subtype = annot.GetName("Subtype");
+                if (subtype is "Popup" or "Link")
+                    continue;
+
+                long flags = annot.GetInteger("F") ?? 0;
+                if ((flags & 2) != 0 || (flags & 32) != 0)
+                    continue; // Hidden / NoView
+
+                if (_resolver.Resolve(annot["AP"]) is not PdfDictionary ap)
+                    continue;
+
+                var normal = _resolver.Resolve(ap["N"]);
+                if (normal is PdfDictionary states && annot.GetName("AS") is string state)
+                    normal = _resolver.Resolve(states[state]);
+                if (normal is not PdfStream appearance)
+                    continue;
+
+                if (ReadRect(annot["Rect"]) is not PdfRect rect || rect.IsEmpty)
+                    continue;
+
+                bool hidden = IsOptionalContentHidden(_resolver.Resolve(annot["OC"]));
+                var bbox = ReadRect(appearance.Dictionary["BBox"]) ?? rect;
+                var matrix = ReadMatrix(appearance.Dictionary["Matrix"]) ?? PdfMatrix.Identity;
+                var transformed = matrix.Transform(bbox);
+                if (transformed.Width <= 0 || transformed.Height <= 0)
+                    continue;
+
+                var a = new PdfMatrix(
+                    rect.Width / transformed.Width, 0, 0, rect.Height / transformed.Height,
+                    rect.Left - transformed.Left * rect.Width / transformed.Width,
+                    rect.Top - transformed.Top * rect.Height / transformed.Height);
+
+                var gs = new GraphicsState { ClipBoundsPage = Crop, CTM = a };
+                _commands.Add(new SaveState());
+                _commands.Add(new ConcatTransform(a));
+                ExecuteForm(appearance, _page.Resources, gs, new ContentContext(PdfMatrix.Identity, 0, 0, false), hidden);
+                _commands.Add(new RestoreState());
             }
         }
-    }
 
-    private static double[] PopNumbers(List<PdfObject> operands, int count)
-    {
-        var result = new double[count];
-        for (int i = 0; i < count; i++)
+        // ------------------------------------------------------------------ content streams
+
+        private byte[] ConcatenateContentStreams(IReadOnlyList<PdfStream> streams)
         {
-            result[i] = PopNum(operands);
-        }
-        return result;
-    }
+            if (streams.Count == 0)
+                return Array.Empty<byte>();
 
-    private byte[] ConcatenateContentStreams(IReadOnlyList<PdfStream> streams)
-    {
-        if (streams.Count == 0)
-            return Array.Empty<byte>();
+            if (streams.Count == 1)
+                return _owner._streamDecoder.DecodeStream(streams[0]);
 
-        if (streams.Count == 1)
-        {
-            return _streamDecoder.DecodeStream(streams[0]);
-        }
-
-        using var ms = new MemoryStream();
-        foreach (var stream in streams)
-        {
-            byte[] decoded = _streamDecoder.DecodeStream(stream);
-            if (decoded.Length > 0)
+            // Streams are concatenated with whitespace between them; tokens never span streams (7.8.2).
+            using var ms = new MemoryStream();
+            foreach (var stream in streams)
             {
+                byte[] decoded = _owner._streamDecoder.DecodeStream(stream);
+                if (ms.Length + decoded.Length > _limits.MaxDecodedStreamBytes)
+                    throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxDecodedStreamBytes), "Page content exceeds the decoded size limit.");
                 ms.Write(decoded);
                 ms.WriteByte((byte)'\n');
             }
-        }
 
-        return ms.ToArray();
-    }
-
-    private static double PopNum(List<PdfObject> operands)
-    {
-        for (int i = 0; i < operands.Count; i++)
-        {
-            if (operands[i].TryGetNumber(out double num))
-            {
-                operands.RemoveAt(i);
-                return num;
-            }
+            return ms.ToArray();
         }
-        return 0.0;
-    }
-
-    private static string PopName(List<PdfObject> operands)
-    {
-        for (int i = 0; i < operands.Count; i++)
-        {
-            if (operands[i].TryGetName(out string name))
-            {
-                operands.RemoveAt(i);
-                return name;
-            }
-        }
-        return string.Empty;
     }
 }

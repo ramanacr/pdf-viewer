@@ -22,6 +22,10 @@ public sealed class PdfObjectResolver
     private readonly ConcurrentDictionary<int, PdfObject> _resolvedCache = new();
     private readonly HashSet<int> _resolving = new();
 
+    // The byte source and lexer are positional, so resolution is serialized. Monitor is re-entrant,
+    // which object-stream and /Length resolution rely on.
+    private readonly object _sync = new();
+
     public PdfObjectResolver(IPdfByteSource source, PdfXrefTable xrefTable, PdfSecurityLimits? limits = null)
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
@@ -50,96 +54,155 @@ public sealed class PdfObjectResolver
         if (!entry.IsInUse)
             return null;
 
-        lock (_resolving)
+        lock (_sync)
         {
+            if (_resolvedCache.TryGetValue(objectNumber, out cached))
+                return cached;
+
             if (!_resolving.Add(objectNumber))
             {
-                // Circular reference detected; return null or stub to prevent stack overflow
+                // Circular reference (e.g. a stream whose /Length points back at itself).
                 return null;
             }
-        }
 
-        try
-        {
-            PdfObject? resolved = null;
-
-            if (entry.IsCompressed)
+            try
             {
-                // Resolve from object stream (/ObjStm)
-                resolved = ResolveFromObjectStream(entry.CompressedStreamObjectNumber, entry.CompressedStreamIndex, objectNumber);
-            }
-            else if (entry.ByteOffset > 0 && entry.ByteOffset < _source.Length)
-            {
-                // Resolve uncompressed object from file offset
-                _source.Position = entry.ByteOffset;
-                var lexer = new PdfLexer(_source, _limits);
+                PdfObject? resolved = null;
 
-                var objNumToken = lexer.NextToken();
-                var genNumToken = lexer.NextToken();
-                var objKeyword = lexer.NextToken();
-
-                if (objKeyword.Type == PdfTokenType.Keyword && objKeyword.TextValue == "obj")
+                if (entry.IsCompressed)
                 {
-                    var parser = new PdfParser(_limits);
-                    resolved = parser.ParseObject(lexer);
+                    resolved = ResolveFromObjectStream(entry.CompressedStreamObjectNumber, entry.CompressedStreamIndex, objectNumber);
                 }
-            }
+                else if (entry.ByteOffset > 0 && entry.ByteOffset < _source.Length)
+                {
+                    _source.Position = entry.ByteOffset;
+                    var lexer = new PdfLexer(_source, _limits);
 
-            if (resolved != null)
-            {
-                _resolvedCache[objectNumber] = resolved;
-            }
+                    lexer.NextToken(); // object number
+                    lexer.NextToken(); // generation
+                    var objKeyword = lexer.NextToken();
 
-            return resolved;
-        }
-        finally
-        {
-            lock (_resolving)
+                    if (objKeyword.Type == PdfTokenType.Keyword && objKeyword.TextValue == "obj")
+                    {
+                        var parser = new PdfParser(_limits);
+                        resolved = parser.ParseObject(lexer);
+                    }
+                }
+
+                if (resolved is PdfStream stream)
+                {
+                    resolved = FixIndirectLength(stream);
+                }
+
+                if (resolved != null)
+                {
+                    _resolvedCache[objectNumber] = resolved;
+                }
+
+                return resolved;
+            }
+            finally
             {
                 _resolving.Remove(objectNumber);
             }
         }
     }
 
+    /// <summary>
+    /// The parser cannot resolve an indirect /Length, so it scans for "endstream". When the real
+    /// length is available and plausible, prefer it: binary data may legitimately contain "endstream".
+    /// </summary>
+    private PdfStream FixIndirectLength(PdfStream stream)
+    {
+        if (stream.CachedRawBytes.HasValue ||
+            !stream.Dictionary.TryGetValue("Length", out var lenObj) ||
+            lenObj is not PdfIndirectRef)
+        {
+            return stream;
+        }
+
+        if (Resolve(lenObj) is PdfObject lenValue &&
+            lenValue.TryGetInteger(out long length) &&
+            length >= 0 &&
+            length != stream.StreamLength &&
+            stream.StreamOffset + length <= _source.Length)
+        {
+            return stream with { StreamLength = length };
+        }
+
+        return stream;
+    }
+
+    private sealed record ObjectStreamIndex(byte[] Data, long First, List<(int ObjNum, long Offset)> Offsets);
+
+    // Decoded object streams, so resolving N objects from one /ObjStm decodes it once, not N times.
+    private readonly Dictionary<int, ObjectStreamIndex?> _objectStreams = new();
+
     private PdfObject? ResolveFromObjectStream(int streamObjNum, int indexInStream, int targetObjNum)
     {
-        var streamObj = Resolve(streamObjNum);
-        if (streamObj is not PdfStream objStm)
+        if (!_objectStreams.TryGetValue(streamObjNum, out var index))
+        {
+            index = LoadObjectStream(streamObjNum);
+            _objectStreams[streamObjNum] = index;
+        }
+
+        if (index == null || indexInStream < 0)
+            return null;
+
+        // Prefer the recorded index, but tolerate writers whose index disagrees with the header.
+        long relOffset = -1;
+        if (indexInStream < index.Offsets.Count && index.Offsets[indexInStream].ObjNum == targetObjNum)
+        {
+            relOffset = index.Offsets[indexInStream].Offset;
+        }
+        else
+        {
+            foreach (var (objNum, offset) in index.Offsets)
+            {
+                if (objNum == targetObjNum)
+                {
+                    relOffset = offset;
+                    break;
+                }
+            }
+        }
+
+        long targetOffset = index.First + relOffset;
+        if (relOffset < 0 || targetOffset >= index.Data.Length)
+            return null;
+
+        using var memSource = new MemoryByteSource(index.Data);
+        memSource.Position = targetOffset;
+        var lexer = new PdfLexer(memSource, _limits);
+        var parser = new PdfParser(_limits);
+        return parser.ParseObject(lexer);
+    }
+
+    private ObjectStreamIndex? LoadObjectStream(int streamObjNum)
+    {
+        if (Resolve(streamObjNum) is not PdfStream objStm)
             return null;
 
         byte[] decoded = _streamDecoder.DecodeStream(objStm);
         var dict = objStm.Dictionary;
 
-        int n = (int)(dict.GetInteger("N") ?? 0);
+        long n = dict.GetInteger("N") ?? 0;
         long first = dict.GetInteger("First") ?? 0;
-        if (n <= 0 || first < 0 || first > decoded.Length)
+        if (n <= 0 || n > _limits.MaxObjectsCount || first < 0 || first > decoded.Length)
             return null;
 
         using var memSource = new MemoryByteSource(decoded);
         var lexer = new PdfLexer(memSource, _limits);
-
-        // Read the N pairs of [objNum, offset]
-        var offsets = new List<(int ObjNum, long Offset)>(n);
-        for (int i = 0; i < n; i++)
+        var offsets = new List<(int ObjNum, long Offset)>((int)Math.Min(n, 4096));
+        for (long i = 0; i < n && memSource.Position < first; i++)
         {
             var numToken = lexer.NextToken();
             var offsetToken = lexer.NextToken();
-            if (numToken.Type == PdfTokenType.Integer && offsetToken.Type == PdfTokenType.Integer)
-            {
-                offsets.Add(((int)numToken.IntValue, offsetToken.IntValue));
-            }
+            if (numToken.Type != PdfTokenType.Integer || offsetToken.Type != PdfTokenType.Integer)
+                break;
+            offsets.Add(((int)numToken.IntValue, offsetToken.IntValue));
         }
 
-        if (indexInStream < 0 || indexInStream >= offsets.Count)
-            return null;
-
-        var targetEntry = offsets[indexInStream];
-        long targetOffset = first + targetEntry.Offset;
-        if (targetOffset < 0 || targetOffset >= decoded.Length)
-            return null;
-
-        memSource.Position = targetOffset;
-        var parser = new PdfParser(_limits);
-        return parser.ParseObject(lexer);
+        return new ObjectStreamIndex(decoded, first, offsets);
     }
 }

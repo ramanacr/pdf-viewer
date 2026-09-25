@@ -54,10 +54,21 @@ public sealed class PdfPageTree
         if (!visited.Add(node))
             return; // Cycle guard
 
+        if (_pages.Count >= _limits.MaxObjectsCount)
+            return;
+
         // Inherited boxes and attributes
         PdfRect mediaBox = ParseRect(node["MediaBox"]) ?? inheritedMediaBox;
         PdfRect cropBox = ParseRect(node["CropBox"]) ?? (inheritedCropBox.IsEmpty ? mediaBox : inheritedCropBox);
-        int rotate = (int)(node.GetInteger("Rotate") ?? inheritedRotate);
+        // The crop box is clipped to the media box (ISO 32000-2 14.11.2).
+        if (!mediaBox.IsEmpty && !cropBox.IsEmpty)
+        {
+            double x0 = Math.Max(mediaBox.Left, cropBox.Left), y0 = Math.Max(mediaBox.Top, cropBox.Top);
+            double x1 = Math.Min(mediaBox.Right, cropBox.Right), y1 = Math.Min(mediaBox.Bottom, cropBox.Bottom);
+            cropBox = x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : mediaBox;
+        }
+        // /Rotate must be a multiple of 90 (ISO 32000-2 Table 31); snap anything else.
+        int rotate = (int)(Math.Round((node.GetInteger("Rotate") ?? inheritedRotate) / 90.0) * 90) % 360;
         PdfDictionary mergedResources = MergeResources(inheritedResources, _resolver.Resolve(node["Resources"]) as PdfDictionary);
 
         string? type = node.GetName("Type");
