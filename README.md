@@ -13,6 +13,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
 - [Native Engine & PDFium Tooling](#native-engine--pdfium-tooling)
+- [Rendering Engines (Vector Migration)](#rendering-engines-vector-migration)
 - [Prerequisites & System Requirements](#prerequisites--system-requirements)
 - [Project & Directory Structure](#project--directory-structure)
 - [Building & Running](#building--running)
@@ -254,6 +255,35 @@ To re-run or verify the native tooling setup:
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\eng\pdfium\build.ps1
 ```
+
+---
+
+## Rendering Engines (Vector Migration)
+
+The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.Vector` + `PdfEngine.Vector.Windows`). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
+
+**Engine modes** (View → Rendering Engine, or the `PDF_ENGINE_MODE` environment variable: `Auto`, `Hybrid`, `Vector`, `Pdfium`):
+
+| Mode | Behaviour |
+|---|---|
+| `Auto` / `Hybrid` | Vector path first. Objects it cannot yet render faithfully (soft masks, non-Normal blend modes, tiling patterns, mesh shadings, JPX/JBIG2/CCITT images, text clipping, embedded Type1/CFF fonts, …) are composited **per region** from PDFium. Pages where fallback covers ≥ 50 % of the area, encrypted documents and documents the vector parser cannot open are rendered entirely by PDFium. |
+| `Vector` | Strict: unsupported regions are outlined in orange instead of rendered. For development and CI. |
+| `Pdfium` | The original PDFium renderer only (kill switch). |
+
+The status-bar badge shows which engine rendered the current page (`⚡ Vector`, `⚡ Hybrid (N PDFium regions)`, `🖼️ PDFium (Fallback)`); its tooltip lists the classified fallback reasons.
+
+**What stays on PDFium** regardless of mode: search, annotations and forms editing, saving, printing, image export, redaction, signatures and page organisation. **Releases still ship `pdfium.dll`** — it is required for fallback and for those features.
+
+**Known limitations of the vector path:** rasterization goes through WPF's software `RenderTargetBitmap` and is currently ~2× slower than PDFium for a first render (see `eng/vectorpdf/baseline-bench.txt`); the page view still displays a bitmap per zoom level, so zoom re-rasterizes vectors rather than displaying them directly; there is no security handler for encrypted files yet.
+
+**Verification tooling:**
+```powershell
+dotnet test tests/PdfEngine.Vector.Tests                        # unit, fixture, PDFium-differential and fuzz tests
+$env:VECTOR_FUZZ_ITERATIONS=100000; dotnet test tests/PdfEngine.Vector.Tests --filter Fuzz
+dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- bench --pages 20
+dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- corpus <folder> --out report.jsonl --diff
+```
+The corpus runner reads files locally and writes one JSON line per file (SHA-256, open outcome for both engines, fallback reasons and area, pixel difference). No document content leaves the machine.
 
 ---
 

@@ -1,0 +1,21 @@
+# vectorpdf bench --pages 20 (Release, 2026-09-25, commit ad231cc, developer workstation; WPF software rasterizer vs PDFium)
+commands/page=450 imageCacheBytes=0
+vector.open                        0.83 ms
+pdfium.open                        0.24 ms
+vector.build.perPage              20.51 ms
+vector.render.100%                98.72 ms
+pdfium.render.100%                40.95 ms
+vector.render.200%               156.74 ms
+pdfium.render.200%                64.81 ms
+vector.render.400%               305.05 ms
+pdfium.render.400%               157.05 ms
+vector.render.800%               758.87 ms
+pdfium.render.800%               416.27 ms
+vector.render.1600%             2353.24 ms
+pdfium.render.1600%             1102.65 ms
+vector.compile.100%               14.14 ms
+vector.raster.100%                76.58 ms
+vector.compile.1600%               2.61 ms
+vector.raster.1600%             2569.47 ms
+vector.warmReplay.150dpi         222.83 ms
+vector.cancel.observedMs          31.78 ms
