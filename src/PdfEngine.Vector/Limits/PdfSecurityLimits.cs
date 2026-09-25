@@ -63,4 +63,19 @@ public sealed class PdfSecurityLimits
 
     /// <summary>Display-list cache budget per document, in total commands.</summary>
     public long MaxCachedDisplayListCommands { get; init; } = 2_000_000;
+
+    /// <summary>Maximum total sample values (prod(Size) x outputs) of a Type 0 sampled function.</summary>
+    public int MaxFunctionSamples { get; init; } = 1_000_000;
+
+    /// <summary>Maximum nesting depth of Type 3 stitching functions (and function arrays within them).</summary>
+    public int MaxFunctionNestingDepth { get; init; } = 8;
+
+    /// <summary>Maximum operand stack depth of a Type 4 PostScript calculator function.</summary>
+    public int MaxCalculatorStackDepth { get; init; } = 100;
+
+    /// <summary>Maximum operators executed by a single Type 4 PostScript calculator evaluation.</summary>
+    public int MaxCalculatorOperations { get; init; } = 10_000;
+
+    /// <summary>Maximum color space nesting depth (Indexed base, Separation/DeviceN alternate, named references).</summary>
+    public int MaxColorSpaceNestingDepth { get; init; } = 8;
 }
