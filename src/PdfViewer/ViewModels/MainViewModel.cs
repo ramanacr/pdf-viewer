@@ -842,25 +842,37 @@ public partial class MainViewModel : ObservableObject
         _ = RenderVisiblePagesAsync();
     }
 
+    /// <summary>Smallest zoom factor.</summary>
+    public const double MinZoom = 0.25;
+
+    /// <summary>
+    /// Largest zoom factor. Vector pages stay sharp at any zoom (viewport tiles are rendered at
+    /// device resolution), so the ceiling is the plan's verification range, not a raster limit.
+    /// </summary>
+    public const double MaxZoom = 16.0;
+
     [RelayCommand]
     public void ZoomIn()
     {
         FitMode = PageFitMode.Custom;
-        ZoomLevel = Math.Min(5.0, Math.Round(ZoomLevel + 0.15, 2));
+        // Fine steps up to 200 %, then proportional steps so 1600 % is reachable.
+        double next = ZoomLevel < 2.0 ? ZoomLevel + 0.15 : ZoomLevel * 1.25;
+        ZoomLevel = Math.Min(MaxZoom, Math.Round(next, 2));
     }
 
     [RelayCommand]
     public void ZoomOut()
     {
         FitMode = PageFitMode.Custom;
-        ZoomLevel = Math.Max(0.25, Math.Round(ZoomLevel - 0.15, 2));
+        double next = ZoomLevel <= 2.0 ? ZoomLevel - 0.15 : Math.Max(2.0, ZoomLevel / 1.25);
+        ZoomLevel = Math.Max(MinZoom, Math.Round(next, 2));
     }
 
     [RelayCommand]
     public void SetZoom(double zoom)
     {
         FitMode = PageFitMode.Custom;
-        ZoomLevel = Math.Clamp(zoom, 0.25, 5.0);
+        ZoomLevel = Math.Clamp(zoom, MinZoom, MaxZoom);
     }
 
     [RelayCommand]
@@ -899,7 +911,7 @@ public partial class MainViewModel : ObservableObject
             double availableWidth = viewportWidth - 40; // account for scrollbar & margins
             if (availableWidth > 0 && requiredWidth > 0)
             {
-                ZoomLevel = Math.Clamp(availableWidth / requiredWidth, 0.25, 5.0);
+                ZoomLevel = Math.Clamp(availableWidth / requiredWidth, MinZoom, MaxZoom);
             }
         }
         else if (FitMode == PageFitMode.FitPage)
@@ -910,7 +922,7 @@ public partial class MainViewModel : ObservableObject
             {
                 double scaleX = availableWidth / requiredWidth;
                 double scaleY = availableHeight / docPageHeight;
-                ZoomLevel = Math.Clamp(Math.Min(scaleX, scaleY), 0.25, 5.0);
+                ZoomLevel = Math.Clamp(Math.Min(scaleX, scaleY), MinZoom, MaxZoom);
             }
         }
     }
@@ -1203,6 +1215,10 @@ public partial class MainViewModel : ObservableObject
     }
 
     #endregion
+
+    /// <summary>Viewport detail tile for a visible page (see <see cref="PageViewModel.UpdateDetailAsync"/>).</summary>
+    public Task RequestPageDetailAsync(PageViewModel page, System.Windows.Rect visibleDips, double devicePixelsPerDip) =>
+        page.UpdateDetailAsync(_docService, visibleDips, devicePixelsPerDip, RotationAngle, IsNightMode);
 
     public void RenderPagesInViewport(double viewportTop, double viewportHeight)
     {

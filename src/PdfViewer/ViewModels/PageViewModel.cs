@@ -158,14 +158,105 @@ public partial class PageViewModel : ObservableObject
 
     public void UpdateScale(double scale)
     {
+        if (Math.Abs(DisplayScale - scale) > 1e-9)
+            ClearDetail(); // the tile belongs to the previous zoom
         DisplayScale = scale;
         RaiseGeometryChanged();
     }
 
     public void UpdateRotation(int angle)
     {
+        if (RotationAngle != angle)
+            ClearDetail();
         RotationAngle = angle;
         RaiseGeometryChanged();
+    }
+
+    // ------------------------------------------------------------------ viewport detail tile
+
+    /// <summary>
+    /// The visible part of the page rendered at exact device resolution when the page bitmap is
+    /// coarser than the screen (zoomed in). Positioned by <see cref="DetailRect"/> in page DIPs.
+    /// </summary>
+    [ObservableProperty]
+    private BitmapSource? _detailImage;
+
+    [ObservableProperty]
+    private Rect _detailRect;
+
+    private CancellationTokenSource? _detailCts;
+    private (double PixelsPerPoint, int Rotation, bool Night) _detailKey;
+    private Rect _detailPixels;
+
+    /// <summary>Largest detail tile side in device pixels (memory bound: 64 MB at 4096²).</summary>
+    public const double MaxDetailPixels = 4096;
+
+    public void ClearDetail()
+    {
+        _detailCts?.Cancel();
+        _detailCts = null;
+        DetailImage = null;
+        _detailPixels = Rect.Empty;
+    }
+
+    /// <summary>
+    /// Ensures a detail tile covers <paramref name="visibleDips"/> (the page's visible rectangle in
+    /// its own DIPs) at the current zoom. Renders visible area plus a margin so small scrolls reuse
+    /// the tile; does nothing when the page bitmap is already sharp enough.
+    /// </summary>
+    public async Task UpdateDetailAsync(IPdfDocumentService service, Rect visibleDips, double devicePixelsPerDip, int rotation, bool nightMode)
+    {
+        if (VectorSurface != null || visibleDips.IsEmpty || visibleDips.Width < 1 || visibleDips.Height < 1)
+        {
+            ClearDetail();
+            return;
+        }
+
+        double pxPerPt = DisplayScale * devicePixelsPerDip;
+        var baseImage = RenderedImage;
+        double basePxPerPt = baseImage != null ? baseImage.PixelWidth / Math.Max(1, OrientedWidthPt) : 0;
+        if (baseImage != null && basePxPerPt >= pxPerPt * 0.95)
+        {
+            ClearDetail(); // the page bitmap already matches the screen
+            return;
+        }
+
+        double fullW = DisplayWidth * devicePixelsPerDip, fullH = DisplayHeight * devicePixelsPerDip;
+        var visiblePx = new Rect(visibleDips.X * devicePixelsPerDip, visibleDips.Y * devicePixelsPerDip,
+            visibleDips.Width * devicePixelsPerDip, visibleDips.Height * devicePixelsPerDip);
+
+        var key = (Math.Round(pxPerPt, 4), rotation, nightMode);
+        if (DetailImage != null && _detailKey == key && _detailPixels.Contains(visiblePx))
+            return;
+
+        // Visible area plus half a viewport on every side, clamped to the page and the memory bound.
+        double mx = Math.Min(visiblePx.Width / 2, Math.Max(0, (MaxDetailPixels - visiblePx.Width) / 2));
+        double my = Math.Min(visiblePx.Height / 2, Math.Max(0, (MaxDetailPixels - visiblePx.Height) / 2));
+        double x0 = Math.Max(0, Math.Floor(visiblePx.X - mx)), y0 = Math.Max(0, Math.Floor(visiblePx.Y - my));
+        double x1 = Math.Min(fullW, Math.Ceiling(visiblePx.Right + mx)), y1 = Math.Min(fullH, Math.Ceiling(visiblePx.Bottom + my));
+        int w = (int)Math.Min(MaxDetailPixels, x1 - x0), h = (int)Math.Min(MaxDetailPixels, y1 - y0);
+        if (w <= 0 || h <= 0)
+            return;
+
+        _detailCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _detailCts = cts;
+        try
+        {
+            var tile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)x0, (int)y0, w, h, nightMode, cts.Token);
+            if (cts.IsCancellationRequested || tile == null)
+                return;
+            DetailImage = tile;
+            DetailRect = new Rect(x0 / devicePixelsPerDip, y0 / devicePixelsPerDip, w / devicePixelsPerDip, h / devicePixelsPerDip);
+            _detailKey = key;
+            _detailPixels = new Rect(x0, y0, w, h);
+        }
+        catch (OperationCanceledException) { }
+        catch (PdfEngine.Exceptions.PdfSecurityPolicyException) { }
+        catch (Exception) when (!cts.IsCancellationRequested)
+        {
+            // A failed tile leaves the (coarser) page bitmap visible; never an empty page.
+        }
     }
 
     private void RaiseGeometryChanged()
@@ -277,6 +368,7 @@ public partial class PageViewModel : ObservableObject
 
     public void UnloadImage()
     {
+        ClearDetail();
         VectorSurface = null;
         _surfaceRotation = -1;
         RenderedImage = null;

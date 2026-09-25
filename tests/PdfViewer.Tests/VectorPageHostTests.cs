@@ -15,8 +15,9 @@ using Xunit;
 namespace PdfViewer.Tests;
 
 /// <summary>
-/// The vector page host (backlog E8): pages the vector engine can show are displayed as a live,
+/// The WPF drawing host (opt-in, PDF_VECTOR_HOST=wpf): pages are displayed as a live,
 /// resolution-independent drawing, so zooming never re-renders or stretches a page bitmap.
+/// The default Direct2D host is covered by <see cref="Direct2DPageHostTests"/>.
 /// </summary>
 public class VectorPageHostTests : IDisposable
 {
@@ -34,7 +35,7 @@ public class VectorPageHostTests : IDisposable
     public async Task VectorPage_IsShownAsLiveSurface_AndZoomDoesNotRebuildIt()
     {
         string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "live.pdf"), 1);
-        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto) { HostMode = HybridVectorDocumentService.VectorHostMode.WpfDrawing };
         await service.OpenDocumentAsync(path);
         var (page, renderer) = PageFor(service);
 
@@ -57,7 +58,7 @@ public class VectorPageHostTests : IDisposable
     public async Task Rotation_ProducesARotatedSurface()
     {
         string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "rot.pdf"), 1);
-        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto) { HostMode = HybridVectorDocumentService.VectorHostMode.WpfDrawing };
         await service.OpenDocumentAsync(path);
         var (page, renderer) = PageFor(service);
 
@@ -90,7 +91,7 @@ public class VectorPageHostTests : IDisposable
             "<< /ExtGState << /G1 << /ca 0.5 >> >> /Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] " +
             "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 1 0] /C1 [0 0.5 1] /N 1 >> /Extend [true true] >> >> >>");
 
-        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto) { HostMode = HybridVectorDocumentService.VectorHostMode.WpfDrawing };
         await service.OpenDocumentAsync(path);
         var (page, renderer) = PageFor(service, w: 200, h: 200);
 
@@ -123,7 +124,7 @@ public class VectorPageHostTests : IDisposable
     {
         string path = Path.Combine(_dir, "showcase.pdf");
         TestPdfBuilder.CreateEngineShowcasePdf(path);
-        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto) { HostMode = HybridVectorDocumentService.VectorHostMode.WpfDrawing };
         await service.OpenDocumentAsync(path);
         var (page, renderer) = PageFor(service, page: 2);
 
@@ -143,7 +144,7 @@ public class VectorPageHostTests : IDisposable
             content.Append("0 0 1 1 re f\n");
         WriteSinglePagePdf(path, content.ToString());
 
-        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto) { HostMode = HybridVectorDocumentService.VectorHostMode.WpfDrawing };
         await service.OpenDocumentAsync(path);
         var (page, renderer) = PageFor(service, w: 200, h: 200);
         await page.LoadImageAsync(renderer, 72, 0);
@@ -159,7 +160,7 @@ public class VectorPageHostTests : IDisposable
         // edge; a stretched 300 dpi bitmap would smear it over ~4 device pixels.
         string path = Path.Combine(_dir, "edge.pdf");
         WriteSinglePagePdf(path, "0 g 50 50 100 100 re f");
-        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto) { HostMode = HybridVectorDocumentService.VectorHostMode.WpfDrawing };
         await service.OpenDocumentAsync(path);
         var surface = await service.GetVectorPageSurfaceAsync(1);
         Assert.NotNull(surface);

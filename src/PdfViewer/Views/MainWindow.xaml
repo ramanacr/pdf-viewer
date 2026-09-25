@@ -1077,6 +1077,14 @@
                                                    views:PageSurfaceCache.IsEnabled="True"
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
+                                            <!-- Viewport detail tile: the visible part of a zoomed page at exact device resolution
+                                                 (Direct2D host), laid over the coarser page bitmap. Also the page's visibility probe. -->
+                                            <Canvas views:PageDetailHost.IsHost="True" IsHitTestVisible="False" ClipToBounds="True">
+                                                <Image Source="{Binding DetailImage}"
+                                                       Canvas.Left="{Binding DetailRect.X}" Canvas.Top="{Binding DetailRect.Y}"
+                                                       Width="{Binding DetailRect.Width}" Height="{Binding DetailRect.Height}"
+                                                       Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality" />
+                                            </Canvas>
 
                                             <!-- Everything drawn over the page lives in unrotated page space,
                                                  because that is the space text boxes and annotation rectangles
@@ -1392,6 +1400,14 @@
                                                    views:PageSurfaceCache.IsEnabled="True"
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
+                                <!-- Viewport detail tile: the visible part of a zoomed page at exact device resolution
+                                     (Direct2D host), laid over the coarser page bitmap. Also the page's visibility probe. -->
+                                <Canvas views:PageDetailHost.IsHost="True" IsHitTestVisible="False" ClipToBounds="True" DataContext="{Binding SingleCurrentPage}">
+                                    <Image Source="{Binding DetailImage}"
+                                           Canvas.Left="{Binding DetailRect.X}" Canvas.Top="{Binding DetailRect.Y}"
+                                           Width="{Binding DetailRect.Width}" Height="{Binding DetailRect.Height}"
+                                           Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality" />
+                                </Canvas>
 
                                 <!-- The overlay stack, in unrotated page space and then turned to
                                      sit on the picture. Same as the continuous view. -->

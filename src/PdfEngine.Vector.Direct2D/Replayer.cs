@@ -31,6 +31,9 @@ internal sealed class Replayer : IDisposable
     private readonly Dictionary<PdfDrawCommand, ID2D1GeometryRealization?> _realizations = new(ReferenceEqualityComparer.Instance);
     private float _realizationScale = -1;
 
+    /// <summary>Night mode: every paint, gradient stop and image is colour-inverted.</summary>
+    public bool InvertColors { get; set; }
+
     /// <summary>Tessellate once and reuse across tiles; only worth it when a render spans several tiles.</summary>
     public bool UseRealizations { get; set; }
 
@@ -215,7 +218,9 @@ internal sealed class Replayer : IDisposable
         ctx1?.Dispose();
     }
 
-    private static Color4 Color(PdfColor c, double alpha) => new(c.R, c.G, c.B, (float)Math.Clamp(alpha, 0, 1));
+    private Color4 Color(PdfColor c, double alpha) => InvertColors
+        ? new(1 - c.R, 1 - c.G, 1 - c.B, (float)Math.Clamp(alpha, 0, 1))
+        : new(c.R, c.G, c.B, (float)Math.Clamp(alpha, 0, 1));
 
     private void PushLayer(ID2D1DeviceContext ctx, ID2D1Geometry? mask, Matrix3x2 full, float opacity)
     {
@@ -591,12 +596,26 @@ internal sealed class Replayer : IDisposable
     private void PaintImage(ID2D1DeviceContext ctx, DrawImage di, Matrix3x2 full)
     {
         var image = di.Image;
-        string key = image.Source?.CacheKey ?? image.ImageId;
+        string key = (image.Source?.CacheKey ?? image.ImageId) + (InvertColors ? "|inverted" : "");
         var bitmap = _res.GetBitmap(key);
         if (bitmap == null)
         {
             if (!TryDecode(image, out var pixels, out int w, out int h, out _))
                 return;
+            if (InvertColors)
+            {
+                pixels = (byte[])pixels.Clone();
+                for (int p = 0; p + 3 < pixels.Length; p += 4)
+                {
+                    pixels[p] = (byte)(255 - pixels[p]);
+                    pixels[p + 1] = (byte)(255 - pixels[p + 1]);
+                    pixels[p + 2] = (byte)(255 - pixels[p + 2]);
+                }
+            }
+            else
+            {
+                pixels = (byte[])pixels.Clone(); // the decoded copy is shared with analysis
+            }
             // Direct2D draws premultiplied alpha.
             for (int p = 0; p < pixels.Length; p += 4)
             {
@@ -642,8 +661,8 @@ internal sealed class Replayer : IDisposable
         using var areaGeom = Polygon(pageToUser, area);
         GradientStop[] Stops(IReadOnlyList<PdfGradientStop>? stops, PdfColor start, PdfColor end) =>
             stops is { Count: > 0 }
-                ? stops.Select(s => new GradientStop((float)Math.Clamp(s.Offset, 0, 1), new Color4(s.Color.R, s.Color.G, s.Color.B, 1))).ToArray()
-                : new[] { new GradientStop(0, new Color4(start.R, start.G, start.B, 1)), new GradientStop(1, new Color4(end.R, end.G, end.B, 1)) };
+                ? stops.Select(s => new GradientStop((float)Math.Clamp(s.Offset, 0, 1), Color(s.Color, 1))).ToArray()
+                : new[] { new GradientStop(0, Color(start, 1)), new GradientStop(1, Color(end, 1)) };
 
         switch (ds.Shading)
         {

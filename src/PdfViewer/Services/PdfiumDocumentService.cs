@@ -381,6 +381,60 @@ public class PdfiumDocumentService : IPdfDocumentService
         }
     }
 
+    public async Task<BitmapSource?> RenderPageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+    {
+        if (width <= 0 || height <= 0 || width > 8192 || height > 8192 || pixelsPerPoint <= 0)
+            return null;
+        var bmp = await Task.Run(() => RenderPageRegion(pageNumber, pixelsPerPoint * 72.0, rotationAngle, x, y, width, height), ct).ConfigureAwait(false);
+        return bmp != null && nightMode ? NightModeImage.Invert(bmp) : bmp;
+    }
+
+    /// <summary>
+    /// Renders only a pixel window of the page as it would appear at <paramref name="dpi"/>
+    /// (FPDF_RenderPageBitmap with a negative origin), so a small region of a highly zoomed page
+    /// never allocates a full-page raster. Used for vector fallback regions.
+    /// </summary>
+    public BitmapSource? RenderPageRegion(int pageNumber, double dpi, int rotationAngle, int x, int y, int width, int height)
+    {
+        lock (_docLock)
+        {
+            if (_document == null || _document.IsInvalid || pageNumber < 1 || pageNumber > PageCount || width <= 0 || height <= 0)
+                return null;
+            _securityPolicy.EnsureRenderDimensionsAllowed(width, height);
+
+            if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var size) == 0)
+                return null;
+            double widthPt = size.width > 0 ? size.width : 612;
+            double heightPt = size.height > 0 ? size.height : 792;
+            int pdfRotation = ((rotationAngle % 360) + 360) % 360 / 90;
+            bool isRotated90 = pdfRotation == 1 || pdfRotation == 3;
+            int fullW = Math.Max(1, (int)Math.Round((isRotated90 ? heightPt : widthPt) * dpi / 72.0));
+            int fullH = Math.Max(1, (int)Math.Round((isRotated90 ? widthPt : heightPt) * dpi / 72.0));
+
+            using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
+            if (page == null || page.IsInvalid) return null;
+
+            IntPtr bitmap = PdfiumNativeBridge.FPDFBitmap_CreateEx(width, height, PdfiumNativeBridge.FPDFBitmap_BGRA, IntPtr.Zero, 0);
+            if (bitmap == IntPtr.Zero) return null;
+            try
+            {
+                PdfiumNativeBridge.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFFFFFF);
+                int renderFlags = PdfiumNativeBridge.FPDF_ANNOT | PdfiumNativeBridge.FPDF_LCD_TEXT;
+                PdfiumNativeBridge.FPDF_RenderPageBitmap(bitmap, page, -x, -y, fullW, fullH, pdfRotation, renderFlags);
+                IntPtr buffer = PdfiumNativeBridge.FPDFBitmap_GetBuffer(bitmap);
+                int stride = PdfiumNativeBridge.FPDFBitmap_GetStride(bitmap);
+                var result = BitmapSource.Create(width, height, dpi, dpi, PixelFormats.Bgra32, null, buffer, stride * height, stride);
+                result.Freeze();
+                return result;
+            }
+            finally
+            {
+                PdfiumNativeBridge.FPDFBitmap_Destroy(bitmap);
+            }
+        }
+    }
+
     /// <summary>
     /// Asynchronously renders a single PDF page into a frozen WPF BitmapSource with cancellation support.
     /// </summary>

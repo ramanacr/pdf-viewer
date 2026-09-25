@@ -15,6 +15,7 @@ using PdfEngine.Rendering;
 using PdfEngine.Vector;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
+using PdfEngine.Vector.Direct2D;
 using PdfEngine.Vector.Windows;
 using PdfViewer.Core.Security;
 using PdfViewer.Models;
@@ -36,6 +37,30 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     private readonly PdfiumDocumentService _pdfiumService;
     private readonly PdfSecurityPolicy _securityPolicy;
     private readonly WindowsVectorRenderer _vectorRenderer;
+
+    /// <summary>
+    /// Direct2D/DirectWrite rasterizer (ADR-005): GPU (or WARP) rendering of pages and viewport
+    /// regions. Null only if no Direct3D device can be created; the WPF renderer then stands in.
+    /// </summary>
+    private readonly Direct2DVectorRenderer? _d2d;
+
+    /// <summary>How vector pages reach the screen.</summary>
+    public enum VectorHostMode
+    {
+        /// <summary>Direct2D bitmaps: page bitmap plus a viewport detail tile at device resolution (default).</summary>
+        Direct2DTiles,
+        /// <summary>Frozen WPF drawings stretched by WPF (the earlier live-surface host).</summary>
+        WpfDrawing,
+    }
+
+    /// <summary>Host mode; PDF_VECTOR_HOST=wpf selects the WPF drawing host.</summary>
+    public VectorHostMode HostMode { get; set; } =
+        string.Equals(Environment.GetEnvironmentVariable("PDF_VECTOR_HOST"), "wpf", StringComparison.OrdinalIgnoreCase)
+            ? VectorHostMode.WpfDrawing
+            : VectorHostMode.Direct2DTiles;
+
+    /// <summary>True when the Direct2D rasterizer is active (false: WPF fallback renderer).</summary>
+    public bool IsDirect2DActive => _d2d != null;
     private readonly PdfiumRegionFallbackProvider _fallbackProvider;
     private readonly ConcurrentDictionary<int, PageEngineReport> _pageEngineReports = new();
     private PdfEngineMetrics _metrics = new();
@@ -85,7 +110,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public async Task<ImageSource?> GetVectorPageSurfaceAsync(int pageNumber, int rotationAngle = 0, CancellationToken ct = default, bool nightMode = false)
     {
-        if (_mode == PdfEngineMode.Pdfium)
+        if (_mode == PdfEngineMode.Pdfium || HostMode != VectorHostMode.WpfDrawing)
             return null;
 
         int rotation = (((rotationAngle % 360) + 360) % 360) / 90 * 90;
@@ -222,6 +247,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _securityPolicy = securityPolicy ?? PdfSecurityPolicy.DefaultStrict;
         _pdfiumService = new PdfiumDocumentService(_securityPolicy);
         _vectorRenderer = new WindowsVectorRenderer();
+        try
+        {
+            _d2d = new Direct2DVectorRenderer();
+        }
+        catch (Exception ex) when (ex is SharpGen.Runtime.SharpGenException or InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            _d2d = null; // no Direct3D device at all: the WPF renderer rasterizes instead
+        }
         _fallbackProvider = new PdfiumRegionFallbackProvider(_pdfiumService, GetPageGeometry);
         _mode = mode;
     }
@@ -402,10 +435,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             Rotation = (PageRotation)((((rotationAngle % 360) + 360) % 360) / 90 * 90),
         };
 
-        PdfVectorRenderResult result;
+        RasterResult result;
         try
         {
-            result = await _vectorRenderer.RenderAsync(displayList, request, strict ? null : _fallbackProvider, ct).ConfigureAwait(false);
+            result = await RasterizeAsync(displayList, request, strict ? null : _fallbackProvider, null, false, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (!strict && ex is not OperationCanceledException)
         {
@@ -423,13 +456,70 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             FallbackCommandsCount = result.Fallbacks.Count,
             FallbackAreaRatio = AreaRatio(displayList, result.Fallbacks),
             ParseDurationMs = buildClock.Elapsed.TotalMilliseconds,
-            RenderDurationMs = (result.CompileTime + result.RasterTime).TotalMilliseconds,
+            RenderDurationMs = result.Elapsed.TotalMilliseconds,
         };
         metrics.FallbackReasons.AddRange(result.Fallbacks.Select(t => t.Reason));
         _metrics.RecordPage(metrics);
 
         _pageEngineReports[pageNumber] = VectorReport(pageNumber, displayList.Commands.Count, result.Fallbacks, result.FallbackRegionsComposited, strict, live: false);
         return CreateBitmapSource(renderedPage);
+    }
+
+    private readonly record struct RasterResult(RenderedPage Page, IReadOnlyList<PdfFallbackToken> Fallbacks, int FallbackRegionsComposited, TimeSpan Elapsed);
+
+    /// <summary>Direct2D when available; the WPF renderer otherwise (full page only, inversion applied after).</summary>
+    private async Task<RasterResult> RasterizeAsync(IPdfDisplayList list, RenderRequest request, IPdfFallbackProvider? provider,
+        PixelRegion? region, bool invert, CancellationToken ct)
+    {
+        if (_d2d != null)
+        {
+            var r = await _d2d.RenderAsync(list, request, provider, region, invert, ct).ConfigureAwait(false);
+            return new RasterResult(r.Page, r.Fallbacks, r.FallbackRegionsComposited, r.Elapsed);
+        }
+        if (region != null || invert)
+            throw new NotSupportedException("Region and inverted rasterization need the Direct2D renderer.");
+        var w = await _vectorRenderer.RenderAsync(list, request, provider, ct).ConfigureAwait(false);
+        return new RasterResult(w.Page, w.Fallbacks, w.FallbackRegionsComposited, w.CompileTime + w.RasterTime);
+    }
+
+    /// <summary>
+    /// Renders a pixel window of the page at <paramref name="pixelsPerPoint"/> — the visible part of
+    /// a zoomed page at exact device resolution (Direct2D host). Null when the vector path is not
+    /// used for this page (the caller keeps the page bitmap).
+    /// </summary>
+    public async Task<BitmapSource?> RenderPageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+    {
+        const int MaxSide = 8192;
+        if (width <= 0 || height <= 0 || width > MaxSide || height > MaxSide || pixelsPerPoint <= 0)
+            return null;
+
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        var doc = _vectorDoc;
+        if (_mode == PdfEngineMode.Pdfium || doc == null || _d2d == null || pageNumber < 1 || pageNumber > doc.PageCount)
+        {
+            // PDFium pages get the same viewport detail from PDFium itself.
+            var bmp = await Task.Run(() => _pdfiumService.RenderPageRegion(pageNumber, pixelsPerPoint * 72.0, rotationAngle, x, y, width, height), ct).ConfigureAwait(false);
+            return bmp != null && nightMode ? NightModeImage.Invert(bmp) : bmp;
+        }
+
+        var list = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        bool strict = _mode == PdfEngineMode.Vector;
+        if (!strict && (list.ComputeFallbackAreaRatio() >= FullPageFallbackAreaThreshold || list.Commands.Count == 0 && list.HasFallback))
+        {
+            var bmp = await Task.Run(() => _pdfiumService.RenderPageRegion(pageNumber, pixelsPerPoint * 72.0, rotationAngle, x, y, width, height), ct).ConfigureAwait(false);
+            return bmp != null && nightMode ? NightModeImage.Invert(bmp) : bmp;
+        }
+
+        var request = new RenderRequest
+        {
+            PageNumber = pageNumber,
+            Dpi = pixelsPerPoint * 72.0,
+            Rotation = (PageRotation)((((rotationAngle % 360) + 360) % 360) / 90 * 90),
+        };
+        var result = await RasterizeAsync(list, request, strict ? null : _fallbackProvider, new PixelRegion(x, y, width, height), nightMode, ct).ConfigureAwait(false);
+        using var page = result.Page;
+        return CreateBitmapSource(page);
     }
 
     private static (int Width, int Height) PixelSize(IPdfDisplayList list, int dpi, int rotationAngle)
@@ -726,6 +816,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             _disposed = true;
             _vectorDoc?.Dispose();
             _vectorRenderer.Dispose();
+            _d2d?.Dispose();
             _pdfiumService.Dispose();
         }
     }

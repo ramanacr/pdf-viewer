@@ -87,6 +87,15 @@ public interface IPdfDocumentService : IDisposable
         => Task.FromResult<System.Windows.Media.ImageSource?>(null);
 
     /// <summary>
+    /// A pixel window (x, y, width, height) of the page as it appears at <paramref name="pixelsPerPoint"/>
+    /// after rotation — the visible part of a zoomed page at exact device resolution. Null when the
+    /// service cannot render regions.
+    /// </summary>
+    Task<BitmapSource?> RenderPageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+        => Task.FromResult<BitmapSource?>(null);
+
+    /// <summary>
     /// Extracts the hierarchical bookmarks / outline tree.
     /// </summary>
     ObservableCollection<BookmarkItem> ExtractBookmarks();

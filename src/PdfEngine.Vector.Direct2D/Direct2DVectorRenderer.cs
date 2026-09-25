@@ -15,6 +15,9 @@ using D2DPixelFormat = Vortice.DCommon.PixelFormat;
 
 namespace PdfEngine.Vector.Direct2D;
 
+/// <summary>Pixel window of a full-page output.</summary>
+public readonly record struct PixelRegion(int X, int Y, int Width, int Height);
+
 /// <summary>Result of a Direct2D render, including every region that needed fallback.</summary>
 public sealed record D2DRenderResult(
     RenderedPage Page,
@@ -83,11 +86,28 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         }
     }
 
-    public async Task<D2DRenderResult> RenderAsync(IPdfDisplayList list, RenderRequest request, IPdfFallbackProvider? provider, CancellationToken ct)
+    public Task<D2DRenderResult> RenderAsync(IPdfDisplayList list, RenderRequest request, IPdfFallbackProvider? provider, CancellationToken ct) =>
+        RenderAsync(list, request, provider, region: null, invertColors: false, ct);
+
+    /// <summary>
+    /// Renders the page, or only <paramref name="region"/> of it (pixel window of the full output at
+    /// the request's resolution) — how a viewer draws the visible part of a zoomed page at exact
+    /// device resolution. <paramref name="invertColors"/> produces the night-mode page (colour
+    /// inversion commutes with source-over compositing, so this equals inverting the pixels).
+    /// </summary>
+    public async Task<D2DRenderResult> RenderAsync(IPdfDisplayList list, RenderRequest request, IPdfFallbackProvider? provider,
+        PixelRegion? region, bool invertColors, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var geometry = PageGeometry.From(list, request);
+        var r = ClampRegion(region ?? new PixelRegion(0, 0, geometry.PixelWidth, geometry.PixelHeight), geometry);
+        if (r.Width <= 0 || r.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(region), "Region lies outside the page.");
+
+        // Page-space area of the region, to fetch fallback pixels only where they show.
+        Matrix3x2.Invert(geometry.PageUserToPixels(), out var pixelsToPage);
+        var regionPage = TransformRect(pixelsToPage, new Vector2(r.X, r.Y), new Vector2(r.X + r.Width, r.Y + r.Height));
 
         // Analysis first (cheap), so fallback pixels can be fetched before drawing.
         var tokens = await AnalyzeAsync(list, ct).ConfigureAwait(false);
@@ -97,6 +117,8 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         {
             foreach (var token in tokens)
             {
+                if (!token.Bounds.IntersectsWith(regionPage))
+                    continue;
                 RenderedPage? pixels = provider == null ? null : await provider.RenderFallbackRegionAsync(token, geometry.Dpi, ct).ConfigureAwait(false);
                 overlays.Add((token, pixels));
             }
@@ -104,28 +126,28 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                int stride = geometry.PixelWidth * 4;
-                var owner = new PageBuffer(checked(stride * geometry.PixelHeight));
-                int composited = 0;
+                int stride = r.Width * 4;
+                var owner = new PageBuffer(checked(stride * r.Height));
                 using var replay = new Replayer(_res, list, backendFallbacks: null, analyzeOnly: false, ct)
                 {
-                    UseRealizations = geometry.PixelWidth > TileSize || geometry.PixelHeight > TileSize,
+                    UseRealizations = r.Width > TileSize || r.Height > TileSize,
+                    InvertColors = invertColors,
                 };
                 await Task.Run(() =>
                 {
-                    for (int ty = 0; ty < geometry.PixelHeight; ty += TileSize)
+                    for (int ty = r.Y; ty < r.Y + r.Height; ty += TileSize)
                     {
-                        for (int tx = 0; tx < geometry.PixelWidth; tx += TileSize)
+                        for (int tx = r.X; tx < r.X + r.Width; tx += TileSize)
                         {
                             ct.ThrowIfCancellationRequested();
-                            int w = Math.Min(TileSize, geometry.PixelWidth - tx), h = Math.Min(TileSize, geometry.PixelHeight - ty);
-                            RenderTileWithRecovery(replay, list, geometry, overlays, tx, ty, w, h, owner.Array, stride, ct);
+                            int w = Math.Min(TileSize, r.X + r.Width - tx), h = Math.Min(TileSize, r.Y + r.Height - ty);
+                            RenderTileWithRecovery(replay, list, geometry, overlays, tx, ty, w, h, owner.Array, stride, r.X, r.Y, invertColors, ct);
                         }
                     }
                 }, ct).ConfigureAwait(false);
 
-                composited = overlays.Count(o => o.Pixels != null);
-                var page = new RenderedPage(list.PageNumber, geometry.PixelWidth, geometry.PixelHeight, stride, geometry.Dpi, request.Rotation, owner);
+                int composited = overlays.Count(o => o.Pixels != null);
+                var page = new RenderedPage(list.PageNumber, r.Width, r.Height, stride, geometry.Dpi, request.Rotation, owner);
                 return new D2DRenderResult(page, tokens, backendCount, composited, _res.IsSoftware, clock.Elapsed);
             }
             finally
@@ -139,14 +161,28 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         }
     }
 
+    /// <summary>Full-output pixel size of a request (page /Rotate plus viewer rotation).</summary>
+    public static (int Width, int Height) OutputSize(IPdfDisplayList list, RenderRequest request)
+    {
+        var g = PageGeometry.From(list, request);
+        return (g.PixelWidth, g.PixelHeight);
+    }
+
+    private static PixelRegion ClampRegion(PixelRegion r, PageGeometry g)
+    {
+        int x0 = Math.Clamp(r.X, 0, g.PixelWidth), y0 = Math.Clamp(r.Y, 0, g.PixelHeight);
+        int x1 = Math.Clamp(r.X + r.Width, 0, g.PixelWidth), y1 = Math.Clamp(r.Y + r.Height, 0, g.PixelHeight);
+        return new PixelRegion(x0, y0, x1 - x0, y1 - y0);
+    }
+
     private int RenderTileWithRecovery(Replayer replay, IPdfDisplayList list, PageGeometry g, List<(PdfFallbackToken, RenderedPage?)> overlays,
-        int tx, int ty, int w, int h, byte[] dest, int destStride, CancellationToken ct)
+        int tx, int ty, int w, int h, byte[] dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
     {
         for (int attempt = 0; ; attempt++)
         {
             try
             {
-                return RenderTile(replay, list, g, overlays, tx, ty, w, h, dest, destStride, ct);
+                return RenderTile(replay, list, g, overlays, tx, ty, w, h, dest, destStride, originX, originY, invert, ct);
             }
             catch (SharpGenException ex) when (attempt == 0 && IsDeviceLost((uint)ex.HResult))
             {
@@ -160,7 +196,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
     private static bool IsDeviceLost(uint hr) => hr is D2DERR_RECREATE_TARGET or DXGI_ERROR_DEVICE_REMOVED or DXGI_ERROR_DEVICE_RESET;
 
     private int RenderTile(Replayer replay, IPdfDisplayList list, PageGeometry g, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays,
-        int tx, int ty, int w, int h, byte[] dest, int destStride, CancellationToken ct)
+        int tx, int ty, int w, int h, byte[] dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
     {
         var ctx = _res.Context!;
         var targetProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target);
@@ -180,14 +216,14 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         try
         {
             ctx.Transform = Matrix3x2.Identity;
-            ctx.Clear(new Color4(1, 1, 1, 1));
+            ctx.Clear(invert ? new Color4(0, 0, 0, 1) : new Color4(1, 1, 1, 1));
             ctx.AntialiasMode = AntialiasMode.PerPrimitive;
             ctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
 
             replay.Draw(ctx, pageToDevice, visible);
 
             // Fallback regions last: provider pixels are the full truth for their region.
-            composited = DrawOverlays(ctx, list, g.PagePointsToPixels() * Matrix3x2.CreateTranslation(-tx, -ty), overlays);
+            composited = DrawOverlays(ctx, list, g.PagePointsToPixels() * Matrix3x2.CreateTranslation(-tx, -ty), overlays, invert);
         }
         finally
         {
@@ -201,7 +237,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         try
         {
             for (int row = 0; row < h; row++)
-                Marshal.Copy(map.Bits + (int)(row * map.Pitch), dest, (ty + row) * destStride + tx * 4, w * 4);
+                Marshal.Copy(map.Bits + (int)(row * map.Pitch), dest, (ty - originY + row) * destStride + (tx - originX) * 4, w * 4);
         }
         finally
         {
@@ -210,7 +246,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         return composited;
     }
 
-    private int DrawOverlays(ID2D1DeviceContext ctx, IPdfDisplayList list, Matrix3x2 pointsToDevice, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays)
+    private int DrawOverlays(ID2D1DeviceContext ctx, IPdfDisplayList list, Matrix3x2 pointsToDevice, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert)
     {
         var crop = list.CropBox.IsEmpty ? new PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
         int composited = 0;
@@ -227,6 +263,15 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             if (pixels != null && pixels.WidthPixels > 0 && pixels.HeightPixels > 0)
             {
                 var data = pixels.Pixels.ToArray();
+                if (invert)
+                {
+                    for (int i = 0; i + 3 < data.Length; i += 4)
+                    {
+                        data[i] = (byte)(255 - data[i]);
+                        data[i + 1] = (byte)(255 - data[i + 1]);
+                        data[i + 2] = (byte)(255 - data[i + 2]);
+                    }
+                }
                 var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
                 try
                 {

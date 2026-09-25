@@ -500,9 +500,46 @@ public partial class MainWindow : Window
         ScrollThumbnailIntoView(pageNumber);
     }
 
+    private System.Windows.Threading.DispatcherTimer? _detailTimer;
+
+    /// <summary>
+    /// Debounced: once scrolling/zooming pauses, ask every visible page for a viewport detail tile
+    /// at device resolution (the page bitmap is shown, stretched, until it arrives).
+    /// </summary>
+    private void ScheduleDetailTiles()
+    {
+        if (_detailTimer == null)
+        {
+            _detailTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(90),
+            };
+            _detailTimer.Tick += (_, _) =>
+            {
+                _detailTimer!.Stop();
+                RequestDetailTiles();
+            };
+        }
+        _detailTimer.Stop();
+        _detailTimer.Start();
+    }
+
+    private void RequestDetailTiles()
+    {
+        if (!_vm.IsDocumentLoaded || DocumentScrollViewer == null)
+            return;
+        double deviceScale = System.Windows.Media.VisualTreeHelper.GetDpi(DocumentScrollViewer).DpiScaleX;
+        var viewport = new Size(DocumentScrollViewer.ViewportWidth, DocumentScrollViewer.ViewportHeight);
+        foreach (var (page, visible) in PageDetailHost.VisiblePages(DocumentScrollViewer, viewport))
+        {
+            _ = _vm.RequestPageDetailAsync(page, visible, deviceScale);
+        }
+    }
+
     private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+        ScheduleDetailTiles();
 
         if (_vm.IsMultiPageLayout)
         {
