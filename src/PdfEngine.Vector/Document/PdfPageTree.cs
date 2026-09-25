@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
@@ -49,7 +50,7 @@ public sealed class PdfPageTree
         int depth)
     {
         if (depth > _limits.MaxPageTreeDepth)
-            throw new InvalidDataException($"PDF Page tree recursion depth exceeded limit ({_limits.MaxPageTreeDepth}).");
+            throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxPageTreeDepth), $"PDF Page tree recursion depth exceeded limit ({_limits.MaxPageTreeDepth}).");
 
         if (!visited.Add(node))
             return; // Cycle guard

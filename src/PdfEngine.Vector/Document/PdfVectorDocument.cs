@@ -78,6 +78,23 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         string filePath,
         PdfSecurityLimits? limits)
     {
+        try
+        {
+            return OpenCoreUnchecked(source, filePath, limits);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or FormatException or OverflowException
+                                       or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            // Hostile-input boundary: data-shape failures surface as one typed syntax error.
+            throw new PdfSyntaxException($"Malformed PDF structure ({ex.GetType().Name}).", ex);
+        }
+    }
+
+    private static PdfVectorDocument OpenCoreUnchecked(
+        IPdfByteSource source,
+        string filePath,
+        PdfSecurityLimits? limits)
+    {
         limits ??= PdfSecurityLimits.Default;
         var xref = new PdfXrefTable(limits);
         xref.Load(source);
@@ -91,15 +108,16 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
             throw new PdfEncryptedDocumentException();
         }
 
-        if (xref.Trailer == null || !xref.Trailer.TryGetValue("Root", out var rootRef))
+        PdfDictionary? catalog = ResolveCatalog(xref, resolver);
+        if (catalog == null && !xref.WasReconstructed)
         {
-            throw new InvalidDataException("PDF document contains no valid trailer or /Root catalog.");
+            // The xref chain parsed but its /Root is missing or dangling: rebuild by scanning once.
+            xref.Rebuild(source);
+            catalog = ResolveCatalog(xref, resolver);
         }
-
-        var catalogObj = resolver.Resolve(rootRef);
-        if (catalogObj is not PdfDictionary catalog)
+        if (catalog == null)
         {
-            throw new InvalidDataException("PDF /Root catalog could not be resolved.");
+            throw new PdfSyntaxException("PDF document has no resolvable /Root catalog.");
         }
 
         var pageTree = new PdfPageTree(resolver, limits);
@@ -109,6 +127,13 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         var meta = ExtractMetadata(xref.Trailer, resolver, filePath, source.Length, pageTree.Count);
 
         return new PdfVectorDocument(source, filePath, meta, xref, resolver, pageTree, catalog, limits);
+    }
+
+    private static PdfDictionary? ResolveCatalog(PdfXrefTable xref, PdfObjectResolver resolver)
+    {
+        if (xref.Trailer == null || !xref.Trailer.TryGetValue("Root", out var rootRef))
+            return null;
+        return resolver.Resolve(rootRef) as PdfDictionary;
     }
 
     private PdfVectorDocument(

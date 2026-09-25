@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>VectorPdf.Tool</RootNamespace>
+    <AssemblyName>vectorpdf</AssemblyName>
+    <Description>Developer tooling for the vector engine migration: benchmarks against the PDFium baseline and a corpus runner. Not shipped.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\..\src\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+    <ProjectReference Include="..\..\..\..\src\PdfEngine.Vector.Windows\PdfEngine.Vector.Windows.csproj" />
+    <!-- PDFium is the reference oracle for developer validation only (06 "Removal sequence" step 4). -->
+    <ProjectReference Include="..\..\..\..\src\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
+  </ItemGroup>
+
+</Project>

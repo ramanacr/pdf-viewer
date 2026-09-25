@@ -48,7 +48,7 @@ public sealed class PdfXrefTable
         int idx = span.LastIndexOf(target);
         if (idx < 0)
         {
-            throw new InvalidDataException("Unable to locate 'startxref' token in PDF header/trailer.");
+            throw new PdfSyntaxException("Unable to locate 'startxref' token in PDF header/trailer.");
         }
 
         // Parse integer after startxref
@@ -66,13 +66,13 @@ public sealed class PdfXrefTable
 
         if (numStart == pos)
         {
-            throw new InvalidDataException("Invalid or missing offset following 'startxref'.");
+            throw new PdfSyntaxException("Invalid or missing offset following 'startxref'.");
         }
 
         string numStr = Encoding.ASCII.GetString(span.Slice(numStart, pos - numStart));
         if (!long.TryParse(numStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out long offset))
         {
-            throw new InvalidDataException($"Malformed startxref offset: '{numStr}'.");
+            throw new PdfSyntaxException($"Malformed startxref offset: '{numStr}'.");
         }
 
         return offset;

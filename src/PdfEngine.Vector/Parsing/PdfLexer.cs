@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 
 namespace PdfEngine.Vector.Parsing;
@@ -193,7 +194,7 @@ public sealed class PdfLexer
                 break; // Premature EOF recovery
 
             if (ms.Length > _limits.MaxTokenLength)
-                throw new InvalidDataException("PDF literal string exceeded maximum allowed token length.");
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxTokenLength), "PDF literal string exceeded maximum allowed token length.");
 
             if (b == '(')
             {

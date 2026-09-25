@@ -247,8 +247,9 @@ public sealed class PdfStreamDecoder
             }
             return true;
         }
-        catch (InvalidDataException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
         {
+            // ZLibException (an IOException) is thrown for some corrupt inputs instead of InvalidDataException.
             // Keep partial output of a truncated/corrupt stream; retry only when nothing was produced.
             return output.Length > startLength;
         }
