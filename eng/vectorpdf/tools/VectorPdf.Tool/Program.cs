@@ -23,7 +23,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff]");
+            Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff] | live <file.pdf> [--frames N] [--pages N]");
             return 2;
         }
 
@@ -31,8 +31,17 @@ public static class Program
         {
             "bench" => await Bench.RunAsync(args),
             "corpus" => await Corpus.RunAsync(args),
+            "live" => LiveBench.Run(args),
+            "gen" when args.Length >= 2 => Gen(args),
             _ => 2,
         };
+    }
+
+    private static int Gen(string[] args)
+    {
+        int pages = int.TryParse(Option(args, "--pages"), out int p) ? p : 10;
+        File.WriteAllBytes(args[1], BenchDocument.Create(pages));
+        return 0;
     }
 
     internal static string? Option(string[] args, string name) =>

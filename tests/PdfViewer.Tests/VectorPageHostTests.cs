@@ -178,6 +178,20 @@ public class VectorPageHostTests : IDisposable
         Assert.True(soft <= 2, $"edge spans {soft} intermediate pixels at {scale}x");
     }
 
+    [Fact]
+    public void SurfaceCache_OnlyForDrawingsThatFitATexture()
+    {
+        var drawing = new DrawingImage(new GeometryDrawing(Brushes.Black, null, new RectangleGeometry(new Rect(0, 0, 10, 10))));
+        drawing.Freeze();
+        var bitmap = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null, new byte[16], 8);
+
+        Assert.IsType<BitmapCache>(PdfViewer.Views.PageSurfaceCache.Choose(drawing, 612, 792, 1.0));
+        Assert.IsType<BitmapCache>(PdfViewer.Views.PageSurfaceCache.Choose(drawing, 2048, 2650, 1.5)); // 3975 px
+        Assert.Null(PdfViewer.Views.PageSurfaceCache.Choose(drawing, 612 * 8, 792 * 8, 1.0));        // 1600 % zoom: live
+        Assert.Null(PdfViewer.Views.PageSurfaceCache.Choose(bitmap, 612, 792, 1.0));                // bitmaps are textures already
+        Assert.Null(PdfViewer.Views.PageSurfaceCache.Choose(null, 612, 792, 1.0));
+    }
+
     private static void WriteSinglePagePdf(string path, string content, string resources = "<< >>")
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

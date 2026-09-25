@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:PdfViewer.ViewModels"
+        xmlns:views="clr-namespace:PdfViewer.Views"
         xmlns:models="clr-namespace:PdfViewer.Models"
         mc:Ignorable="d"
         Title="PDF Viewer"
@@ -1073,6 +1074,7 @@
 
                                             <!-- 2. Rendered Page Image -->
                                             <Image Source="{Binding PageSurface}"
+                                                   views:PageSurfaceCache.IsEnabled="True"
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
 
@@ -1387,6 +1389,7 @@
 
                                 <!-- Rendered Page Image -->
                                 <Image Source="{Binding SingleCurrentPage.PageSurface}"
+                                                   views:PageSurfaceCache.IsEnabled="True"
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
 
