@@ -3,6 +3,7 @@
   <Project Path="src/PdfEngine.Pdfium/PdfEngine.Pdfium.csproj" />
   <Project Path="src/PdfEngine.Vector/PdfEngine.Vector.csproj" />
   <Project Path="src/PdfEngine.Vector.Windows/PdfEngine.Vector.Windows.csproj" />
+  <Project Path="src/PdfEngine.Vector.Direct2D/PdfEngine.Vector.Direct2D.csproj" />
   <Project Path="src/PdfViewer.Core/PdfViewer.Core.csproj" />
   <Project Path="src/PdfViewer/PdfViewer.csproj" />
   <Project Path="src/Installer/PdfViewerInstaller.csproj" />

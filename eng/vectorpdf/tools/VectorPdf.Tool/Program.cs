@@ -47,6 +47,14 @@ public static class Program
         return 0;
     }
 
+    /// <summary>--backend wpf|d2d (default d2d).</summary>
+    internal static IPdfVectorRenderer CreateRenderer(string[] args) =>
+        (Option(args, "--backend") ?? "d2d") switch
+        {
+            "wpf" => new WindowsVectorRenderer(),
+            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(),
+        };
+
     internal static string? Option(string[] args, string name) =>
         Array.IndexOf(args, name) is int i and >= 0 && i + 1 < args.Length ? args[i + 1] : null;
 }
@@ -88,8 +96,10 @@ internal static class Bench
         results.Add(("vector.build.perPage", buildClock.Elapsed.TotalMilliseconds / doc.PageCount));
 
         using var renderer = new WindowsVectorRenderer();
+        using var d2d = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
         using var engine = new PdfiumEngine();
         await using var pdfiumDoc = await engine.OpenDocumentAsync(pdf);
+        Console.WriteLine($"direct2d software={d2d.IsSoftware}");
 
         foreach (int zoom in new[] { 100, 200, 400, 800, 1600 })
         {
@@ -97,6 +107,10 @@ internal static class Bench
             await Measure($"vector.render.{zoom}%", async () =>
             {
                 using var page = await renderer.RenderDisplayListAsync(lists[0], new RenderRequest { PageNumber = 1, Dpi = dpi });
+            }, zoom >= 800 ? 1 : 3);
+            await Measure($"d2d.render.{zoom}%", async () =>
+            {
+                using var page = await d2d.RenderDisplayListAsync(lists[0], new RenderRequest { PageNumber = 1, Dpi = dpi });
             }, zoom >= 800 ? 1 : 3);
             await Measure($"pdfium.render.{zoom}%", async () =>
             {
@@ -161,7 +175,7 @@ internal static class Corpus
         string? outPath = Program.Option(args, "--out");
         bool diff = args.Contains("--diff");
         using var output = outPath != null ? new StreamWriter(outPath, append: false, Encoding.UTF8) : null;
-        using var renderer = new WindowsVectorRenderer();
+        using var renderer = Program.CreateRenderer(args);
         int files = 0, vectorOpen = 0, pdfiumOpen = 0, pagesTotal = 0, pagesVector = 0;
         int bothOpen = 0, vectorOnlyFailed = 0, untyped = 0, pagesClassified = 0;
         double areaVectorSum = 0;
@@ -290,7 +304,7 @@ internal static class Corpus
         return 0;
     }
 
-    private static async Task<double> DiffAsync(byte[] bytes, IPdfDisplayList list, WindowsVectorRenderer renderer, int page)
+    private static async Task<double> DiffAsync(byte[] bytes, IPdfDisplayList list, IPdfVectorRenderer renderer, int page)
     {
         using var v = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = page, Dpi = 72 });
         using var engine = new PdfiumEngine();
@@ -373,7 +387,7 @@ internal static class DiffPage
 
         using var doc = await PdfVectorDocument.OpenAsync(bytes);
         var list = await doc.GetPageDisplayListAsync(page);
-        using var renderer = new WindowsVectorRenderer();
+        using var renderer = Program.CreateRenderer(args);
         var tokens = await renderer.AnalyzeAsync(list);
         using var v = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = page, Dpi = dpi });
         using var engine = new PdfiumEngine();
