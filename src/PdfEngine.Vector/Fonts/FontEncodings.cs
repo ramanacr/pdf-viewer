@@ -10,26 +10,26 @@ namespace PdfEngine.Vector.Fonts;
 internal static class FontEncodings
 {
     /// <summary>Adobe StandardEncoding (Annex D.2, STD column).</summary>
-    public static readonly string?[] Standard;
+    public static readonly string?[] Standard = null!;
 
     /// <summary>WinAnsiEncoding (Annex D.2, WIN column).</summary>
-    public static readonly string?[] WinAnsi;
+    public static readonly string?[] WinAnsi = null!;
 
     /// <summary>
     /// MacRomanEncoding (Annex D.2, MAC column), extended with the Mac OS Roman math glyphs
     /// (notequal, infinity, …) so that text extraction of such fonts is not lossy.
     /// </summary>
-    public static readonly string?[] MacRoman;
+    public static readonly string?[] MacRoman = null!;
 
     /// <summary>Built-in encoding of the standard Symbol font (Annex D.5).</summary>
-    public static readonly string?[] Symbol;
+    public static readonly string?[] Symbol = null!;
 
     /// <summary>
     /// Built-in encoding of the standard ZapfDingbats font (Annex D.6), with glyphs expressed as
     /// <c>uniXXXX</c> names of their Unicode Dingbats equivalents (approximation, see
     /// <see cref="Standard14Fonts"/> remarks).
     /// </summary>
-    public static readonly string?[] ZapfDingbats;
+    public static readonly string?[] ZapfDingbats = null!;
 
     // Tables are built in the static constructor so that the helper arrays below are initialized first.
     static FontEncodings()
