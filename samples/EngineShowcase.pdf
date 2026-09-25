@@ -100,10 +100,10 @@ ET
 endstream
 endobj
 5 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> /ExtGState << /GS1 << /Type /ExtGState /BM /Multiply >> >> >> >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> /XObject << /KO 15 0 R >> >> >>
 endobj
 6 0 obj
-<< /Length 1514 >>
+<< /Length 1276 >>
 stream
 BT
 /F1 22 Tf
@@ -126,41 +126,19 @@ BT
 /F1 12 Tf
 0.75 0.1 0.1 rg
 70 640 Td
-(NOTICE: The two panels below use the Multiply blend mode) Tj
+(NOTICE: The two panels below form a knockout transparency group) Tj
 ET
 BT
 /F1 10 Tf
 0.3 0.1 0.1 rg
 70 618 Td
-(The vector engine classifies them as BlendMode fallback regions) Tj
+(The vector engine classifies them as a TransparencyGroup fallback region) Tj
 0 -15 Td
 (and composites just those regions from PDFium; the rest stays vector.) Tj
 ET
 /RelativeColorimetric ri
 q
-/GS1 gs
-0.2 0.55 0.35 rg
-50 420 220 110 re
-f
-BT
-/F1 14 Tf
-1 1 1 rg
-70 485 Td
-(Rendered via PDFium) Tj
-0 -22 Td
-(100% Visual Fidelity) Tj
-ET
-0.3 0.4 0.7 rg
-300 420 262 110 re
-f
-BT
-/F1 14 Tf
-1 1 1 rg
-320 485 Td
-(Zero Truncation) Tj
-0 -22 Td
-(Safe Content Delivery) Tj
-ET
+/KO Do
 Q
 0.96 0.96 0.96 rg
 0.5 0.5 0.5 RG
@@ -181,7 +159,7 @@ BT
 0 -18 Td
 (2. Hover your mouse over the badge: the tooltip lists the reason:) Tj
 0 -18 Td
-(   'BlendMode'.) Tj
+(   'TransparencyGroup'.) Tj
 0 -18 Td
 (3. Switch to 'PDFium Only' in View -> Rendering Engine: renders via standard PDFium.) Tj
 0 -18 Td
@@ -312,25 +290,54 @@ endobj
 14 0 obj
 << /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>
 endobj
+15 0 obj
+<< /Type /XObject /Subtype /Form /BBox [50 420 562 530] /Group << /S /Transparency /K true >> /Resources << /Font << /F1 9 0 R >> >> /Length 261 >>
+stream
+0.2 0.55 0.35 rg
+50 420 220 110 re
+f
+BT
+/F1 14 Tf
+1 1 1 rg
+70 485 Td
+(Rendered via PDFium) Tj
+0 -22 Td
+(100% Visual Fidelity) Tj
+ET
+0.3 0.4 0.7 rg
+300 420 262 110 re
+f
+BT
+/F1 14 Tf
+1 1 1 rg
+320 485 Td
+(Zero Truncation) Tj
+0 -22 Td
+(Safe Content Delivery) Tj
+ET
+
+endstream
+endobj
 xref
-0 15
+0 16
 0000000000 65535 f 
 0000000017 00000 n 
 0000000086 00000 n 
 0000000158 00000 n 
 0000000287 00000 n 
 0000001727 00000 n 
-0000001915 00000 n 
-0000003484 00000 n 
-0000003613 00000 n 
-0000005231 00000 n 
-0000005304 00000 n 
-0000005381 00000 n 
-0000005484 00000 n 
-0000005597 00000 n 
-0000005702 00000 n 
+0000001882 00000 n 
+0000003213 00000 n 
+0000003342 00000 n 
+0000004960 00000 n 
+0000005033 00000 n 
+0000005110 00000 n 
+0000005213 00000 n 
+0000005326 00000 n 
+0000005431 00000 n 
+0000005559 00000 n 
 trailer
-<< /Size 15 /Root 1 0 R /Info 14 0 R >>
+<< /Size 16 /Root 1 0 R /Info 14 0 R >>
 startxref
-5830
+6005
 %%EOF

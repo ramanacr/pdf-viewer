@@ -260,13 +260,13 @@ pwsh -ExecutionPolicy Bypass -File .\eng\pdfium\build.ps1
 
 ## Rendering Engines (Vector Migration)
 
-The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.Vector` + `PdfEngine.Vector.Windows`). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
+The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.Vector`, rendered by Direct2D/DirectWrite in `PdfEngine.Vector.Direct2D`, with the WPF renderer `PdfEngine.Vector.Windows` as fallback). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
 
 **Engine modes** (View → Rendering Engine, or the `PDF_ENGINE_MODE` environment variable: `Auto`, `Hybrid`, `Vector`, `Pdfium`):
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` / `Hybrid` | Vector path first. Objects it cannot yet render faithfully (soft masks, non-Normal blend modes, tiling patterns, mesh shadings, JPX/JBIG2/CCITT images, text clipping, embedded Type1/CFF fonts, …) are composited **per region** from PDFium. Pages where fallback covers ≥ 50 % of the area, encrypted documents and documents the vector parser cannot open are rendered entirely by PDFium. |
+| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups and tiling patterns are composited natively. Objects it cannot yet render faithfully (knockout groups, mesh shadings, JPX/JBIG2/CCITT images, text clipping, CJK predefined CMaps, …) are composited **per region** from PDFium. Pages where fallback covers ≥ 50 % of the area, encrypted documents and documents the vector parser cannot open are rendered entirely by PDFium. |
 | `Vector` | Strict: unsupported regions are outlined in orange instead of rendered. For development and CI. |
 | `Pdfium` | The original PDFium renderer only (kill switch). |
 
@@ -274,9 +274,9 @@ The status-bar badge shows which engine rendered the current page (`⚡ Vector`,
 
 **What stays on PDFium** regardless of mode: search, annotations and forms editing, saving, printing, image export, redaction, signatures and page organisation. **Releases still ship `pdfium.dll`** — it is required for fallback and for those features.
 
-**Live vector pages:** in `Auto`/`Vector` the page view shows a resolution-independent drawing (night mode included), so zooming stays sharp and never re-renders or stretches a bitmap; while a page fits 4096 device pixels WPF caches it as a GPU texture for smooth scrolling. PDFium-rendered pages and very dense pages (over 40 000 drawing commands) are shown as bitmaps. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
+**Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it, for vector and PDFium pages alike. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
 
-**Known limitations of the vector path:** off-screen rasterization (used by tests and tooling) goes through WPF's software `RenderTargetBitmap` and is ~2× slower than PDFium (see `eng/vectorpdf/baseline-bench.txt`); there is no security handler for encrypted files yet.
+**Known limitations of the vector path:** there is no security handler for encrypted files yet (they render through PDFium); the WPF fallback renderer is ~2× slower than PDFium, while Direct2D is faster than PDFium at every zoom (`eng/vectorpdf/baseline-bench.txt`).
 
 **Verification tooling:**
 ```powershell

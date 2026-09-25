@@ -474,6 +474,7 @@ public static class TestPdfBuilder
         int outline2Obj = currentObj++;  // 12
         int outline3Obj = currentObj++;  // 13
         int infoObj = currentObj++;      // 14
+        int knockoutObj = currentObj++;  // 15
 
         // 1. Catalog
         WriteObj(catalogObj, $"<< /Type /Catalog /Pages {pagesObj} 0 R /Outlines {outlinesObj} 0 R >>");
@@ -500,21 +501,18 @@ public static class TestPdfBuilder
         WriteObj(content1Obj, $"<< /Length {b1.Length} >>\nstream\n{stream1}\nendstream");
 
         // Page 2: Hybrid Fallback
-        WriteObj(page2Obj, $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] /Contents {content2Obj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> /ExtGState << /GS1 << /Type /ExtGState /BM /Multiply >> >> >> >>");
+        WriteObj(page2Obj, $"<< /Type /Page /Parent {pagesObj} 0 R /MediaBox [0 0 612 792] /Contents {content2Obj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> /XObject << /KO {knockoutObj} 0 R >> >> >>");
         string stream2 =
             "BT\n/F1 22 Tf\n0.85 0.25 0.15 rg\n50 735 Td\n(Page 2: Hybrid Fallback Pipeline) Tj\nET\n" +
             "BT\n/F1 12 Tf\n0.25 0.25 0.25 rg\n50 710 Td\n(Region fallback: only the unsupported objects are composited from PDFium) Tj\nET\n" +
             "0.99 0.94 0.94 rg\n0.85 0.3 0.3 RG\n1.5 w\n50 580 512 90 re\nB\n" +
-            "BT\n/F1 12 Tf\n0.75 0.1 0.1 rg\n70 640 Td\n(NOTICE: The two panels below use the Multiply blend mode) Tj\nET\n" +
-            "BT\n/F1 10 Tf\n0.3 0.1 0.1 rg\n70 618 Td\n(The vector engine classifies them as BlendMode fallback regions) Tj\n0 -15 Td\n(and composites just those regions from PDFium; the rest stays vector.) Tj\nET\n" +
+            "BT\n/F1 12 Tf\n0.75 0.1 0.1 rg\n70 640 Td\n(NOTICE: The two panels below form a knockout transparency group) Tj\nET\n" +
+            "BT\n/F1 10 Tf\n0.3 0.1 0.1 rg\n70 618 Td\n(The vector engine classifies them as a TransparencyGroup fallback region) Tj\n0 -15 Td\n(and composites just those regions from PDFium; the rest stays vector.) Tj\nET\n" +
             "/RelativeColorimetric ri\n" +
-            "q\n/GS1 gs\n0.2 0.55 0.35 rg\n50 420 220 110 re\nf\n" +
-            "BT\n/F1 14 Tf\n1 1 1 rg\n70 485 Td\n(Rendered via PDFium) Tj\n0 -22 Td\n(100% Visual Fidelity) Tj\nET\n" +
-            "0.3 0.4 0.7 rg\n300 420 262 110 re\nf\n" +
-            "BT\n/F1 14 Tf\n1 1 1 rg\n320 485 Td\n(Zero Truncation) Tj\n0 -22 Td\n(Safe Content Delivery) Tj\nET\nQ\n" +
+            "q\n/KO Do\nQ\n" +
             "0.96 0.96 0.96 rg\n0.5 0.5 0.5 RG\n1.5 w\n50 180 512 180 re\nB\n" +
             "BT\n/F1 12 Tf\n0.2 0.2 0.2 rg\n70 330 Td\n(HOW TO VERIFY FALLBACK DIAGNOSTICS:) Tj\nET\n" +
-            "BT\n/F1 10 Tf\n0.25 0.25 0.25 rg\n70 305 Td\n(1. Look at the bottom-right status bar: it displays 'Hybrid (N PDFium regions)'.) Tj\n0 -18 Td\n(2. Hover your mouse over the badge: the tooltip lists the reason:) Tj\n0 -18 Td\n(   'BlendMode'.) Tj\n0 -18 Td\n(3. Switch to 'PDFium Only' in View -> Rendering Engine: renders via standard PDFium.) Tj\n0 -18 Td\n(4. Switch to 'Vector Only' in View -> Rendering Engine: the regions are outlined.) Tj\n0 -18 Td\n(5. Return to 'Auto': transparent fallback is restored instantly.) Tj\nET\n";
+            "BT\n/F1 10 Tf\n0.25 0.25 0.25 rg\n70 305 Td\n(1. Look at the bottom-right status bar: it displays 'Hybrid (N PDFium regions)'.) Tj\n0 -18 Td\n(2. Hover your mouse over the badge: the tooltip lists the reason:) Tj\n0 -18 Td\n(   'TransparencyGroup'.) Tj\n0 -18 Td\n(3. Switch to 'PDFium Only' in View -> Rendering Engine: renders via standard PDFium.) Tj\n0 -18 Td\n(4. Switch to 'Vector Only' in View -> Rendering Engine: the regions are outlined.) Tj\n0 -18 Td\n(5. Return to 'Auto': transparent fallback is restored instantly.) Tj\nET\n";
         byte[] b2 = Encoding.ASCII.GetBytes(stream2);
         WriteObj(content2Obj, $"<< /Length {b2.Length} >>\nstream\n{stream2}\nendstream");
 
@@ -556,6 +554,15 @@ public static class TestPdfBuilder
 
         // 14. Info
         WriteObj(infoObj, "<< /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>");
+
+        // 15. Knockout transparency group: still outside the native compositor, so PDFium supplies it.
+        string knockout =
+            "0.2 0.55 0.35 rg\n50 420 220 110 re\nf\n" +
+            "BT\n/F1 14 Tf\n1 1 1 rg\n70 485 Td\n(Rendered via PDFium) Tj\n0 -22 Td\n(100% Visual Fidelity) Tj\nET\n" +
+            "0.3 0.4 0.7 rg\n300 420 262 110 re\nf\n" +
+            "BT\n/F1 14 Tf\n1 1 1 rg\n320 485 Td\n(Zero Truncation) Tj\n0 -22 Td\n(Safe Content Delivery) Tj\nET\n";
+        byte[] bk = Encoding.ASCII.GetBytes(knockout);
+        WriteObj(knockoutObj, $"<< /Type /XObject /Subtype /Form /BBox [50 420 562 530] /Group << /S /Transparency /K true >> /Resources << /Font << /F1 {fontObj} 0 R >> >> /Length {bk.Length} >>\nstream\n{knockout}\nendstream");
 
         // Xref & Trailer
         writer.Flush();

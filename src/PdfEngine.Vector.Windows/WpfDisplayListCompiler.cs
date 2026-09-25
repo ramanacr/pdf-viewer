@@ -81,11 +81,33 @@ internal sealed class WpfDisplayListCompiler
             var ctm = PdfMatrix.Identity;
             var ctmStack = new Stack<PdfMatrix>();
             int index = 0;
+            int skipDepth = 0;
 
             foreach (var cmd in list.Commands)
             {
                 if ((++index & 0x3FF) == 0)
                     ct.ThrowIfCancellationRequested();
+
+                // Blend modes and soft masks are beyond WPF's compositing model: the group's area is
+                // classified as backend fallback (PDFium pixels) and its content skipped.
+                if (skipDepth > 0)
+                {
+                    if (cmd is BeginCompositingGroup) skipDepth++;
+                    else if (cmd is EndCompositingGroup) skipDepth--;
+                    continue;
+                }
+                if (cmd is BeginCompositingGroup cg)
+                {
+                    skipDepth = 1;
+                    if (backendFallbacks != null && cg.Bounds is PdfRect gb && !gb.IsEmpty)
+                    {
+                        backendFallbacks.Add(new PdfFallbackToken(list.PageNumber, new PdfRect(gb.X - 1, gb.Y - 1, gb.Width + 2, gb.Height + 2),
+                            cg.Blend != PdfBlendMode.Normal ? PdfFallbackReason.BlendMode : PdfFallbackReason.SoftMask,
+                            "Compositing group not supported by the WPF backend",
+                            new Dictionary<string, string> { ["origin"] = "backend" }));
+                    }
+                    continue;
+                }
 
                 // Conservative culling: bounds are page space; unknown bounds always draw.
                 if (visibleRegion is PdfRect vis && cmd.Bounds is PdfRect b && !b.IsEmpty && !b.IntersectsWith(vis)
@@ -136,6 +158,16 @@ internal sealed class WpfDisplayListCompiler
                         pushes.Push(PushKind.Clip);
                         break;
 
+                    case PushStrokeClip psc:
+                    {
+                        var outline = BuildGeometry(psc.Path, PdfFillRule.NonZero) is MediaGeometry sg
+                            ? sg.GetWidenedPathGeometry(CreatePen(psc.Stroke, new PdfPaint(new PdfColor(0, 0, 0), 1), ctm))
+                            : MediaGeometry.Empty;
+                        dc.PushClip(outline);
+                        pushes.Push(PushKind.Clip);
+                        break;
+                    }
+
                     case PopClip:
                         if (pushes.Count > 0 && pushes.Peek() == PushKind.Clip)
                         {
@@ -168,6 +200,13 @@ internal sealed class WpfDisplayListCompiler
                             pushes.Pop();
                             dc.Pop();
                         }
+                        break;
+
+                    case DrawTilingPattern tp:
+                        if (tp.Bounds is PdfRect tb && !tb.IsEmpty)
+                            backendFallbacks.Add(new PdfFallbackToken(list.PageNumber, new PdfRect(tb.X - 1, tb.Y - 1, tb.Width + 2, tb.Height + 2),
+                                PdfFallbackReason.Pattern, "Tiling pattern not supported by the WPF backend",
+                                new Dictionary<string, string> { ["origin"] = "backend" }));
                         break;
 
                     case DrawFallbackRegion:

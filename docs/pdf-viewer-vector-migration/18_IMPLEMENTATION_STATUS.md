@@ -1,6 +1,6 @@
 # Implementation Status and Audit
 
-**Last updated:** 2026-09-25 (corpus, embedded font programs) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
+**Last updated:** 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
 **Scope of this document:** what the first implementation pass (commits `b0ab63c` … `2e2fdd7`, 2026-09-21) delivered against this bundle, what it got wrong, what the second pass fixed, and what remains — with evidence, not claims.
 
 ---
@@ -53,7 +53,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 ### Composition root (`PdfViewer`)
 - `PdfiumRegionFallbackProvider` (one PDFium raster per page+dpi, cropped per token, unrotated to crop space).
 - `HybridVectorDocumentService`: vector path honours `EnsureRenderDimensionsAllowed`; ≥ 50 % fallback area ⇒ full PDFium page; engine badge `Vector` / `Hybrid (N PDFium regions)` / `PDFium (Fallback)`; per-page `PdfEngineMetrics` (once per page, no document text) with `ToJsonReport()`; selection boxes from `TextToPage` normalized to the unrotated crop box (matches PDFium); lazy vector open after an engine switch.
-- Showcase PDF and its test now demonstrate a genuine region fallback (Multiply blend) and no longer claim DirectX/Direct2D.
+- Showcase PDF and its test demonstrate a genuine region fallback (a knockout transparency group, which is still outside the native compositor; it used a Multiply blend until blend modes became native).
 - A race where a late text-extraction result overwrote already-populated segments is fixed (`PageViewModel`).
 
 ### Vector page host (E8) — decided: keep `Auto` default, build the host
@@ -71,6 +71,18 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Root cause found in the first pass's renderer:** WPF's font cache throws for a second font file loaded from a folder it has already read, and for a folder that is deleted and recreated. All embedded fonts were written to one folder, so **only the first embedded font per process ever rendered with its own glyphs**; the rest silently used system substitutes. Fonts now get one folder each under a per-renderer root.
 - **Page boxes:** only an explicitly specified `/CropBox` is inherited, and it is clipped to the media box at the leaf (two corpus files rendered at the wrong size).
 
+### Direct2D / DirectWrite backend (ADR-005; ADR-011 decided)
+- `PdfEngine.Vector.Direct2D` (Vortice.Windows 3.8.3, MIT): D3D11 device (hardware, WARP fallback), Direct2D 1.1 device context, DirectWrite fonts from memory (custom font-file loader, no temp files), WIC JPEG decode. Clips are geometric-mask layers; hairlines use `StrokeTransformType.Hairline`; output larger than 2 048 px is tiled, and geometry realizations are shared across tiles; device loss recreates the device without reparsing (`SimulateDeviceLoss` test).
+- **Default page host:** the page bitmap comes from Direct2D, and when the page is zoomed past that bitmap a **viewport detail tile** (visible area plus a margin, ≤ 4 096 px a side) is rendered at exact device resolution and laid over it; scrolling inside the margin reuses the tile. Zoom range 25–1 600 %. `PDF_VECTOR_HOST=wpf` selects the earlier WPF drawing host; the WPF renderer also stands in when no Direct3D device exists.
+- PDFium pages get the same detail tiles (`RenderPageRegion`: FPDF_RenderPageBitmap with a negative origin), and region fallback asks PDFium only for each token's region.
+
+### Transparency and patterns (M7)
+- **IR:** `BeginCompositingGroup(bounds, alpha, blend, softMask, isolated, knockout)` / `EndCompositingGroup`, `PdfSoftMask` (luminosity or alpha, the mask group as its own display list, backdrop colour, sampled `/TR`), `DrawTilingPattern` + `PdfTilingPattern` (one cell as its own display list), `PushStrokeClip` (pattern-painted strokes).
+- **Interpreter:** an object painted under a non-Normal blend mode or a soft mask is wrapped in a group of its own (the specified single-object result); transparency-group XObjects painted with a blend mode or soft mask become one compositing group; the soft-mask group is recorded when the ExtGState is set, with the CTM of that moment (cached per mask and CTM, depth-limited). Tiling cells are recorded once in pattern space (cached per pattern and, for uncoloured patterns, per colour; self-reference and depth are guarded); uncoloured patterns take their colour from `scn`. A mask or cell that itself needs fallback keeps the whole object on the fallback path.
+- **Direct2D:** a group renders into an offscreen bitmap on its own device context; soft masks are rendered over their backdrop colour, turned into alpha with a luminosity colour matrix and `/TR` via a table transfer, and applied with an alpha-mask effect; blend modes use the Blend effect against a backdrop copied from the surface after its layers are popped (enclosing clips are re-applied to the group content), written back with a clipped source-copy. Opacity groups that contain a blend group are composited offscreen as a whole. Night mode blends true colours and inverts the result, because blend modes do not commute with inversion. Tiling patterns rasterize one period at device resolution (every overlapping tile contributes) and fill with a wrapping bitmap brush, so the period is exact at any zoom.
+- **WPF backend:** compositing groups and tiling patterns are classified as backend fallback (PDFium pixels) — WPF has no blend modes.
+- Still classified: knockout groups, text painted with a pattern, text clipping modes, mesh shadings (types 4–7).
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
@@ -82,7 +94,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 | Measure | Value | Source |
 |---|---|---|
-| Vector engine tests | 244 passing (13 before) | `dotnet test tests/PdfEngine.Vector.Tests` |
+| Vector engine tests | 301 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
 | Viewer regression tests | 307 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
 | Differential vs PDFium, geometry fixtures (paths, curves, clip, dash, alpha, inline image) | mean channel diff ≤ 0.37/255, 0 % pixels off by > 64 (72 and 144 dpi) | `DifferentialRenderingTests`; budgets: mean ≤ 1.5, ≤ 1 % |
 | Differential, axial shading | mean 1.17–1.43/255, 0 % | budget: mean ≤ 3.0, ≤ 1 % |
@@ -94,12 +106,16 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 | Where vector time goes | compile 2–14 ms; rasterization 77 ms (100 %) / 2 569 ms (1 600 %) | same |
 | Cancellation observed | 8–32 ms (budget 50 ms) | same |
 | Time to on-screen page (live surface) | 15.9 ms per page vs PDFium 68 ms raster at 100 % in the same run; zoom afterwards costs no re-render | `vector.surface.build` in `baseline-bench.txt` |
-| Viewer tests after the host | 315 passing | `dotnet test tests/PdfViewer.Tests` |
+| Viewer tests after the Direct2D host | 320 passing | `dotnet test tests/PdfViewer.Tests` |
 | Corpus: documents open (2 913 files) | PDFium 2 913; vector 2 909 (99.86 %; the 4 others are encrypted → classified, rendered by PDFium); 0 untyped errors | `eng/vectorpdf/baseline-corpus-summary.json` |
 | Corpus: pages with a display list or classified fallback | 100 % (3 003 pages sampled, ≤ 50 per file) | same |
 | Corpus: pages fully vector / vector page area | **95.0 % / 98.67 %** (before the font work: 89.2 % / 98.65 %, with embedded fonts silently substituted) | same |
 | Corpus: fidelity of fully-vector pages vs PDFium (72 dpi) | median mean-channel diff 0.009/255; 12 files > 5/255 — inspected: text antialiasing on text-dense pages, no missing content | `vectorpdf corpus --diff` |
 | Corpus: remaining fallback reasons | BlendMode 76, Pattern 53, UnsupportedCMap 37, SoftMask 17, TransparencyGroup 11, UnsupportedImageFilter 9 (JPX), UnsupportedFontType 6 (deliberately broken PDF/A "fail" samples) | same |
+| Direct2D vs PDFium, all 15 blend modes, luminosity/alpha soft masks (with `/BC`, `/TR`), blended and nested groups, soft-masked image | mean channel diff 0.00–0.44/255, 0 % pixels off by > 64 | `CompositingTests` (25 tests) |
+| Direct2D vs PDFium, tiling patterns (coloured, uncoloured, rotated `/Matrix`, overlapping cells, alpha, pattern strokes) | mean 0.00–1.08/255, ≤ 1.08 % off (72 and 144 dpi; at fractional cell sizes PDFium snaps cells to whole pixels, so the exact period is asserted separately) | `TilingPatternTests` |
+| Corpus with the Direct2D backend (2 913 files) | pages fully vector **97.9 %** (95.07 % before transparency and patterns), vector page area **99.51 %** (98.67 %); BlendMode and SoftMask fallbacks 0 (76 and 17 before); Pattern 53 → 6 (4 are pattern-painted text) | `vectorpdf corpus --backend d2d --summary` |
+| Direct2D first render vs PDFium (450-command page) | faster at every zoom: 100 % 26 ms vs 35 ms, 400 % 90 ms vs 194 ms, 1 600 % 0.55 s vs 1.16 s | `eng/vectorpdf/baseline-bench.txt` |
 | Embedded fonts by kind (corpus) | Type 1: 11 files, max diff 0.27/255; CFF: 140 files, 0 font fallbacks; TrueType: 665 files, median diff 0.105/255 | same |
 | On-screen scrolling, text document, live surface | 60 fps (p50 16.7 ms, p95 ≤ 17.1 ms) at 100–1600 %, same as PDFium bitmaps | `vectorpdf live`, `eng/vectorpdf/baseline-live.txt` |
 | On-screen scrolling, path-heavy document (400 page-spanning curves/page) | uncached live: 27–41 fps at 100–400 %; **with `PageSurfaceCache`: 60 fps at 100–400 %**, p95 33 ms at 800 % (above the cache limit), 60 fps at 1600 % | same |
@@ -115,11 +131,11 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 ### Vector foundation gate (12)
 - [x] Simple vector PDF opens without PDFium parsing.
-- [~] Paths render — through WPF, not Direct2D (ADR-011, proposed).
+- [x] Paths render through Direct2D (ADR-005; ADR-011 decided 2026-09-26). WPF remains the fallback renderer.
 - [x] Text renders as glyph runs, not re-laid-out Unicode (embedded TrueType/OpenType by glyph ID; otherwise positioned substitutes or classified fallback).
 - [x] Embedded raster images remain images.
 - [x] Zoom to 1600 % never scales a cached bitmap: the page view shows a live vector surface (dense pages over 40 000 commands, night mode and PDFium pages still use bitmaps).
-- [~] Device loss: WPF recovers internally (software fallback); no explicit test.
+- [x] Device loss: the Direct2D device is recreated and the page re-rendered from the cached display list (`Direct2D_SurvivesDeviceLoss_WithoutReparsing`).
 - [x] Cancellation works (observed ≤ 32 ms).
 
 ### Hybrid beta gate (12)
@@ -136,10 +152,9 @@ Not started by design (M9/M10). PDFium still ships and is required.
 ## 5. Remaining work, in priority order
 
 1. **Live host tuning on real-world documents:** repeat `vectorpdf live` on corpus CAD/map/scanned files and on a software render tier (RDP/VM); the 800 % p95 on the path-heavy fixture (33 ms) suggests tiled caching above 4096 px; tune `MaxLiveSurfaceCommands` (40 000) from that evidence.
-2. **Decide the Windows backend (ADR-011):** keep WPF retained drawing, or implement Direct2D/DirectWrite per ADR-005 (needs a COM interop layer or a vetted package, plus device-loss tests).
 3. **Nightly corpus job:** run `fetch-corpus.ps1` + `vectorpdf corpus --summary` in the scheduled CI tier and track trends; add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
 4. **Remaining font coverage:** CJK predefined CMaps and vertical writing (classified `UnsupportedCMap`, 37 regions); bare CFF with a non-uniform FontMatrix (classified).
-5. **Transparency (M7 remainder):** soft masks, blend modes, knockout groups, tiling patterns, mesh shadings via bounded intermediate surfaces — currently classified fallback.
+5. **Transparency (M7 remainder):** knockout groups (11 corpus regions), non-isolated group backdrops (groups are composited as isolated today), text painted with a pattern or used as a clip (glyph outlines via `GetGlyphRunOutline`), mesh shadings.
 6. **Encryption (L1):** Standard Security Handler with platform crypto; today encrypted documents are PDFium-only.
 7. **Package/memory baselines** (A1), SBOM/package test asserting what ships (K7).
 8. Differential fixtures for radial shading, Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
@@ -149,4 +164,4 @@ Not started by design (M9/M10). PDFium still ships and is required.
 ## 6. Decisions for the product owner
 
 1. **Default engine mode — decided 2026-09-25: keep `Auto`.** Deviation from M0/M8 accepted by the product owner; mitigated by region-safe fallback and the live vector host.
-2. **ADR-011** (WPF interim backend vs Direct2D now).
+2. **ADR-011 — decided 2026-09-26: Direct2D.** The product owner asked for the best viewer and allowed replacing WPF where it is the limit; Direct2D renders pages and detail tiles, WPF remains the application shell and the fallback renderer.

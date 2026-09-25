@@ -106,7 +106,7 @@
 
 ## ADR-011 — WPF retained drawing as the interim Windows backend
 
-**Status:** Proposed (needs product-owner decision; see 18_IMPLEMENTATION_STATUS.md §6)
+**Status:** Superseded 2026-09-26 — Direct2D/DirectWrite adopted per ADR-005 (`PdfEngine.Vector.Direct2D`, Vortice.Windows). WPF remains the application shell and the fallback renderer; see 18_IMPLEMENTATION_STATUS.md §2.
 
 **Context:** ADR-005 selects Direct2D + DirectWrite. The first implementation pass built the backend on WPF (`DrawingVisual`, `StreamGeometry`, `GlyphRun`, `RenderTargetBitmap`) while describing it as Direct2D. WPF's composition engine is Direct3D-based, but `RenderTargetBitmap` rasterizes in software, and measured first-render latency is 2.4× PDFium's (eng/vectorpdf/baseline-bench.txt).
 

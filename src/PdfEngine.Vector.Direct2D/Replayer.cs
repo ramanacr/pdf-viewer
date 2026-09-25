@@ -40,6 +40,14 @@ internal sealed class Replayer : IDisposable
     /// <summary>Drops device-dependent caches (after device loss).</summary>
     public void ResetDeviceResources()
     {
+        foreach (var m in _maskReplayers.Values) m.Dispose();
+        _maskReplayers.Clear();
+        foreach (var (replayer, cells) in _tilingCells.Values)
+        {
+            replayer.Dispose();
+            foreach (var c in cells.Values) c.Dispose();
+        }
+        _tilingCells.Clear();
         foreach (var r in _realizations.Values) r?.Dispose();
         _realizations.Clear();
         _realizationScale = -1;
@@ -94,13 +102,15 @@ internal sealed class Replayer : IDisposable
 
     // ------------------------------------------------------------------ drawing
 
-    private enum Push { Layer }
-
     public void Dispose()
     {
+        foreach (var m in _maskReplayers.Values) m.Dispose();
+        _maskReplayers.Clear();
         ResetDeviceResources();
         foreach (var g in _geometries.Values) g?.Dispose();
         _geometries.Clear();
+        foreach (var g in _strokeOutlines.Values) g?.Dispose();
+        _strokeOutlines.Clear();
     }
 
     private ID2D1PathGeometry1? Geometry(PdfPath path, PdfFillRule rule)
@@ -114,6 +124,53 @@ internal sealed class Replayer : IDisposable
         return g;
     }
 
+    /// <summary>
+    /// A drawing surface: a device context with its target and the layers currently pushed on it.
+    /// The layer list lets a blend group pop every layer (so the target holds the composited
+    /// backdrop), composite, and push the same layers again.
+    /// </summary>
+    private sealed class Surface
+    {
+        public required ID2D1DeviceContext Ctx { get; init; }
+        public ID2D1DeviceContext1? Ctx1 { get; init; }
+        public required ID2D1Bitmap1 Target { get; init; }
+        public int Width { get; init; }
+        public int Height { get; init; }
+        public readonly List<(ID2D1Geometry? Mask, Matrix3x2 Full, float Opacity)> Layers = new();
+    }
+
+    // Matching End index for each group Begin, and whether a Normal transparency group contains a
+    // blend group (then it is composited offscreen, because an opacity layer cannot be split).
+    private int[]? _groupEnd;
+    private bool[]? _containsBlend;
+
+    private void MatchGroups()
+    {
+        var cmds = _list.Commands;
+        _groupEnd = new int[cmds.Count];
+        _containsBlend = new bool[cmds.Count];
+        var open = new Stack<int>();
+        for (int i = 0; i < cmds.Count; i++)
+        {
+            _groupEnd[i] = -1;
+            switch (cmds[i])
+            {
+                case BeginCompositingGroup g:
+                    if (g.Blend != PdfBlendMode.Normal)
+                        foreach (int o in open) _containsBlend[o] = true;
+                    open.Push(i);
+                    break;
+                case BeginTransparencyGroup:
+                    open.Push(i);
+                    break;
+                case EndCompositingGroup or EndTransparencyGroup:
+                    if (open.Count > 0) _groupEnd[open.Pop()] = i;
+                    break;
+            }
+        }
+        while (open.Count > 0) _groupEnd[open.Pop()] = cmds.Count; // unterminated: runs to the end
+    }
+
     public void Draw(ID2D1DeviceContext ctx, Matrix3x2 pageToDevice, PdfRect visiblePage)
     {
         if (!_prepared)
@@ -124,6 +181,7 @@ internal sealed class Replayer : IDisposable
                 if (cmd is DrawGlyphRun r && !r.Run.IsInvisible && ResolveText(r, out _) == null) _unsupportedRuns.Add(r);
                 if (cmd is DrawImage im && !TryDecode(im.Image, out _, out _, out _, out _)) _unsupportedImages.Add(im);
             }
+            MatchGroups();
             _prepared = true;
         }
 
@@ -135,33 +193,57 @@ internal sealed class Replayer : IDisposable
             _realizationScale = renderScale;
         }
 
-        var pushes = new Stack<Push>();
-        var frames = new Stack<(int Depth, Matrix3x2 Ctm)>();
-        var ctm = Matrix3x2.Identity; // user → page
-        int index = 0;
-
-        foreach (var cmd in _list.Commands)
+        using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
+        var size = target.PixelSize;
+        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height };
+        try
         {
-            if ((++index & 0x3FF) == 0)
+            DrawRange(surface, 0, _list.Commands.Count, pageToDevice, Matrix3x2.Identity, visiblePage);
+        }
+        finally
+        {
+            while (surface.Layers.Count > 0) PopLayer(surface);
+            ctx.Transform = Matrix3x2.Identity;
+            ctx1?.Dispose();
+        }
+    }
+
+    private void DrawRange(Surface surface, int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage)
+    {
+        var ctx = surface.Ctx;
+        var ctx1 = surface.Ctx1;
+        var cmds = _list.Commands;
+        int baseLayers = surface.Layers.Count;
+        var frames = new Stack<(int Depth, Matrix3x2 Ctm)>();
+
+        for (int i = start; i < end; i++)
+        {
+            var cmd = cmds[i];
+            if ((i & 0x3FF) == 0)
                 _ct.ThrowIfCancellationRequested();
 
-            if (cmd.Bounds is PdfRect b && !b.IsEmpty && !b.IntersectsWith(visiblePage) &&
-                cmd is FillPath or StrokePath or DrawGlyphRun or DrawImage or DrawShading)
+            if (cmd.Bounds is PdfRect b && !b.IsEmpty && !b.IntersectsWith(visiblePage))
             {
-                continue;
+                if (cmd is FillPath or StrokePath or DrawGlyphRun or DrawImage or DrawShading or DrawTilingPattern)
+                    continue;
+                if (cmd is BeginCompositingGroup && _groupEnd![i] > i)
+                {
+                    i = _groupEnd[i];
+                    continue;
+                }
             }
 
             var full = ctm * pageToDevice;
             switch (cmd)
             {
                 case SaveState:
-                    frames.Push((pushes.Count, ctm));
+                    frames.Push((surface.Layers.Count, ctm));
                     break;
                 case RestoreState:
                     if (frames.Count > 0)
                     {
                         var (depth, saved) = frames.Pop();
-                        while (pushes.Count > depth) { pushes.Pop(); ctx.PopLayer(); }
+                        while (surface.Layers.Count > Math.Max(depth, baseLayers)) PopLayer(surface);
                         ctm = saved;
                     }
                     break;
@@ -187,11 +269,13 @@ internal sealed class Replayer : IDisposable
                     }
                     break;
                 case PushClip pc:
-                    PushLayer(ctx, Geometry(pc.Path, pc.Rule), full, 1f);
-                    pushes.Push(Push.Layer);
+                    PushLayer(surface, Geometry(pc.Path, pc.Rule), full, 1f);
+                    break;
+                case PushStrokeClip psc:
+                    PushLayer(surface, StrokeOutline(psc, full), full, 1f);
                     break;
                 case PopClip:
-                    if (pushes.Count > 0) { pushes.Pop(); ctx.PopLayer(); }
+                    if (surface.Layers.Count > baseLayers) PopLayer(surface);
                     break;
                 case DrawGlyphRun dgr:
                     if (!dgr.Run.IsInvisible && !_unsupportedRuns.Contains(dgr))
@@ -204,23 +288,387 @@ internal sealed class Replayer : IDisposable
                 case DrawShading ds:
                     PaintShading(ctx, ds, ctm, pageToDevice);
                     break;
+                case DrawTilingPattern tp:
+                    PaintTiling(ctx, tp, ctm, pageToDevice, visiblePage);
+                    break;
+                case BeginCompositingGroup cg:
+                {
+                    int groupEnd = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
+                    DrawGroup(surface, cg.Bounds, cg.Alpha, cg.Blend, cg.SoftMask, i + 1, groupEnd, pageToDevice, ctm, visiblePage);
+                    i = groupEnd;
+                    break;
+                }
+                case BeginTransparencyGroup tg when _containsBlend![i]:
+                {
+                    int groupEnd = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
+                    DrawGroup(surface, tg.Bounds, tg.Alpha, PdfBlendMode.Normal, null, i + 1, groupEnd, pageToDevice, ctm, visiblePage);
+                    i = groupEnd;
+                    break;
+                }
                 case BeginTransparencyGroup g:
-                    PushLayer(ctx, null, full, (float)Math.Clamp(g.Alpha, 0, 1));
-                    pushes.Push(Push.Layer);
+                    PushLayer(surface, null, full, (float)Math.Clamp(g.Alpha, 0, 1));
                     break;
                 case EndTransparencyGroup:
-                    if (pushes.Count > 0) { pushes.Pop(); ctx.PopLayer(); }
+                    if (surface.Layers.Count > baseLayers) PopLayer(surface);
                     break;
             }
         }
-        while (pushes.Count > 0) { pushes.Pop(); ctx.PopLayer(); }
-        ctx.Transform = Matrix3x2.Identity;
-        ctx1?.Dispose();
+        while (surface.Layers.Count > baseLayers) PopLayer(surface);
+    }
+
+    // ------------------------------------------------------------------ compositing groups
+
+    /// <summary>Largest offscreen group side; larger groups are clamped to the visible target anyway.</summary>
+    private const int MaxGroupPixels = 8192;
+
+    private static readonly BitmapProperties1 OffscreenProps =
+        new(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target);
+
+    /// <summary>
+    /// Renders a group's content into an offscreen bitmap, applies the soft mask and group alpha,
+    /// and composites it onto <paramref name="surface"/> with the blend mode (ISO 32000-2 11.3–11.6).
+    /// Groups are composited as isolated; a non-Normal blend reads the backdrop from the surface
+    /// after popping its layers, so every enclosing clip has been applied to it.
+    /// </summary>
+    private void DrawGroup(Surface surface, PdfRect? bounds, double alpha, PdfBlendMode blend, PdfSoftMask? mask,
+        int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage)
+    {
+        if (_res.Device is not { } device)
+            return;
+
+        // Device rectangle of the group, clamped to the surface.
+        var r = bounds ?? visiblePage;
+        var corners = new[]
+        {
+            Vector2.Transform(new Vector2((float)r.X, (float)r.Y), pageToDevice),
+            Vector2.Transform(new Vector2((float)r.Right, (float)r.Y), pageToDevice),
+            Vector2.Transform(new Vector2((float)r.X, (float)r.Bottom), pageToDevice),
+            Vector2.Transform(new Vector2((float)r.Right, (float)r.Bottom), pageToDevice),
+        };
+        int x0 = (int)Math.Floor(corners.Min(c => c.X)) - 1, y0 = (int)Math.Floor(corners.Min(c => c.Y)) - 1;
+        int x1 = (int)Math.Ceiling(corners.Max(c => c.X)) + 1, y1 = (int)Math.Ceiling(corners.Max(c => c.Y)) + 1;
+        x0 = Math.Max(0, x0); y0 = Math.Max(0, y0);
+        x1 = Math.Min(surface.Width, x1); y1 = Math.Min(surface.Height, y1);
+        int w = Math.Min(MaxGroupPixels, x1 - x0), h = Math.Min(MaxGroupPixels, y1 - y0);
+        if (w <= 0 || h <= 0 || alpha <= 0)
+            return;
+
+        var offset = Matrix3x2.CreateTranslation(-x0, -y0);
+        var groupPageToDevice = pageToDevice * offset;
+        var groupVisible = bounds is PdfRect gb ? Intersect(visiblePage, gb) : visiblePage;
+        bool blends = blend != PdfBlendMode.Normal;
+
+        using var content = surface.Ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, OffscreenProps);
+        using (var gctx = device.CreateDeviceContext(DeviceContextOptions.None))
+        {
+            gctx.Target = content;
+            gctx.BeginDraw();
+            gctx.AntialiasMode = AntialiasMode.PerPrimitive;
+            gctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            gctx.Clear(new Color4(0, 0, 0, 0));
+            using var gctx1 = surface.Ctx1 != null ? gctx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
+            var sub = new Surface { Ctx = gctx, Ctx1 = gctx1, Target = content, Width = w, Height = h };
+            try
+            {
+                // A blended group replaces its rectangle on the surface, so its content must carry
+                // the enclosing clips itself.
+                if (blends)
+                    foreach (var layer in surface.Layers)
+                        PushLayer(sub, layer.Mask, layer.Full * offset, 1f);
+                DrawRange(sub, start, end, groupPageToDevice, ctm, groupVisible);
+            }
+            finally
+            {
+                while (sub.Layers.Count > 0) PopLayer(sub);
+                gctx.Transform = Matrix3x2.Identity;
+                gctx.EndDraw();
+                gctx.Target = null;
+            }
+        }
+
+        var disposables = new List<IDisposable>();
+        try
+        {
+            ID2D1Image image = content;
+            var ctx = surface.Ctx;
+
+            if (mask != null && RenderSoftMask(mask, w, h, groupPageToDevice, surface.Ctx1 != null) is { } maskImage)
+            {
+                disposables.Add(maskImage);
+                ID2D1Image maskAlpha = maskImage;
+                if (mask.Luminosity)
+                {
+                    // Mask value = luminosity of the group composited over its backdrop (11.6.5.2).
+                    var lum = new Vortice.Direct2D1.Effects.ColorMatrix(ctx)
+                    {
+                        Matrix = new Matrix5x4(
+                            0, 0, 0, 0.30f,
+                            0, 0, 0, 0.59f,
+                            0, 0, 0, 0.11f,
+                            0, 0, 0, 0,
+                            0, 0, 0, 0),
+                    };
+                    disposables.Add(lum);
+                    lum.SetInput(0, maskAlpha, true);
+                    maskAlpha = lum.Output;
+                    disposables.Add(maskAlpha);
+                }
+                if (mask.Transfer is { Count: >= 2 } tr)
+                {
+                    var table = new Vortice.Direct2D1.Effects.TableTransfer(ctx)
+                    {
+                        AlphaTable = tr.ToArray(),
+                        RedDisable = true,
+                        GreenDisable = true,
+                        BlueDisable = true,
+                        ClampOutput = true,
+                    };
+                    disposables.Add(table);
+                    table.SetInput(0, maskAlpha, true);
+                    maskAlpha = table.Output;
+                    disposables.Add(maskAlpha);
+                }
+                var apply = new Vortice.Direct2D1.Effects.AlphaMask(ctx);
+                disposables.Add(apply);
+                apply.SetInput(0, image, true);
+                apply.SetInput(1, maskAlpha, true);
+                image = apply.Output;
+                disposables.Add(image);
+            }
+
+            if (alpha < 1)
+            {
+                var opacity = new Vortice.Direct2D1.Effects.Opacity(ctx) { Value = (float)alpha };
+                disposables.Add(opacity);
+                opacity.SetInput(0, image, true);
+                image = opacity.Output;
+                disposables.Add(image);
+            }
+
+            if (!blends)
+            {
+                ctx.Transform = Matrix3x2.Identity;
+                ctx.DrawImage(image, new Vector2(x0, y0), null, InterpolationMode.NearestNeighbor, CompositeMode.SourceOver);
+                return;
+            }
+
+            // Blend: composite the surface's layers so the target holds the backdrop, blend, write
+            // the rectangle back, and push the layers again for what follows.
+            var layers = surface.Layers.ToArray();
+            while (surface.Layers.Count > 0) PopLayer(surface);
+            ctx.Flush(out _, out _);
+            var backdrop = ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+            disposables.Add(backdrop);
+            backdrop.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target, new System.Drawing.Rectangle(x0, y0, w, h));
+
+            ID2D1Image dest = backdrop, src = image;
+            if (InvertColors)
+            {
+                // Night mode inverts every paint; blend modes do not commute with inversion, so
+                // blend the true colours and invert the result.
+                dest = Invert(ctx, dest, disposables);
+                src = Invert(ctx, src, disposables);
+            }
+            var blendEffect = new Vortice.Direct2D1.Effects.Blend(ctx) { Mode = ToD2D(blend) };
+            disposables.Add(blendEffect);
+            blendEffect.SetInput(0, dest, true);
+            blendEffect.SetInput(1, src, true);
+            ID2D1Image result = blendEffect.Output;
+            disposables.Add(result);
+            if (InvertColors)
+                result = Invert(ctx, result, disposables);
+
+            ctx.Transform = Matrix3x2.Identity;
+            // SourceCopy replaces everything inside the clip, including where the image is empty:
+            // bound it to the group rectangle.
+            ctx.PushAxisAlignedClip(new RawRectF(x0, y0, x0 + w, y0 + h), AntialiasMode.Aliased);
+            ctx.DrawImage(result, new Vector2(x0, y0), null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+            ctx.PopAxisAlignedClip();
+            foreach (var layer in layers)
+                PushLayer(surface, layer.Mask, layer.Full, layer.Opacity);
+        }
+        finally
+        {
+            for (int i = disposables.Count - 1; i >= 0; i--) disposables[i].Dispose();
+        }
+    }
+
+    private static ID2D1Image Invert(ID2D1DeviceContext ctx, ID2D1Image input, List<IDisposable> disposables)
+    {
+        var inv = new Vortice.Direct2D1.Effects.Invert(ctx);
+        disposables.Add(inv);
+        inv.SetInput(0, input, true);
+        var output = inv.Output;
+        disposables.Add(output);
+        return output;
+    }
+
+    private static Vortice.Direct2D1.BlendMode ToD2D(PdfBlendMode mode) => mode switch
+    {
+        PdfBlendMode.Multiply => Vortice.Direct2D1.BlendMode.Multiply,
+        PdfBlendMode.Screen => Vortice.Direct2D1.BlendMode.Screen,
+        PdfBlendMode.Overlay => Vortice.Direct2D1.BlendMode.Overlay,
+        PdfBlendMode.Darken => Vortice.Direct2D1.BlendMode.Darken,
+        PdfBlendMode.Lighten => Vortice.Direct2D1.BlendMode.Lighten,
+        PdfBlendMode.ColorDodge => Vortice.Direct2D1.BlendMode.ColorDodge,
+        PdfBlendMode.ColorBurn => Vortice.Direct2D1.BlendMode.ColorBurn,
+        PdfBlendMode.HardLight => Vortice.Direct2D1.BlendMode.HardLight,
+        PdfBlendMode.SoftLight => Vortice.Direct2D1.BlendMode.SoftLight,
+        PdfBlendMode.Difference => Vortice.Direct2D1.BlendMode.Difference,
+        PdfBlendMode.Exclusion => Vortice.Direct2D1.BlendMode.Exclusion,
+        PdfBlendMode.Hue => Vortice.Direct2D1.BlendMode.Hue,
+        PdfBlendMode.Saturation => Vortice.Direct2D1.BlendMode.Saturation,
+        PdfBlendMode.Color => Vortice.Direct2D1.BlendMode.Color,
+        PdfBlendMode.Luminosity => Vortice.Direct2D1.BlendMode.Luminosity,
+        _ => Vortice.Direct2D1.BlendMode.Multiply,
+    };
+
+    private readonly Dictionary<PdfSoftMask, Replayer> _maskReplayers = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The soft mask's group rendered over its backdrop colour (luminosity) or transparent (alpha)
+    /// for the w × h device rectangle. Mask content is drawn in true colours even in night mode:
+    /// the mask shapes opacity, and inverting it would invert the mask.
+    /// </summary>
+    private ID2D1Bitmap1? RenderSoftMask(PdfSoftMask mask, int w, int h, Matrix3x2 pageToDevice, bool realize)
+    {
+        if (_res.Device is not { } device)
+            return null;
+        if (!_maskReplayers.TryGetValue(mask, out var replayer))
+        {
+            replayer = new Replayer(_res, mask.Content, null, false, _ct) { InvertColors = false };
+            _maskReplayers[mask] = replayer;
+        }
+        replayer.UseRealizations = realize;
+
+        var bitmap = _res.Context!.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, OffscreenProps);
+        using var mctx = device.CreateDeviceContext(DeviceContextOptions.None);
+        mctx.Target = bitmap;
+        mctx.BeginDraw();
+        mctx.AntialiasMode = AntialiasMode.PerPrimitive;
+        mctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        try
+        {
+            var bc = mask.Backdrop;
+            mctx.Clear(mask.Luminosity ? new Color4(bc.R, bc.G, bc.B, 1) : new Color4(0, 0, 0, 0));
+            var maskToDevice = M(mask.MaskToPage) * pageToDevice;
+            replayer.Draw(mctx, maskToDevice, new PdfRect(-1e6, -1e6, 2e6, 2e6));
+        }
+        finally
+        {
+            mctx.EndDraw();
+            mctx.Target = null;
+        }
+        return bitmap;
+    }
+
+    // ------------------------------------------------------------------ tiling patterns
+
+    /// <summary>Largest cell bitmap side; finer cells are resampled (the pattern stays seamless).</summary>
+    private const int MaxCellPixels = 2048;
+
+    private readonly Dictionary<PdfTilingPattern, (Replayer Replayer, Dictionary<(int W, int H), ID2D1Bitmap1> Cells)> _tilingCells =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// One period of the pattern rasterized at device resolution (every tile whose BBox reaches into
+    /// the period contributes), then used as a wrapping bitmap brush over the painted area.
+    /// </summary>
+    private void PaintTiling(ID2D1DeviceContext ctx, DrawTilingPattern cmd, Matrix3x2 ctm, Matrix3x2 pageToDevice, PdfRect visiblePage)
+    {
+        var pattern = cmd.Pattern;
+        var full = ctm * pageToDevice; // pattern space → device
+        double sx = Math.Sqrt(full.M11 * full.M11 + full.M12 * full.M12);
+        double sy = Math.Sqrt(full.M21 * full.M21 + full.M22 * full.M22);
+        double xs = pattern.XStep, ys = pattern.YStep;
+        int bw = (int)Math.Clamp(Math.Ceiling(xs * sx), 1, MaxCellPixels);
+        int bh = (int)Math.Clamp(Math.Ceiling(ys * sy), 1, MaxCellPixels);
+
+        if (!_tilingCells.TryGetValue(pattern, out var entry))
+        {
+            entry = (new Replayer(_res, pattern.Cell, null, false, _ct) { InvertColors = InvertColors }, new());
+            _tilingCells[pattern] = entry;
+        }
+        if (!entry.Cells.TryGetValue((bw, bh), out var cell))
+        {
+            cell = RenderCell(entry.Replayer, pattern, bw, bh);
+            if (cell == null)
+                return;
+            entry.Cells[(bw, bh)] = cell;
+        }
+
+        var area = cmd.Bounds is PdfRect b ? Intersect(b, visiblePage) : visiblePage;
+        if (area.IsEmpty || !Matrix3x2.Invert(ctm, out var pageToPattern))
+            return;
+
+        using var geom = Polygon(pageToPattern, area);
+        var bitmapToPattern = Matrix3x2.CreateScale((float)(xs / bw), (float)(ys / bh)) *
+                              Matrix3x2.CreateTranslation((float)pattern.BBox.X, (float)pattern.BBox.Y);
+        using var brush = ctx.CreateBitmapBrush(cell, new BitmapBrushProperties1(ExtendMode.Wrap, ExtendMode.Wrap, InterpolationMode.Linear),
+            new BrushProperties(1f, bitmapToPattern));
+        ctx.Transform = full;
+        ctx.FillGeometry(geom, brush);
+    }
+
+    private ID2D1Bitmap1? RenderCell(Replayer replayer, PdfTilingPattern pattern, int bw, int bh)
+    {
+        if (_res.Device is not { } device)
+            return null;
+        double xs = pattern.XStep, ys = pattern.YStep;
+        var box = pattern.BBox;
+        var bitmap = _res.Context!.CreateBitmap(new SizeI(bw, bh), IntPtr.Zero, 0, OffscreenProps);
+        using var cctx = device.CreateDeviceContext(DeviceContextOptions.None);
+        cctx.Target = bitmap;
+        cctx.BeginDraw();
+        cctx.AntialiasMode = AntialiasMode.PerPrimitive;
+        cctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        try
+        {
+            cctx.Clear(new Color4(0, 0, 0, 0));
+            var toBitmap = Matrix3x2.CreateScale((float)(bw / xs), (float)(bh / ys));
+            // Tiles (i, j) whose BBox, shifted by (i·XStep, j·YStep), reaches into the period [box.X, +XStep) × [box.Y, +YStep).
+            int ni = (int)Math.Min(8, Math.Ceiling(box.Width / xs)), nj = (int)Math.Min(8, Math.Ceiling(box.Height / ys));
+            for (int i = -ni; i <= ni; i++)
+            for (int j = -nj; j <= nj; j++)
+            {
+                double ox = box.X + i * xs, oy = box.Y + j * ys;
+                if (ox >= box.X + xs || ox + box.Width <= box.X || oy >= box.Y + ys || oy + box.Height <= box.Y)
+                    continue;
+                var cellToBitmap = Matrix3x2.CreateTranslation((float)(i * xs - box.X), (float)(j * ys - box.Y)) * toBitmap;
+                replayer.Draw(cctx, cellToBitmap, new PdfRect(-1e7, -1e7, 2e7, 2e7));
+            }
+        }
+        finally
+        {
+            cctx.EndDraw();
+            cctx.Target = null;
+        }
+        return bitmap;
+    }
+
+    private static PdfRect Intersect(PdfRect a, PdfRect b)
+    {
+        double x0 = Math.Max(a.X, b.X), y0 = Math.Max(a.Y, b.Y);
+        double x1 = Math.Min(a.Right, b.Right), y1 = Math.Min(a.Bottom, b.Bottom);
+        return x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : PdfRect.Empty;
     }
 
     private Color4 Color(PdfColor c, double alpha) => InvertColors
         ? new(1 - c.R, 1 - c.G, 1 - c.B, (float)Math.Clamp(alpha, 0, 1))
         : new(c.R, c.G, c.B, (float)Math.Clamp(alpha, 0, 1));
+
+    private void PushLayer(Surface surface, ID2D1Geometry? mask, Matrix3x2 full, float opacity)
+    {
+        PushLayer(surface.Ctx, mask, full, opacity);
+        surface.Layers.Add((mask, full, opacity));
+    }
+
+    private static void PopLayer(Surface surface)
+    {
+        surface.Layers.RemoveAt(surface.Layers.Count - 1);
+        surface.Ctx.PopLayer();
+    }
 
     private void PushLayer(ID2D1DeviceContext ctx, ID2D1Geometry? mask, Matrix3x2 full, float opacity)
     {
@@ -311,6 +759,45 @@ internal sealed class Replayer : IDisposable
         }
         _realizations[cmd] = r;
         return r;
+    }
+
+    private readonly Dictionary<(PushStrokeClip Cmd, float Scale), ID2D1PathGeometry1?> _strokeOutlines = new();
+
+    /// <summary>The area a stroke covers, in user space (hairlines: one device pixel wide).</summary>
+    private ID2D1PathGeometry1? StrokeOutline(PushStrokeClip cmd, Matrix3x2 full)
+    {
+        float scale = MathF.Sqrt(MathF.Abs(full.GetDeterminant()));
+        var key = (cmd, MathF.Round(scale, 3));
+        if (_strokeOutlines.TryGetValue(key, out var cached))
+            return cached;
+        ID2D1PathGeometry1? outline = null;
+        if (Geometry(cmd.Path, PdfFillRule.NonZero) is { } geom && scale > 0)
+        {
+            var stroke = cmd.Stroke;
+            float width = (float)Math.Max(stroke.Width, 1.0 / scale);
+            var cap = stroke.Cap switch { PdfLineCap.Round => CapStyle.Round, PdfLineCap.Square => CapStyle.Square, _ => CapStyle.Flat };
+            float[]? dashes = stroke.DashArray is { Count: > 0 } d
+                ? Enumerable.Range(0, d.Count % 2 == 1 ? 2 : 1).SelectMany(_ => d).Select(v => (float)(v / width)).ToArray()
+                : null;
+            var style = _res.StrokeStyle(new StrokeStyleProperties1
+            {
+                StartCap = cap,
+                EndCap = cap,
+                DashCap = cap,
+                LineJoin = stroke.Join switch { PdfLineJoin.Round => LineJoin.Round, PdfLineJoin.Bevel => LineJoin.Bevel, _ => LineJoin.MiterOrBevel },
+                MiterLimit = (float)Math.Max(1, stroke.MiterLimit),
+                DashStyle = dashes != null ? DashStyle.Custom : DashStyle.Solid,
+                DashOffset = dashes != null ? (float)(stroke.DashPhase / width) : 0,
+                TransformType = StrokeTransformType.Normal,
+            }, dashes);
+            outline = _res.Factory.CreatePathGeometry();
+            using var sink = outline.Open();
+            sink.SetFillMode(FillMode.Winding);
+            geom.Widen(width, style, null, 0.25f / scale, sink);
+            sink.Close();
+        }
+        _strokeOutlines[key] = outline;
+        return outline;
     }
 
     private void Stroke(ID2D1DeviceContext ctx, ID2D1Geometry geom, ID2D1Brush brush, PdfStroke stroke, Matrix3x2 full,

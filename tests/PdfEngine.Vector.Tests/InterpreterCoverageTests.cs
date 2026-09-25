@@ -129,9 +129,25 @@ public class InterpreterCoverageTests
         Assert.True(m.G > 200 && m.R < 60, $"stencil painted with fill colour, got {m}");
     }
 
+    [Fact]
+    public async Task BlendMode_WrapsOnlyTheAffectedObjectInACompositingGroup()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("0 0 1 rg 10 10 30 30 re f /G1 gs 1 0 0 rg 100 100 20 20 re f", "<< /ExtGState << /G1 << /BM /Multiply >> >> >>");
+        var list = await BuildAsync(b.Build());
+        Assert.False(list.HasFallback);
+        var cmds = list.Commands.ToList();
+        var group = Assert.Single(cmds.OfType<BeginCompositingGroup>());
+        Assert.Equal(PdfBlendMode.Multiply, group.Blend);
+        Assert.Equal(new PdfRect(100, 100, 20, 20), group.Bounds);
+        int i = cmds.IndexOf(group);
+        Assert.IsType<FillPath>(cmds[i + 1]);
+        Assert.IsType<EndCompositingGroup>(cmds[i + 2]);
+        Assert.IsType<FillPath>(cmds[i - 1]); // the blue rectangle stays outside the group
+    }
+
     [Theory]
     [InlineData("/SMask << /Type /Mask /S /Luminosity /G 99 0 R >>", PdfFallbackReason.SoftMask)]
-    [InlineData("/BM /Multiply", PdfFallbackReason.BlendMode)]
     public async Task UnsupportedTransparency_IsClassifiedWithObjectBounds(string gsEntries, PdfFallbackReason expected)
     {
         var b = new VectorPdfBuilder();
@@ -149,7 +165,7 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
-    public async Task TilingPattern_IsClassified_ShadingPattern_IsRendered()
+    public async Task TilingAndShadingPatterns_AreRendered()
     {
         var b = new VectorPdfBuilder();
         int tile = b.AddStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 4 4] /XStep 4 /YStep 4 /Resources << >>", "0 0 2 2 re f");
@@ -160,8 +176,10 @@ public class InterpreterCoverageTests
             $"<< /Pattern << /P1 {tile} 0 R /P2 {shPattern} 0 R >> >>");
 
         var list = await BuildAsync(b.Build());
-        var token = Assert.Single(list.FallbackTokens);
-        Assert.Equal(PdfFallbackReason.Pattern, token.Reason);
+        Assert.False(list.HasFallback);
+        var tiling = Assert.Single(list.Commands.OfType<DrawTilingPattern>());
+        Assert.Equal(4, tiling.Pattern.XStep);
+        Assert.Contains(tiling.Pattern.Cell.Commands, c => c is FillPath);
         var sh = Assert.Single(list.Commands.OfType<DrawShading>());
         var axial = Assert.IsType<PdfAxialShading>(sh.Shading);
         Assert.NotNull(axial.Stops);

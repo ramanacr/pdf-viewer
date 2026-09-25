@@ -637,6 +637,7 @@ public sealed class PdfContentInterpreter
             to.FillAlpha = clone.FillAlpha;
             to.BlendMode = clone.BlendMode;
             to.SoftMaskActive = clone.SoftMaskActive;
+            to.SoftMask = clone.SoftMask;
             to.AlphaIsShape = clone.AlphaIsShape;
             to.ClipPath = clone.ClipPath;
             to.ClipRule = clone.ClipRule;
@@ -736,8 +737,9 @@ public sealed class PdfContentInterpreter
 
         private static PdfFallbackReason? PaintUnsupported(GraphicsState gs, bool stroke)
         {
-            if (gs.SoftMaskActive) return PdfFallbackReason.SoftMask;
-            if (!gs.IsNormalBlend) return PdfFallbackReason.BlendMode;
+            // Blend modes and captured soft masks are composited natively (BeginCompositingGroup);
+            // only a soft mask that could not be captured still falls back.
+            if (gs.SoftMaskActive && gs.SoftMask == null) return PdfFallbackReason.SoftMask;
             var cs = stroke ? gs.StrokeColorSpace : gs.FillColorSpace;
             if (cs.IsPattern) return null; // handled by the pattern paint path
             return cs.UnsupportedReason;
@@ -803,13 +805,32 @@ public sealed class PdfContentInterpreter
                 return;
             }
 
+            bool composite = BeginComposite(gs, pageBounds);
             if (gs.FillColorSpace.IsPattern)
-            {
                 PaintPatternFill(pdfPath, rule, gs, pageBounds);
-                return;
-            }
+            else
+                _commands.Add(new FillPath(pdfPath, gs.CreateFillPaint(), rule, pageBounds));
+            EndComposite(composite);
+        }
 
-            _commands.Add(new FillPath(pdfPath, gs.CreateFillPaint(), rule, pageBounds));
+        /// <summary>
+        /// An object painted under a non-Normal blend mode or a soft mask is composited as a group
+        /// of its own (the specified result for a single object, ISO 32000-2 11.3, 11.6.5).
+        /// </summary>
+        private bool BeginComposite(GraphicsState gs, PdfRect bounds)
+        {
+            var blend = gs.Blend;
+            if (blend == PdfBlendMode.Normal && gs.SoftMask == null)
+                return false;
+            _features |= PdfFeatureSet.Transparency;
+            _commands.Add(new BeginCompositingGroup(bounds, 1.0, blend, gs.SoftMask, Isolated: true, Knockout: false));
+            return true;
+        }
+
+        private void EndComposite(bool open)
+        {
+            if (open)
+                _commands.Add(new EndCompositingGroup());
         }
 
         private void PaintStroke(PdfPath pdfPath, GraphicsState gs, PdfRect pageBounds)
@@ -820,19 +841,24 @@ public sealed class PdfContentInterpreter
                 return;
             }
 
+            bool composite = BeginComposite(gs, pageBounds);
             if (gs.StrokeColorSpace.IsPattern)
-            {
-                AddFallback(PdfFallbackReason.Pattern, "Pattern stroke", pageBounds);
-                return;
-            }
-
-            _commands.Add(new StrokePath(pdfPath, gs.CreateStroke(), gs.CreateStrokePaint(), pageBounds));
+                PaintPatternFill(pdfPath, PdfFillRule.NonZero, gs, pageBounds, gs.CreateStroke());
+            else
+                _commands.Add(new StrokePath(pdfPath, gs.CreateStroke(), gs.CreateStrokePaint(), pageBounds));
+            EndComposite(composite);
         }
 
-        private void PaintPatternFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfRect pageBounds)
+        /// <summary>
+        /// Paints the current fill (or, with <paramref name="stroke"/>, stroke) pattern inside the
+        /// path's area (or stroke outline).
+        /// </summary>
+        private void PaintPatternFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfRect pageBounds, PdfStroke? stroke = null)
         {
             _features |= PdfFeatureSet.Patterns;
-            var pattern = gs.FillPattern;
+            var pattern = stroke != null ? gs.StrokePattern : gs.FillPattern;
+            double alpha = stroke != null ? gs.StrokeAlpha : gs.FillAlpha;
+            PdfDrawCommand clip = stroke != null ? new PushStrokeClip(pdfPath, stroke, pageBounds) : new PushClip(pdfPath, rule, pageBounds);
             var patternDict = pattern switch
             {
                 PdfStream ps => ps.Dictionary,
@@ -848,6 +874,11 @@ public sealed class PdfContentInterpreter
             }
 
             long patternType = patternDict.GetInteger("PatternType") ?? 0;
+            if (patternType == 1 && pattern is PdfStream tiling)
+            {
+                PaintTilingFill(clip, gs, pageBounds, tiling, alpha, stroke != null ? gs.StrokeColor : gs.FillColor);
+                return;
+            }
             if (patternType != 2)
             {
                 AddFallback(PdfFallbackReason.Pattern, "Tiling pattern", pageBounds);
@@ -881,16 +912,114 @@ public sealed class PdfContentInterpreter
 
             _features |= PdfFeatureSet.Shading;
             _commands.Add(new SaveState());
-            _commands.Add(new PushClip(pdfPath, rule, pageBounds));
+            _commands.Add(clip);
             _commands.Add(new ConcatTransform(target * invCtm));
-            bool group = gs.FillAlpha < 1.0;
-            if (group) _commands.Add(new BeginTransparencyGroup(pageBounds, gs.FillAlpha));
+            bool group = alpha < 1.0;
+            if (group) _commands.Add(new BeginTransparencyGroup(pageBounds, alpha));
             _commands.Add(new DrawShading(shading, pageBounds));
             if (group) _commands.Add(new EndTransparencyGroup());
             _commands.Add(new RestoreState());
         }
 
         private PdfMatrix _currentPatternBase = PdfMatrix.Identity;
+
+        // ------------------------------------------------------------------ tiling patterns
+
+        private readonly Dictionary<(PdfStream Pattern, PdfColor? Color), PdfTilingPattern?> _tilings = new();
+        private int _tilingDepth;
+        private const int MaxTilingDepth = 4;
+
+        private void PaintTilingFill(PdfDrawCommand clip, GraphicsState gs, PdfRect pageBounds, PdfStream patternStream, double alpha, PdfColor color)
+        {
+            var d = patternStream.Dictionary;
+            bool uncolored = (d.GetInteger("PaintType") ?? 1) == 2;
+            var tiling = CaptureTiling(patternStream, uncolored ? color : null);
+            if (tiling == null)
+            {
+                AddFallback(PdfFallbackReason.Pattern, "Tiling pattern could not be reproduced", pageBounds);
+                return;
+            }
+
+            // Pattern space maps to the default space of the pattern's parent stream (8.7.2), not the CTM.
+            var patternMatrix = ReadMatrix(d["Matrix"]) ?? PdfMatrix.Identity;
+            var target = patternMatrix * _currentPatternBase;
+            if (!gs.CTM.TryInvert(out var invCtm))
+                return;
+
+            _commands.Add(new SaveState());
+            _commands.Add(clip);
+            _commands.Add(new ConcatTransform(target * invCtm));
+            bool group = alpha < 1.0;
+            if (group) _commands.Add(new BeginTransparencyGroup(pageBounds, alpha));
+            _commands.Add(new DrawTilingPattern(tiling, pageBounds));
+            if (group) _commands.Add(new EndTransparencyGroup());
+            _commands.Add(new RestoreState());
+        }
+
+        /// <summary>
+        /// Records one pattern cell in pattern space. Null (fallback) for malformed steps or boxes,
+        /// self-referencing or too deeply nested patterns, and cells whose content needs fallback.
+        /// </summary>
+        private PdfTilingPattern? CaptureTiling(PdfStream patternStream, PdfColor? color)
+        {
+            var key = (patternStream, color);
+            if (_tilings.TryGetValue(key, out var cached))
+                return cached;
+
+            PdfTilingPattern? result = null;
+            var d = patternStream.Dictionary;
+            if (ReadRect(d["BBox"]) is PdfRect bbox && !bbox.IsEmpty &&
+                _resolver.Resolve(d["XStep"]) is { } xo && xo.TryGetNumber(out double xStep) &&
+                _resolver.Resolve(d["YStep"]) is { } yo && yo.TryGetNumber(out double yStep) &&
+                Math.Abs(xStep) > 1e-6 && Math.Abs(yStep) > 1e-6 && Math.Abs(xStep) < 1e7 && Math.Abs(yStep) < 1e7 &&
+                _tilingDepth < MaxTilingDepth && _activeForms.Add(patternStream))
+            {
+                int mark = _commands.Count, fallbackMark = _fallbacks.Count;
+                var savedBase = _currentPatternBase;
+                _tilingDepth++;
+                try
+                {
+                    var cellState = new GraphicsState { CTM = PdfMatrix.Identity, ClipBoundsPage = bbox };
+                    if (color is PdfColor c)
+                    {
+                        // Uncoloured pattern: the cell paints in the colour given with scn.
+                        cellState.FillColorSpace = PdfColorSpace.DeviceRgb;
+                        cellState.StrokeColorSpace = PdfColorSpace.DeviceRgb;
+                        cellState.FillColor = c;
+                        cellState.StrokeColor = c;
+                    }
+                    _currentPatternBase = PdfMatrix.Identity; // nested patterns map to this pattern's space
+                    byte[] content = _owner._streamDecoder.DecodeStream(patternStream);
+                    var resources = _resolver.Resolve(d["Resources"]) as PdfDictionary ?? _page.Resources;
+                    _commands.Add(new SaveState());
+                    _commands.Add(new PushClip(RectPath(bbox), PdfFillRule.NonZero, bbox));
+                    Execute(content, resources, cellState, new ContentContext(PdfMatrix.Identity, 0, 0, color != null));
+                    _commands.Add(new RestoreState());
+
+                    if (_fallbacks.Count == fallbackMark)
+                    {
+                        var cell = new PdfDisplayList(_page.PageNumber, _page.PageSize, _page.MediaBox, _page.CropBox, _page.RotationDegrees,
+                            _commands.GetRange(mark, _commands.Count - mark), _features & ~PdfFeatureSet.Fallback, Array.Empty<PdfFallbackToken>());
+                        result = new PdfTilingPattern(cell, bbox, Math.Abs(xStep), Math.Abs(yStep));
+                    }
+                }
+                catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
+                                               or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
+                {
+                    result = null;
+                }
+                finally
+                {
+                    _tilingDepth--;
+                    _currentPatternBase = savedBase;
+                    _activeForms.Remove(patternStream);
+                    _commands.RemoveRange(mark, _commands.Count - mark);
+                    _fallbacks.RemoveRange(fallbackMark, _fallbacks.Count - fallbackMark);
+                }
+            }
+            _tilings[key] = result;
+            return result;
+        }
 
         private PdfMatrix? ReadMatrix(PdfObject? obj)
         {
@@ -993,6 +1122,25 @@ public sealed class PdfContentInterpreter
                 {
                     var pattern = LookupResource(resources, "Pattern", patternName);
                     if (stroke) gs.StrokePattern = pattern; else gs.FillPattern = pattern;
+
+                    // [/Pattern base] with components before the name: the uncoloured pattern's colour.
+                    if (cs.PatternBaseColorSpace is { } baseCs)
+                    {
+                        int bn = baseCs.NumberOfComponents;
+                        var bcomps = new double[bn];
+                        int got = 0;
+                        for (int i = operands.Count - 2; i >= 0 && got < bn; i--)
+                        {
+                            if (!operands[i].TryGetNumber(out double v)) break;
+                            bcomps[bn - 1 - got] = v;
+                            got++;
+                        }
+                        if (got == bn)
+                        {
+                            var pc = baseCs.ToRgbColor(bcomps, 1f);
+                            if (stroke) gs.StrokeColor = pc; else gs.FillColor = pc;
+                        }
+                    }
                 }
                 return;
             }
@@ -1069,6 +1217,7 @@ public sealed class PdfContentInterpreter
                         break;
                     case "SMask":
                         gs.SoftMaskActive = !(value is PdfName n && n.Value == "None");
+                        gs.SoftMask = gs.SoftMaskActive && value is PdfDictionary smd ? CaptureSoftMask(smd, gs, resources) : null;
                         if (gs.SoftMaskActive) _features |= PdfFeatureSet.Transparency;
                         break;
                     case "AIS":
@@ -1083,6 +1232,114 @@ public sealed class PdfContentInterpreter
                         break;
                 }
             }
+        }
+
+        // ------------------------------------------------------------------ soft masks
+
+        private readonly Dictionary<(PdfDictionary Mask, PdfMatrix Ctm), PdfSoftMask?> _softMasks = new();
+        private int _softMaskDepth;
+        private const int MaxSoftMaskDepth = 4;
+
+        /// <summary>
+        /// Records a soft mask's group into its own display list, in page space, using the CTM in
+        /// effect when the ExtGState is set (ISO 32000-2 11.6.5.2). Null when the mask cannot be
+        /// reproduced natively: an unknown subtype, an unusable transfer function, or mask content
+        /// that itself needs fallback.
+        /// </summary>
+        private PdfSoftMask? CaptureSoftMask(PdfDictionary smd, GraphicsState gs, PdfDictionary resources)
+        {
+            var key = (smd, gs.CTM);
+            if (_softMasks.TryGetValue(key, out var cached))
+                return cached;
+            PdfSoftMask? mask = null;
+            if (_softMaskDepth < MaxSoftMaskDepth)
+            {
+                _softMaskDepth++;
+                try
+                {
+                    mask = BuildSoftMask(smd, gs);
+                }
+                catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
+                                               or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
+                {
+                    mask = null;
+                }
+                finally
+                {
+                    _softMaskDepth--;
+                }
+            }
+            _softMasks[key] = mask;
+            return mask;
+        }
+
+        private PdfSoftMask? BuildSoftMask(PdfDictionary smd, GraphicsState gs)
+        {
+            string? subtype = smd.GetName("S");
+            bool luminosity = subtype == "Luminosity";
+            if (!luminosity && subtype != "Alpha")
+                return null;
+            if (_resolver.Resolve(smd["G"]) is not PdfStream group)
+                return null;
+
+            float[]? transfer = null;
+            var tr = _resolver.Resolve(smd["TR"]);
+            if (tr != null && tr is not PdfName { Value: "Identity" })
+            {
+                var fn = PdfFunction.Parse(tr, _resolver, _limits, PdfFallbackReason.SoftMask);
+                if (fn.InputCount != 1 || fn.OutputCount < 1)
+                    return null;
+                transfer = new float[256];
+                Span<double> input = stackalloc double[1];
+                var output = new double[fn.OutputCount];
+                for (int i = 0; i < 256; i++)
+                {
+                    input[0] = i / 255.0;
+                    fn.Evaluate(input, output);
+                    transfer[i] = (float)Math.Clamp(output[0], 0, 1);
+                }
+            }
+
+            var backdrop = new PdfColor(0, 0, 0);
+            if (luminosity && _resolver.Resolve(smd["BC"]) is PdfArray bc && bc.Count > 0)
+            {
+                var groupDict = _resolver.Resolve(group.Dictionary["Group"]) as PdfDictionary;
+                var groupResources = _resolver.Resolve(group.Dictionary["Resources"]) as PdfDictionary ?? _page.Resources;
+                var cs = groupDict?["CS"] is { } csObj
+                    ? PdfColorSpace.Resolve(csObj, _resolver, groupResources)
+                    : bc.Count >= 4 ? PdfColorSpace.DeviceCmyk : bc.Count == 3 ? PdfColorSpace.DeviceRgb : PdfColorSpace.DeviceGray;
+                var comps = new double[cs.NumberOfComponents];
+                for (int i = 0; i < comps.Length && i < bc.Count; i++)
+                    comps[i] = _resolver.Resolve(bc[i]) is { } c && c.TryGetNumber(out double v) ? v : 0;
+                backdrop = cs.ToRgbColor(comps);
+            }
+
+            // The mask group is painted with the CTM at the time of gs and otherwise default state.
+            int mark = _commands.Count, fallbackMark = _fallbacks.Count;
+            var maskState = new GraphicsState { CTM = gs.CTM, ClipBoundsPage = Crop };
+            _commands.Add(new SaveState());
+            _commands.Add(new ConcatTransform(gs.CTM));
+            var savedBase = _currentPatternBase;
+            try
+            {
+                ExecuteForm(group, _page.Resources, maskState, new ContentContext(gs.CTM, 0, 0, false), hidden: false);
+            }
+            finally
+            {
+                _currentPatternBase = savedBase;
+            }
+            _commands.Add(new RestoreState());
+
+            var content = _commands.GetRange(mark, _commands.Count - mark);
+            bool needsFallback = _fallbacks.Count > fallbackMark;
+            _commands.RemoveRange(mark, _commands.Count - mark);
+            _fallbacks.RemoveRange(fallbackMark, _fallbacks.Count - fallbackMark);
+            if (needsFallback)
+                return null;
+
+            var list = new PdfDisplayList(_page.PageNumber, _page.PageSize, _page.MediaBox, _page.CropBox, _page.RotationDegrees,
+                content, _features & ~PdfFeatureSet.Fallback, Array.Empty<PdfFallbackToken>());
+            return new PdfSoftMask(luminosity, list, PdfMatrix.Identity, backdrop, transfer);
         }
 
         // ------------------------------------------------------------------ text
@@ -1215,7 +1472,9 @@ public sealed class PdfContentInterpreter
             };
 
             // Invisible runs are kept: selection, search and copy work on them (OCR layers use mode 3).
+            bool composite = drawVisible && BeginComposite(gs, pageBounds);
             _commands.Add(new DrawGlyphRun(run, gs.CreateFillPaint(), pageBounds));
+            EndComposite(composite);
 
             if (!hidden && paints && reason is PdfFallbackReason r && !pageBounds.IsEmpty)
             {
@@ -1386,6 +1645,7 @@ public sealed class PdfContentInterpreter
 
             bool group = gs.FillAlpha < 1.0;
             bool clipBox = ReadRect(shDict["BBox"]) is not null;
+            bool composite = BeginComposite(gs, bounds);
             if (clipBox)
             {
                 _commands.Add(new SaveState());
@@ -1395,6 +1655,7 @@ public sealed class PdfContentInterpreter
             _commands.Add(new DrawShading(shading, bounds));
             if (group) _commands.Add(new EndTransparencyGroup());
             if (clipBox) _commands.Add(new RestoreState());
+            EndComposite(composite);
         }
 
         /// <summary>
@@ -1589,9 +1850,9 @@ public sealed class PdfContentInterpreter
                 {
                     _features |= PdfFeatureSet.Transparency;
                     bool knockout = groupDict!.TryGetValue("K", out var k) && k != null && k.TryGetBoolean(out bool kb) && kb;
-                    if (knockout || gs.SoftMaskActive || !gs.IsNormalBlend)
+                    if (knockout || (gs.SoftMaskActive && gs.SoftMask == null))
                     {
-                        AddFallback(knockout ? PdfFallbackReason.TransparencyGroup : gs.SoftMaskActive ? PdfFallbackReason.SoftMask : PdfFallbackReason.BlendMode,
+                        AddFallback(knockout ? PdfFallbackReason.TransparencyGroup : PdfFallbackReason.SoftMask,
                             "Transparency group composited with unsupported parameters", formBounds);
                         return;
                     }
@@ -1610,7 +1871,8 @@ public sealed class PdfContentInterpreter
                 if (bbox is PdfRect clip)
                     _commands.Add(new PushClip(RectPath(clip), PdfFillRule.NonZero, formBounds));
 
-                bool group = isTransparencyGroup && !hidden && gs.FillAlpha < 1.0;
+                bool compositing = isTransparencyGroup && !hidden && (gs.SoftMask != null || !gs.IsNormalBlend);
+                bool group = isTransparencyGroup && !hidden && (gs.FillAlpha < 1.0 || compositing);
                 if (isTransparencyGroup)
                 {
                     // The group's elements start with alpha 1, Normal blend, no soft mask; the group
@@ -1619,11 +1881,15 @@ public sealed class PdfContentInterpreter
                     inner.StrokeAlpha = 1;
                     inner.BlendMode = "Normal";
                     inner.SoftMaskActive = false;
+                    inner.SoftMask = null;
                 }
                 if (group)
                 {
                     bool isolated = groupDict!.TryGetValue("I", out var iso) && iso != null && iso.TryGetBoolean(out bool ib) && ib;
-                    _commands.Add(new BeginTransparencyGroup(formBounds, gs.FillAlpha, "Normal", isolated, false));
+                    if (compositing)
+                        _commands.Add(new BeginCompositingGroup(formBounds, gs.FillAlpha, gs.Blend, gs.SoftMask, isolated, false));
+                    else
+                        _commands.Add(new BeginTransparencyGroup(formBounds, gs.FillAlpha, "Normal", isolated, false));
                 }
 
                 var savedBase = _currentPatternBase;
@@ -1637,7 +1903,7 @@ public sealed class PdfContentInterpreter
                     _currentPatternBase = savedBase;
                 }
 
-                if (group) _commands.Add(new EndTransparencyGroup());
+                if (group) _commands.Add(compositing ? new EndCompositingGroup() : new EndTransparencyGroup());
                 _commands.Add(new RestoreState());
             }
             finally
@@ -1772,7 +2038,9 @@ public sealed class PdfContentInterpreter
                 Opacity = gs.FillAlpha,
             };
 
+            bool composite = BeginComposite(gs, pageBounds);
             _commands.Add(new DrawImage(imageRef, PdfMatrix.Identity, pageBounds));
+            EndComposite(composite);
         }
 
         private List<string> FilterNames(PdfDictionary dict)

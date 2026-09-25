@@ -132,7 +132,7 @@ public class VectorPageHostTests : IDisposable
         Assert.IsType<DrawingImage>(page.PageSurface);
         var report = service.GetPageEngineReport(2)!;
         Assert.Equal(PdfEngineMode.Hybrid, report.Engine);
-        Assert.Contains(report.FallbackReasons, r => r.Contains("BlendMode"));
+        Assert.Contains(report.FallbackReasons, r => r.Contains("TransparencyGroup"));
     }
 
     [Fact]

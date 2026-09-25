@@ -37,6 +37,12 @@ public sealed class GraphicsState
     /// <summary>An ExtGState /SMask other than /None is in effect.</summary>
     public bool SoftMaskActive { get; set; }
 
+    /// <summary>
+    /// The active soft mask, captured when the ExtGState was set. Null while <see cref="SoftMaskActive"/>
+    /// means the mask could not be reproduced natively (its paint falls back).
+    /// </summary>
+    public PdfSoftMask? SoftMask { get; set; }
+
     /// <summary>ExtGState /AIS — alpha constants are shape, not opacity.</summary>
     public bool AlphaIsShape { get; set; }
 
@@ -63,7 +69,28 @@ public sealed class GraphicsState
     public PdfMatrix TextMatrix { get; set; } = PdfMatrix.Identity;
     public PdfMatrix TextLineMatrix { get; set; } = PdfMatrix.Identity;
 
-    public bool IsNormalBlend => BlendMode is "Normal" or "Compatible";
+    public bool IsNormalBlend => Blend == PdfBlendMode.Normal;
+
+    /// <summary>The blend mode as an enum; unrecognised names are Normal (ISO 32000-2 11.3.5).</summary>
+    public PdfBlendMode Blend => BlendMode switch
+    {
+        "Multiply" => PdfBlendMode.Multiply,
+        "Screen" => PdfBlendMode.Screen,
+        "Overlay" => PdfBlendMode.Overlay,
+        "Darken" => PdfBlendMode.Darken,
+        "Lighten" => PdfBlendMode.Lighten,
+        "ColorDodge" => PdfBlendMode.ColorDodge,
+        "ColorBurn" => PdfBlendMode.ColorBurn,
+        "HardLight" => PdfBlendMode.HardLight,
+        "SoftLight" => PdfBlendMode.SoftLight,
+        "Difference" => PdfBlendMode.Difference,
+        "Exclusion" => PdfBlendMode.Exclusion,
+        "Hue" => PdfBlendMode.Hue,
+        "Saturation" => PdfBlendMode.Saturation,
+        "Color" => PdfBlendMode.Color,
+        "Luminosity" => PdfBlendMode.Luminosity,
+        _ => PdfBlendMode.Normal,
+    };
 
     public GraphicsState Clone()
     {
@@ -86,6 +113,7 @@ public sealed class GraphicsState
             FillAlpha = FillAlpha,
             BlendMode = BlendMode,
             SoftMaskActive = SoftMaskActive,
+            SoftMask = SoftMask,
             AlphaIsShape = AlphaIsShape,
             ClipPath = ClipPath,
             ClipRule = ClipRule,
