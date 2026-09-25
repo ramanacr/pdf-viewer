@@ -1,0 +1,5 @@
+# Binary documents and fonts: never convert line endings (PDF xref offsets are byte positions).
+*.pdf binary
+*.ttf binary
+*.otf binary
+*.png binary
