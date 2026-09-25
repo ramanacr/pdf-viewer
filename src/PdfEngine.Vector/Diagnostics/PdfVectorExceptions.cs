@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 
 namespace PdfEngine.Vector.Diagnostics;
 
@@ -18,10 +17,9 @@ public enum PdfVectorErrorKind
 }
 
 /// <summary>
-/// Base type for every classified failure raised by the vector engine. Derives from
-/// <see cref="InvalidDataException"/> so existing callers that caught malformed-input errors keep working.
+/// Base type for every classified failure raised by the vector engine.
 /// </summary>
-public class PdfVectorException : InvalidDataException
+public class PdfVectorException : Exception
 {
     public PdfVectorErrorKind Kind { get; }
 
