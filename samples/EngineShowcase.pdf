@@ -10,7 +10,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 9 0 R >> >> >>
 endobj
 4 0 obj
-<< /Length 1383 >>
+<< /Length 1385 >>
 stream
 BT
 /F1 22 Tf
@@ -22,7 +22,7 @@ BT
 /F1 12 Tf
 0.25 0.25 0.25 rg
 50 710 Td
-(Rendered natively via DirectX and DirectWrite with infinite zoom sharpness) Tj
+(Rendered from the vector display list: zoom re-rasterizes vectors, never a bitmap) Tj
 ET
 0.2 0.5 0.9 rg
 0.1 0.25 0.6 RG
@@ -73,7 +73,7 @@ BT
 /F1 11 Tf
 0.3 0.3 0.3 rg
 200 355 Td
-(Exact glyph positioning from PDF font metrics & DirectWrite layout) Tj
+(Glyph positions come from PDF font metrics, not UI text layout) Tj
 ET
 0.94 0.96 1.0 rg
 0.2 0.4 0.85 RG
@@ -94,16 +94,16 @@ BT
 0 -16 Td
 (o Visual sharpness: Zoom into this page up to 500% - lines and curves stay pin-sharp!) Tj
 0 -16 Td
-(o Zero raster artifacts: Geometry is tessellated directly on the GPU.) Tj
+(o No bitmap scaling: every zoom level replays the same display list.) Tj
 ET
 
 endstream
 endobj
 5 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> /ExtGState << /GS1 << /Type /ExtGState /BM /Multiply >> >> >> >>
 endobj
 6 0 obj
-<< /Length 1562 >>
+<< /Length 1514 >>
 stream
 BT
 /F1 22 Tf
@@ -115,7 +115,7 @@ BT
 /F1 12 Tf
 0.25 0.25 0.25 rg
 50 710 Td
-(Automatic Fallback: Unsupported operators trigger Google PDFium with 0% truncation) Tj
+(Region fallback: only the unsupported objects are composited from PDFium) Tj
 ET
 0.99 0.94 0.94 rg
 0.85 0.3 0.3 RG
@@ -126,17 +126,19 @@ BT
 /F1 12 Tf
 0.75 0.1 0.1 rg
 70 640 Td
-(NOTICE: This page contains an unsupported PDF operator - 'ri' / Rendering Intent) Tj
+(NOTICE: The two panels below use the Multiply blend mode) Tj
 ET
 BT
 /F1 10 Tf
 0.3 0.1 0.1 rg
 70 618 Td
-(The Vector Engine classifies this construct during display list generation) Tj
+(The vector engine classifies them as BlendMode fallback regions) Tj
 0 -15 Td
-(and gracefully delegates the entire page to Google PDFium.) Tj
+(and composites just those regions from PDFium; the rest stays vector.) Tj
 ET
 /RelativeColorimetric ri
+q
+/GS1 gs
 0.2 0.55 0.35 rg
 50 420 220 110 re
 f
@@ -159,6 +161,7 @@ BT
 0 -22 Td
 (Safe Content Delivery) Tj
 ET
+Q
 0.96 0.96 0.96 rg
 0.5 0.5 0.5 RG
 1.5 w
@@ -174,15 +177,15 @@ BT
 /F1 10 Tf
 0.25 0.25 0.25 rg
 70 305 Td
-(1. Look at the bottom-right status bar: it displays 'PDFium (Fallback)'.) Tj
+(1. Look at the bottom-right status bar: it displays 'Hybrid (N PDFium regions)'.) Tj
 0 -18 Td
-(2. Hover your mouse over the badge: the tooltip displays the exact reason:) Tj
+(2. Hover your mouse over the badge: the tooltip lists the reason:) Tj
 0 -18 Td
-(   'Unsupported PDF operator: ri'.) Tj
+(   'BlendMode'.) Tj
 0 -18 Td
 (3. Switch to 'PDFium Only' in View -> Rendering Engine: renders via standard PDFium.) Tj
 0 -18 Td
-(4. Switch to 'Vector Only' in View -> Rendering Engine: observes strict vector refusal.) Tj
+(4. Switch to 'Vector Only' in View -> Rendering Engine: the regions are outlined.) Tj
 0 -18 Td
 (5. Return to 'Auto': transparent fallback is restored instantly.) Tj
 ET
@@ -193,7 +196,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R >> >> >>
 endobj
 8 0 obj
-<< /Length 1603 >>
+<< /Length 1563 >>
 stream
 BT
 /F1 22 Tf
@@ -205,7 +208,7 @@ BT
 /F1 12 Tf
 0.25 0.25 0.25 rg
 50 710 Td
-(Directly compare Windows ClearType vs FreeType antialiasing at all scales) Tj
+(Compare the vector engine and PDFium text rendering at all scales) Tj
 ET
 BT
 /F1 7 Tf
@@ -229,13 +232,13 @@ BT
 /F1 14 Tf
 0.15 0.15 0.15 rg
 50 595 Td
-(14pt: Windows DirectWrite vs FreeType Software Rasterizer) Tj
+(14pt: WPF glyph runs vs PDFium software rasterizer) Tj
 ET
 BT
 /F1 20 Tf
 0.1 0.2 0.4 rg
 50 560 Td
-(20pt: Direct2D Hardware Acceleration) Tj
+(20pt: Retained vector drawing) Tj
 ET
 BT
 /F1 28 Tf
@@ -284,7 +287,7 @@ BT
 0 -17 Td
 (3. Observe how the page instantly re-renders in real time.) Tj
 0 -17 Td
-(4. Notice subtle differences in font smoothing, stroke weights, and GPU compositing.) Tj
+(4. Notice subtle differences in font smoothing and stroke weights.) Tj
 0 -17 Td
 (5. Check the status bar: the badge updates dynamically to match the active engine!) Tj
 ET
@@ -316,18 +319,18 @@ xref
 0000000086 00000 n 
 0000000158 00000 n 
 0000000287 00000 n 
-0000001725 00000 n 
-0000001854 00000 n 
-0000003471 00000 n 
-0000003600 00000 n 
-0000005258 00000 n 
-0000005331 00000 n 
-0000005408 00000 n 
-0000005511 00000 n 
-0000005624 00000 n 
-0000005729 00000 n 
+0000001727 00000 n 
+0000001915 00000 n 
+0000003484 00000 n 
+0000003613 00000 n 
+0000005231 00000 n 
+0000005304 00000 n 
+0000005381 00000 n 
+0000005484 00000 n 
+0000005597 00000 n 
+0000005702 00000 n 
 trailer
 << /Size 15 /Root 1 0 R /Info 14 0 R >>
 startxref
-5857
+5830
 %%EOF
