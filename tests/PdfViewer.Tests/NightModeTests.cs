@@ -195,15 +195,31 @@ public class NightModeTests : IDisposable
         return total / (pixels.Length / 4);
     }
 
+    /// <summary>
+    /// What the page view shows, as pixels: the bitmap, or the live vector surface rasterized
+    /// the way the screen would draw it.
+    /// </summary>
     private static async Task<BitmapSource> WaitForRender(MainViewModel vm)
     {
-        for (int i = 0; i < 100 && vm.Pages[0].RenderedImage == null; i++)
+        for (int i = 0; i < 100 && !vm.Pages[0].HasSurface; i++)
         {
             await Task.Delay(50);
         }
 
-        Assert.NotNull(vm.Pages[0].RenderedImage);
-        return vm.Pages[0].RenderedImage!;
+        var surface = vm.Pages[0].PageSurface;
+        Assert.NotNull(surface);
+        if (surface is BitmapSource bitmap)
+            return bitmap;
+
+        int w = Math.Max(1, (int)Math.Ceiling(surface!.Width));
+        int h = Math.Max(1, (int)Math.Ceiling(surface.Height));
+        var visual = new System.Windows.Media.DrawingVisual();
+        using (var dc = visual.RenderOpen())
+            dc.DrawImage(surface, new System.Windows.Rect(0, 0, w, h));
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        rtb.Render(visual);
+        rtb.Freeze();
+        return rtb;
     }
 
     /// <summary>

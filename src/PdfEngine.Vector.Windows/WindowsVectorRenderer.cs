@@ -22,6 +22,16 @@ public sealed record PdfVectorRenderResult(
     TimeSpan CompileTime,
     TimeSpan RasterTime);
 
+/// <summary>Frozen on-screen page surface and what it needed from fallback.</summary>
+public sealed record PdfVectorSurfaceResult(
+    ImageSource Surface,
+    double WidthPoints,
+    double HeightPoints,
+    IReadOnlyList<PdfFallbackToken> Fallbacks,
+    int BackendFallbackCount,
+    int FallbackRegionsComposited,
+    int CommandCount);
+
 /// <summary>
 /// Windows vector renderer: replays an immutable display list through WPF's retained drawing
 /// stack and rasterizes at the requested resolution. Unsupported regions are composited from an
@@ -189,35 +199,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             dc.PushTransform(new MatrixTransform(geometry.PageToPixels()));
             dc.DrawDrawing(compiled.Drawing);
 
-            // Fallback regions are drawn last: the provider's pixels are the full truth for the
-            // region (every object in it), so nothing vector may paint over them.
-            foreach (var (token, pixels) in overlays)
-            {
-                var b = token.Bounds;
-                var rect = new Rect(b.X - crop.X, crop.Y + crop.Height - (b.Y + b.Height), b.Width, b.Height);
-                if (rect.Width <= 0 || rect.Height <= 0)
-                    continue;
-
-                if (pixels != null && pixels.WidthPixels > 0 && pixels.HeightPixels > 0)
-                {
-                    var bmp = BitmapSource.Create(pixels.WidthPixels, pixels.HeightPixels, 96, 96, PixelFormats.Bgra32, null,
-                        pixels.Pixels.ToArray(), pixels.Stride);
-                    bmp.Freeze();
-                    dc.PushClip(new RectangleGeometry(rect));
-                    dc.DrawImage(bmp, rect);
-                    dc.Pop();
-                    composited++;
-                }
-                else
-                {
-                    // Strict vector mode: make the unsupported region visible, never silently wrong.
-                    var fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
-                    fill.Freeze();
-                    var pen = new Pen(Brushes.DarkOrange, 0.75);
-                    pen.Freeze();
-                    dc.DrawRectangle(fill, pen, rect);
-                }
-            }
+            composited = DrawOverlays(dc, crop, overlays);
 
             dc.Pop();
         }
@@ -229,6 +211,123 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
         rtb.CopyPixels(new Int32Rect(0, 0, geometry.PixelWidth, geometry.PixelHeight), memoryOwner.Buffer, stride, 0);
 
         return (new RenderedPage(list.PageNumber, geometry.PixelWidth, geometry.PixelHeight, stride, geometry.Dpi, request.Rotation, memoryOwner), composited);
+    }
+
+    /// <summary>
+    /// Fallback regions are drawn last: the provider's pixels are the full truth for the region
+    /// (every object in it), so nothing vector may paint over them. Coordinates are unrotated
+    /// top-left page points.
+    /// </summary>
+    private static int DrawOverlays(DrawingContext dc, PdfRect crop, IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays)
+    {
+        int composited = 0;
+        foreach (var (token, pixels) in overlays)
+        {
+            var b = token.Bounds;
+            var rect = new Rect(b.X - crop.X, crop.Y + crop.Height - (b.Y + b.Height), b.Width, b.Height);
+            if (rect.Width <= 0 || rect.Height <= 0)
+                continue;
+
+            if (pixels != null && pixels.WidthPixels > 0 && pixels.HeightPixels > 0)
+            {
+                var bmp = BitmapSource.Create(pixels.WidthPixels, pixels.HeightPixels, 96, 96, PixelFormats.Bgra32, null,
+                    pixels.Pixels.ToArray(), pixels.Stride);
+                bmp.Freeze();
+                dc.PushClip(new RectangleGeometry(rect));
+                dc.DrawImage(bmp, rect);
+                dc.Pop();
+                composited++;
+            }
+            else
+            {
+                // Strict vector mode: make the unsupported region visible, never silently wrong.
+                var fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
+                fill.Freeze();
+                var pen = new Pen(Brushes.DarkOrange, 0.75);
+                pen.Freeze();
+                dc.DrawRectangle(fill, pen, rect);
+            }
+        }
+        return composited;
+    }
+
+    /// <summary>
+    /// Builds a frozen, resolution-independent page surface for on-screen display (backlog E8):
+    /// white page, vector content, and fallback regions composited from <paramref name="fallbackProvider"/>
+    /// rasterized at <paramref name="fallbackDpi"/> (or outlined when no provider is given).
+    /// Its size is the page in points after /Rotate and <paramref name="rotation"/>; a host stretches
+    /// it to any zoom and WPF re-renders the vectors at that scale — no page bitmap exists.
+    /// </summary>
+    public async Task<PdfVectorSurfaceResult> BuildPageSurfaceAsync(
+        IPdfDisplayList displayList,
+        PageRotation rotation,
+        IPdfFallbackProvider? fallbackProvider,
+        double fallbackDpi,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(displayList);
+
+        var compiled = await _sta.InvokeAsync(() => _compiler.Compile(displayList, null, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+
+        var overlays = new List<(PdfFallbackToken Token, RenderedPage? Pixels)>(compiled.Fallbacks.Count);
+        try
+        {
+            foreach (var token in compiled.Fallbacks)
+            {
+                RenderedPage? pixels = fallbackProvider == null
+                    ? null
+                    : await fallbackProvider.RenderFallbackRegionAsync(token, fallbackDpi, cancellationToken).ConfigureAwait(false);
+                overlays.Add((token, pixels));
+            }
+
+            return await _sta.InvokeAsync(() =>
+            {
+                var crop = displayList.CropBox.IsEmpty ? new PdfRect(0, 0, displayList.PageSize.Width, displayList.PageSize.Height) : displayList.CropBox;
+                int total = (((displayList.RotationDegrees + (int)rotation) % 360) + 360) % 360;
+                bool sideways = total is 90 or 270;
+                double w = sideways ? crop.Height : crop.Width;
+                double h = sideways ? crop.Width : crop.Height;
+
+                var group = new DrawingGroup();
+                int composited;
+                using (var dc = group.Open())
+                {
+                    dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, w, h));
+                    dc.PushTransform(new MatrixTransform(RotationMatrix(total, crop.Width, crop.Height)));
+                    dc.DrawDrawing(compiled.Drawing);
+                    composited = DrawOverlays(dc, crop, overlays);
+                    dc.Pop();
+                }
+                // Pin the bounds: an empty page must still measure as the full page.
+                group.ClipGeometry = new RectangleGeometry(new Rect(0, 0, w, h));
+                group.Freeze();
+
+                var image = new DrawingImage(group);
+                image.Freeze();
+                return new PdfVectorSurfaceResult(image, w, h, compiled.Fallbacks, compiled.BackendFallbacks.Count, composited,
+                    displayList.Commands.Count);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (var (_, pixels) in overlays)
+                pixels?.Dispose();
+        }
+    }
+
+    /// <summary>Unrotated top-left page points → rotated top-left page points.</summary>
+    private static Matrix RotationMatrix(int totalRotation, double widthPoints, double heightPoints)
+    {
+        var m = Matrix.Identity;
+        switch (totalRotation)
+        {
+            case 90: m.Rotate(90); m.Translate(heightPoints, 0); break;
+            case 180: m.Rotate(180); m.Translate(widthPoints, heightPoints); break;
+            case 270: m.Rotate(270); m.Translate(0, widthPoints); break;
+        }
+        return m;
     }
 
     private void ThrowIfDisposed()

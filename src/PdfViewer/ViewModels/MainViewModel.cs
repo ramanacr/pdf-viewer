@@ -1221,7 +1221,7 @@ public partial class MainViewModel : ObservableObject
             for (int i = row.FirstPageIndex; i < row.FirstPageIndex + row.PageCount; i++)
             {
                 var page = Pages[i];
-                if (page.RenderedImage == null && !page.IsLoading)
+                if (!page.HasSurface && !page.IsLoading)
                 {
                     _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
                 }
@@ -1263,7 +1263,7 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var idx in priorityIndices)
         {
-            if (Pages[idx].RenderedImage == null && !Pages[idx].IsLoading)
+            if (!Pages[idx].HasSurface && !Pages[idx].IsLoading)
             {
                 _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
             }
@@ -1284,7 +1284,7 @@ public partial class MainViewModel : ObservableObject
         {
             if (!IsDocumentLoaded || ViewMode == ViewLayoutMode.SinglePage) break;
             var page = Pages[i];
-            if (page.RenderedImage == null && !page.IsLoading)
+            if (!page.HasSurface && !page.IsLoading)
             {
                 await page.LoadImageAsync(_renderer, dpi, rotation, IsNightMode, CancellationToken.None);
                 await Task.Delay(25); // Gentle yield to maintain smooth 60 FPS UI

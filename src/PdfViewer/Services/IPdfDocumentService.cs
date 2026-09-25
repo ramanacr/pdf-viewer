@@ -78,6 +78,14 @@ public interface IPdfDocumentService : IDisposable
     Task<BitmapSource?> RenderPageAsync(int pageNumber, int dpi = 150, int rotationAngle = 0, CancellationToken ct = default);
 
     /// <summary>
+    /// A frozen, resolution-independent surface for the page (a vector drawing sized in points
+    /// after rotation), or null when the page must be shown as a bitmap from
+    /// <see cref="RenderPageAsync"/>. A surface is stretched to any zoom without re-rendering.
+    /// </summary>
+    Task<System.Windows.Media.ImageSource?> GetVectorPageSurfaceAsync(int pageNumber, int rotationAngle = 0, CancellationToken ct = default)
+        => Task.FromResult<System.Windows.Media.ImageSource?>(null);
+
+    /// <summary>
     /// Extracts the hierarchical bookmarks / outline tree.
     /// </summary>
     ObservableCollection<BookmarkItem> ExtractBookmarks();

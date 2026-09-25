@@ -49,7 +49,139 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public PdfEngineMode EngineMode
     {
         get => _mode;
-        set => _mode = value;
+        set
+        {
+            if (_mode != value)
+                ClearSurfaces();
+            _mode = value;
+        }
+    }
+
+    /// <summary>
+    /// Fallback regions on a live vector surface are PDFium pixels; this is their resolution.
+    /// 200 dpi stays crisp to roughly 275 % zoom, and only the (small) regions pay for it.
+    /// </summary>
+    internal const double SurfaceFallbackDpi = 200;
+
+    /// <summary>
+    /// Pages with more commands than this are shown as bitmaps: WPF re-renders a live drawing on
+    /// every frame, which stops being cheaper than one raster for very dense pages.
+    /// </summary>
+    internal const int MaxLiveSurfaceCommands = 40_000;
+
+    private const int SurfaceCacheCapacity = 24;
+    private readonly object _surfaceSync = new();
+    private readonly LinkedList<((int Page, int Rotation) Key, ImageSource Surface)> _surfaceLru = new();
+    private readonly Dictionary<(int Page, int Rotation), LinkedListNode<((int Page, int Rotation) Key, ImageSource Surface)>> _surfaces = new();
+
+    private void ClearSurfaces()
+    {
+        lock (_surfaceSync)
+        {
+            _surfaceLru.Clear();
+            _surfaces.Clear();
+        }
+    }
+
+    public async Task<ImageSource?> GetVectorPageSurfaceAsync(int pageNumber, int rotationAngle = 0, CancellationToken ct = default)
+    {
+        if (_mode == PdfEngineMode.Pdfium)
+            return null;
+
+        int rotation = (((rotationAngle % 360) + 360) % 360) / 90 * 90;
+        var key = (pageNumber, rotation);
+        lock (_surfaceSync)
+        {
+            if (_surfaces.TryGetValue(key, out var node))
+            {
+                _surfaceLru.Remove(node);
+                _surfaceLru.AddFirst(node);
+                return node.Value.Surface;
+            }
+        }
+
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        var doc = _vectorDoc;
+        if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
+            return null;
+
+        var buildClock = System.Diagnostics.Stopwatch.StartNew();
+        IPdfDisplayList displayList;
+        try
+        {
+            displayList = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (_mode != PdfEngineMode.Vector && ex is not OperationCanceledException)
+        {
+            return null; // the bitmap path classifies and reports it
+        }
+        buildClock.Stop();
+
+        bool strict = _mode == PdfEngineMode.Vector;
+        if (displayList.Commands.Count > MaxLiveSurfaceCommands)
+            return null;
+        if (!strict && (displayList.ComputeFallbackAreaRatio() >= FullPageFallbackAreaThreshold ||
+                        displayList.Commands.Count == 0 && displayList.HasFallback))
+            return null;
+
+        if (!strict && displayList.HasFallback)
+        {
+            // Fallback pixels come from one PDFium page raster: same ceiling as any other raster.
+            var (w, h) = PixelSize(displayList, (int)SurfaceFallbackDpi, 0);
+            try
+            {
+                _securityPolicy.EnsureRenderDimensionsAllowed(w, h);
+            }
+            catch (PdfEngine.Exceptions.PdfSecurityPolicyException)
+            {
+                return null;
+            }
+        }
+
+        PdfVectorSurfaceResult result;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            result = await _vectorRenderer.BuildPageSurfaceAsync(displayList, (PageRotation)rotation,
+                strict ? null : _fallbackProvider, SurfaceFallbackDpi, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!strict && ex is not OperationCanceledException)
+        {
+            return null;
+        }
+        clock.Stop();
+
+        if (!strict && AreaRatio(displayList, result.Fallbacks) >= FullPageFallbackAreaThreshold)
+            return null; // backend fallbacks pushed the page over the threshold: show PDFium's raster
+
+        var metrics = new PdfPageMetrics
+        {
+            PageNumber = pageNumber,
+            IsFullyVector = result.Fallbacks.Count == 0,
+            DrawCommandsCount = displayList.Commands.Count,
+            FallbackCommandsCount = result.Fallbacks.Count,
+            FallbackAreaRatio = AreaRatio(displayList, result.Fallbacks),
+            ParseDurationMs = buildClock.Elapsed.TotalMilliseconds,
+            RenderDurationMs = clock.Elapsed.TotalMilliseconds,
+        };
+        metrics.FallbackReasons.AddRange(result.Fallbacks.Select(t => t.Reason));
+        _metrics.RecordPage(metrics);
+        _pageEngineReports[pageNumber] = VectorReport(pageNumber, displayList.Commands.Count, result.Fallbacks, result.FallbackRegionsComposited, strict, live: true);
+
+        lock (_surfaceSync)
+        {
+            if (!_surfaces.ContainsKey(key))
+            {
+                _surfaces[key] = _surfaceLru.AddFirst((key, result.Surface));
+                while (_surfaceLru.Count > SurfaceCacheCapacity)
+                {
+                    var last = _surfaceLru.Last!;
+                    _surfaceLru.RemoveLast();
+                    _surfaces.Remove(last.Value.Key);
+                }
+            }
+        }
+        return result.Surface;
     }
 
     public PageEngineReport? GetPageEngineReport(int pageNumber)
@@ -119,6 +251,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         var meta = await _pdfiumService.OpenDocumentAsync(filePath, password, ct).ConfigureAwait(false);
         _metrics = new PdfEngineMetrics();
         _fallbackProvider.Reset();
+        ClearSurfaces();
         _vectorOpenAttempted = false;
         _openedWithPassword = !string.IsNullOrEmpty(password);
 
@@ -127,6 +260,24 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
         await OpenVectorDocumentAsync(filePath, ct).ConfigureAwait(false);
         return meta;
+    }
+
+    /// <summary>Opens the vector document lazily when the file was opened in PDFium mode and the engine changed since.</summary>
+    private async Task EnsureVectorDocumentAsync(CancellationToken ct)
+    {
+        if (_mode == PdfEngineMode.Pdfium || _vectorDoc != null || _vectorOpenAttempted || !_pdfiumService.IsDocumentLoaded)
+            return;
+
+        await _vectorOpenGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_vectorDoc == null && !_vectorOpenAttempted)
+                await OpenVectorDocumentAsync(_pdfiumService.CurrentFilePath, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _vectorOpenGate.Release();
+        }
     }
 
     private async Task OpenVectorDocumentAsync(string filePath, CancellationToken ct)
@@ -160,6 +311,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public void CloseDocument()
     {
+        ClearSurfaces();
         _vectorOpenAttempted = false;
         _openedWithPassword = false;
         _pageEngineReports.Clear();
@@ -202,20 +354,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         int rotationAngle = 0,
         CancellationToken ct = default)
     {
-        if (_mode != PdfEngineMode.Pdfium && _vectorDoc == null && !_vectorOpenAttempted && _pdfiumService.IsDocumentLoaded)
-        {
-            // The document was opened in PDFium mode and the user switched engines since.
-            await _vectorOpenGate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                if (_vectorDoc == null && !_vectorOpenAttempted)
-                    await OpenVectorDocumentAsync(_pdfiumService.CurrentFilePath, ct).ConfigureAwait(false);
-            }
-            finally
-            {
-                _vectorOpenGate.Release();
-            }
-        }
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
 
         var doc = _vectorDoc;
         if (_mode == PdfEngineMode.Pdfium || doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
@@ -289,7 +428,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         metrics.FallbackReasons.AddRange(result.Fallbacks.Select(t => t.Reason));
         _metrics.RecordPage(metrics);
 
-        _pageEngineReports[pageNumber] = VectorReport(pageNumber, displayList, result, strict);
+        _pageEngineReports[pageNumber] = VectorReport(pageNumber, displayList.Commands.Count, result.Fallbacks, result.FallbackRegionsComposited, strict, live: false);
         return CreateBitmapSource(renderedPage);
     }
 
@@ -346,26 +485,27 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         BadgeText: "🖼️ PDFium (Fallback)",
         Tooltip: $"Rendered by PDFium because {why}:\n{string.Join("\n", reasons)}");
 
-    private static PageEngineReport VectorReport(int pageNumber, IPdfDisplayList list, PdfVectorRenderResult result, bool strict)
+    private static PageEngineReport VectorReport(int pageNumber, int commands, IReadOnlyList<PdfFallbackToken> fallbacks, int composited, bool strict, bool live)
     {
-        if (result.Fallbacks.Count == 0)
+        string how = live ? "live vector surface (zoom re-renders vectors, no page bitmap)" : "vector engine (rasterized)";
+        if (fallbacks.Count == 0)
         {
             return new PageEngineReport(pageNumber, PdfEngineMode.Vector, IsFallback: false, Array.Empty<string>(),
                 BadgeText: "⚡ Vector",
-                Tooltip: $"Rendered by the vector engine (WPF retained drawing)\nCommands: {list.Commands.Count}");
+                Tooltip: $"Rendered by the {how}\nCommands: {commands}");
         }
 
-        var reasons = DescribeReasons(result.Fallbacks);
+        var reasons = DescribeReasons(fallbacks);
         if (strict)
         {
             return new PageEngineReport(pageNumber, PdfEngineMode.Vector, IsFallback: false, reasons,
-                BadgeText: $"⚡ Vector ({result.Fallbacks.Count} unsupported)",
-                Tooltip: $"Strict vector mode: unsupported regions are outlined, not rendered:\n{string.Join("\n", reasons)}");
+                BadgeText: $"⚡ Vector ({fallbacks.Count} unsupported)",
+                Tooltip: $"Strict vector mode ({how}): unsupported regions are outlined, not rendered:\n{string.Join("\n", reasons)}");
         }
 
         return new PageEngineReport(pageNumber, PdfEngineMode.Hybrid, IsFallback: true, reasons,
-            BadgeText: $"⚡ Hybrid ({result.FallbackRegionsComposited} PDFium regions)",
-            Tooltip: $"Rendered by the vector engine; {result.FallbackRegionsComposited} region(s) composited from PDFium:\n{string.Join("\n", reasons)}");
+            BadgeText: $"⚡ Hybrid ({composited} PDFium regions)",
+            Tooltip: $"Rendered by the {how}; {composited} region(s) composited from PDFium:\n{string.Join("\n", reasons)}");
     }
 
     private static BitmapSource CreateBitmapSource(RenderedPage renderedPage)

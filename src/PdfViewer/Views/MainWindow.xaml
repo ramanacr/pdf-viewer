@@ -1072,7 +1072,7 @@
                                                          Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
 
                                             <!-- 2. Rendered Page Image -->
-                                            <Image Source="{Binding RenderedImage}"
+                                            <Image Source="{Binding PageSurface}"
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
 
@@ -1386,7 +1386,7 @@
                                              Visibility="{Binding SingleCurrentPage.IsLoading, Converter={StaticResource BoolToVis}}" />
 
                                 <!-- Rendered Page Image -->
-                                <Image Source="{Binding SingleCurrentPage.RenderedImage}"
+                                <Image Source="{Binding SingleCurrentPage.PageSurface}"
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
 

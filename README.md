@@ -274,7 +274,9 @@ The status-bar badge shows which engine rendered the current page (`⚡ Vector`,
 
 **What stays on PDFium** regardless of mode: search, annotations and forms editing, saving, printing, image export, redaction, signatures and page organisation. **Releases still ship `pdfium.dll`** — it is required for fallback and for those features.
 
-**Known limitations of the vector path:** rasterization goes through WPF's software `RenderTargetBitmap` and is currently ~2× slower than PDFium for a first render (see `eng/vectorpdf/baseline-bench.txt`); the page view still displays a bitmap per zoom level, so zoom re-rasterizes vectors rather than displaying them directly; there is no security handler for encrypted files yet.
+**Live vector pages:** in `Auto`/`Vector` the page view shows a resolution-independent drawing, so zooming stays sharp and never re-renders or stretches a bitmap. Night mode, PDFium-rendered pages and very dense pages (over 40 000 drawing commands) are shown as bitmaps.
+
+**Known limitations of the vector path:** off-screen rasterization (used by tests and tooling) goes through WPF's software `RenderTargetBitmap` and is ~2× slower than PDFium (see `eng/vectorpdf/baseline-bench.txt`); there is no security handler for encrypted files yet.
 
 **Verification tooling:**
 ```powershell

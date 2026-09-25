@@ -101,6 +101,12 @@ internal static class Bench
             split.Page.Dispose();
         }
 
+        // Live page surface (what the viewer shows): built once per page and rotation, reused at every zoom.
+        await Measure("vector.surface.build", async () =>
+        {
+            await renderer.BuildPageSurfaceAsync(lists[0], PageRotation.Rotate0, null, 200, CancellationToken.None);
+        }, 5);
+
         // Warm replay: the display list is reused; nothing is reparsed.
         await Measure("vector.warmReplay.150dpi", async () =>
         {

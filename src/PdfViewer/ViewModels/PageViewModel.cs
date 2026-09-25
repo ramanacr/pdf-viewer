@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using PdfViewer.Models;
@@ -26,6 +27,31 @@ public partial class PageViewModel : ObservableObject
 
     [ObservableProperty]
     private BitmapSource? _renderedImage;
+
+    /// <summary>
+    /// Resolution-independent page drawing from the vector engine. When set, the page view shows
+    /// it instead of <see cref="RenderedImage"/> and zooming never re-renders a bitmap.
+    /// </summary>
+    [ObservableProperty]
+    private ImageSource? _vectorSurface;
+
+    /// <summary>What the page view displays: the live vector surface, else the bitmap.</summary>
+    public ImageSource? PageSurface => VectorSurface ?? RenderedImage;
+
+    /// <summary>True once the page has something to show, vector or bitmap.</summary>
+    public bool HasSurface => VectorSurface != null || RenderedImage != null;
+
+    partial void OnRenderedImageChanged(BitmapSource? value)
+    {
+        OnPropertyChanged(nameof(PageSurface));
+        OnPropertyChanged(nameof(HasSurface));
+    }
+
+    partial void OnVectorSurfaceChanged(ImageSource? value)
+    {
+        OnPropertyChanged(nameof(PageSurface));
+        OnPropertyChanged(nameof(HasSurface));
+    }
 
     [ObservableProperty]
     private bool _isLoading;
@@ -167,10 +193,52 @@ public partial class PageViewModel : ObservableObject
     public Action<int, string>? RenderRefused { get; set; }
 
     private bool _renderedNightMode;
+    private int _surfaceRotation = -1;
 
     public async Task LoadImageAsync(
         AsyncPageRenderer renderer, int dpi, int rotation, bool nightMode = false, CancellationToken ct = default)
     {
+        // Night mode inverts pixels, which a live drawing cannot do: it stays on the bitmap path.
+        if (!nightMode)
+        {
+            // A surface does not depend on zoom: a DPI change is not a reason to rebuild it.
+            if (VectorSurface != null && _surfaceRotation == rotation)
+                return;
+
+            IsLoading = true;
+            try
+            {
+                var surface = await renderer.GetVectorSurfaceAsync(PageNumber, rotation, ct);
+                if (ct.IsCancellationRequested)
+                    return;
+                if (surface != null)
+                {
+                    VectorSurface = surface;
+                    _surfaceRotation = rotation;
+                    // Release the bitmap: the surface replaces it at every zoom.
+                    RenderedImage = null;
+                    _renderedDpi = 0;
+                    RenderErrorMessage = string.Empty;
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception)
+            {
+                // Any surface failure falls through to the bitmap path, which reports errors.
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+
+        VectorSurface = null;
+        _surfaceRotation = -1;
+
         if (RenderedImage != null && RotationAngle == rotation && _renderedDpi == dpi
             && _renderedNightMode == nightMode)
         {
@@ -208,6 +276,8 @@ public partial class PageViewModel : ObservableObject
 
     public void UnloadImage()
     {
+        VectorSurface = null;
+        _surfaceRotation = -1;
         RenderedImage = null;
         _renderedDpi = 0;
         _renderedNightMode = false;

@@ -1,6 +1,6 @@
 # Implementation Status and Audit
 
-**Last updated:** 2026-09-25 · branch `feat/vector-migration-gaps`
+**Last updated:** 2026-09-25 (vector page host added) · branch `feat/vector-migration-gaps`
 **Scope of this document:** what the first implementation pass (commits `b0ab63c` … `2e2fdd7`, 2026-09-21) delivered against this bundle, what it got wrong, what the second pass fixed, and what remains — with evidence, not claims.
 
 ---
@@ -56,6 +56,12 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Showcase PDF and its test now demonstrate a genuine region fallback (Multiply blend) and no longer claim DirectX/Direct2D.
 - A race where a late text-extraction result overwrote already-populated segments is fixed (`PageViewModel`).
 
+### Vector page host (E8) — decided: keep `Auto` default, build the host
+- `WindowsVectorRenderer.BuildPageSurfaceAsync` builds a frozen `DrawingImage`: white page, vector content, fallback regions as PDFium crops at 200 dpi, sized in points after `/Rotate` + viewer rotation.
+- `IPdfDocumentService.GetVectorPageSurfaceAsync` (default: none). `HybridVectorDocumentService` returns a surface unless the page needs ≥ 50 % fallback, has more than 40 000 commands (live drawings re-render every frame), or the fallback raster would breach the render-dimension policy; surfaces are cached per page and rotation (LRU 24), cleared on open/close/engine switch.
+- `PageViewModel.VectorSurface` / `PageSurface` / `HasSurface`: the page view binds `PageSurface`. A zoom change does not rebuild a surface and no page bitmap is held; night mode (pixel inversion) and PDFium pages stay on the bitmap path.
+- Tests: `VectorPageHostTests` (surface reuse across zoom, rotation, bitmap path for night/PDFium/dense pages, hybrid region page stays live, hard edge at 16× zoom).
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
@@ -77,7 +83,9 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 | First render, 450-command page, 100 % | vector 98.7 ms vs PDFium 41.0 ms (**2.4× slower**) | `eng/vectorpdf/baseline-bench.txt` |
 | Render at 1600 % | vector 2 353 ms vs PDFium 1 103 ms | same |
 | Where vector time goes | compile 2–14 ms; rasterization 77 ms (100 %) / 2 569 ms (1 600 %) | same |
-| Cancellation observed | 14–32 ms (budget 50 ms) | same |
+| Cancellation observed | 8–32 ms (budget 50 ms) | same |
+| Time to on-screen page (live surface) | 15.9 ms per page vs PDFium 68 ms raster at 100 % in the same run; zoom afterwards costs no re-render | `vector.surface.build` in `baseline-bench.txt` |
+| Viewer tests after the host | 313 passing | `dotnet test tests/PdfViewer.Tests` |
 
 ---
 
@@ -93,13 +101,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - [~] Paths render — through WPF, not Direct2D (ADR-011, proposed).
 - [x] Text renders as glyph runs, not re-laid-out Unicode (embedded TrueType/OpenType by glyph ID; otherwise positioned substitutes or classified fallback).
 - [x] Embedded raster images remain images.
-- [~] Zoom to 1600 % never scales a cached bitmap — each zoom re-rasterizes the vectors — but the page view still holds a full-page bitmap per zoom level (memory grows with zoom²). Needs the vector host (§5 #1).
+- [x] Zoom to 1600 % never scales a cached bitmap: the page view shows a live vector surface (dense pages over 40 000 commands, night mode and PDFium pages still use bitmaps).
 - [~] Device loss: WPF recovers internally (software fallback); no explicit test.
 - [x] Cancellation works (observed ≤ 32 ms).
 
 ### Hybrid beta gate (12)
 - [ ] Corpus thresholds (≥ 99.5 % open, ≥ 99 % pages classified, ≥ 95 % area vector): **no legal corpus exists yet** — only `samples/`. The runner is ready.
-- [ ] **≤ 10 % first-visible-page latency regression: fails** (2.4× slower). Root cause is the software rasterizer, not interpretation.
+- [~] ≤ 10 % first-visible-page latency: the on-screen path now builds a surface in ~16 ms vs PDFium's ~68 ms raster (same run); WPF's per-frame composition cost of live surfaces is **not yet measured** in the running app. Off-screen rasterization (print/export if moved to vector, bench `vector.render.*`) is still ~2× PDFium.
 - [x] Memory ceilings enforced (display-list cache, image cache, render dimensions, per-page budgets).
 - [x] Existing viewer workflows pass.
 
@@ -110,7 +118,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 ## 5. Remaining work, in priority order
 
-1. **Vector page host (E8)** — display `WindowsVectorRenderer.BuildPageDrawingAsync` output directly (`DrawingImage`/`DrawingVisual`) so zoom and scroll compose vectors on the GPU through WPF instead of re-rasterizing full pages. Fixes the latency gate and the zoom² memory growth. Touches page cache, night-mode effect, overlays and thumbnails — deserves its own PR and tests.
+1. **Measure the live host in the running app:** frame time while scrolling/zooming text- and path-heavy pages, GPU vs software render tier; tune `MaxLiveSurfaceCommands` from evidence. Night mode on live surfaces (an inverting pixel shader effect on the page image) would remove the last bitmap path for ordinary pages.
 2. **Decide the Windows backend (ADR-011):** keep WPF retained drawing, or implement Direct2D/DirectWrite per ADR-005 (needs a COM interop layer or a vetted package, plus device-loss tests).
 3. **Legal corpus + nightly corpus job** (07): select rights-cleared suites, add `eng/vectorpdf/corpus/manifest.json` entries, track open/coverage/diff trends.
 4. **Font coverage:** wrap bare CFF/Type1C (and convert Type1) into OpenType so the backend can render them — today they fall back per region, which is correct but makes most LaTeX/InDesign output PDFium-composited; CJK predefined CMaps; vertical writing (currently classified `UnsupportedCMap`).
@@ -123,5 +131,5 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 ## 6. Decisions for the product owner
 
-1. **Default engine mode.** The plan (M0, M8) says PDFium stays default until the hybrid beta gate passes; the first pass shipped `Auto`. `Auto` is now region-safe (no known silent-wrong constructs), but it is 2.4× slower on first render. Options: keep `Auto`; or default to `Pdfium` and make `Auto` opt-in until §5 #1 lands.
+1. **Default engine mode — decided 2026-09-25: keep `Auto`.** Deviation from M0/M8 accepted by the product owner; mitigated by region-safe fallback and the live vector host.
 2. **ADR-011** (WPF interim backend vs Direct2D now).

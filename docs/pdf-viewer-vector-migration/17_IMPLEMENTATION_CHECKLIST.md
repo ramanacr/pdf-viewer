@@ -53,8 +53,8 @@ Details and evidence: `18_IMPLEMENTATION_STATUS.md`.
 - [x] resource eviction (display-list LRU, image cache LRU)
 
 ## Verification
-- [~] 25–1600% zoom (100–1600 % benchmarked; display-list reuse tested)
-- [~] no full-page bitmap enlargement (re-rasterized per zoom, never scaled; the page view still holds one bitmap per zoom)
+- [x] 25–1600% zoom (surface reused across zoom; hard edge verified at 16×)
+- [x] no full-page bitmap enlargement (live vector page surface; bitmap path only for night mode, PDFium and very dense pages)
 - [x] differential render
 - [x] text geometry (selection boxes vs PDFium)
 - [x] malformed files
