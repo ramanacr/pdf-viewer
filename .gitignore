@@ -67,3 +67,6 @@ CodeCoverage/
 *.license
 Aspose.Total.lic
 
+
+# Vector corpus downloads (never committed; see eng/vectorpdf/corpus/README.md)
+eng/vectorpdf/corpus/cache/

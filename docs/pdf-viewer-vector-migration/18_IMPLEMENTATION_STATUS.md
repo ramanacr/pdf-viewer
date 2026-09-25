@@ -1,6 +1,6 @@
 # Implementation Status and Audit
 
-**Last updated:** 2026-09-25 (vector page host, live night mode, measured frame times) · branch `feat/vector-migration-gaps`
+**Last updated:** 2026-09-25 (corpus, embedded font programs) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
 **Scope of this document:** what the first implementation pass (commits `b0ab63c` … `2e2fdd7`, 2026-09-21) delivered against this bundle, what it got wrong, what the second pass fixed, and what remains — with evidence, not claims.
 
 ---
@@ -64,6 +64,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Scroll cost:** `Views/PageSurfaceCache` gives a page image a `BitmapCache` at scale 1 while it fits 4096 device pixels, so scrolling composes a GPU texture and the vectors re-render only when the size changes (zoom). Larger (high-zoom) pages draw live.
 - Tests: `VectorPageHostTests` (surface reuse across zoom, rotation, night surface = inverted day surface, bitmap path for PDFium/dense pages, hybrid region page stays live, hard edge at 16× zoom, cache rule). Smoke: the real viewer opened EngineShowcase and a path-heavy file on the live path, stayed responsive, badge `⚡ Vector`.
 
+### Corpus and embedded font programs
+- **Corpus:** `eng/vectorpdf/corpus/fetch-corpus.ps1` fetches the veraPDF corpus (CC BY 4.0) and the PDF Association PDF 2.0 examples (CC BY-SA 4.0) at pinned commits into a git-ignored cache and writes `manifest.json` (SHA-256, source, licence per file; 2 913 files). PDFs are never committed.
+- **Corpus runner** reports the hybrid-beta gate inputs (`--summary`), per-detail fallback counts and worst pixel differences; `vectorpdf diffpage` writes vector | PDFium | difference images and dumps commands, content and per-font load status.
+- **Font programs (`Fonts/Programs/`):** every embedded kind is normalized into an sfnt the backend loads — TrueType subsets get `name`/`OS/2`/`post`/`cmap` (and `hhea`/`hmtx` when inconsistent); bare CFF (Type1C, CIDFontType0C) is wrapped in OpenType; Type 1 (`FontFile`) is converted to CFF (eexec/charstring decryption, subrs inlined, flex, hint replacement, seac, FontMatrix baked into outlines). Glyph indices come from the CFF charset / built-in encoding / sfnt cmap per kind. A program the backend still rejects becomes a classified fallback region — never a silent substitute.
+- **Root cause found in the first pass's renderer:** WPF's font cache throws for a second font file loaded from a folder it has already read, and for a folder that is deleted and recreated. All embedded fonts were written to one folder, so **only the first embedded font per process ever rendered with its own glyphs**; the rest silently used system substitutes. Fonts now get one folder each under a per-renderer root.
+- **Page boxes:** only an explicitly specified `/CropBox` is inherited, and it is clipped to the media box at the leaf (two corpus files rendered at the wrong size).
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
@@ -88,6 +95,12 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 | Cancellation observed | 8–32 ms (budget 50 ms) | same |
 | Time to on-screen page (live surface) | 15.9 ms per page vs PDFium 68 ms raster at 100 % in the same run; zoom afterwards costs no re-render | `vector.surface.build` in `baseline-bench.txt` |
 | Viewer tests after the host | 315 passing | `dotnet test tests/PdfViewer.Tests` |
+| Corpus: documents open (2 913 files) | PDFium 2 913; vector 2 909 (99.86 %; the 4 others are encrypted → classified, rendered by PDFium); 0 untyped errors | `eng/vectorpdf/baseline-corpus-summary.json` |
+| Corpus: pages with a display list or classified fallback | 100 % (3 003 pages sampled, ≤ 50 per file) | same |
+| Corpus: pages fully vector / vector page area | **95.0 % / 98.67 %** (before the font work: 89.2 % / 98.65 %, with embedded fonts silently substituted) | same |
+| Corpus: fidelity of fully-vector pages vs PDFium (72 dpi) | median mean-channel diff 0.009/255; 12 files > 5/255 — inspected: text antialiasing on text-dense pages, no missing content | `vectorpdf corpus --diff` |
+| Corpus: remaining fallback reasons | BlendMode 76, Pattern 53, UnsupportedCMap 37, SoftMask 17, TransparencyGroup 11, UnsupportedImageFilter 9 (JPX), UnsupportedFontType 6 (deliberately broken PDF/A "fail" samples) | same |
+| Embedded fonts by kind (corpus) | Type 1: 11 files, max diff 0.27/255; CFF: 140 files, 0 font fallbacks; TrueType: 665 files, median diff 0.105/255 | same |
 | On-screen scrolling, text document, live surface | 60 fps (p50 16.7 ms, p95 ≤ 17.1 ms) at 100–1600 %, same as PDFium bitmaps | `vectorpdf live`, `eng/vectorpdf/baseline-live.txt` |
 | On-screen scrolling, path-heavy document (400 page-spanning curves/page) | uncached live: 27–41 fps at 100–400 %; **with `PageSurfaceCache`: 60 fps at 100–400 %**, p95 33 ms at 800 % (above the cache limit), 60 fps at 1600 % | same |
 
@@ -110,7 +123,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - [x] Cancellation works (observed ≤ 32 ms).
 
 ### Hybrid beta gate (12)
-- [ ] Corpus thresholds (≥ 99.5 % open, ≥ 99 % pages classified, ≥ 95 % area vector): **no legal corpus exists yet** — only `samples/`. The runner is ready.
+- [x] Corpus thresholds on the rights-cleared corpus (2 913 files): open 100 % (≥ 99.5 %), pages classified 100 % (≥ 99 %), vector area 98.67 % (≥ 95 %). The corpus is standards-conformance heavy; broaden with real-world producers before the beta decision.
 - [x] ≤ 10 % first-visible-page latency (on-screen path): surface built in ~16 ms vs PDFium's ~68 ms raster in the same run; scrolling holds 60 fps on text and, with `PageSurfaceCache`, on the path-heavy fixture up to 400 %. Off-screen rasterization (bench `vector.render.*`) is still ~2× PDFium, which matters only if print/export move to the vector path.
 - [x] Memory ceilings enforced (display-list cache, image cache, render dimensions, per-page budgets).
 - [x] Existing viewer workflows pass.
@@ -124,8 +137,8 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 1. **Live host tuning on real-world documents:** repeat `vectorpdf live` on corpus CAD/map/scanned files and on a software render tier (RDP/VM); the 800 % p95 on the path-heavy fixture (33 ms) suggests tiled caching above 4096 px; tune `MaxLiveSurfaceCommands` (40 000) from that evidence.
 2. **Decide the Windows backend (ADR-011):** keep WPF retained drawing, or implement Direct2D/DirectWrite per ADR-005 (needs a COM interop layer or a vetted package, plus device-loss tests).
-3. **Legal corpus + nightly corpus job** (07): select rights-cleared suites, add `eng/vectorpdf/corpus/manifest.json` entries, track open/coverage/diff trends.
-4. **Font coverage:** wrap bare CFF/Type1C (and convert Type1) into OpenType so the backend can render them — today they fall back per region, which is correct but makes most LaTeX/InDesign output PDFium-composited; CJK predefined CMaps; vertical writing (currently classified `UnsupportedCMap`).
+3. **Nightly corpus job:** run `fetch-corpus.ps1` + `vectorpdf corpus --summary` in the scheduled CI tier and track trends; add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
+4. **Remaining font coverage:** CJK predefined CMaps and vertical writing (classified `UnsupportedCMap`, 37 regions); bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency (M7 remainder):** soft masks, blend modes, knockout groups, tiling patterns, mesh shadings via bounded intermediate surfaces — currently classified fallback.
 6. **Encryption (L1):** Standard Security Handler with platform crypto; today encrypted documents are PDFium-only.
 7. **Package/memory baselines** (A1), SBOM/package test asserting what ships (K7).

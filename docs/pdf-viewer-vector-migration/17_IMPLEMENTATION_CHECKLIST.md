@@ -8,7 +8,7 @@ Details and evidence: `18_IMPLEMENTATION_STATUS.md`.
 - [x] Run complete tests.
 - [ ] Publish current release artifact and record size.
 - [~] Record cold start, open, first page, zoom, scroll, memory. (open/first page/zoom/cancel in `eng/vectorpdf/baseline-bench.txt`; cold start, scroll, memory not yet)
-- [ ] Select initial legal test corpus.
+- [x] Select initial legal test corpus. (veraPDF corpus CC BY 4.0 + PDF 2.0 examples CC BY-SA 4.0, pinned, `eng/vectorpdf/corpus/`)
 - [x] Create migration branch.
 
 ## Foundation

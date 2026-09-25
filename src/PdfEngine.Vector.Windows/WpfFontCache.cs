@@ -20,7 +20,10 @@ internal sealed class WpfFontCache : IDisposable
 
     public WpfFontCache()
     {
-        _tempDirectory = Path.Combine(Path.GetTempPath(), "PdfViewer", "fonts", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // Unique per cache instance: WPF remembers folders it has read fonts from, so a path that is
+        // deleted and recreated (a disposed renderer followed by a new one) must never be reused.
+        _tempDirectory = Path.Combine(Path.GetTempPath(), "PdfViewer", "fonts",
+            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N"));
     }
 
     /// <summary>Embedded program as a glyph typeface, or null when absent or unloadable.</summary>
@@ -37,8 +40,13 @@ internal sealed class WpfFontCache : IDisposable
         {
             // GlyphTypeface only loads from a URI. Font bytes come from an untrusted PDF; they are
             // parsed by the same platform font stack that renders web fonts.
-            Directory.CreateDirectory(_tempDirectory);
-            string file = Path.Combine(_tempDirectory, SafeFileName(face.Key) + (face.Format == PdfFontProgramFormat.OpenTypeCff ? ".otf" : ".ttf"));
+            //
+            // One directory per program: WPF's font cache fails (NullReferenceException inside
+            // FontFaceLayoutInfo) for a second font file loaded from a folder it has already seen,
+            // which previously made every embedded font after the first fall back silently.
+            string folder = Path.Combine(_tempDirectory, SafeFileName(face.Key));
+            Directory.CreateDirectory(folder);
+            string file = Path.Combine(folder, "font" + (face.Format == PdfFontProgramFormat.OpenTypeCff ? ".otf" : ".ttf"));
             if (!File.Exists(file))
             {
                 File.WriteAllBytes(file, face.ProgramData.ToArray());
@@ -125,7 +133,13 @@ internal sealed class WpfFontCache : IDisposable
     {
         foreach (var file in _tempFiles)
         {
-            try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try
+            {
+                File.Delete(file);
+                Directory.Delete(Path.GetDirectoryName(file)!);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }

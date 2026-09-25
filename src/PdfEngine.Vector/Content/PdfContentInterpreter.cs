@@ -11,6 +11,7 @@ using PdfEngine.Vector.Color;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Fonts;
+using PdfEngine.Vector.Fonts.Programs;
 using PdfEngine.Vector.Functions;
 using PdfEngine.Vector.Graphics;
 using PdfEngine.Vector.Images;
@@ -36,7 +37,6 @@ public sealed class PdfContentInterpreter
     private readonly PdfFontResolver _fontResolver;
     private readonly PdfSecurityLimits _limits;
     private readonly PdfStreamDecoder _streamDecoder;
-    private readonly ConditionalWeakTable<PdfFont, PdfFontFace> _faces = new();
 
     /// <summary>Optional-content groups that are OFF in the default configuration (never painted).</summary>
     public IReadOnlySet<PdfDictionary>? HiddenOptionalContentGroups { get; init; }
@@ -66,30 +66,34 @@ public sealed class PdfContentInterpreter
         return new PageRun(this, page, cancellationToken).Build();
     }
 
-    internal PdfFontFace FaceFor(PdfFont font)
-    {
-        return _faces.GetValue(font, static f =>
-        {
-            byte[]? program = f.EmbeddedFontData;
-            var format = f.EmbeddedProgramKind switch
-            {
-                PdfFontProgramKind.TrueType => PdfFontProgramFormat.TrueType,
-                PdfFontProgramKind.OpenType => program is { Length: >= 4 } && program[0] == 'O' && program[1] == 'T' && program[2] == 'T' && program[3] == 'O'
-                    ? PdfFontProgramFormat.OpenTypeCff
-                    : PdfFontProgramFormat.TrueType,
-                PdfFontProgramKind.None => PdfFontProgramFormat.None,
-                _ => PdfFontProgramFormat.Unsupported,
-            };
+    private sealed record PreparedFace(PdfFontFace Face, PreparedFontProgram? Program);
 
-            string key = program is { Length: > 0 }
-                ? "fontprog:" + Convert.ToHexString(SHA256.HashData(program), 0, 12)
+    private readonly ConditionalWeakTable<PdfFont, PreparedFace> _prepared = new();
+
+    internal PdfFontFace FaceFor(PdfFont font) => PrepareFont(font).Face;
+
+    /// <summary>
+    /// Face plus prepared program. Every embedded kind (TrueType, OpenType, bare CFF, Type 1) is
+    /// normalized into a loadable sfnt; when that fails the face is <see cref="PdfFontProgramFormat.Unsupported"/>
+    /// and the backend classifies its text as fallback instead of substituting another font.
+    /// </summary>
+    private PreparedFace PrepareFont(PdfFont font)
+    {
+        return _prepared.GetValue(font, static f =>
+        {
+            PreparedFontProgram? program = f.EmbeddedProgramKind == PdfFontProgramKind.None ? null : FontProgramPreparer.Prepare(f);
+            var format = program?.Format
+                         ?? (f.EmbeddedProgramKind == PdfFontProgramKind.None ? PdfFontProgramFormat.None : PdfFontProgramFormat.Unsupported);
+
+            string key = program != null
+                ? "fontprog:" + Convert.ToHexString(SHA256.HashData(program.Sfnt), 0, 12)
                 : "fontsub:" + (f.PostScriptName ?? f.BaseFont);
 
-            return new PdfFontFace(
+            var face = new PdfFontFace(
                 key,
                 f.PostScriptName ?? f.BaseFont,
                 format,
-                format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff ? program : ReadOnlyMemory<byte>.Empty,
+                program != null ? program.Sfnt : ReadOnlyMemory<byte>.Empty,
                 f.IsBold,
                 f.IsItalic,
                 f.IsSerif,
@@ -97,6 +101,7 @@ public sealed class PdfContentInterpreter
                 f.IsSymbolic,
                 NormalizeEm(f.Ascent, 0.8),
                 NormalizeEm(f.Descent, -0.2));
+            return new PreparedFace(face, program);
         });
     }
 
@@ -1107,8 +1112,9 @@ public sealed class PdfContentInterpreter
             double x = 0;
             double minX = double.MaxValue, maxX = double.MinValue;
             bool allGlyphIdsKnown = true;
-            var face = _owner.FaceFor(font);
-            bool faceHasProgram = face.Format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff;
+            var prepared = _owner.PrepareFont(font);
+            var face = prepared.Face;
+            bool faceHasProgram = prepared.Program != null;
 
             void AddString(PdfString s)
             {
@@ -1127,7 +1133,7 @@ public sealed class PdfContentInterpreter
                     double tw = font.IsWordSpaceCode(code, consumed) ? gs.WordSpacing : 0;
                     double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
 
-                    int gid = faceHasProgram ? font.GetGlyphId(code, cid) : -1;
+                    int gid = faceHasProgram ? prepared.Program!.GetGlyphId(code, cid) : -1;
                     if (faceHasProgram && gid < 0) allGlyphIdsKnown = false;
                     string unicode = font.MapToUnicode(code);
 

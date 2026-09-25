@@ -4,6 +4,8 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using PdfEngine.Pdfium;
 using PdfEngine.Rendering;
 using PdfEngine.Vector;
@@ -33,6 +35,7 @@ public static class Program
             "corpus" => await Corpus.RunAsync(args),
             "live" => LiveBench.Run(args),
             "gen" when args.Length >= 2 => Gen(args),
+            "diffpage" when args.Length >= 4 => await DiffPage.RunAsync(args),
             _ => 2,
         };
     }
@@ -160,6 +163,12 @@ internal static class Corpus
         using var output = outPath != null ? new StreamWriter(outPath, append: false, Encoding.UTF8) : null;
         using var renderer = new WindowsVectorRenderer();
         int files = 0, vectorOpen = 0, pdfiumOpen = 0, pagesTotal = 0, pagesVector = 0;
+        int bothOpen = 0, vectorOnlyFailed = 0, untyped = 0, pagesClassified = 0;
+        double areaVectorSum = 0;
+        var reasonTotals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var reasonDetails = new Dictionary<string, int>(StringComparer.Ordinal);
+        var vectorErrors = new Dictionary<string, int>(StringComparer.Ordinal);
+        var worstDiffs = new List<(double Diff, string File, int Page)>();
 
         foreach (var file in Directory.EnumerateFiles(args[1], "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
         {
@@ -197,19 +206,44 @@ internal static class Corpus
                 var areas = new List<double>();
                 var diffs = new List<double>();
 
-                for (int page = 1; page <= doc.PageCount; page++)
+                if (pdfiumPages >= 0) bothOpen++;
+                for (int page = 1; page <= Math.Min(doc.PageCount, 50); page++)
                 {
                     pagesTotal++;
-                    var list = await doc.GetPageDisplayListAsync(page);
-                    var tokens = await renderer.AnalyzeAsync(list);
+                    IPdfDisplayList list;
+                    IReadOnlyList<PdfFallbackToken> tokens;
+                    try
+                    {
+                        list = await doc.GetPageDisplayListAsync(page);
+                        tokens = await renderer.AnalyzeAsync(list);
+                    }
+                    catch (Exception pex) when (pex is not OutOfMemoryException)
+                    {
+                        // A page that yields neither a display list nor classified fallback.
+                        reasons["PageFailed:" + pex.GetType().Name] = reasons.GetValueOrDefault("PageFailed:" + pex.GetType().Name) + 1;
+                        if (pex is not PdfVectorException) untyped++;
+                        continue;
+                    }
+                    pagesClassified++;
                     if (tokens.Count == 0) pagesVector++;
                     foreach (var t in tokens)
+                    {
+                        string detail = $"{t.Reason}: {t.Description}" + (t.Metadata != null && t.Metadata.TryGetValue("subtype", out var st) ? $" [{st}]" : "");
+                        reasonDetails[detail] = reasonDetails.GetValueOrDefault(detail) + 1;
                         reasons[t.Reason.ToString()] = reasons.GetValueOrDefault(t.Reason.ToString()) + 1;
-                    areas.Add(new PdfDisplayList(list.PageNumber, list.PageSize, list.MediaBox, list.CropBox, list.RotationDegrees,
-                        Array.Empty<PdfDrawCommand>(), list.Features, tokens).ComputeFallbackAreaRatio());
+                        reasonTotals[t.Reason.ToString()] = reasonTotals.GetValueOrDefault(t.Reason.ToString()) + 1;
+                    }
+                    double area = new PdfDisplayList(list.PageNumber, list.PageSize, list.MediaBox, list.CropBox, list.RotationDegrees,
+                        Array.Empty<PdfDrawCommand>(), list.Features, tokens).ComputeFallbackAreaRatio();
+                    areas.Add(area);
+                    areaVectorSum += 1 - area;
 
                     if (diff && tokens.Count == 0 && pdfiumPages >= page)
-                        diffs.Add(await DiffAsync(bytes, list, renderer, page));
+                    {
+                        double d = await DiffAsync(bytes, list, renderer, page);
+                        diffs.Add(d);
+                        worstDiffs.Add((d, Path.GetRelativePath(args[1], file), page));
+                    }
                 }
 
                 record["fallbackReasons"] = reasons;
@@ -218,7 +252,11 @@ internal static class Corpus
             }
             catch (Exception ex)
             {
-                record["vectorError"] = ex is PdfVectorException pve ? $"{ex.GetType().Name}:{pve.Kind}" : ex.GetType().Name;
+                string kind = ex is PdfVectorException pve ? $"{ex.GetType().Name}:{pve.Kind}" : ex.GetType().Name;
+                record["vectorError"] = kind;
+                vectorErrors[kind] = vectorErrors.GetValueOrDefault(kind) + 1;
+                if (ex is not PdfVectorException) untyped++;
+                if (pdfiumPages >= 0) vectorOnlyFailed++;
             }
             record["vectorMs"] = Math.Round(clock.Elapsed.TotalMilliseconds, 1);
 
@@ -226,7 +264,29 @@ internal static class Corpus
             if (output != null) await output.WriteLineAsync(line); else Console.WriteLine(line);
         }
 
-        Console.Error.WriteLine($"files={files} vectorOpen={vectorOpen} pdfiumOpen={pdfiumOpen} pages={pagesTotal} pagesFullyVector={pagesVector}");
+        // Hybrid beta gate inputs (12_ACCEPTANCE_AND_RELEASE_GATES): in hybrid mode a document the vector
+        // core cannot open still renders through PDFium, so "open without process failure" counts both.
+        var summary = new Dictionary<string, object?>
+        {
+            ["files"] = files,
+            ["pdfiumOpen"] = pdfiumOpen,
+            ["vectorOpen"] = vectorOpen,
+            ["vectorFailedWherePdfiumOpened"] = vectorOnlyFailed,
+            ["untypedErrors"] = untyped,
+            ["pagesSampled"] = pagesTotal,
+            ["pagesClassifiedRatio"] = pagesTotal > 0 ? Math.Round((double)pagesClassified / pagesTotal, 4) : 1,
+            ["pagesFullyVectorRatio"] = pagesClassified > 0 ? Math.Round((double)pagesVector / pagesClassified, 4) : 1,
+            ["vectorAreaRatio"] = pagesClassified > 0 ? Math.Round(areaVectorSum / pagesClassified, 4) : 1,
+            ["fallbackReasons"] = reasonTotals.OrderByDescending(kv => kv.Value).ToDictionary(kv => kv.Key, kv => kv.Value),
+            ["fallbackDetails"] = reasonDetails.OrderByDescending(kv => kv.Value).Take(25).ToDictionary(kv => kv.Key, kv => kv.Value),
+            ["vectorOpenErrors"] = vectorErrors.OrderByDescending(kv => kv.Value).ToDictionary(kv => kv.Key, kv => kv.Value),
+            ["worstPixelDiffs"] = worstDiffs.OrderByDescending(w => w.Diff).Take(15)
+                .Select(w => $"{w.Diff:F1} {w.File} p{w.Page}").ToList(),
+        };
+        string summaryJson = JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true });
+        Console.Error.WriteLine(summaryJson);
+        if (Program.Option(args, "--summary") is string summaryPath)
+            await File.WriteAllTextAsync(summaryPath, summaryJson);
         return 0;
     }
 
@@ -299,5 +359,98 @@ internal static class BenchDocument
         foreach (var o in offsets) W(o.ToString("D10", inv) + " 00000 n \n");
         W($"trailer\n<< /Size {objects.Count + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
         return ms.ToArray();
+    }
+}
+
+/// <summary>vectorpdf diffpage &lt;file.pdf&gt; &lt;page&gt; &lt;out.png&gt; [--dpi N]: vector | PDFium | difference, side by side.</summary>
+internal static class DiffPage
+{
+    public static async Task<int> RunAsync(string[] args)
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(args[1]);
+        int page = int.Parse(args[2], CultureInfo.InvariantCulture);
+        double dpi = double.TryParse(Program.Option(args, "--dpi"), NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : 72;
+
+        using var doc = await PdfVectorDocument.OpenAsync(bytes);
+        var list = await doc.GetPageDisplayListAsync(page);
+        using var renderer = new WindowsVectorRenderer();
+        var tokens = await renderer.AnalyzeAsync(list);
+        using var v = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = page, Dpi = dpi });
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(bytes);
+        using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = page, Dpi = dpi });
+
+        Console.WriteLine($"media={list.MediaBox} crop={list.CropBox} rotate={list.RotationDegrees} commands={list.Commands.Count} fallbacks={tokens.Count}");
+        Console.WriteLine($"vector={v.WidthPixels}x{v.HeightPixels} pdfium={p.WidthPixels}x{p.HeightPixels}");
+        foreach (var g in list.Commands.GroupBy(c => c.GetType().Name)) Console.WriteLine($"  {g.Key}: {g.Count()}");
+        foreach (var t in tokens) Console.WriteLine($"  fallback {t.Reason}: {t.Description} {(t.Metadata == null ? "" : string.Join(",", t.Metadata.Select(kv => kv.Key + "=" + kv.Value)))}");
+        if (args.Contains("--content"))
+        {
+            var node = doc.PageTree.Pages[page - 1];
+            var dec = new PdfEngine.Vector.Streams.PdfStreamDecoder(null, o => doc.Resolver.Resolve(o));
+            foreach (var stream in node.Contents)
+                Console.WriteLine(System.Text.Encoding.Latin1.GetString(dec.DecodeStream(stream)));
+            Console.WriteLine("RESOURCES " + node.Resources);
+        }
+        if (args.Contains("--dump"))
+        {
+            foreach (var c in list.Commands)
+            {
+                string extra = c switch
+                {
+                    FillPath f => $" rgb=({f.Paint.Color.R:F2},{f.Paint.Color.G:F2},{f.Paint.Color.B:F2}) a={f.Paint.Alpha:F2} rule={f.Rule} segs={f.Path.Segments.Count}",
+                    StrokePath sp => $" rgb=({sp.Paint.Color.R:F2},{sp.Paint.Color.G:F2},{sp.Paint.Color.B:F2}) w={sp.Stroke.Width:F2}",
+                    DrawGlyphRun r => $" '{(r.Run.FullText is { Length: > 30 } t ? t[..30] : r.Run.FullText)}' mode={r.Run.RenderingMode}",
+                    ConcatTransform ct => $" {ct.Matrix}",
+                    DrawFallbackRegion fr => $" {fr.Token.Reason}",
+                    _ => "",
+                };
+                Console.WriteLine($"    {c.GetType().Name} {c.Bounds}{extra}");
+            }
+        }
+        foreach (var face in list.Commands.OfType<DrawGlyphRun>().Select(r => r.Run.Face).Where(f => f != null).DistinctBy(f => f!.Key))
+        {
+            string load = "n/a";
+            if (!face!.ProgramData.IsEmpty)
+            {
+                string tmp = Path.Combine(Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "vectorpdf-font-" + Guid.NewGuid().ToString("N"))).FullName, "font.ttf"); // one font per folder (WPF cache)
+                File.WriteAllBytes(tmp, face.ProgramData.ToArray());
+                try { var gt = new GlyphTypeface(new Uri(tmp)); load = $"ok glyphs={gt.GlyphCount} family={string.Join(",", gt.FamilyNames.Values)}"; }
+                catch (Exception ex) { load = "FAIL " + ex.GetType().Name + ": " + ex.Message + "\n      " + string.Join("\n      ", (ex.StackTrace ?? "").Split('\n').Take(4)); }
+                var bytesArr = face.ProgramData.ToArray();
+                int nt = (bytesArr[4] << 8) | bytesArr[5];
+                var tags = new List<string>();
+                for (int t = 0; t < nt; t++) tags.Add(System.Text.Encoding.ASCII.GetString(bytesArr, 12 + t * 16, 4) + ":" + (((uint)bytesArr[12 + t * 16 + 12] << 24) | ((uint)bytesArr[12 + t * 16 + 13] << 16) | ((uint)bytesArr[12 + t * 16 + 14] << 8) | bytesArr[12 + t * 16 + 15]));
+                load += "\n      tables " + string.Join(" ", tags);
+            }
+            Console.WriteLine($"  face {face.PostScriptName} format={face.Format} bytes={face.ProgramData.Length} bold={face.IsBold} serif={face.IsSerif} symbolic={face.IsSymbolic} load={load}");
+        }
+
+        int w = Math.Max(v.WidthPixels, p.WidthPixels), h = Math.Max(v.HeightPixels, p.HeightPixels);
+        var outPixels = new byte[w * 3 * h * 4];
+        void Blit(RenderedPage src, int ox)
+        {
+            var span = src.Pixels.Span;
+            for (int y = 0; y < src.HeightPixels; y++)
+                span.Slice(y * src.Stride, src.WidthPixels * 4).CopyTo(outPixels.AsSpan((y * w * 3 + ox) * 4, src.WidthPixels * 4));
+        }
+        Blit(v, 0);
+        Blit(p, w);
+        for (int y = 0; y < Math.Min(v.HeightPixels, p.HeightPixels); y++)
+        for (int x = 0; x < Math.Min(v.WidthPixels, p.WidthPixels); x++)
+        {
+            int ia = y * v.Stride + x * 4, ib = y * p.Stride + x * 4, io = (y * w * 3 + 2 * w + x) * 4;
+            int diff = 0;
+            for (int c = 0; c < 3; c++) diff = Math.Max(diff, Math.Abs(v.Pixels.Span[ia + c] - p.Pixels.Span[ib + c]));
+            outPixels[io] = outPixels[io + 1] = (byte)(255 - diff);
+            outPixels[io + 2] = 255;
+            outPixels[io + 3] = 255;
+        }
+        var bmp = BitmapSource.Create(w * 3, h, 96, 96, PixelFormats.Bgra32, null, outPixels, w * 3 * 4);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bmp));
+        using var fs = File.Create(args[3]);
+        encoder.Save(fs);
+        return 0;
     }
 }

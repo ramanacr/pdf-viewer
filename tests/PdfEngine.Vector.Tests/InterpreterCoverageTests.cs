@@ -262,6 +262,31 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
+    public void PageBoxes_InheritOnlySpecifiedCropBox_AndClipAtTheLeaf()
+    {
+        // Found in the veraPDF corpus: an ancestor's defaulted crop box overrode the page's own
+        // media box, and an inherited crop box was clipped by the ancestor's media box.
+        var b = new VectorPdfBuilder();
+        b.AddPage("0 0 1 1 re f", mediaBox: "[0 0 400 400]");
+        byte[] pdf = b.Build();
+        string text = System.Text.Encoding.Latin1.GetString(pdf)
+            .Replace("<< /Type /Pages /Kids", "<< /Type /Pages /MediaBox [0 0 200 200] /CropBox [0 0 300 300] /Kids");
+        using var source = new PdfEngine.Vector.Parsing.MemoryByteSource(System.Text.Encoding.Latin1.GetBytes(text));
+        using var doc = PdfVectorDocument.Open(source);
+        var page = doc.PageTree.Pages[0];
+        Assert.Equal(400, page.MediaBox.Width);
+        Assert.Equal(300, page.CropBox.Width); // inherited /CropBox, clipped by the page's own media box
+
+        var b2 = new VectorPdfBuilder();
+        b2.AddPage("0 0 1 1 re f", mediaBox: "[0 0 595.3 841.9]");
+        string text2 = System.Text.Encoding.Latin1.GetString(b2.Build())
+            .Replace("<< /Type /Pages /Kids", "<< /Type /Pages /MediaBox [0 0 595 841] /Kids");
+        using var source2 = new PdfEngine.Vector.Parsing.MemoryByteSource(System.Text.Encoding.Latin1.GetBytes(text2));
+        using var doc2 = PdfVectorDocument.Open(source2);
+        Assert.Equal(841.9, doc2.PageTree.Pages[0].CropBox.Height, 3); // no crop box anywhere: the page's media box
+    }
+
+    [Fact]
     public async Task IntrinsicRotate90_IsApplied()
     {
         var b = new VectorPdfBuilder();

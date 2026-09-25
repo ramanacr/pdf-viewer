@@ -348,6 +348,15 @@ internal sealed class WpfDisplayListCompiler
         var face = run.Face;
         GlyphTypeface? typeface = face != null ? _fonts.GetEmbedded(face) : null;
         bool byGlyphId = typeface != null;
+        if (face != null && typeface == null && !face.ProgramData.IsEmpty &&
+            face.Format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff)
+        {
+            // The author's glyphs exist but the platform rejected the program: another font's
+            // shapes would be silently wrong (ADR-006), so classify instead of substituting.
+            ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType,
+                "Embedded font program could not be loaded by the Windows backend");
+            return;
+        }
         if (face?.Format == PdfFontProgramFormat.Unsupported && typeface == null)
         {
             ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType,
