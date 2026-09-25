@@ -25,11 +25,12 @@ internal sealed class WpfImageCache
         get { lock (_lru) return _bytes; }
     }
 
-    public BitmapSource GetOrDecode(IPdfImageSource source, System.Threading.CancellationToken ct)
+    public BitmapSource GetOrDecode(IPdfImageSource source, System.Threading.CancellationToken ct, bool invert = false)
     {
+        string key = invert ? source.CacheKey + "|inverted" : source.CacheKey;
         lock (_lru)
         {
-            if (_map.TryGetValue(source.CacheKey, out var node))
+            if (_map.TryGetValue(key, out var node))
             {
                 _lru.Remove(node);
                 _lru.AddFirst(node);
@@ -39,13 +40,15 @@ internal sealed class WpfImageCache
 
         var decoded = source.Decode(ct);
         var bitmap = ToBitmap(decoded);
+        if (invert)
+            bitmap = Invert(bitmap);
         long bytes = (long)bitmap.PixelWidth * bitmap.PixelHeight * 4;
 
         lock (_lru)
         {
-            if (!_map.ContainsKey(source.CacheKey))
+            if (!_map.ContainsKey(key))
             {
-                _map[source.CacheKey] = _lru.AddFirst((source.CacheKey, bitmap, bytes));
+                _map[key] = _lru.AddFirst((key, bitmap, bytes));
                 _bytes += bytes;
                 while (_bytes > _maxBytes && _lru.Count > 1)
                 {
@@ -57,6 +60,30 @@ internal sealed class WpfImageCache
             }
         }
         return bitmap;
+    }
+
+    /// <summary>Colour-inverted copy (alpha kept): the night-mode form of an image.</summary>
+    internal static BitmapSource Invert(BitmapSource source)
+    {
+        var bgra = source.Format == PixelFormats.Bgra32 ? source : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        int w = bgra.PixelWidth, h = bgra.PixelHeight;
+        var pixels = new byte[w * h * 4];
+        bgra.CopyPixels(pixels, w * 4, 0);
+        InvertBgra(pixels);
+        var result = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, pixels, w * 4);
+        result.Freeze();
+        return result;
+    }
+
+    /// <summary>Inverts straight-alpha BGRA colour channels in place.</summary>
+    internal static void InvertBgra(Span<byte> pixels)
+    {
+        for (int i = 0; i + 3 < pixels.Length; i += 4)
+        {
+            pixels[i] = (byte)(255 - pixels[i]);
+            pixels[i + 1] = (byte)(255 - pixels[i + 1]);
+            pixels[i + 2] = (byte)(255 - pixels[i + 2]);
+        }
     }
 
     public void Clear()

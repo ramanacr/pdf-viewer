@@ -218,7 +218,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
     /// (every object in it), so nothing vector may paint over them. Coordinates are unrotated
     /// top-left page points.
     /// </summary>
-    private static int DrawOverlays(DrawingContext dc, PdfRect crop, IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays)
+    private static int DrawOverlays(DrawingContext dc, PdfRect crop, IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert = false)
     {
         int composited = 0;
         foreach (var (token, pixels) in overlays)
@@ -230,8 +230,11 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 
             if (pixels != null && pixels.WidthPixels > 0 && pixels.HeightPixels > 0)
             {
+                var data = pixels.Pixels.ToArray();
+                if (invert)
+                    WpfImageCache.InvertBgra(data);
                 var bmp = BitmapSource.Create(pixels.WidthPixels, pixels.HeightPixels, 96, 96, PixelFormats.Bgra32, null,
-                    pixels.Pixels.ToArray(), pixels.Stride);
+                    data, pixels.Stride);
                 bmp.Freeze();
                 dc.PushClip(new RectangleGeometry(rect));
                 dc.DrawImage(bmp, rect);
@@ -263,12 +266,13 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
         PageRotation rotation,
         IPdfFallbackProvider? fallbackProvider,
         double fallbackDpi,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool invertColors = false)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(displayList);
 
-        var compiled = await _sta.InvokeAsync(() => _compiler.Compile(displayList, null, cancellationToken), cancellationToken)
+        var compiled = await _sta.InvokeAsync(() => _compiler.Compile(displayList, null, cancellationToken, invertColors), cancellationToken)
             .ConfigureAwait(false);
 
         var overlays = new List<(PdfFallbackToken Token, RenderedPage? Pixels)>(compiled.Fallbacks.Count);
@@ -294,10 +298,10 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 int composited;
                 using (var dc = group.Open())
                 {
-                    dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, w, h));
+                    dc.DrawRectangle(invertColors ? Brushes.Black : Brushes.White, null, new Rect(0, 0, w, h));
                     dc.PushTransform(new MatrixTransform(RotationMatrix(total, crop.Width, crop.Height)));
                     dc.DrawDrawing(compiled.Drawing);
-                    composited = DrawOverlays(dc, crop, overlays);
+                    composited = DrawOverlays(dc, crop, overlays, invertColors);
                     dc.Pop();
                 }
                 // Pin the bounds: an empty page must still measure as the full page.

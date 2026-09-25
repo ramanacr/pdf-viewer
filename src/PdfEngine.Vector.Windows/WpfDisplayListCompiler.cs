@@ -39,7 +39,29 @@ internal sealed class WpfDisplayListCompiler
 
     private enum PushKind { Transform, Clip, Opacity }
 
-    public CompiledPage Compile(IPdfDisplayList list, PdfRect? visibleRegion, CancellationToken ct)
+    // Compilation runs on the renderer's single STA thread; the flag is per compile.
+    [ThreadStatic] private static bool s_invert;
+
+    /// <param name="invertColors">
+    /// Night mode: every paint, gradient stop and image is colour-inverted. Inversion commutes with
+    /// source-over compositing (1−(a·s+(1−a)·d) = a·(1−s)+(1−a)·(1−d)), so the result equals the
+    /// pixel-inverted page without a shader.
+    /// </param>
+    public CompiledPage Compile(IPdfDisplayList list, PdfRect? visibleRegion, CancellationToken ct, bool invertColors = false)
+    {
+        bool previous = s_invert;
+        s_invert = invertColors;
+        try
+        {
+            return CompileCore(list, visibleRegion, ct);
+        }
+        finally
+        {
+            s_invert = previous;
+        }
+    }
+
+    private CompiledPage CompileCore(IPdfDisplayList list, PdfRect? visibleRegion, CancellationToken ct)
     {
         var crop = list.CropBox.IsEmpty ? new PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
         var backendFallbacks = new List<PdfFallbackToken>();
@@ -249,10 +271,21 @@ internal sealed class WpfDisplayListCompiler
 
     private static SolidColorBrush Brush(PdfColor color, double alpha)
     {
-        var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(
-            ToByte(alpha), ToByte(color.R), ToByte(color.G), ToByte(color.B)));
+        var brush = new SolidColorBrush(MediaColor(color, alpha));
         brush.Freeze();
         return brush;
+    }
+
+    private static System.Windows.Media.Color MediaColor(PdfColor color, double alpha = 1.0)
+    {
+        byte r = ToByte(color.R), g = ToByte(color.G), b = ToByte(color.B);
+        if (s_invert)
+        {
+            r = (byte)(255 - r);
+            g = (byte)(255 - g);
+            b = (byte)(255 - b);
+        }
+        return System.Windows.Media.Color.FromArgb(ToByte(alpha), r, g, b);
     }
 
     private static byte ToByte(double v) => (byte)Math.Clamp((int)Math.Round(v * 255), 0, 255);
@@ -450,7 +483,7 @@ internal sealed class WpfDisplayListCompiler
         {
             try
             {
-                bitmap = _images.GetOrDecode(image.Source, ct);
+                bitmap = _images.GetOrDecode(image.Source, ct, s_invert);
             }
             catch (OperationCanceledException)
             {
@@ -472,8 +505,13 @@ internal sealed class WpfDisplayListCompiler
                  image.ImageData.Length >= (long)image.Width * image.Height * 3)
         {
             // Legacy builders hand over raw RGB24.
+            var rgb = image.ImageData.ToArray();
+            if (s_invert)
+            {
+                for (int i = 0; i < rgb.Length; i++) rgb[i] = (byte)(255 - rgb[i]);
+            }
             bitmap = BitmapSource.Create(image.Width, image.Height, 96, 96, PixelFormats.Rgb24, null,
-                image.ImageData.ToArray(), image.Width * 3);
+                rgb, image.Width * 3);
             bitmap.Freeze();
         }
 
@@ -518,12 +556,12 @@ internal sealed class WpfDisplayListCompiler
             if (stops is { Count: > 0 })
             {
                 foreach (var s in stops)
-                    collection.Add(new GradientStop(System.Windows.Media.Color.FromArgb(255, ToByte(s.Color.R), ToByte(s.Color.G), ToByte(s.Color.B)), Math.Clamp(s.Offset, 0, 1)));
+                    collection.Add(new GradientStop(MediaColor(s.Color), Math.Clamp(s.Offset, 0, 1)));
             }
             else
             {
-                collection.Add(new GradientStop(System.Windows.Media.Color.FromArgb(255, ToByte(start.R), ToByte(start.G), ToByte(start.B)), 0));
-                collection.Add(new GradientStop(System.Windows.Media.Color.FromArgb(255, ToByte(end.R), ToByte(end.G), ToByte(end.B)), 1));
+                collection.Add(new GradientStop(MediaColor(start), 0));
+                collection.Add(new GradientStop(MediaColor(end), 1));
             }
             return collection;
         }

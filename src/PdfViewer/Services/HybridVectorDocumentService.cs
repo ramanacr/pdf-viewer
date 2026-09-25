@@ -71,8 +71,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     private const int SurfaceCacheCapacity = 24;
     private readonly object _surfaceSync = new();
-    private readonly LinkedList<((int Page, int Rotation) Key, ImageSource Surface)> _surfaceLru = new();
-    private readonly Dictionary<(int Page, int Rotation), LinkedListNode<((int Page, int Rotation) Key, ImageSource Surface)>> _surfaces = new();
+    private readonly LinkedList<((int Page, int Rotation, bool Night) Key, ImageSource Surface)> _surfaceLru = new();
+    private readonly Dictionary<(int Page, int Rotation, bool Night), LinkedListNode<((int Page, int Rotation, bool Night) Key, ImageSource Surface)>> _surfaces = new();
 
     private void ClearSurfaces()
     {
@@ -83,13 +83,13 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         }
     }
 
-    public async Task<ImageSource?> GetVectorPageSurfaceAsync(int pageNumber, int rotationAngle = 0, CancellationToken ct = default)
+    public async Task<ImageSource?> GetVectorPageSurfaceAsync(int pageNumber, int rotationAngle = 0, CancellationToken ct = default, bool nightMode = false)
     {
         if (_mode == PdfEngineMode.Pdfium)
             return null;
 
         int rotation = (((rotationAngle % 360) + 360) % 360) / 90 * 90;
-        var key = (pageNumber, rotation);
+        var key = (pageNumber, rotation, nightMode);
         lock (_surfaceSync)
         {
             if (_surfaces.TryGetValue(key, out var node))
@@ -143,7 +143,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         try
         {
             result = await _vectorRenderer.BuildPageSurfaceAsync(displayList, (PageRotation)rotation,
-                strict ? null : _fallbackProvider, SurfaceFallbackDpi, ct).ConfigureAwait(false);
+                strict ? null : _fallbackProvider, SurfaceFallbackDpi, ct, invertColors: nightMode).ConfigureAwait(false);
         }
         catch (Exception ex) when (!strict && ex is not OperationCanceledException)
         {

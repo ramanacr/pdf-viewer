@@ -68,23 +68,54 @@ public class VectorPageHostTests : IDisposable
     }
 
     [Fact]
-    public async Task NightModeAndPdfiumMode_StayOnTheBitmapPath()
+    public async Task PdfiumMode_StaysOnTheBitmapPath()
     {
         string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "bitmap.pdf"), 1);
-
-        using var hybrid = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
-        await hybrid.OpenDocumentAsync(path);
-        var (night, r1) = PageFor(hybrid);
-        await night.LoadImageAsync(r1, 72, 0, nightMode: true);
-        Assert.Null(night.VectorSurface);
-        Assert.NotNull(night.RenderedImage);
-
         using var pdfium = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Pdfium);
         await pdfium.OpenDocumentAsync(path);
         var (raster, r2) = PageFor(pdfium);
         await raster.LoadImageAsync(r2, 72, 0);
         Assert.Null(raster.VectorSurface);
         Assert.NotNull(raster.RenderedImage);
+    }
+
+    [Fact]
+    public async Task NightMode_IsALiveSurfaceEqualToThePixelInvertedPage()
+    {
+        // Colour, alpha, gradient and stroke content: inversion must commute with compositing.
+        string path = Path.Combine(_dir, "night.pdf");
+        WriteSinglePagePdf(path,
+            "1 0 0 rg 10 10 120 120 re f /G1 gs 0 0 1 rg 60 60 120 120 re f " +
+            "q 0 0 200 40 re W n /Sh1 sh Q 0.2 g 2 w 20 190 m 180 150 l S",
+            "<< /ExtGState << /G1 << /ca 0.5 >> >> /Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] " +
+            "/Function << /FunctionType 2 /Domain [0 1] /C0 [1 1 0] /C1 [0 0.5 1] /N 1 >> /Extend [true true] >> >> >>");
+
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        await service.OpenDocumentAsync(path);
+        var (page, renderer) = PageFor(service, w: 200, h: 200);
+
+        await page.LoadImageAsync(renderer, 150, 0, nightMode: true);
+        var night = Assert.IsType<DrawingImage>(page.PageSurface);
+        Assert.Null(page.RenderedImage);
+
+        var day = await service.GetVectorPageSurfaceAsync(1);
+        Assert.NotNull(day);
+        Assert.NotSame(day, night);
+
+        var dayPixels = ReadAll(Rasterize(day!, 400, 400));
+        var nightPixels = ReadAll(Rasterize(night, 400, 400));
+        long total = 0;
+        for (int i = 0; i < dayPixels.Length; i += 4)
+        {
+            for (int c = 0; c < 3; c++)
+                total += Math.Abs(255 - dayPixels[i + c] - nightPixels[i + c]);
+        }
+        double mean = total / (dayPixels.Length / 4.0 * 3);
+        Assert.True(mean < 1.0, $"night surface differs from the inverted day surface by {mean:F2}/255");
+
+        // Toggling back returns the day surface.
+        await page.LoadImageAsync(renderer, 150, 0, nightMode: false);
+        Assert.Same(day, page.PageSurface);
     }
 
     [Fact]
@@ -147,14 +178,14 @@ public class VectorPageHostTests : IDisposable
         Assert.True(soft <= 2, $"edge spans {soft} intermediate pixels at {scale}x");
     }
 
-    private static void WriteSinglePagePdf(string path, string content)
+    private static void WriteSinglePagePdf(string path, string content, string resources = "<< >>")
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var objects = new[]
         {
             "<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R >>",
+            $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources {resources} /Contents 4 0 R >>",
             $"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n{content}\nendstream",
         };
         using var ms = new MemoryStream();
@@ -181,6 +212,13 @@ public class VectorPageHostTests : IDisposable
         var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(visual);
         return rtb;
+    }
+
+    private static byte[] ReadAll(BitmapSource bitmap)
+    {
+        var all = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
+        bitmap.CopyPixels(all, bitmap.PixelWidth * 4, 0);
+        return all;
     }
 
     private static byte[] ReadRow(BitmapSource bitmap, int y)

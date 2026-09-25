@@ -194,27 +194,28 @@ public partial class PageViewModel : ObservableObject
 
     private bool _renderedNightMode;
     private int _surfaceRotation = -1;
+    private bool _surfaceNightMode;
 
     public async Task LoadImageAsync(
         AsyncPageRenderer renderer, int dpi, int rotation, bool nightMode = false, CancellationToken ct = default)
     {
-        // Night mode inverts pixels, which a live drawing cannot do: it stays on the bitmap path.
-        if (!nightMode)
+        // Live vector surface first (night mode gets a colour-inverted drawing); bitmap otherwise.
         {
             // A surface does not depend on zoom: a DPI change is not a reason to rebuild it.
-            if (VectorSurface != null && _surfaceRotation == rotation)
+            if (VectorSurface != null && _surfaceRotation == rotation && _surfaceNightMode == nightMode)
                 return;
 
             IsLoading = true;
             try
             {
-                var surface = await renderer.GetVectorSurfaceAsync(PageNumber, rotation, ct);
+                var surface = await renderer.GetVectorSurfaceAsync(PageNumber, rotation, ct, nightMode);
                 if (ct.IsCancellationRequested)
                     return;
                 if (surface != null)
                 {
                     VectorSurface = surface;
                     _surfaceRotation = rotation;
+                    _surfaceNightMode = nightMode;
                     // Release the bitmap: the surface replaces it at every zoom.
                     RenderedImage = null;
                     _renderedDpi = 0;
