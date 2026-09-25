@@ -98,7 +98,7 @@ internal sealed class WpfFontCache : IDisposable
         // "ArialMT", "Calibri-Bold", "SegoeUI" → installed family when the base name matches one.
         string baseName = postScriptName.Split('-', ',')[0];
         if (baseName.EndsWith("MT", StringComparison.Ordinal)) baseName = baseName[..^2];
-        foreach (var f in Fonts.SystemFontFamilies)
+        foreach (var f in System.Windows.Media.Fonts.SystemFontFamilies)
         {
             string source = f.Source.Replace(" ", string.Empty, StringComparison.Ordinal);
             if (string.Equals(source, baseName, StringComparison.OrdinalIgnoreCase))

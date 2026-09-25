@@ -1403,9 +1403,9 @@ public sealed class PdfContentInterpreter
                 return null;
 
             var cs = PdfColorSpace.Resolve(sh["ColorSpace"], _resolver, _page.Resources);
-            if (cs.UnsupportedReason is PdfFallbackReason csReason || cs.IsPattern)
+            if (cs.IsPattern || cs.UnsupportedReason != null)
             {
-                reason = cs.IsPattern ? PdfFallbackReason.Shading : csReason;
+                reason = cs.UnsupportedReason ?? PdfFallbackReason.Shading;
                 return null;
             }
 
@@ -1717,9 +1717,9 @@ public sealed class PdfContentInterpreter
                     return;
                 }
                 cs = PdfColorSpace.Resolve(csObj, _resolver, resources);
-                if (cs.UnsupportedReason is PdfFallbackReason csReason || cs.IsPattern)
+                if (cs.IsPattern || cs.UnsupportedReason != null)
                 {
-                    AddFallback(cs.IsPattern ? PdfFallbackReason.UnsupportedColorSpace : csReason, "Image colour space unsupported", pageBounds);
+                    AddFallback(cs.UnsupportedReason ?? PdfFallbackReason.UnsupportedColorSpace, "Image colour space unsupported", pageBounds);
                     return;
                 }
             }

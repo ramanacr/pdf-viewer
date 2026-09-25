@@ -240,7 +240,8 @@ public partial class PageViewModel : ObservableObject
         try
         {
             var segments = await docService.ExtractPageTextSegmentsAsync(PageNumber, ct);
-            if (!ct.IsCancellationRequested)
+            // A result that arrives after the page was already populated must not replace it.
+            if (!ct.IsCancellationRequested && !IsTextExtracted)
             {
                 TextSegments.Clear();
                 TextSegments.AddRange(segments);

@@ -211,7 +211,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 else
                 {
                     // Strict vector mode: make the unsupported region visible, never silently wrong.
-                    var fill = new SolidColorBrush(Color.FromArgb(40, 255, 165, 0));
+                    var fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
                     fill.Freeze();
                     var pen = new Pen(Brushes.DarkOrange, 0.75);
                     pen.Freeze();

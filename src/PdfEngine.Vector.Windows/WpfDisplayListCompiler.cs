@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using PdfEngine.Geometry;
+using MediaGeometry = System.Windows.Media.Geometry;
 
 namespace PdfEngine.Vector.Windows;
 
@@ -99,17 +100,17 @@ internal sealed class WpfDisplayListCompiler
                         break;
 
                     case FillPath fp:
-                        if (BuildGeometry(fp.Path, fp.Rule) is Geometry fillGeometry)
+                        if (BuildGeometry(fp.Path, fp.Rule) is MediaGeometry fillGeometry)
                             dc.DrawGeometry(Brush(fp.Paint.Color, fp.Paint.Alpha), null, fillGeometry);
                         break;
 
                     case StrokePath sp:
-                        if (BuildGeometry(sp.Path, PdfFillRule.NonZero) is Geometry strokeGeometry)
+                        if (BuildGeometry(sp.Path, PdfFillRule.NonZero) is MediaGeometry strokeGeometry)
                             dc.DrawGeometry(null, CreatePen(sp.Stroke, sp.Paint, ctm), strokeGeometry);
                         break;
 
                     case PushClip pc:
-                        dc.PushClip(BuildGeometry(pc.Path, pc.Rule) ?? Geometry.Empty);
+                        dc.PushClip(BuildGeometry(pc.Path, pc.Rule) ?? MediaGeometry.Empty);
                         pushes.Push(PushKind.Clip);
                         break;
 
@@ -127,11 +128,11 @@ internal sealed class WpfDisplayListCompiler
                         break;
 
                     case DrawImage di:
-                        DrawImage(dc, di, list.PageNumber, backendFallbacks, ct);
+                        PaintImage(dc, di, list.PageNumber, backendFallbacks, ct);
                         break;
 
                     case DrawShading ds:
-                        DrawShading(dc, ds, ctm, crop);
+                        PaintShading(dc, ds, ctm, crop);
                         break;
 
                     case BeginTransparencyGroup btg:
@@ -248,7 +249,7 @@ internal sealed class WpfDisplayListCompiler
 
     private static SolidColorBrush Brush(PdfColor color, double alpha)
     {
-        var brush = new SolidColorBrush(Color.FromArgb(
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(
             ToByte(alpha), ToByte(color.R), ToByte(color.G), ToByte(color.B)));
         brush.Freeze();
         return brush;
@@ -440,7 +441,7 @@ internal sealed class WpfDisplayListCompiler
 
     // ------------------------------------------------------------------ images
 
-    private void DrawImage(DrawingContext dc, DrawImage di, int pageNumber, List<PdfFallbackToken> backendFallbacks, CancellationToken ct)
+    private void PaintImage(DrawingContext dc, DrawImage di, int pageNumber, List<PdfFallbackToken> backendFallbacks, CancellationToken ct)
     {
         var image = di.Image;
         BitmapSource? bitmap = null;
@@ -456,7 +457,7 @@ internal sealed class WpfDisplayListCompiler
                 throw;
             }
             catch (Exception ex) when (ex is Diagnostics.PdfVectorException or System.IO.InvalidDataException
-                                           or System.IO.IOException or NotSupportedException or FileFormatException
+                                           or System.IO.IOException or NotSupportedException or System.IO.FileFormatException
                                            or ArgumentException or OverflowException)
             {
                 var reason = ex is Diagnostics.PdfUnsupportedFeatureException u ? u.Reason
@@ -503,7 +504,7 @@ internal sealed class WpfDisplayListCompiler
 
     // ------------------------------------------------------------------ shading
 
-    private static void DrawShading(DrawingContext dc, DrawShading ds, PdfMatrix ctm, PdfRect crop)
+    private static void PaintShading(DrawingContext dc, DrawShading ds, PdfMatrix ctm, PdfRect crop)
     {
         // Fill the command's page-space bounds (the clip), expressed in current user space.
         var pageArea = ds.Bounds is PdfRect b && !b.IsEmpty ? b : crop;
@@ -517,12 +518,12 @@ internal sealed class WpfDisplayListCompiler
             if (stops is { Count: > 0 })
             {
                 foreach (var s in stops)
-                    collection.Add(new GradientStop(Color.FromArgb(255, ToByte(s.Color.R), ToByte(s.Color.G), ToByte(s.Color.B)), Math.Clamp(s.Offset, 0, 1)));
+                    collection.Add(new GradientStop(System.Windows.Media.Color.FromArgb(255, ToByte(s.Color.R), ToByte(s.Color.G), ToByte(s.Color.B)), Math.Clamp(s.Offset, 0, 1)));
             }
             else
             {
-                collection.Add(new GradientStop(Color.FromArgb(255, ToByte(start.R), ToByte(start.G), ToByte(start.B)), 0));
-                collection.Add(new GradientStop(Color.FromArgb(255, ToByte(end.R), ToByte(end.G), ToByte(end.B)), 1));
+                collection.Add(new GradientStop(System.Windows.Media.Color.FromArgb(255, ToByte(start.R), ToByte(start.G), ToByte(start.B)), 0));
+                collection.Add(new GradientStop(System.Windows.Media.Color.FromArgb(255, ToByte(end.R), ToByte(end.G), ToByte(end.B)), 1));
             }
             return collection;
         }
@@ -572,7 +573,7 @@ internal sealed class WpfDisplayListCompiler
         }
     }
 
-    private static Geometry PolygonGeometry(PdfMatrix pageToUser, PdfRect pageRect)
+    private static MediaGeometry PolygonGeometry(PdfMatrix pageToUser, PdfRect pageRect)
     {
         var g = new StreamGeometry();
         using (var ctx = g.Open())
@@ -591,12 +592,12 @@ internal sealed class WpfDisplayListCompiler
     }
 
     /// <summary>Region between the perpendiculars through the axis ends (only on non-extended sides).</summary>
-    private static Geometry AxialBand(PdfAxialShading axial, PdfMatrix pageToUser, PdfRect pageArea)
+    private static MediaGeometry AxialBand(PdfAxialShading axial, PdfMatrix pageToUser, PdfRect pageArea)
     {
         double dx = axial.EndPoint.X - axial.StartPoint.X, dy = axial.EndPoint.Y - axial.StartPoint.Y;
         double len = Math.Sqrt(dx * dx + dy * dy);
         if (len < 1e-12)
-            return Geometry.Empty;
+            return MediaGeometry.Empty;
         double ux = dx / len, uy = dy / len;   // along the axis
         double vx = -uy, vy = ux;              // perpendicular
 

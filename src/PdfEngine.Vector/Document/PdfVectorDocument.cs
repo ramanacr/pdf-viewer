@@ -129,13 +129,56 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         _pageTree = pageTree;
         _catalog = catalog;
         _limits = limits;
-        _interpreter = new PdfContentInterpreter(_resolver, null, _limits);
+        _interpreter = new PdfContentInterpreter(_resolver, new PdfEngine.Vector.Fonts.PdfFontResolver(_resolver, _limits), _limits)
+        {
+            HiddenOptionalContentGroups = ResolveHiddenOptionalContent(catalog, resolver),
+        };
         _displayListCache = new DisplayListCache(limits.MaxCachedDisplayListCommands);
 
         for (int i = 0; i < pageTree.Pages.Count; i++)
         {
             _pageDictToNumber[pageTree.Pages[i].Dictionary] = i + 1;
         }
+    }
+
+    /// <summary>
+    /// Optional-content groups that are OFF in the default viewing configuration /OCProperties /D
+    /// (ISO 32000-2 8.11.4.3): /BaseState, then /ON and /OFF overrides.
+    /// </summary>
+    private static IReadOnlySet<PdfDictionary>? ResolveHiddenOptionalContent(PdfDictionary catalog, PdfObjectResolver resolver)
+    {
+        if (resolver.Resolve(catalog["OCProperties"]) is not PdfDictionary ocProps)
+            return null;
+
+        var all = new List<PdfDictionary>();
+        if (resolver.Resolve(ocProps["OCGs"]) is PdfArray ocgs)
+        {
+            foreach (var item in ocgs)
+                if (resolver.Resolve(item) is PdfDictionary g) all.Add(g);
+        }
+
+        if (resolver.Resolve(ocProps["D"]) is not PdfDictionary config)
+            return null;
+
+        var hidden = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
+        if (config.GetName("BaseState") == "OFF")
+        {
+            foreach (var g in all) hidden.Add(g);
+        }
+
+        if (resolver.Resolve(config["ON"]) is PdfArray on)
+        {
+            foreach (var item in on)
+                if (resolver.Resolve(item) is PdfDictionary g) hidden.Remove(g);
+        }
+
+        if (resolver.Resolve(config["OFF"]) is PdfArray off)
+        {
+            foreach (var item in off)
+                if (resolver.Resolve(item) is PdfDictionary g) hidden.Add(g);
+        }
+
+        return hidden.Count > 0 ? hidden : null;
     }
 
     public ValueTask<PageInfo> GetPageInfoAsync(int pageNumber, CancellationToken cancellationToken = default)
