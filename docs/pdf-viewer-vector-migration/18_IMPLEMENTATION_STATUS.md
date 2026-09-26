@@ -75,6 +75,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - `PdfEngine.Vector.Direct2D` (Vortice.Windows 3.8.3, MIT): D3D11 device (hardware, WARP fallback), Direct2D 1.1 device context, DirectWrite fonts from memory (custom font-file loader, no temp files), WIC JPEG decode. Clips are geometric-mask layers; hairlines use `StrokeTransformType.Hairline`; output larger than 2 048 px is tiled, and geometry realizations are shared across tiles; device loss recreates the device without reparsing (`SimulateDeviceLoss` test).
 - **Default page host:** the page bitmap comes from Direct2D, and when the page is zoomed past that bitmap a **viewport detail tile** (visible area plus a margin, ≤ 4 096 px a side) is rendered at exact device resolution and laid over it; scrolling inside the margin reuses the tile. Zoom range 25–1 600 %. `PDF_VECTOR_HOST=wpf` selects the earlier WPF drawing host; the WPF renderer also stands in when no Direct3D device exists.
 - **Host tuning (`vectorpdf tiles`, `eng/vectorpdf/baseline-tiles.txt`):** rectangular clips (`re W n`) are axis-aligned clips instead of offscreen layers, and other clip layers are bounded to their mask (a 58-command text page with 13 nested clips: 516 → 44 ms at 300 dpi). GPU tiles are 4 096 px (one replay per viewport tile instead of four). Replayers, with their tessellations, are cached per page, scale and colour mode, so scrolling at a fixed zoom reuses them (path-heavy fixture at 1 600 %: next tile 136 ms, versus 1.2 s before). The detail tile shows the visible area first, then the margin tile replaces it. `forceSoftware` measures the WARP tier (RDP, VMs).
+- **Zero-copy detail tiles:** on a hardware tier in a local session, a detail tile is rendered into a shared Direct3D 11 texture and shown by a WPF `D3DImage` through a Direct3D 9Ex surface (`D3D9ExInterop`, four COM calls, no extra package): the pixels never leave the GPU. Next tile on light corpus pages p50 ≈ 30–40 ms against 130–175 ms for readback plus WPF bitmap (before WPF's upload). Software tier, RDP and `PDF_GPU_PRESENT=0` keep bitmaps; a lost display device drops the tile and the page bitmap shows until the next one.
 - PDFium pages get the same detail tiles (`RenderPageRegion`: FPDF_RenderPageBitmap with a negative origin), and region fallback asks PDFium only for each token's region.
 
 ### Transparency and patterns (M7)
@@ -123,8 +124,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 | Measure | Value | Source |
 |---|---|---|
-| Vector engine tests | 421 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
-| Viewer regression tests | 370 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
+| Vector engine tests | 422 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
+| Viewer regression tests | 371 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
 | Differential vs PDFium, geometry fixtures (paths, curves, clip, dash, alpha, inline image) | mean channel diff ≤ 0.37/255, 0 % pixels off by > 64 (72 and 144 dpi) | `DifferentialRenderingTests`; budgets: mean ≤ 1.5, ≤ 1 % |
 | Differential, axial shading | mean 1.17–1.43/255, 0 % | budget: mean ≤ 3.0, ≤ 1 % |
 | Differential, Helvetica text (substituted) | mean 1.08/255, 0.49 % | budget: mean ≤ 3.0, ≤ 2 % |
@@ -190,7 +191,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 ## 5. Remaining work, in priority order
 
-1. **Live host tuning, remainder:** readback (GPU → CPU → WPF bitmap) is now the floor for light pages (≈ 25 ms per 16 MP); presenting Direct2D output without the copy (D3DImage / DirectComposition) would remove it. First tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); scrolling reuses it.
+1. **Live host tuning, remainder:** the first tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); building the realizations in the background while the zoom settles would hide it. Tried and rejected: sharing tessellations across zoom steps (scale buckets of √2, tessellated at the bucket top) — `vectorpdf tiles` zoom-step p50 unchanged and p95 worse in two of three A/B runs, because the finer tessellation costs what the reuse saves. Page bitmaps (not detail tiles) still take the readback path; they are cached and reused, so this matters less.
 3. **Nightly corpus job:** run `fetch-corpus.ps1` + `vectorpdf corpus --summary` in the scheduled CI tier and track trends; add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
