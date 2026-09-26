@@ -353,15 +353,31 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
-    public async Task TextClipMode_IsClassified()
+    public async Task TextClipMode_BecomesAGlyphOutlineClip()
     {
         var b = new VectorPdfBuilder();
         int font = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
         b.AddPage("BT 7 Tr /F1 40 Tf 10 50 Td (CLIP) Tj ET 1 0 0 rg 0 0 200 200 re f", $"<< /Font << /F1 {font} 0 R >> >>");
         var list = await BuildAsync(b.Build());
-        var token = Assert.Single(list.FallbackTokens);
-        Assert.Equal(PdfFallbackReason.TextClipping, token.Reason);
-        Assert.True(token.Bounds.Width < 150, "clip region is the text box, not the page");
+        Assert.False(list.HasFallback);
+        var clip = Assert.Single(list.Commands.OfType<PushTextClip>());
+        Assert.Equal("CLIP", Assert.Single(clip.Runs).FullText);
+        Assert.True(clip.Bounds!.Value.Width < 150, "clip bounds are the text box, not the page");
+        var fill = list.Commands.OfType<FillPath>().Single();
+        Assert.True(fill.Bounds!.Value.Width < 150, "later content is bounded by the clip");
+    }
+
+    [Fact]
+    public async Task Type3TextClip_IsStillClassified()
+    {
+        var b = new VectorPdfBuilder();
+        int proc = b.AddStream(string.Empty, "1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f");
+        int font = b.Add($"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] " +
+                         $"/CharProcs << /square {proc} 0 R >> /Encoding << /Type /Encoding /Differences [65 /square] >> " +
+                         "/FirstChar 65 /LastChar 65 /Widths [1000] >>");
+        b.AddPage("BT 7 Tr /F1 40 Tf 10 50 Td (A) Tj ET 1 0 0 rg 0 0 200 200 re f", $"<< /Font << /F1 {font} 0 R >> >>");
+        var list = await BuildAsync(b.Build());
+        Assert.Contains(list.FallbackTokens, t => t.Reason == PdfFallbackReason.TextClipping);
     }
 
     [Fact]

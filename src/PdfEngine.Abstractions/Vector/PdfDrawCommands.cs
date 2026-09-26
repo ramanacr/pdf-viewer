@@ -50,6 +50,12 @@ public sealed record StrokePath(PdfPath Path, PdfStroke Stroke, PdfPaint Paint, 
 /// </summary>
 public sealed record PushStrokeClip(PdfPath Path, PdfStroke Stroke, PdfRect? Bounds = null) : PdfDrawCommand(Bounds);
 
+/// <summary>
+/// Intersects the clip with the outlines of glyph runs (text rendering modes 4–7 at ET, and
+/// pattern-filled text). Runs are in the current user space. Popped like <see cref="PushClip"/>.
+/// </summary>
+public sealed record PushTextClip(IReadOnlyList<PdfGlyphRun> Runs, PdfRect? Bounds = null) : PdfDrawCommand(Bounds);
+
 public sealed record PushClip(PdfPath Path, PdfFillRule Rule, PdfRect? Bounds = null)
     : PdfDrawCommand(Bounds);
 

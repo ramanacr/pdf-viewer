@@ -88,6 +88,16 @@ internal sealed class Replayer : IDisposable
                     if (!TryDecode(image.Image, out _, out _, out _, out var reason))
                         Report(cmd, reason, "Image could not be decoded by the Direct2D backend");
                     break;
+                case PushTextClip clip:
+                    foreach (var run in clip.Runs)
+                    {
+                        if (ResolveText(new DrawGlyphRun(run, default!, clip.Bounds), out _) == null)
+                        {
+                            Report(cmd, PdfFallbackReason.TextClipping, "Clip glyphs could not be outlined: " + _lastTextProblem);
+                            break;
+                        }
+                    }
+                    break;
             }
         }
     }
@@ -111,6 +121,8 @@ internal sealed class Replayer : IDisposable
         _geometries.Clear();
         foreach (var g in _strokeOutlines.Values) g?.Dispose();
         _strokeOutlines.Clear();
+        foreach (var g in _textOutlines.Values) g?.Dispose();
+        _textOutlines.Clear();
     }
 
     private ID2D1PathGeometry1? Geometry(PdfPath path, PdfFillRule rule)
@@ -273,6 +285,9 @@ internal sealed class Replayer : IDisposable
                     break;
                 case PushStrokeClip psc:
                     PushLayer(surface, StrokeOutline(psc, full), full, 1f);
+                    break;
+                case PushTextClip ptc:
+                    PushLayer(surface, TextOutline(ptc, ctm), full, 1f);
                     break;
                 case PopClip:
                     if (surface.Layers.Count > baseLayers) PopLayer(surface);
@@ -759,6 +774,58 @@ internal sealed class Replayer : IDisposable
         }
         _realizations[cmd] = r;
         return r;
+    }
+
+    private readonly Dictionary<PushTextClip, ID2D1Geometry?> _textOutlines = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Union of the runs' glyph outlines in user space (nonzero). A run whose font cannot be
+    /// outlined contributes its box instead (the region is classified by <see cref="Analyze"/>).
+    /// </summary>
+    private ID2D1Geometry? TextOutline(PushTextClip cmd, Matrix3x2 ctm)
+    {
+        if (_textOutlines.TryGetValue(cmd, out var cached))
+            return cached;
+        var parts = new List<ID2D1Geometry>();
+        foreach (var run in cmd.Runs)
+        {
+            if (run.FontSize == 0 || run.Glyphs.Count == 0)
+                continue;
+            var resolved = ResolveText(new DrawGlyphRun(run, default!, cmd.Bounds), out _);
+            if (resolved is not { } r)
+            {
+                if (cmd.Bounds is PdfRect b && Matrix3x2.Invert(ctm, out var pageToUser))
+                    parts.Add(Polygon(pageToUser, b));
+                continue;
+            }
+            double th = run.HorizontalScaling / 100.0;
+            float sign = run.FontSize < 0 ? -1 : 1;
+            var glyphToUser = new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise) * M(run.TextMatrix);
+            using var outline = _res.Factory.CreatePathGeometry();
+            using (var sink = outline.Open())
+            {
+                sink.SetFillMode(FillMode.Winding);
+                r.Face.GetGlyphRunOutline((float)Math.Abs(run.FontSize), r.Indices, new float[r.Indices.Length],
+                    r.Offsets.Select(o => new GlyphOffset { AdvanceOffset = o.X, AscenderOffset = o.Y }).ToArray(), false, false, sink);
+                sink.Close();
+            }
+            parts.Add(_res.Factory.CreateTransformedGeometry(outline, glyphToUser));
+        }
+        ID2D1Geometry? result = parts.Count switch
+        {
+            0 => _res.Factory.CreatePathGeometry(), // empty clip: nothing shows through
+            1 => parts[0],
+            _ => _res.Factory.CreateGeometryGroup(FillMode.Winding, parts.ToArray()),
+        };
+        if (result is ID2D1PathGeometry empty && parts.Count == 0)
+        {
+            using var s = empty.Open();
+            s.Close();
+        }
+        if (parts.Count > 1)
+            foreach (var p in parts) p.Dispose();
+        _textOutlines[cmd] = result;
+        return result;
     }
 
     private readonly Dictionary<(PushStrokeClip Cmd, float Scale), ID2D1PathGeometry1?> _strokeOutlines = new();

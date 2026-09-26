@@ -437,6 +437,8 @@ public sealed class PdfContentInterpreter
                         gs.TextMatrix = PdfMatrix.Identity;
                         gs.TextLineMatrix = PdfMatrix.Identity;
                         textClip = null;
+                        _textClipRuns.Clear();
+                        _textClipExact = true;
                         break;
 
                     case "ET":
@@ -446,6 +448,7 @@ public sealed class PdfContentInterpreter
                             EndTextClip(gs, tc);
                         }
                         textClip = null;
+                        _textClipRuns.Clear();
                         break;
 
                     case "Tf":
@@ -853,12 +856,14 @@ public sealed class PdfContentInterpreter
         /// Paints the current fill (or, with <paramref name="stroke"/>, stroke) pattern inside the
         /// path's area (or stroke outline).
         /// </summary>
-        private void PaintPatternFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfRect pageBounds, PdfStroke? stroke = null)
+        private void PaintPatternFill(PdfPath? pdfPath, PdfFillRule rule, GraphicsState gs, PdfRect pageBounds, PdfStroke? stroke = null,
+            PdfDrawCommand? clipOverride = null)
         {
             _features |= PdfFeatureSet.Patterns;
             var pattern = stroke != null ? gs.StrokePattern : gs.FillPattern;
             double alpha = stroke != null ? gs.StrokeAlpha : gs.FillAlpha;
-            PdfDrawCommand clip = stroke != null ? new PushStrokeClip(pdfPath, stroke, pageBounds) : new PushClip(pdfPath, rule, pageBounds);
+            PdfDrawCommand clip = clipOverride
+                ?? (stroke != null ? new PushStrokeClip(pdfPath!, stroke, pageBounds) : new PushClip(pdfPath!, rule, pageBounds));
             var patternDict = pattern switch
             {
                 PdfStream ps => ps.Dictionary,
@@ -1475,7 +1480,13 @@ public sealed class PdfContentInterpreter
                 ? face with { Format = PdfFontProgramFormat.None, ProgramData = ReadOnlyMemory<byte>.Empty }
                 : face;
 
-            bool drawVisible = !hidden && paints && reason == null;
+            // Pattern-filled text: the pattern is painted through the glyph outlines.
+            bool patternText = !hidden && reason == PdfFallbackReason.Pattern && font.UnsupportedReason == null &&
+                               mode is 0 or 4 && gs.FillColorSpace.IsPattern;
+            if (patternText)
+                reason = null;
+
+            bool drawVisible = !hidden && paints && reason == null && !patternText;
             var run = new PdfGlyphRun(
                 gs.CurrentFontResource,
                 fs,
@@ -1496,8 +1507,10 @@ public sealed class PdfContentInterpreter
             };
 
             // Invisible runs are kept: selection, search and copy work on them (OCR layers use mode 3).
-            bool composite = drawVisible && BeginComposite(gs, pageBounds);
+            bool composite = (drawVisible || patternText) && BeginComposite(gs, pageBounds);
             _commands.Add(new DrawGlyphRun(run, gs.CreateFillPaint(), pageBounds));
+            if (patternText && !pageBounds.IsEmpty)
+                PaintPatternFill(null, PdfFillRule.NonZero, gs, pageBounds, clipOverride: new PushTextClip(new[] { run with { RenderingMode = 0 } }, pageBounds));
             EndComposite(composite);
 
             if (!hidden && paints && reason is PdfFallbackReason r && !pageBounds.IsEmpty)
@@ -1510,8 +1523,14 @@ public sealed class PdfContentInterpreter
             {
                 _features |= PdfFeatureSet.Clipping;
                 textClip = Union(textClip ?? PdfRect.Empty, pageBounds);
+                if (font.UnsupportedReason != null) _textClipExact = false;
+                else _textClipRuns.Add(run with { RenderingMode = 7 });
             }
         }
+
+        // Glyph runs of the current text object that add to the clip (modes 4–7).
+        private readonly List<PdfGlyphRun> _textClipRuns = new();
+        private bool _textClipExact = true;
 
         /// <summary>
         /// Text rendering modes 4–7 add glyph outlines to the clip at ET. The IR has no glyph-outline
@@ -1520,6 +1539,13 @@ public sealed class PdfContentInterpreter
         /// </summary>
         private void EndTextClip(GraphicsState gs, PdfRect clipBounds)
         {
+            if (_textClipExact && _textClipRuns.Count > 0)
+            {
+                // Glyph outlines as the clip (backends that cannot outline the font classify it).
+                _commands.Add(new PushTextClip(_textClipRuns.ToArray(), clipBounds));
+                gs.ClipBoundsPage = Intersect(gs.ClipBoundsPage, clipBounds);
+                return;
+            }
             AddFallback(PdfFallbackReason.TextClipping, "Text rendering mode adds glyphs to the clip", clipBounds);
             var userPath = PageRectInUserSpace(gs, clipBounds);
             if (userPath != null)
@@ -1552,6 +1578,7 @@ public sealed class PdfContentInterpreter
             {
                 // Type3 glyphs as clip: classify the whole show operation.
                 textClip = Union(textClip ?? PdfRect.Empty, gs.ClipBoundsPage);
+                _textClipExact = false;
             }
 
             void ShowGlyph(int code)

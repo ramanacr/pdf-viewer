@@ -158,6 +158,25 @@ internal sealed class WpfDisplayListCompiler
                         pushes.Push(PushKind.Clip);
                         break;
 
+                    case PushTextClip ptc:
+                    {
+                        if (ptc.Bounds is PdfRect cb && !cb.IsEmpty)
+                        {
+                            backendFallbacks.Add(new PdfFallbackToken(list.PageNumber, new PdfRect(cb.X - 1, cb.Y - 1, cb.Width + 2, cb.Height + 2),
+                                PdfFallbackReason.TextClipping, "Glyph-outline clip not supported by the WPF backend",
+                                new Dictionary<string, string> { ["origin"] = "backend" }));
+                            // Conservative superset: the text's box in user space.
+                            var inv = ctm; bool ok = inv.TryInvert(out var pageToUser);
+                            dc.PushClip(ok ? new RectangleGeometry(new Rect(cb.X, cb.Y, cb.Width, cb.Height), 0, 0, new MatrixTransform(ToWpf(pageToUser))) : MediaGeometry.Empty);
+                        }
+                        else
+                        {
+                            dc.PushClip(MediaGeometry.Empty);
+                        }
+                        pushes.Push(PushKind.Clip);
+                        break;
+                    }
+
                     case PushStrokeClip psc:
                     {
                         var outline = BuildGeometry(psc.Path, PdfFillRule.NonZero) is MediaGeometry sg
