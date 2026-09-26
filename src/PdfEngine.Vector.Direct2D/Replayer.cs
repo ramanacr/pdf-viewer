@@ -148,6 +148,8 @@ internal sealed class Replayer : IDisposable
         public required ID2D1Bitmap1 Target { get; init; }
         public int Width { get; init; }
         public int Height { get; init; }
+        /// <summary>Every pixel is opaque (the page, or a group initialised with an opaque backdrop).</summary>
+        public bool Opaque { get; init; }
         public readonly List<(ID2D1Geometry? Mask, Matrix3x2 Full, float Opacity)> Layers = new();
     }
 
@@ -207,7 +209,7 @@ internal sealed class Replayer : IDisposable
 
         using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
         var size = target.PixelSize;
-        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height };
+        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height, Opaque = true };
         try
         {
             DrawRange(surface, 0, _list.Commands.Count, pageToDevice, Matrix3x2.Identity, visiblePage);
@@ -220,7 +222,13 @@ internal sealed class Replayer : IDisposable
         }
     }
 
-    private void DrawRange(Surface surface, int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage)
+    /// <summary>Knockout state of the group whose range is being drawn: its initial backdrop (null when isolated).</summary>
+    private sealed record Knockout(ID2D1Bitmap1? Backdrop);
+
+    /// <summary>Shape rendering (knockout): every paint opaque, images as their full rectangle, groups without alpha or masks.</summary>
+    private bool _shapeMode;
+
+    private void DrawRange(Surface surface, int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage, Knockout? knockout = null)
     {
         var ctx = surface.Ctx;
         var ctx1 = surface.Ctx1;
@@ -246,6 +254,17 @@ internal sealed class Replayer : IDisposable
             }
 
             var full = ctm * pageToDevice;
+            if (knockout != null && cmd is FillPath or StrokePath or DrawGlyphRun or DrawImage or DrawShading or DrawTilingPattern
+                    or BeginCompositingGroup or BeginTransparencyGroup)
+            {
+                // Knockout (11.4.8): each element replaces what earlier elements painted under its shape.
+                int elementEnd = cmd is BeginCompositingGroup or BeginTransparencyGroup
+                    ? Math.Min(end, (_groupEnd![i] < 0 ? end : _groupEnd[i]) + 1)
+                    : i + 1;
+                DrawKnockoutElement(surface, knockout, i, elementEnd, pageToDevice, ctm, visiblePage);
+                i = elementEnd - 1;
+                continue;
+            }
             switch (cmd)
             {
                 case SaveState:
@@ -309,19 +328,21 @@ internal sealed class Replayer : IDisposable
                 case BeginCompositingGroup cg:
                 {
                     int groupEnd = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
-                    DrawGroup(surface, cg.Bounds, cg.Alpha, cg.Blend, cg.SoftMask, i + 1, groupEnd, pageToDevice, ctm, visiblePage);
+                    DrawGroup(surface, cg.Bounds, cg.Alpha, cg.Blend, cg.SoftMask, cg.Isolated, cg.Knockout, _containsBlend![i],
+                        i + 1, groupEnd, pageToDevice, ctm, visiblePage);
                     i = groupEnd;
                     break;
                 }
                 case BeginTransparencyGroup tg when _containsBlend![i]:
                 {
                     int groupEnd = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
-                    DrawGroup(surface, tg.Bounds, tg.Alpha, PdfBlendMode.Normal, null, i + 1, groupEnd, pageToDevice, ctm, visiblePage);
+                    DrawGroup(surface, tg.Bounds, tg.Alpha, PdfBlendMode.Normal, null, tg.Isolated, false, true,
+                        i + 1, groupEnd, pageToDevice, ctm, visiblePage);
                     i = groupEnd;
                     break;
                 }
                 case BeginTransparencyGroup g:
-                    PushLayer(surface, null, full, (float)Math.Clamp(g.Alpha, 0, 1));
+                    PushLayer(surface, null, full, _shapeMode ? 1f : (float)Math.Clamp(g.Alpha, 0, 1));
                     break;
                 case EndTransparencyGroup:
                     if (surface.Layers.Count > baseLayers) PopLayer(surface);
@@ -346,10 +367,18 @@ internal sealed class Replayer : IDisposable
     /// after popping its layers, so every enclosing clip has been applied to it.
     /// </summary>
     private void DrawGroup(Surface surface, PdfRect? bounds, double alpha, PdfBlendMode blend, PdfSoftMask? mask,
+        bool isolated, bool knockout, bool containsBlend,
         int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage)
     {
         if (_res.Device is not { } device)
             return;
+        if (_shapeMode)
+        {
+            // Shape of a group = union of its elements' shapes; opacity and masks do not contribute.
+            alpha = 1;
+            mask = null;
+            blend = PdfBlendMode.Normal;
+        }
 
         // Device rectangle of the group, clamped to the surface.
         var r = bounds ?? visiblePage;
@@ -373,16 +402,24 @@ internal sealed class Replayer : IDisposable
         var groupVisible = bounds is PdfRect gb ? Intersect(visiblePage, gb) : visiblePage;
         bool blends = blend != PdfBlendMode.Normal;
 
-        using var content = surface.Ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, OffscreenProps);
-        using (var gctx = device.CreateDeviceContext(DeviceContextOptions.None))
+        // A non-isolated group sees the backdrop: inner blend modes and knockout elements composite
+        // against it (11.4.7). Exact on an opaque backdrop; on a transparent one the group is isolated.
+        bool nonIsolated = !isolated && (containsBlend || knockout) && surface.Opaque && !_shapeMode;
+        ID2D1Bitmap1? initialBackdrop = nonIsolated ? CopyBackdrop(surface, x0, y0, w, h) : null;
+
+        ID2D1Bitmap1 RenderContent(bool fromBackdrop)
         {
-            gctx.Target = content;
+            var bmp = surface.Ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, OffscreenProps);
+            using var gctx = device.CreateDeviceContext(DeviceContextOptions.None);
+            gctx.Target = bmp;
             gctx.BeginDraw();
             gctx.AntialiasMode = AntialiasMode.PerPrimitive;
             gctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
             gctx.Clear(new Color4(0, 0, 0, 0));
+            if (fromBackdrop)
+                gctx.DrawImage(initialBackdrop!, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
             using var gctx1 = surface.Ctx1 != null ? gctx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
-            var sub = new Surface { Ctx = gctx, Ctx1 = gctx1, Target = content, Width = w, Height = h };
+            var sub = new Surface { Ctx = gctx, Ctx1 = gctx1, Target = bmp, Width = w, Height = h, Opaque = fromBackdrop };
             try
             {
                 // A blended group replaces its rectangle on the surface, so its content must carry
@@ -390,7 +427,8 @@ internal sealed class Replayer : IDisposable
                 if (blends)
                     foreach (var layer in surface.Layers)
                         PushLayer(sub, layer.Mask, layer.Full * offset, 1f);
-                DrawRange(sub, start, end, groupPageToDevice, ctm, groupVisible);
+                DrawRange(sub, start, end, groupPageToDevice, ctm, groupVisible,
+                    knockout ? new Knockout(fromBackdrop ? initialBackdrop : null) : null);
             }
             finally
             {
@@ -399,13 +437,42 @@ internal sealed class Replayer : IDisposable
                 gctx.EndDraw();
                 gctx.Target = null;
             }
+            return bmp;
         }
 
+        using var content = RenderContent(fromBackdrop: nonIsolated);
+        using var isolatedAlpha = nonIsolated ? RenderContent(fromBackdrop: false) : null;
+
         var disposables = new List<IDisposable>();
+        if (initialBackdrop != null) disposables.Add(initialBackdrop);
         try
         {
             ID2D1Image image = content;
             var ctx = surface.Ctx;
+
+            if (nonIsolated)
+            {
+                // Group result with the backdrop removed (11.4.8, α0 = 1): R = Cn − C0 · (1 − αg), where
+                // Cn was rendered over the backdrop and αg is the group's own alpha (isolated render).
+                var alphaRgb = new Vortice.Direct2D1.Effects.ColorMatrix(ctx)
+                {
+                    Matrix = new Matrix5x4(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0),
+                };
+                disposables.Add(alphaRgb);
+                alphaRgb.SetInput(0, isolatedAlpha!, true); // premultiplied (αg, αg, αg, αg)
+                var ag = alphaRgb.Output; disposables.Add(ag);
+                var k = new Vortice.Direct2D1.Effects.ArithmeticComposite(ctx) { Coefficients = new Vector4(-1, 1, 0, 0), ClampOutput = true };
+                disposables.Add(k);
+                k.SetInput(0, initialBackdrop!, true); // C0
+                k.SetInput(1, ag, true);               // αg → C0 − αg·C0
+                var kOut = k.Output; disposables.Add(kOut);
+                var rEffect = new Vortice.Direct2D1.Effects.ArithmeticComposite(ctx) { Coefficients = new Vector4(0, 1, -1, 0), ClampOutput = true };
+                disposables.Add(rEffect);
+                rEffect.SetInput(0, content, true); // Cn
+                rEffect.SetInput(1, kOut, true);    // − C0 (1 − αg)
+                image = rEffect.Output;
+                disposables.Add(image);
+            }
 
             if (mask != null && RenderSoftMask(mask, w, h, groupPageToDevice, surface.Ctx1 != null) is { } maskImage)
             {
@@ -507,6 +574,111 @@ internal sealed class Replayer : IDisposable
         {
             for (int i = disposables.Count - 1; i >= 0; i--) disposables[i].Dispose();
         }
+    }
+
+    /// <summary>Copies the composited pixels under a rectangle (layers popped and pushed again).</summary>
+    private ID2D1Bitmap1 CopyBackdrop(Surface surface, int x0, int y0, int w, int h)
+    {
+        var layers = surface.Layers.ToArray();
+        while (surface.Layers.Count > 0) PopLayer(surface);
+        surface.Ctx.Flush(out _, out _);
+        var copy = surface.Ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0,
+            new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+        copy.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target, new System.Drawing.Rectangle(x0, y0, w, h));
+        foreach (var layer in layers)
+            PushLayer(surface, layer.Mask, layer.Full, layer.Opacity);
+        return copy;
+    }
+
+    /// <summary>
+    /// One element of a knockout group: G = G·(1 − f) + E + (f − αE)·C0, where E is the element
+    /// rendered alone (with the current clips), f its shape and C0 the group's initial backdrop
+    /// (absent for isolated groups).
+    /// </summary>
+    private void DrawKnockoutElement(Surface surface, Knockout knockout, int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage)
+    {
+        if (_res.Device is not { } device)
+            return;
+        ID2D1Bitmap1 Render(bool shape)
+        {
+            var bmp = surface.Ctx.CreateBitmap(new SizeI(surface.Width, surface.Height), IntPtr.Zero, 0, OffscreenProps);
+            using var ectx = device.CreateDeviceContext(DeviceContextOptions.None);
+            ectx.Target = bmp;
+            ectx.BeginDraw();
+            ectx.AntialiasMode = AntialiasMode.PerPrimitive;
+            ectx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            ectx.Clear(new Color4(0, 0, 0, 0));
+            using var ectx1 = surface.Ctx1 != null ? ectx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
+            var sub = new Surface { Ctx = ectx, Ctx1 = ectx1, Target = bmp, Width = surface.Width, Height = surface.Height };
+            bool savedShape = _shapeMode;
+            _shapeMode = shape;
+            try
+            {
+                foreach (var layer in surface.Layers)
+                    PushLayer(sub, layer.Mask, layer.Full, 1f);
+                DrawRange(sub, start, end, pageToDevice, ctm, visiblePage);
+            }
+            finally
+            {
+                _shapeMode = savedShape;
+                while (sub.Layers.Count > 0) PopLayer(sub);
+                ectx.Transform = Matrix3x2.Identity;
+                ectx.EndDraw();
+                ectx.Target = null;
+            }
+            return bmp;
+        }
+
+        using var element = Render(shape: false);
+        using var shapeBmp = Render(shape: true);
+        var ctx = surface.Ctx;
+        var disposables = new List<IDisposable>();
+        var layers = surface.Layers.ToArray();
+        while (surface.Layers.Count > 0) PopLayer(surface);
+        try
+        {
+            ID2D1Image add = element;
+            if (knockout.Backdrop is { } c0)
+            {
+                // (f − αE) broadcast to all channels, times C0, plus E.
+                var fRgb = AlphaToRgb(ctx, shapeBmp, disposables);
+                var eRgb = AlphaToRgb(ctx, element, disposables);
+                var diff = Arithmetic(ctx, fRgb, eRgb, new Vector4(0, 1, -1, 0), disposables);   // f − αE
+                var times = Arithmetic(ctx, c0, diff, new Vector4(1, 0, 0, 0), disposables);    // · C0
+                add = Arithmetic(ctx, element, times, new Vector4(0, 1, 1, 0), disposables);   // + E
+            }
+            ctx.Transform = Matrix3x2.Identity;
+            ctx.DrawImage(shapeBmp, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOut);
+            ctx.DrawImage(add, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.Plus);
+        }
+        finally
+        {
+            for (int i = disposables.Count - 1; i >= 0; i--) disposables[i].Dispose();
+            foreach (var layer in layers)
+                PushLayer(surface, layer.Mask, layer.Full, layer.Opacity);
+        }
+    }
+
+    private static ID2D1Image AlphaToRgb(ID2D1DeviceContext ctx, ID2D1Image input, List<IDisposable> disposables)
+    {
+        var m = new Vortice.Direct2D1.Effects.ColorMatrix(ctx) { Matrix = new Matrix5x4(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0) };
+        disposables.Add(m);
+        m.SetInput(0, input, true);
+        var o = m.Output;
+        disposables.Add(o);
+        return o;
+    }
+
+    /// <summary>ArithmeticComposite: C1·I0·I1 + C2·I0 + C3·I1 + C4 (I0 = input 0, I1 = input 1; premultiplied, per channel).</summary>
+    private static ID2D1Image Arithmetic(ID2D1DeviceContext ctx, ID2D1Image destination, ID2D1Image source, Vector4 k, List<IDisposable> disposables)
+    {
+        var a = new Vortice.Direct2D1.Effects.ArithmeticComposite(ctx) { Coefficients = k, ClampOutput = true };
+        disposables.Add(a);
+        a.SetInput(0, destination, true);
+        a.SetInput(1, source, true);
+        var o = a.Output;
+        disposables.Add(o);
+        return o;
     }
 
     private static ID2D1Image Invert(ID2D1DeviceContext ctx, ID2D1Image input, List<IDisposable> disposables)
@@ -618,6 +790,14 @@ internal sealed class Replayer : IDisposable
             return;
 
         using var geom = Polygon(pageToPattern, area);
+        if (_shapeMode)
+        {
+            // The shape of a pattern fill is the painted area, not the cell's coverage.
+            using var shapeBrush = ctx.CreateSolidColorBrush(new Color4(0, 0, 0, 1));
+            ctx.Transform = full;
+            ctx.FillGeometry(geom, shapeBrush);
+            return;
+        }
         var bitmapToPattern = Matrix3x2.CreateScale((float)(xs / bw), (float)(ys / bh)) *
                               Matrix3x2.CreateTranslation((float)pattern.BBox.X, (float)pattern.BBox.Y);
         using var brush = ctx.CreateBitmapBrush(cell, new BitmapBrushProperties1(ExtendMode.Wrap, ExtendMode.Wrap, InterpolationMode.Linear),
@@ -669,9 +849,11 @@ internal sealed class Replayer : IDisposable
         return x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : PdfRect.Empty;
     }
 
-    private Color4 Color(PdfColor c, double alpha) => InvertColors
-        ? new(1 - c.R, 1 - c.G, 1 - c.B, (float)Math.Clamp(alpha, 0, 1))
-        : new(c.R, c.G, c.B, (float)Math.Clamp(alpha, 0, 1));
+    private Color4 Color(PdfColor c, double alpha) => _shapeMode
+        ? new(0, 0, 0, alpha > 0 ? 1 : 0)
+        : InvertColors
+            ? new(1 - c.R, 1 - c.G, 1 - c.B, (float)Math.Clamp(alpha, 0, 1))
+            : new(c.R, c.G, c.B, (float)Math.Clamp(alpha, 0, 1));
 
     private void PushLayer(Surface surface, ID2D1Geometry? mask, Matrix3x2 full, float opacity)
     {
@@ -1150,6 +1332,14 @@ internal sealed class Replayer : IDisposable
     private void PaintImage(ID2D1DeviceContext ctx, DrawImage di, Matrix3x2 full)
     {
         var image = di.Image;
+        if (_shapeMode && image.ColorSpaceName != "ImageMask")
+        {
+            // An image's shape is its whole parallelogram; soft masks are opacity (11.6.5.3).
+            ctx.Transform = new Matrix3x2(1, 0, 0, -1, 0, 1) * M(di.Transform) * full;
+            using var shapeBrush = ctx.CreateSolidColorBrush(new Color4(0, 0, 0, 1));
+            ctx.FillRectangle(new RawRectF(0, 0, 1, 1), shapeBrush);
+            return;
+        }
         string key = (image.Source?.CacheKey ?? image.ImageId) + (InvertColors ? "|inverted" : "");
         var bitmap = _res.GetBitmap(key);
         if (bitmap == null)
@@ -1200,7 +1390,7 @@ internal sealed class Replayer : IDisposable
         var mode = devicePerSourcePixel < 1f ? Vortice.Direct2D1.InterpolationMode.HighQualityCubic
                  : !image.Interpolate && devicePerSourcePixel > 1.5f ? Vortice.Direct2D1.InterpolationMode.NearestNeighbor
                  : Vortice.Direct2D1.InterpolationMode.Linear;
-        ctx.DrawBitmap(bitmap, new RawRectF(0, 0, 1, 1), (float)Math.Clamp(image.Opacity, 0, 1), mode, null, null);
+        ctx.DrawBitmap(bitmap, new RawRectF(0, 0, 1, 1), _shapeMode ? 1f : (float)Math.Clamp(image.Opacity, 0, 1), mode, null, null);
     }
 
     // ------------------------------------------------------------------ shading

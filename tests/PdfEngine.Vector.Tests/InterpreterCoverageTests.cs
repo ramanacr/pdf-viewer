@@ -368,7 +368,7 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
-    public async Task Type3TextClip_IsStillClassified()
+    public async Task Type3TextClip_AddsNothingToTheClip()
     {
         var b = new VectorPdfBuilder();
         int proc = b.AddStream(string.Empty, "1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f");
@@ -377,7 +377,11 @@ public class InterpreterCoverageTests
                          "/FirstChar 65 /LastChar 65 /Widths [1000] >>");
         b.AddPage("BT 7 Tr /F1 40 Tf 10 50 Td (A) Tj ET 1 0 0 rg 0 0 200 200 re f", $"<< /Font << /F1 {font} 0 R >> >>");
         var list = await BuildAsync(b.Build());
-        Assert.Contains(list.FallbackTokens, t => t.Reason == PdfFallbackReason.TextClipping);
+        Assert.False(list.HasFallback);
+        // ISO 32000-2 9.3.6: with a Type 3 font, modes 4–7 add nothing to the clip and mode 7 draws nothing.
+        Assert.DoesNotContain(list.Commands, c => c is PushTextClip or PushClip);
+        var fill = Assert.Single(list.Commands.OfType<FillPath>()); // only the page's red fill, unclipped
+        Assert.Equal(200, fill.Bounds!.Value.Width);
     }
 
     [Fact]

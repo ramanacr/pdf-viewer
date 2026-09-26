@@ -1575,12 +1575,8 @@ public sealed class PdfContentInterpreter
             double x = 0;
             var pageBounds = PdfRect.Empty;
 
-            if (mode >= 4)
-            {
-                // Type3 glyphs as clip: classify the whole show operation.
-                textClip = Union(textClip ?? PdfRect.Empty, gs.ClipBoundsPage);
-                _textClipExact = false;
-            }
+            // Type 3 glyphs never add to the clip: modes 4–7 add nothing to the clipping path, and
+            // modes 3 and 7 do not render (ISO 32000-2 9.3.6).
 
             void ShowGlyph(int code)
             {
@@ -2024,7 +2020,6 @@ public sealed class PdfContentInterpreter
                         return;
                     }
                 }
-                int formMark = _commands.Count, formFallbackMark = _fallbacks.Count;
 
                 byte[] content = _owner._streamDecoder.DecodeStream(form);
                 var formResources = _resolver.Resolve(dict["Resources"]) as PdfDictionary ?? parentResources;
@@ -2039,7 +2034,7 @@ public sealed class PdfContentInterpreter
                 if (bbox is PdfRect clip)
                     _commands.Add(new PushClip(RectPath(clip), PdfFillRule.NonZero, formBounds));
 
-                bool compositing = isTransparencyGroup && !hidden && (gs.SoftMask != null || !gs.IsNormalBlend);
+                bool compositing = isTransparencyGroup && !hidden && (gs.SoftMask != null || !gs.IsNormalBlend || knockout);
                 bool group = isTransparencyGroup && !hidden && (gs.FillAlpha < 1.0 || compositing);
                 if (isTransparencyGroup)
                 {
@@ -2055,11 +2050,12 @@ public sealed class PdfContentInterpreter
                 {
                     bool isolated = groupDict!.TryGetValue("I", out var iso) && iso != null && iso.TryGetBoolean(out bool ib) && ib;
                     if (compositing)
-                        _commands.Add(new BeginCompositingGroup(formBounds, gs.FillAlpha, gs.Blend, gs.SoftMask, isolated, false));
+                        _commands.Add(new BeginCompositingGroup(formBounds, gs.FillAlpha, gs.Blend, gs.SoftMask, isolated, knockout));
                     else
                         _commands.Add(new BeginTransparencyGroup(formBounds, gs.FillAlpha, "Normal", isolated, false));
                 }
 
+                int groupBegin = _commands.Count - 1;
                 int knockoutElements = _commands.Count; // the group's own Begin is not an element
                 var savedBase = _currentPatternBase;
                 _currentPatternBase = formCtm;
@@ -2077,12 +2073,20 @@ public sealed class PdfContentInterpreter
 
                 // Knockout (11.4.8): each element replaces earlier ones by its shape instead of
                 // accumulating. For opaque, Normal-blend elements that is exactly source-over
-                // (C·(1 − shape) + E), so such groups are kept; anything else still falls back.
-                if (knockout && !KnockoutIsSourceOver(knockoutElements))
+                // (C·(1 − shape) + E): the group is downgraded to an ordinary one (or removed when it
+                // has no alpha, blend or mask of its own), sparing backends the per-element work.
+                if (knockout && group && _commands[groupBegin] is BeginCompositingGroup kg && KnockoutIsSourceOver(knockoutElements))
                 {
-                    _commands.RemoveRange(formMark, _commands.Count - formMark);
-                    _fallbacks.RemoveRange(formFallbackMark, _fallbacks.Count - formFallbackMark);
-                    AddFallback(PdfFallbackReason.TransparencyGroup, "Knockout group with translucent or blended elements", formBounds);
+                    int groupEnd = _commands.Count - 2; // EndCompositingGroup, then RestoreState
+                    if (kg.Alpha >= 1 && kg.Blend == PdfBlendMode.Normal && kg.SoftMask == null)
+                    {
+                        _commands.RemoveAt(groupEnd);
+                        _commands.RemoveAt(groupBegin);
+                    }
+                    else
+                    {
+                        _commands[groupBegin] = kg with { Knockout = false };
+                    }
                 }
             }
             finally

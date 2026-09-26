@@ -102,7 +102,7 @@ internal sealed class WpfDisplayListCompiler
                     if (backendFallbacks != null && cg.Bounds is PdfRect gb && !gb.IsEmpty)
                     {
                         backendFallbacks.Add(new PdfFallbackToken(list.PageNumber, new PdfRect(gb.X - 1, gb.Y - 1, gb.Width + 2, gb.Height + 2),
-                            cg.Blend != PdfBlendMode.Normal ? PdfFallbackReason.BlendMode : PdfFallbackReason.SoftMask,
+                            cg.Knockout ? PdfFallbackReason.TransparencyGroup : cg.Blend != PdfBlendMode.Normal ? PdfFallbackReason.BlendMode : PdfFallbackReason.SoftMask,
                             "Compositing group not supported by the WPF backend",
                             new Dictionary<string, string> { ["origin"] = "backend" }));
                     }
