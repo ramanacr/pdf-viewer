@@ -111,12 +111,12 @@ public class Direct2DRendererTests
     [Fact]
     public async Task Direct2D_TilesOutputsLargerThanOneTexture()
     {
-        // 200pt page at 1600 % ≈ 4444 px: several 2048 px tiles must stitch without seams.
+        // 200pt page at 1600 % = 3200 px: several 2048 px tiles must stitch without seams.
         var b = new VectorPdfBuilder();
         b.AddPage("0 0 1 rg 0 0 200 200 re f 1 1 1 rg 99 0 2 200 re f");
         using var doc = await PdfVectorDocument.OpenAsync(b.Build());
         var list = await doc.GetPageDisplayListAsync(1);
-        using var renderer = new Direct2DVectorRenderer();
+        using var renderer = new Direct2DVectorRenderer(tileSize: 2048);
         using var page = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 * 16 });
         Assert.Equal(3200, page.WidthPixels);
         var span = page.Pixels.Span;
@@ -148,5 +148,44 @@ public class Direct2DRendererTests
                 if (page.Pixels.Span[y * page.Stride + x * 4] < 200) dark++;
             Assert.InRange(dark, 1, 2); // hairline thickness is device pixels at every zoom
         }
+    }
+    /// <summary>
+    /// Rectangular clips (<c>re W n</c>) are axis-aligned clips instead of offscreen layers; the
+    /// pixels must equal the same clip drawn as a general path (an extra collinear point keeps it
+    /// on the layer path), nested, under page rotation, fractional edges, and inside a blended
+    /// group whose content re-applies the enclosing clips.
+    /// </summary>
+    [Theory]
+    [InlineData(PageRotation.Rotate0, 72.0)]
+    [InlineData(PageRotation.Rotate90, 144.0)]
+    [InlineData(PageRotation.Rotate270, 100.0)]
+    public async Task Direct2D_RectangleClips_MatchGeneralPathClips(PageRotation rotation, double dpi)
+    {
+        const string body = "1 0 0 rg 0 0 200 200 re f 0 0 1 rg 30 30 150 120 re f " +
+                            "/GS1 gs 0 1 0 rg 40.25 40.75 60 60 re f";
+        string Rect(double x, double y, double w, double h) => $"{x} {y} {w} {h} re";
+        string Poly(double x, double y, double w, double h) =>
+            $"{x} {y} m {x + w / 2} {y} l {x + w} {y} l {x + w} {y + h} l {x} {y + h} l h";
+        string Page(Func<double, double, double, double, string> clip) =>
+            $"q {clip(10.3, 12.7, 170.2, 150.1)} W n q {clip(25.5, 20, 120, 170)} W n {body} Q Q " +
+            $"q 1 0 0 1 5 5 cm {clip(0, 0, 90.5, 90)} W* n 0 0 0 rg 0 0 300 300 re f Q";
+        const string res = "<< /ExtGState << /GS1 << /BM /Multiply /ca 0.7 >> >> >>";
+
+        async Task<RenderedPage> Draw(string content, Direct2DVectorRenderer r)
+        {
+            var b = new VectorPdfBuilder();
+            b.AddPage(content, res);
+            using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+            var list = await doc.GetPageDisplayListAsync(1);
+            return await r.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = dpi, Rotation = rotation });
+        }
+
+        using var renderer = new Direct2DVectorRenderer();
+        using var fast = await Draw(Page(Rect), renderer);
+        using var general = await Draw(Page(Poly), renderer);
+        var (mean, bad) = DifferentialRenderingTests.Compare(fast, general);
+        _output.WriteLine($"rect vs path clip {rotation} @{dpi}: mean={mean:F3} bad={bad:P3}");
+        Assert.True(mean <= 0.25, $"mean {mean:F3}");
+        Assert.True(bad <= 0.001, $"bad {bad:P3}");
     }
 }

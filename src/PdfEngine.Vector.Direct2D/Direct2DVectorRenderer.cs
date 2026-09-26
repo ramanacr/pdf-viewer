@@ -35,19 +35,72 @@ public sealed record D2DRenderResult(
 /// </summary>
 public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
 {
-    private const int TileSize = 2048;
+    /// <summary>
+    /// GPU tile side. Every tile replays the whole display list, so a viewer's detail tile
+    /// (≈ 3600 × 2700 px) in one texture costs one replay instead of four at 2048.
+    /// </summary>
+    public const int DefaultTileSize = 4096;
     private const uint D2DERR_RECREATE_TARGET = 0x8899000C;
     private const uint DXGI_ERROR_DEVICE_REMOVED = 0x887A0005;
     private const uint DXGI_ERROR_DEVICE_RESET = 0x887A0007;
 
     private readonly D2DResources _res;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly int _tileSizeLimit;
     private bool _disposed;
 
-    public Direct2DVectorRenderer(long bitmapCacheBytes = 256L * 1024 * 1024)
+    /// <summary>
+    /// Replayers kept across renders, per display list, scale and colour mode. A replayer holds
+    /// the page's geometries and its tessellations (realizations) at one scale, which dominate
+    /// the cost of dense vector pages; a viewer scrolling at a fixed zoom asks for one tile after
+    /// another at the same scale and pays tessellation once. Guarded by <see cref="_gate"/>.
+    /// </summary>
+    private const int ReplayerCacheCapacity = 6;
+    private readonly LinkedList<((IPdfDisplayList List, float Scale, bool Invert) Key, Replayer Replayer)> _replayers = new();
+
+    private Replayer AcquireReplayer(IPdfDisplayList list, float scale, bool invert, CancellationToken ct)
     {
-        _res = new D2DResources(bitmapCacheBytes);
+        var key = (list, MathF.Round(scale, 4), invert);
+        for (var node = _replayers.First; node != null; node = node.Next)
+        {
+            if (ReferenceEquals(node.Value.Key.List, list) && node.Value.Key.Scale == key.Item2 && node.Value.Key.Invert == invert)
+            {
+                _replayers.Remove(node);
+                _replayers.AddFirst(node);
+                node.Value.Replayer.SetCancellation(ct);
+                return node.Value.Replayer;
+            }
+        }
+        var replayer = new Replayer(_res, list, backendFallbacks: null, analyzeOnly: false, ct)
+        {
+            UseRealizations = true,
+            InvertColors = invert,
+        };
+        _replayers.AddFirst((key, replayer));
+        while (_replayers.Count > ReplayerCacheCapacity)
+        {
+            _replayers.Last!.Value.Replayer.Dispose();
+            _replayers.RemoveLast();
+        }
+        return replayer;
     }
+
+    private void ClearReplayers()
+    {
+        foreach (var (_, replayer) in _replayers) replayer.Dispose();
+        _replayers.Clear();
+    }
+
+    /// <param name="forceSoftware">Render on WARP even when a GPU exists (the tier RDP sessions and VMs get).</param>
+    /// <param name="tileSize">GPU tile side; bounded by the device's maximum bitmap size.</param>
+    public Direct2DVectorRenderer(long bitmapCacheBytes = 256L * 1024 * 1024, bool forceSoftware = false, int tileSize = DefaultTileSize)
+    {
+        _res = new D2DResources(bitmapCacheBytes, forceSoftware);
+        _tileSizeLimit = Math.Clamp(tileSize, 256, 16384);
+    }
+
+    /// <summary>Tile side for the current device (feature level 9.x devices allow 2048 or 4096).</summary>
+    private int TileSize => (int)Math.Min(_tileSizeLimit, _res.Context?.MaximumBitmapSize ?? 2048u);
 
     /// <summary>True when running on WARP (no hardware device).</summary>
     public bool IsSoftware => _res.IsSoftware;
@@ -58,7 +111,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
     public void SimulateDeviceLoss()
     {
         _gate.Wait();
-        try { _res.CreateDevice(); }
+        try { ClearReplayers(); _res.CreateDevice(); }
         finally { _gate.Release(); }
     }
 
@@ -128,11 +181,10 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             {
                 int stride = r.Width * 4;
                 var owner = new PageBuffer(checked(stride * r.Height));
-                using var replay = new Replayer(_res, list, backendFallbacks: null, analyzeOnly: false, ct)
-                {
-                    UseRealizations = r.Width > TileSize || r.Height > TileSize,
-                    InvertColors = invertColors,
-                };
+                // Tessellation is always worth keeping: a realization is drawn at least once per
+                // tile, and is reused by the next render at this scale (the next viewport tile).
+                var pageToPixels = geometry.PageUserToPixels();
+                var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), invertColors, ct);
                 await Task.Run(() =>
                 {
                     for (int ty = r.Y; ty < r.Y + r.Height; ty += TileSize)
@@ -188,6 +240,8 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             {
                 // Device loss: rebuild device-dependent resources and replay; the display list is intact.
                 _res.CreateDevice();
+                foreach (var (_, cached) in _replayers)
+                    if (!ReferenceEquals(cached, replay)) cached.ResetDeviceResources();
                 replay.ResetDeviceResources();
             }
         }
@@ -312,7 +366,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         if (_disposed) return;
         _disposed = true;
         _gate.Wait();
-        try { _res.Dispose(); }
+        try { ClearReplayers(); _res.Dispose(); }
         finally { _gate.Release(); }
     }
 

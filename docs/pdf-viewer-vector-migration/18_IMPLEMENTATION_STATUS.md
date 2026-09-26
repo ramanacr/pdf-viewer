@@ -74,6 +74,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 ### Direct2D / DirectWrite backend (ADR-005; ADR-011 decided)
 - `PdfEngine.Vector.Direct2D` (Vortice.Windows 3.8.3, MIT): D3D11 device (hardware, WARP fallback), Direct2D 1.1 device context, DirectWrite fonts from memory (custom font-file loader, no temp files), WIC JPEG decode. Clips are geometric-mask layers; hairlines use `StrokeTransformType.Hairline`; output larger than 2 048 px is tiled, and geometry realizations are shared across tiles; device loss recreates the device without reparsing (`SimulateDeviceLoss` test).
 - **Default page host:** the page bitmap comes from Direct2D, and when the page is zoomed past that bitmap a **viewport detail tile** (visible area plus a margin, ≤ 4 096 px a side) is rendered at exact device resolution and laid over it; scrolling inside the margin reuses the tile. Zoom range 25–1 600 %. `PDF_VECTOR_HOST=wpf` selects the earlier WPF drawing host; the WPF renderer also stands in when no Direct3D device exists.
+- **Host tuning (`vectorpdf tiles`, `eng/vectorpdf/baseline-tiles.txt`):** rectangular clips (`re W n`) are axis-aligned clips instead of offscreen layers, and other clip layers are bounded to their mask (a 58-command text page with 13 nested clips: 516 → 44 ms at 300 dpi). GPU tiles are 4 096 px (one replay per viewport tile instead of four). Replayers, with their tessellations, are cached per page, scale and colour mode, so scrolling at a fixed zoom reuses them (path-heavy fixture at 1 600 %: next tile 136 ms, versus 1.2 s before). The detail tile shows the visible area first, then the margin tile replaces it. `forceSoftware` measures the WARP tier (RDP, VMs).
 - PDFium pages get the same detail tiles (`RenderPageRegion`: FPDF_RenderPageBitmap with a negative origin), and region fallback asks PDFium only for each token's region.
 
 ### Transparency and patterns (M7)
@@ -189,7 +190,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 ## 5. Remaining work, in priority order
 
-1. **Live host tuning on real-world documents:** repeat `vectorpdf live` on corpus CAD/map/scanned files and on a software render tier (RDP/VM); the 800 % p95 on the path-heavy fixture (33 ms) suggests tiled caching above 4096 px; tune `MaxLiveSurfaceCommands` (40 000) from that evidence.
+1. **Live host tuning, remainder:** readback (GPU → CPU → WPF bitmap) is now the floor for light pages (≈ 25 ms per 16 MP); presenting Direct2D output without the copy (D3DImage / DirectComposition) would remove it. First tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); scrolling reuses it.
 3. **Nightly corpus job:** run `fetch-corpus.ps1` + `vectorpdf corpus --summary` in the scheduled CI tier and track trends; add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.

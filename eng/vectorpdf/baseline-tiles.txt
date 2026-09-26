@@ -1,0 +1,45 @@
+# vectorpdf tiles (Release, 2026-09-26, developer workstation). Viewer page host timings: page bitmap at the DPI buckets, first detail tile at a zoom, next tile while scrolling (cached tessellation).
+## generated path-heavy document (vectorpdf gen --pages 6: 400 page-spanning curves + 50 text lines per page)
+# vectorpdf tiles (hardware GPU), 6 pages ranked, heaviest 6
+# window 1200x900 DIP at 150 % scaling; tile = visible + half a viewport per side, <= 4096 px
+commands: max 450, median of heaviest 450
+build      n=  6 p50=    42.0ms p95=   150.3ms max=   150.3ms
+page150    n=  6 p50=   111.3ms p95=   124.7ms max=   124.7ms
+page200    n=  6 p50=   158.4ms p95=   192.5ms max=   192.5ms
+page300    n=  6 p50=   214.3ms p95=   237.9ms max=   237.9ms
+pdfium300  n=  6 p50=   527.2ms p95=   593.0ms max=   593.0ms
+tile400    n=  6 p50=   311.5ms p95=   452.1ms max=   452.1ms
+scroll400  n=  6 p50=   105.4ms p95=   137.3ms max=   137.3ms
+tile800    n=  6 p50=   548.4ms p95=   618.7ms max=   618.7ms
+scroll800  n=  6 p50=   112.7ms p95=   119.3ms max=   119.3ms
+tile1600   n=  6 p50=   822.2ms p95=   946.7ms max=   946.7ms
+scroll1600 n=  6 p50=   136.3ms p95=   157.1ms max=   157.1ms
+# vectorpdf tiles (WARP software), 6 pages ranked, heaviest 6
+# window 1200x900 DIP at 150 % scaling; tile = visible + half a viewport per side, <= 4096 px
+commands: max 450, median of heaviest 450
+build      n=  6 p50=    33.2ms p95=   130.1ms max=   130.1ms
+page150    n=  6 p50=   422.7ms p95=   576.9ms max=   576.9ms
+page200    n=  6 p50=   444.9ms p95=   682.8ms max=   682.8ms
+page300    n=  6 p50=   614.6ms p95=  1067.8ms max=  1067.8ms
+pdfium300  n=  6 p50=  1113.9ms p95=  1239.2ms max=  1239.2ms
+tile400    n=  6 p50=   843.3ms p95=  1476.5ms max=  1476.5ms
+scroll400  n=  6 p50=   436.6ms p95=  1360.5ms max=  1360.5ms
+tile800    n=  6 p50=  1149.7ms p95=  3400.4ms max=  3400.4ms
+scroll800  n=  6 p50=   584.8ms p95=  2196.6ms max=  2196.6ms
+tile1600   n=  6 p50=  1501.8ms p95=  4173.4ms max=  4173.4ms
+scroll1600 n=  6 p50=   562.4ms p95=  1303.5ms max=  1303.5ms
+## rights-cleared corpus, 40 heaviest pages
+# vectorpdf tiles (hardware GPU), 2941 pages ranked, heaviest 40
+# window 1200x900 DIP at 150 % scaling; tile = visible + half a viewport per side, <= 4096 px
+commands: max 160, median of heaviest 68
+build      n= 40 p50=     4.1ms p95=    37.9ms max=    55.6ms
+page150    n= 40 p50=    33.8ms p95=   237.3ms max=   427.1ms
+page200    n= 40 p50=    51.4ms p95=   149.3ms max=   373.2ms
+page300    n= 40 p50=    78.7ms p95=   253.3ms max=   340.4ms
+pdfium300  n= 40 p50=    71.3ms p95=   582.6ms max=  1196.2ms
+tile400    n= 40 p50=   104.3ms p95=   520.7ms max=   535.3ms
+scroll400  n= 40 p50=   109.2ms p95=   399.2ms max=   501.1ms
+tile800    n= 40 p50=   107.3ms p95=   524.2ms max=   910.2ms
+scroll800  n= 40 p50=    95.4ms p95=  1116.8ms max=  1384.3ms
+tile1600   n= 40 p50=    92.0ms p95=   425.2ms max=   725.3ms
+scroll1600 n= 40 p50=    97.3ms p95=   265.5ms max=   630.5ms

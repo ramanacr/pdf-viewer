@@ -25,7 +25,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff] | live <file.pdf> [--frames N] [--pages N]");
+            Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff] | live <file.pdf> [--frames N] [--pages N] | tiles <dir> [--software] [--top N]");
             return 2;
         }
 
@@ -34,6 +34,7 @@ public static class Program
             "bench" => await Bench.RunAsync(args),
             "corpus" => await Corpus.RunAsync(args),
             "live" => LiveBench.Run(args),
+            "tiles" => await TileBench.RunAsync(args),
             "gen" when args.Length >= 2 => Gen(args),
             "diffpage" when args.Length >= 4 => await DiffPage.RunAsync(args),
             _ => 2,

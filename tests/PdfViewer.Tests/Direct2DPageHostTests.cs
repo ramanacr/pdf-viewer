@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -140,5 +142,43 @@ public class Direct2DPageHostTests : IDisposable
         // (52.5 pt, 52.5 pt) = 420 DIPs from the top-left is inside the square (400..1200 DIPs at 800 %).
         int inside = ((int)(420 - page.DetailRect.Y) * tile.PixelWidth + (int)(420 - page.DetailRect.X)) * 4;
         Assert.True(px[inside] > 225, "the black square is light in night mode");
+    }
+    /// <summary>Forwards every call to the real service and records detail-region requests.</summary>
+    public class RegionRecorder : DispatchProxy
+    {
+        public IPdfDocumentService Inner { get; set; } = null!;
+        public List<Int32Rect> Regions { get; } = new();
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == nameof(IPdfDocumentService.RenderPageRegionAsync))
+                Regions.Add(new Int32Rect((int)args![3]!, (int)args[4]!, (int)args[5]!, (int)args[6]!));
+            return method.Invoke(Inner, args);
+        }
+    }
+
+    [Fact]
+    public async Task DetailTile_ShowsTheVisibleAreaFirst_ThenTheMarginTile()
+    {
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        await service.OpenDocumentAsync(SquarePdf());
+        var proxy = DispatchProxy.Create<IPdfDocumentService, RegionRecorder>();
+        var recorder = (RegionRecorder)(object)proxy;
+        recorder.Inner = service;
+
+        var page = new PageViewModel(1, 200, 200);
+        await page.LoadImageAsync(new AsyncPageRenderer(service, new LruPageCache(8)), 150, 0);
+        page.UpdateScale(16);
+        var visible = new Rect(700, 1400, 400, 300);
+        await page.UpdateDetailAsync(proxy, visible, 1.0, 0, false);
+
+        Assert.Equal(2, recorder.Regions.Count);
+        Assert.Equal(new Int32Rect(700, 1400, 400, 300), recorder.Regions[0]);          // exactly what is on screen
+        Assert.True(recorder.Regions[1].Width * recorder.Regions[1].Height > 3 * 400 * 300); // then the margin
+        Assert.True(page.DetailRect.Contains(new Rect(500, 1250, 800, 600)), "the final tile carries the margin");
+
+        // Scrolling within the margin needs no render.
+        await page.UpdateDetailAsync(proxy, new Rect(760, 1440, 400, 300), 1.0, 0, false);
+        Assert.Equal(2, recorder.Regions.Count);
     }
 }

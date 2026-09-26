@@ -38,9 +38,12 @@ internal sealed class D2DResources : IDisposable
     private long _bitmapBytes;
     private IDWriteFontCollection? _systemCollection;
 
-    public D2DResources(long maxBitmapBytes)
+    private readonly bool _forceSoftware;
+
+    public D2DResources(long maxBitmapBytes, bool forceSoftware = false)
     {
         _maxBitmapBytes = maxBitmapBytes;
+        _forceSoftware = forceSoftware;
         Factory = D2D1.D2D1CreateFactory<ID2D1Factory1>(Vortice.Direct2D1.FactoryType.MultiThreaded, DebugLevel.None);
         DWrite = Vortice.DirectWrite.DWrite.DWriteCreateFactory<IDWriteFactory5>(Vortice.DirectWrite.FactoryType.Shared);
         _fontLoader = DWrite.CreateInMemoryFontFileLoader();
@@ -55,7 +58,7 @@ internal sealed class D2DResources : IDisposable
         ReleaseDeviceResources();
         var levels = new[] { Vortice.Direct3D.FeatureLevel.Level_11_1, Vortice.Direct3D.FeatureLevel.Level_11_0, Vortice.Direct3D.FeatureLevel.Level_10_1, Vortice.Direct3D.FeatureLevel.Level_10_0, Vortice.Direct3D.FeatureLevel.Level_9_3 };
         ID3D11Device? device = null;
-        foreach (var driver in new[] { DriverType.Hardware, DriverType.Warp })
+        foreach (var driver in _forceSoftware ? new[] { DriverType.Warp } : new[] { DriverType.Hardware, DriverType.Warp })
         {
             if (D3D11.D3D11CreateDevice((IDXGIAdapter?)null!, driver, DeviceCreationFlags.BgraSupport, levels, out device).Success && device != null)
             {

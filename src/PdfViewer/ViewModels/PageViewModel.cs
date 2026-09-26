@@ -191,6 +191,14 @@ public partial class PageViewModel : ObservableObject
     /// <summary>Largest detail tile side in device pixels (memory bound: 64 MB at 4096²).</summary>
     public const double MaxDetailPixels = 4096;
 
+    private void SetDetail(BitmapSource tile, (double, int, bool) key, Rect pixels, double devicePixelsPerDip)
+    {
+        DetailImage = tile;
+        DetailRect = new Rect(pixels.X / devicePixelsPerDip, pixels.Y / devicePixelsPerDip, pixels.Width / devicePixelsPerDip, pixels.Height / devicePixelsPerDip);
+        _detailKey = key;
+        _detailPixels = pixels;
+    }
+
     public void ClearDetail()
     {
         _detailCts?.Cancel();
@@ -243,13 +251,24 @@ public partial class PageViewModel : ObservableObject
         _detailCts = cts;
         try
         {
+            // Visible area first: the margin quadruples the pixels, and the user is waiting for
+            // what is on screen. The margin tile follows and replaces it.
+            double vx0 = Math.Max(0, Math.Floor(visiblePx.X)), vy0 = Math.Max(0, Math.Floor(visiblePx.Y));
+            int vw = (int)Math.Min(MaxDetailPixels, Math.Min(fullW, Math.Ceiling(visiblePx.Right)) - vx0);
+            int vh = (int)Math.Min(MaxDetailPixels, Math.Min(fullH, Math.Ceiling(visiblePx.Bottom)) - vy0);
+            if (vw > 0 && vh > 0 && (double)w * h > 1.5 * vw * vh && !(DetailImage != null && _detailKey == key))
+            {
+                var visibleTile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)vx0, (int)vy0, vw, vh, nightMode, cts.Token);
+                if (cts.IsCancellationRequested)
+                    return;
+                if (visibleTile != null)
+                    SetDetail(visibleTile, key, new Rect(vx0, vy0, vw, vh), devicePixelsPerDip);
+            }
+
             var tile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)x0, (int)y0, w, h, nightMode, cts.Token);
             if (cts.IsCancellationRequested || tile == null)
                 return;
-            DetailImage = tile;
-            DetailRect = new Rect(x0 / devicePixelsPerDip, y0 / devicePixelsPerDip, w / devicePixelsPerDip, h / devicePixelsPerDip);
-            _detailKey = key;
-            _detailPixels = new Rect(x0, y0, w, h);
+            SetDetail(tile, key, new Rect(x0, y0, w, h), devicePixelsPerDip);
         }
         catch (OperationCanceledException) { }
         catch (PdfEngine.Exceptions.PdfSecurityPolicyException) { }

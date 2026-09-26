@@ -34,7 +34,7 @@ internal sealed class Replayer : IDisposable
     /// <summary>Night mode: every paint, gradient stop and image is colour-inverted.</summary>
     public bool InvertColors { get; set; }
 
-    /// <summary>Tessellate once and reuse across tiles; only worth it when a render spans several tiles.</summary>
+    /// <summary>Tessellate once and reuse across tiles and, for a cached replayer, across renders at the same scale.</summary>
     public bool UseRealizations { get; set; }
 
     /// <summary>Drops device-dependent caches (after device loss).</summary>
@@ -56,7 +56,7 @@ internal sealed class Replayer : IDisposable
     private readonly IPdfDisplayList _list;
     private readonly List<PdfFallbackToken>? _backendFallbacks;
     private readonly bool _analyzeOnly;
-    private readonly CancellationToken _ct;
+    private CancellationToken _ct;
     private readonly HashSet<DrawGlyphRun> _unsupportedRuns = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<DrawImage> _unsupportedImages = new(ReferenceEqualityComparer.Instance);
 
@@ -67,6 +67,17 @@ internal sealed class Replayer : IDisposable
         _backendFallbacks = backendFallbacks;
         _analyzeOnly = analyzeOnly;
         _ct = ct;
+    }
+
+    /// <summary>
+    /// A replayer kept across renders (the renderer caches one per page and scale) takes each
+    /// render's cancellation token, and so do the nested replayers it created.
+    /// </summary>
+    public void SetCancellation(CancellationToken ct)
+    {
+        _ct = ct;
+        foreach (var m in _maskReplayers.Values) m.SetCancellation(ct);
+        foreach (var (replayer, _) in _tilingCells.Values) replayer.SetCancellation(ct);
     }
 
     private static Matrix3x2 M(PdfMatrix m) => new((float)m.A, (float)m.B, (float)m.C, (float)m.D, (float)m.E, (float)m.F);
@@ -150,7 +161,14 @@ internal sealed class Replayer : IDisposable
         public int Height { get; init; }
         /// <summary>Every pixel is opaque (the page, or a group initialised with an opaque backdrop).</summary>
         public bool Opaque { get; init; }
-        public readonly List<(ID2D1Geometry? Mask, Matrix3x2 Full, float Opacity)> Layers = new();
+        /// <summary>
+        /// Clip and opacity layers in push order. <c>Rect</c> is set for rectangular clips (user
+        /// space); under an axis-preserving transform they become an axis-aligned clip instead of a
+        /// layer, which costs no offscreen surface.
+        /// </summary>
+        public readonly List<(ID2D1Geometry? Mask, Matrix3x2 Full, float Opacity, PdfRect? Rect)> Layers = new();
+        /// <summary>Per layer: true when it was pushed as an axis-aligned clip.</summary>
+        public readonly List<bool> AxisAligned = new();
     }
 
     // Matching End index for each group Begin, and whether a Normal transparency group contains a
@@ -221,6 +239,7 @@ internal sealed class Replayer : IDisposable
             ctx1?.Dispose();
         }
     }
+
 
     /// <summary>Knockout state of the group whose range is being drawn: its initial backdrop (null when isolated).</summary>
     private sealed record Knockout(ID2D1Bitmap1? Backdrop);
@@ -300,7 +319,7 @@ internal sealed class Replayer : IDisposable
                     }
                     break;
                 case PushClip pc:
-                    PushLayer(surface, Geometry(pc.Path, pc.Rule), full, 1f);
+                    PushLayer(surface, Geometry(pc.Path, pc.Rule), full, 1f, AxisRectangle(pc.Path));
                     break;
                 case PushStrokeClip psc:
                     PushLayer(surface, StrokeOutline(psc, full), full, 1f);
@@ -426,7 +445,7 @@ internal sealed class Replayer : IDisposable
                 // the enclosing clips itself.
                 if (blends)
                     foreach (var layer in surface.Layers)
-                        PushLayer(sub, layer.Mask, layer.Full * offset, 1f);
+                        PushLayer(sub, layer.Mask, layer.Full * offset, 1f, layer.Rect);
                 DrawRange(sub, start, end, groupPageToDevice, ctm, groupVisible,
                     knockout ? new Knockout(fromBackdrop ? initialBackdrop : null) : null);
             }
@@ -568,7 +587,7 @@ internal sealed class Replayer : IDisposable
             ctx.DrawImage(result, new Vector2(x0, y0), null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
             ctx.PopAxisAlignedClip();
             foreach (var layer in layers)
-                PushLayer(surface, layer.Mask, layer.Full, layer.Opacity);
+                PushLayer(surface, layer.Mask, layer.Full, layer.Opacity, layer.Rect);
         }
         finally
         {
@@ -586,7 +605,7 @@ internal sealed class Replayer : IDisposable
             new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
         copy.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target, new System.Drawing.Rectangle(x0, y0, w, h));
         foreach (var layer in layers)
-            PushLayer(surface, layer.Mask, layer.Full, layer.Opacity);
+            PushLayer(surface, layer.Mask, layer.Full, layer.Opacity, layer.Rect);
         return copy;
     }
 
@@ -615,7 +634,7 @@ internal sealed class Replayer : IDisposable
             try
             {
                 foreach (var layer in surface.Layers)
-                    PushLayer(sub, layer.Mask, layer.Full, 1f);
+                    PushLayer(sub, layer.Mask, layer.Full, 1f, layer.Rect);
                 DrawRange(sub, start, end, pageToDevice, ctm, visiblePage);
             }
             finally
@@ -655,7 +674,7 @@ internal sealed class Replayer : IDisposable
         {
             for (int i = disposables.Count - 1; i >= 0; i--) disposables[i].Dispose();
             foreach (var layer in layers)
-                PushLayer(surface, layer.Mask, layer.Full, layer.Opacity);
+                PushLayer(surface, layer.Mask, layer.Full, layer.Opacity, layer.Rect);
         }
     }
 
@@ -855,16 +874,91 @@ internal sealed class Replayer : IDisposable
             ? new(1 - c.R, 1 - c.G, 1 - c.B, (float)Math.Clamp(alpha, 0, 1))
             : new(c.R, c.G, c.B, (float)Math.Clamp(alpha, 0, 1));
 
-    private void PushLayer(Surface surface, ID2D1Geometry? mask, Matrix3x2 full, float opacity)
+    private void PushLayer(Surface surface, ID2D1Geometry? mask, Matrix3x2 full, float opacity, PdfRect? rect = null)
     {
-        PushLayer(surface.Ctx, mask, full, opacity);
-        surface.Layers.Add((mask, full, opacity));
+        // A rectangle under an axis-preserving transform is an axis-aligned clip: D2D clips it in
+        // the rasterizer, while a geometric-mask layer renders its content to an offscreen surface
+        // and composites it back (per nested clip, per tile — the dominant cost on text pages).
+        RawRectF? device = rect is { } r && opacity >= 1f ? DeviceRect(r, full) : null;
+        bool axis = device.HasValue;
+        if (axis)
+        {
+            surface.Ctx.Transform = Matrix3x2.Identity;
+            surface.Ctx.PushAxisAlignedClip(device!.Value, AntialiasMode.PerPrimitive);
+        }
+        else
+        {
+            PushLayer(surface.Ctx, mask, full, opacity);
+        }
+        surface.Layers.Add((mask, full, opacity, rect));
+        surface.AxisAligned.Add(axis);
     }
 
     private static void PopLayer(Surface surface)
     {
-        surface.Layers.RemoveAt(surface.Layers.Count - 1);
-        surface.Ctx.PopLayer();
+        int last = surface.Layers.Count - 1;
+        bool axis = surface.AxisAligned[last];
+        surface.Layers.RemoveAt(last);
+        surface.AxisAligned.RemoveAt(last);
+        if (axis) surface.Ctx.PopAxisAlignedClip();
+        else surface.Ctx.PopLayer();
+    }
+
+    /// <summary>The path's rectangle when it is exactly one axis-aligned rectangle (the <c>re W n</c> idiom).</summary>
+    internal static PdfRect? AxisRectangle(PdfPath path)
+    {
+        var segs = path.Segments;
+        if (segs.Count is < 4 or > 6 || segs[0] is not PdfMoveTo m)
+            return null;
+        Span<PdfPoint> pts = stackalloc PdfPoint[5];
+        pts[0] = m.Point;
+        int n = 1;
+        for (int i = 1; i < segs.Count; i++)
+        {
+            switch (segs[i])
+            {
+                case PdfLineTo l when n < 5:
+                    pts[n++] = l.Point;
+                    break;
+                case PdfCloseSubpath when i == segs.Count - 1:
+                    break;
+                default:
+                    return null;
+            }
+        }
+        if (n == 5)
+        {
+            if (pts[4] != pts[0]) return null; // explicit return to the start
+            n = 4;
+        }
+        if (n != 4)
+            return null;
+        // Each edge horizontal or vertical, alternating.
+        bool hFirst = pts[0].Y == pts[1].Y;
+        for (int i = 0; i < 4; i++)
+        {
+            var a = pts[i];
+            var b = pts[(i + 1) % 4];
+            bool horizontal = (i % 2 == 0) == hFirst;
+            if (horizontal ? a.Y != b.Y : a.X != b.X)
+                return null;
+        }
+        double x0 = Math.Min(pts[0].X, pts[2].X), x1 = Math.Max(pts[0].X, pts[2].X);
+        double y0 = Math.Min(pts[0].Y, pts[2].Y), y1 = Math.Max(pts[0].Y, pts[2].Y);
+        return new PdfRect(x0, y0, x1 - x0, y1 - y0);
+    }
+
+    /// <summary>Device rectangle of a user-space rectangle, or null when the transform rotates or skews it.</summary>
+    private static RawRectF? DeviceRect(PdfRect r, Matrix3x2 full)
+    {
+        const float eps = 1e-5f;
+        bool axisPreserving = (MathF.Abs(full.M12) < eps && MathF.Abs(full.M21) < eps) ||
+                              (MathF.Abs(full.M11) < eps && MathF.Abs(full.M22) < eps);
+        if (!axisPreserving)
+            return null;
+        var a = Vector2.Transform(new Vector2((float)r.X, (float)r.Y), full);
+        var b = Vector2.Transform(new Vector2((float)(r.X + r.Width), (float)(r.Y + r.Height)), full);
+        return new RawRectF(MathF.Min(a.X, b.X), MathF.Min(a.Y, b.Y), MathF.Max(a.X, b.X), MathF.Max(a.Y, b.Y));
     }
 
     private void PushLayer(ID2D1DeviceContext ctx, ID2D1Geometry? mask, Matrix3x2 full, float opacity)
@@ -872,9 +966,16 @@ internal sealed class Replayer : IDisposable
         // The mask is given in user space; with an identity world transform MaskTransform is the
         // complete user → device mapping, which keeps the semantics unambiguous.
         ctx.Transform = Matrix3x2.Identity;
+        var bounds = new RawRectF(-1e7f, -1e7f, 1e7f, 1e7f);
+        if (mask != null)
+        {
+            var b = mask.GetBounds(full);
+            if (b.Right >= b.Left && b.Bottom >= b.Top)
+                bounds = new RawRectF(MathF.Floor(b.Left) - 1, MathF.Floor(b.Top) - 1, MathF.Ceiling(b.Right) + 1, MathF.Ceiling(b.Bottom) + 1);
+        }
         var p = new LayerParameters1
         {
-            ContentBounds = new RawRectF(-1e7f, -1e7f, 1e7f, 1e7f),
+            ContentBounds = bounds,
             GeometricMask = mask!,
             MaskAntialiasMode = AntialiasMode.PerPrimitive,
             MaskTransform = full,
