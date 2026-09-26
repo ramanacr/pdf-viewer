@@ -136,5 +136,28 @@ public class Jpeg2000Tests
         var result = await renderer.RenderAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 }, null, null, false, CancellationToken.None);
         result.Page.Dispose();
         Assert.Contains(result.Fallbacks, t => t.Reason == PdfFallbackReason.ImageDecode);
+    
+    }
+
+    [Fact]
+    public async Task Jpeg_WithBytesBeforeTheSoiMarker_StillDecodes()
+    {
+        // A tiny baseline JPEG encoded by WIC, prefixed with a stray end-of-line (seen in real files).
+        var src = System.Windows.Media.Imaging.BitmapSource.Create(8, 8, 96, 96, System.Windows.Media.PixelFormats.Bgr24, null,
+            Enumerable.Range(0, 8 * 8 * 3).Select(i => (byte)(i * 5)).ToArray(), 24);
+        var enc = new System.Windows.Media.Imaging.JpegBitmapEncoder { QualityLevel = 95 };
+        enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(src));
+        using var ms = new System.IO.MemoryStream();
+        enc.Save(ms);
+        var jpeg = new byte[] { 0x0A }.Concat(ms.ToArray()).Concat(new byte[] { 0x0D }).ToArray();
+        var b = new VectorPdfBuilder();
+        int image = b.AddStream("/Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode", jpeg);
+        b.AddPage("q 100 0 0 100 50 50 cm /Im1 Do Q", $"<< /XObject << /Im1 {image} 0 R >> >>");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        using var renderer = new Direct2DVectorRenderer();
+        var result = await renderer.RenderAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 }, null, null, false, CancellationToken.None);
+        result.Page.Dispose();
+        Assert.Empty(result.Fallbacks);
     }
 }

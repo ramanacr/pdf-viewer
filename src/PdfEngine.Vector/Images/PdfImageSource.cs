@@ -79,7 +79,7 @@ public sealed class PdfImageSource : IPdfImageSource
         {
             bool invert = IsInvertedDecode(dict, _colorSpace?.NumberOfComponents ?? 3);
             // Adobe CMYK JPEGs store inverted components; a /Decode [1 0 …] flips them back.
-            return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, decoded.Data, alpha,
+            return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, FromStartOfImage(decoded.Data), alpha,
                 InvertCmykJpeg: _colorSpace?.NumberOfComponents == 4 && !invert);
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
@@ -227,6 +227,21 @@ public sealed class PdfImageSource : IPdfImageSource
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// JPEG data from its SOI marker: bytes before it (a stray end-of-line after <c>stream</c>, for
+    /// example) are skipped, as libjpeg does when it scans for the first marker.
+    /// </summary>
+    internal static byte[] FromStartOfImage(byte[] data)
+    {
+        int limit = Math.Min(data.Length - 1, 1024);
+        for (int i = 0; i < limit; i++)
+        {
+            if (data[i] == 0xFF && data[i + 1] == 0xD8)
+                return i == 0 ? data : data.AsSpan(i).ToArray();
+        }
+        return data;
     }
 
     private bool ReadBool(PdfDictionary? parms, string key, bool fallback) =>
