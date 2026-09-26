@@ -66,7 +66,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     private PdfEngineMetrics _metrics = new();
     private PdfVectorDocument? _vectorDoc;
     private bool _vectorOpenAttempted;
-    private bool _openedWithPassword;
+    // The document password, kept for the lazy vector open (engine switch) and cleared on close.
+    private string? _password;
     private readonly SemaphoreSlim _vectorOpenGate = new(1, 1);
     private PdfEngineMode _mode;
     private bool _disposed;
@@ -286,7 +287,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _fallbackProvider.Reset();
         ClearSurfaces();
         _vectorOpenAttempted = false;
-        _openedWithPassword = !string.IsNullOrEmpty(password);
+        _password = password;
 
         if (_mode == PdfEngineMode.Pdfium)
             return meta; // opened lazily if the user later switches to Auto/Vector
@@ -316,21 +317,16 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     private async Task OpenVectorDocumentAsync(string filePath, CancellationToken ct)
     {
         _vectorOpenAttempted = true;
-        if (_openedWithPassword)
-        {
-            _metrics.DocumentFallbackReason = nameof(PdfFallbackReason.EncryptedContent);
-            return;
-        }
-
         try
         {
-            _vectorDoc = await PdfVectorDocument.OpenAsync(filePath, cancellationToken: ct).ConfigureAwait(false);
+            // Encrypted files open with the same password PDFium accepted (Standard security handler).
+            _vectorDoc = await PdfVectorDocument.OpenAsync(filePath, cancellationToken: ct, password: _password).ConfigureAwait(false);
             if (_vectorDoc.WasRepaired)
                 _metrics.RecordRecovery();
         }
         catch (PdfEncryptedDocumentException)
         {
-            // Even Vector mode cannot help here: no security handler exists in the core yet.
+            // An unsupported security handler (e.g. public-key): PDFium renders the document.
             _vectorDoc = null;
             _metrics.DocumentFallbackReason = nameof(PdfFallbackReason.EncryptedContent);
         }
@@ -346,7 +342,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     {
         ClearSurfaces();
         _vectorOpenAttempted = false;
-        _openedWithPassword = false;
+        _password = null;
         _pageEngineReports.Clear();
         _fallbackProvider.Reset();
         _vectorDoc?.Dispose();

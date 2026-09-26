@@ -104,6 +104,27 @@ public class HybridVectorServiceTests : IDisposable
         Assert.True(first.Y + first.Height > word.Y && first.Y < word.Y + word.Height, "character box overlaps the word box vertically");
     }
 
+    [Theory]
+    [InlineData(PdfEngine.Vector.Tests.Fixtures.TestEncryptionKind.Aes128_R4)]
+    [InlineData(PdfEngine.Vector.Tests.Fixtures.TestEncryptionKind.Aes256_R6)]
+    [InlineData(PdfEngine.Vector.Tests.Fixtures.TestEncryptionKind.Rc4_128_R3)]
+    public async Task EncryptedDocument_WithPassword_RendersOnTheVectorPath(PdfEngine.Vector.Tests.Fixtures.TestEncryptionKind scheme)
+    {
+        var b = new PdfEngine.Vector.Tests.Fixtures.VectorPdfBuilder();
+        b.AddPage("0 0 1 rg 20 20 160 160 re f BT /F1 20 Tf 30 90 Td (Locked) Tj ET",
+            $"<< /Font << /F1 {b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")} 0 R >> >>");
+        string path = Path.Combine(_dir, $"encrypted-{scheme}.pdf");
+        Directory.CreateDirectory(_dir);
+        File.WriteAllBytes(path, b.Build(new PdfEngine.Vector.Tests.Fixtures.PdfTestEncryption(scheme, "secret", "owner")));
+
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        await service.OpenDocumentAsync(path, "secret");
+        Assert.True(service.IsVectorDocumentOpen);
+        var page = await service.RenderPageAsync(1, 72);
+        Assert.NotNull(page);
+        Assert.Equal(PdfEngineMode.Vector, service.GetPageEngineReport(1)!.Engine);
+    }
+
     [Fact]
     public async Task SwitchingFromPdfiumToAuto_OpensTheVectorDocumentLazily()
     {

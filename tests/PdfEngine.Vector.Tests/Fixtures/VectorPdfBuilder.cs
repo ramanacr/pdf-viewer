@@ -80,31 +80,45 @@ internal sealed class VectorPdfBuilder
         return this;
     }
 
-    public byte[] Build(bool corruptStartXref = false, bool omitXref = false)
+    public byte[] Build(bool corruptStartXref = false, bool omitXref = false) => Build(null, corruptStartXref, omitXref);
+
+    /// <summary>Builds the file encrypted with <paramref name="encryption"/> (the /Encrypt dictionary is appended in plain).</summary>
+    public byte[] Build(PdfTestEncryption? encryption, bool corruptStartXref = false, bool omitXref = false)
     {
         var kids = new StringBuilder();
         foreach (var p in _pageObjects) kids.Append(p).Append(" 0 R ");
         _objects[CatalogObject - 1] = Encoding.Latin1.GetBytes($"<< /Type /Catalog /Pages {PagesObject} 0 R {_catalogExtra} >>");
         _objects[PagesObject - 1] = Encoding.Latin1.GetBytes($"<< /Type /Pages /Kids [{kids}] /Count {_pageObjects.Count} >>");
 
+        var bodies = new List<byte[]>(_objects.Count + 1);
+        for (int i = 0; i < _objects.Count; i++)
+            bodies.Add(encryption != null ? encryption.EncryptObject(_objects[i], i + 1) : _objects[i]);
+        string encryptTrailer = string.Empty;
+        if (encryption != null)
+        {
+            bodies.Add(Encoding.Latin1.GetBytes(encryption.EncryptDictionary()));
+            string id = Convert.ToHexString(encryption.Id);
+            encryptTrailer = $" /Encrypt {bodies.Count} 0 R /ID [<{id}> <{id}>]";
+        }
+
         using var ms = new MemoryStream();
         Write(ms, "%PDF-1.7\n%âãÏÓ\n");
-        var offsets = new long[_objects.Count];
-        for (int i = 0; i < _objects.Count; i++)
+        var offsets = new long[bodies.Count];
+        for (int i = 0; i < bodies.Count; i++)
         {
             offsets[i] = ms.Position;
             Write(ms, $"{i + 1} 0 obj\n");
-            ms.Write(_objects[i]);
+            ms.Write(bodies[i]);
             Write(ms, "\nendobj\n");
         }
 
         long xrefPos = ms.Position;
         if (!omitXref)
         {
-            Write(ms, $"xref\n0 {_objects.Count + 1}\n0000000000 65535 f \n");
+            Write(ms, $"xref\n0 {bodies.Count + 1}\n0000000000 65535 f \n");
             foreach (var off in offsets)
                 Write(ms, off.ToString("D10", CultureInfo.InvariantCulture) + " 00000 n \n");
-            Write(ms, $"trailer\n<< /Size {_objects.Count + 1} /Root {CatalogObject} 0 R {_extraTrailer} >>\n");
+            Write(ms, $"trailer\n<< /Size {bodies.Count + 1} /Root {CatalogObject} 0 R {_extraTrailer}{encryptTrailer} >>\n");
         }
         Write(ms, $"startxref\n{(corruptStartXref ? xrefPos + 7777 : xrefPos)}\n%%EOF\n");
         return ms.ToArray();

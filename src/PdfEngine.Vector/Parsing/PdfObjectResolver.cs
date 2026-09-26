@@ -26,6 +26,25 @@ public sealed class PdfObjectResolver
     // which object-stream and /Length resolution rely on.
     private readonly object _sync = new();
 
+    private PdfEngine.Vector.Security.PdfStandardSecurityHandler? _security;
+    private int _encryptObjectNumber = -1;
+
+    /// <summary>
+    /// Decrypts every object read from the file from now on (strings and stream data, per object);
+    /// objects inside object streams are covered by their stream. <paramref name="encryptObjectNumber"/>
+    /// (the /Encrypt dictionary) stays plain. Earlier resolutions are discarded.
+    /// </summary>
+    public void SetSecurityHandler(PdfEngine.Vector.Security.PdfStandardSecurityHandler handler, int encryptObjectNumber)
+    {
+        lock (_sync)
+        {
+            _security = handler;
+            _encryptObjectNumber = encryptObjectNumber;
+            _resolvedCache.Clear();
+            _objectStreams.Clear();
+        }
+    }
+
     public PdfObjectResolver(IPdfByteSource source, PdfXrefTable xrefTable, PdfSecurityLimits? limits = null)
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
@@ -79,7 +98,7 @@ public sealed class PdfObjectResolver
                     var lexer = new PdfLexer(_source, _limits);
 
                     var objNumToken = lexer.NextToken();
-                    lexer.NextToken(); // generation
+                    var genToken = lexer.NextToken();
                     var objKeyword = lexer.NextToken();
 
                     bool headerMatches = objNumToken.Type == PdfTokenType.Integer && objNumToken.IntValue == objectNumber &&
@@ -101,6 +120,13 @@ public sealed class PdfObjectResolver
 
                     var parser = new PdfParser(_limits);
                     resolved = parser.ParseObject(lexer);
+                    if (resolved is PdfStream fileStream)
+                        resolved = FixIndirectLength(fileStream);
+                    if (resolved != null && _security != null && objectNumber != _encryptObjectNumber)
+                    {
+                        int generation = genToken.Type == PdfTokenType.Integer ? (int)genToken.IntValue : 0;
+                        resolved = _security.DecryptObject(resolved, objectNumber, generation);
+                    }
                 }
 
                 if (resolved is PdfStream stream)

@@ -45,42 +45,52 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     public bool WasRepaired => _xrefTable.WasReconstructed;
     public PdfPageTree PageTree => _pageTree;
 
+    /// <summary>True when the file is encrypted (and was opened with a valid password).</summary>
+    public bool IsEncrypted => Security != null;
+
+    /// <summary>The Standard security handler of an encrypted document (permissions, revision), else null.</summary>
+    public PdfEngine.Vector.Security.PdfStandardSecurityHandler? Security { get; private init; }
+
     public static async ValueTask<PdfVectorDocument> OpenAsync(
         string filePath,
         PdfSecurityLimits? limits = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? password = null)
     {
         byte[] bytes = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
         var memSource = new MemoryByteSource(bytes);
-        return OpenCore(memSource, filePath, limits);
+        return OpenCore(memSource, filePath, limits, password);
     }
 
     public static async ValueTask<PdfVectorDocument> OpenAsync(
         byte[] pdfBytes,
         string filePath = "Memory.pdf",
         PdfSecurityLimits? limits = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? password = null)
     {
         var memSource = new MemoryByteSource(pdfBytes);
-        return await Task.Run(() => OpenCore(memSource, filePath, limits), cancellationToken).ConfigureAwait(false);
+        return await Task.Run(() => OpenCore(memSource, filePath, limits, password), cancellationToken).ConfigureAwait(false);
     }
 
     public static PdfVectorDocument Open(
         IPdfByteSource source,
         string filePath = "Source.pdf",
-        PdfSecurityLimits? limits = null)
+        PdfSecurityLimits? limits = null,
+        string? password = null)
     {
-        return OpenCore(source, filePath, limits);
+        return OpenCore(source, filePath, limits, password);
     }
 
     private static PdfVectorDocument OpenCore(
         IPdfByteSource source,
         string filePath,
-        PdfSecurityLimits? limits)
+        PdfSecurityLimits? limits,
+        string? password)
     {
         try
         {
-            return OpenCoreUnchecked(source, filePath, limits);
+            return OpenCoreUnchecked(source, filePath, limits, password);
         }
         catch (Exception ex) when (ex is InvalidDataException or FormatException or OverflowException
                                        or ArgumentOutOfRangeException or IndexOutOfRangeException)
@@ -93,7 +103,8 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     private static PdfVectorDocument OpenCoreUnchecked(
         IPdfByteSource source,
         string filePath,
-        PdfSecurityLimits? limits)
+        PdfSecurityLimits? limits,
+        string? password)
     {
         limits ??= PdfSecurityLimits.Default;
         var xref = new PdfXrefTable(limits);
@@ -101,11 +112,18 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
 
         var resolver = new PdfObjectResolver(source, xref, limits);
 
-        // No security handler yet (05_PDF_CORE "Encryption"): strings and streams would decode to
-        // ciphertext and render as garbage, so refuse with a typed error and let the host fall back.
-        if (xref.Trailer != null && xref.Trailer.ContainsKey("Encrypt"))
+        // Standard security handler (7.6.4): authenticate, then every object is decrypted as it is read.
+        PdfEngine.Vector.Security.PdfStandardSecurityHandler? security = null;
+        if (xref.Trailer != null && xref.Trailer.TryGetValue("Encrypt", out var encryptObj) && encryptObj != null)
         {
-            throw new PdfEncryptedDocumentException();
+            if (resolver.Resolve(encryptObj) is not PdfDictionary encrypt)
+                throw new PdfEncryptedDocumentException("The /Encrypt dictionary cannot be read.");
+            security = PdfEngine.Vector.Security.PdfStandardSecurityHandler.Create(encrypt, resolver.Resolve(xref.Trailer["ID"]) as PdfArray, resolver.Resolve);
+            if (!security.Authenticate(password))
+                throw new PdfEncryptedDocumentException(
+                    string.IsNullOrEmpty(password) ? "A password is required to open this document." : "The password is incorrect.",
+                    passwordRequired: true);
+            resolver.SetSecurityHandler(security, encryptObj is PdfIndirectRef er ? er.ObjectNumber : -1);
         }
 
         PdfDictionary? catalog = ResolveCatalog(xref, resolver);
@@ -126,7 +144,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         // Resolve basic metadata
         var meta = ExtractMetadata(xref.Trailer!, resolver, filePath, source.Length, pageTree.Count);
 
-        return new PdfVectorDocument(source, filePath, meta, xref, resolver, pageTree, catalog, limits);
+        return new PdfVectorDocument(source, filePath, meta, xref, resolver, pageTree, catalog, limits) { Security = security };
     }
 
     private static PdfDictionary? ResolveCatalog(PdfXrefTable xref, PdfObjectResolver resolver)

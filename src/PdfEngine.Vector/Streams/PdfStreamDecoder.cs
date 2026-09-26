@@ -73,6 +73,8 @@ public sealed class PdfStreamDecoder
         for (int i = 0; i < filters.Count; i++)
         {
             var (name, parms) = filters[i];
+            if (name == "Crypt" && stream.Decrypted)
+                continue; // the security handler already applied this stream's crypt filter
             string? imageFilter = NormalizeImageFilter(name);
             if (imageFilter != null)
             {

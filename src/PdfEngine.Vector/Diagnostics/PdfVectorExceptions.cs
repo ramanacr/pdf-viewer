@@ -61,9 +61,17 @@ public sealed class PdfUnsupportedFeatureException : PdfVectorException
     }
 }
 
-/// <summary>The document is encrypted; the vector core has no security handler yet (05_PDF_CORE "Encryption").</summary>
+/// <summary>
+/// The document is encrypted and cannot be opened: the password is missing or wrong
+/// (<see cref="PasswordRequired"/>), or the security handler is not supported.
+/// </summary>
 public sealed class PdfEncryptedDocumentException : PdfVectorException
 {
-    public PdfEncryptedDocumentException()
-        : base(PdfVectorErrorKind.Encryption, "Document is encrypted; the vector core does not implement a security handler yet.") { }
+    public bool PasswordRequired { get; }
+
+    public PdfEncryptedDocumentException(string message = "Document is encrypted with an unsupported security handler.", bool passwordRequired = false)
+        : base(PdfVectorErrorKind.Encryption, message)
+    {
+        PasswordRequired = passwordRequired;
+    }
 }
