@@ -203,7 +203,8 @@ public sealed record PdfFontFace(
     bool IsFixedPitch = false,
     bool IsSymbolic = false,
     double Ascent = 0.8,
-    double Descent = -0.2);
+    double Descent = -0.2,
+    PdfMatrix? GlyphMatrix = null);
 
 /// <summary>
 /// Glyph run preserving exact PDF positioning, font identity, and text matrix.
@@ -285,8 +286,14 @@ public sealed record PdfDecodedImage(
     PdfDecodedImageFormat Format,
     ReadOnlyMemory<byte> Data,
     ReadOnlyMemory<byte>? Alpha = null,
-    bool InvertCmykJpeg = false)
+    bool InvertCmykJpeg = false,
+    Func<byte[], int, int, int, byte[]>? MapJpegComponents = null)
 {
+    // MapJpegComponents: for a JPEG whose colour space is not a device space (Separation, DeviceN,
+    // Indexed, Lab) or whose /Decode is not the default, the backend decodes the raw components
+    // (8-bit, interleaved in PDF order: gray / R G B / C M Y K, Adobe inversion already undone)
+    // and passes (samples, components, width, height); the core returns BGRA through the colour
+    // space. Null: the decoded pixels are the colours.
     public long ByteSize => Data.Length + (Alpha?.Length ?? 0);
 }
 

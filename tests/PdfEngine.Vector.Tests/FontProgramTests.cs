@@ -1,3 +1,4 @@
+using System.Threading;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -84,6 +85,75 @@ public class FontProgramTests
         byte[] cff = Type1Converter.TryConvert(SyntheticType1(fontMatrix: "0.001 0 0 0.001 0 0"))!.Cff;
         var pdf = FontPdf(cff, "FontFile3", extraStreamDict: "/Subtype /Type1C", subtype: "Type1", baseFont: "TestType1", text: "(AB)");
         await AssertRendersLikePdfium(pdf, "type1c");
+    }
+
+    /// <summary>
+    /// Bare CFF (Type1C) programs whose FontMatrix is not the standard 1/unitsPerEm scale — as
+    /// real producers write them: 1/2048 rounded, a narrow face's x scale, an oblique's skew. They
+    /// used to be refused (807 fallback runs in GovDocs1); now the matrix is normalized and the
+    /// remainder applied as the face's glyph matrix, drawn like PDFium draws them.
+    /// </summary>
+    [Theory]
+    [InlineData("rounded-2048", 0.00048829999, 0, 0, 0.00048829999, 2048)]
+    [InlineData("short-2048", 0.000488281, 0, 0, 0.000488281, 2048)]
+    [InlineData("narrow", 0.00082, 0, 0, 0.001, 1000)]
+    [InlineData("oblique", 0.001, 0, 0.000212557, 0.001, 1000)]
+    public async Task BareCff_WithNonStandardFontMatrix_RendersLikePdfium(string label, double a, double b, double c, double d, int unitsPerEm)
+    {
+        // Glyph A: an L-shaped outline in font units (a skew or scale is visible in its edges).
+        int u = unitsPerEm;
+        byte[] Glyph()
+        {
+            var ms = new MemoryStream();
+            void Num(int v) { if (v is >= -107 and <= 107) ms.WriteByte((byte)(v + 139)); else { ms.WriteByte(28); ms.WriteByte((byte)(v >> 8)); ms.WriteByte((byte)v); } }
+            Num(u / 10); Num(0); ms.WriteByte(21);                 // rmoveto
+            Num(u * 6 / 10); Num(0); ms.WriteByte(5);               // rlineto →
+            Num(0); Num(u / 5); ms.WriteByte(5);                    // ↑
+            Num(-u * 4 / 10); Num(0); ms.WriteByte(5);              // ←
+            Num(0); Num(u / 2); ms.WriteByte(5);                    // ↑
+            Num(-u / 5); Num(0); ms.WriteByte(5);                   // ←
+            ms.WriteByte(14);                                       // endchar
+            return ms.ToArray();
+        }
+        byte[] notdef = { 14 };
+        byte[] cff = CffWriter.Write("TestCff", new[] { ".notdef", "A" }, new[] { notdef, Glyph() },
+            new[] { a, b, c, d, 0.0, 0.0 }, new double[] { 0, 0, u, u });
+        Assert.NotEqual(new[] { a, b, c, d, 0.0, 0.0 }, new[] { 1.0 / u, 0, 0, 1.0 / u, 0, 0 });
+
+        var pdf = FontPdf(cff, "FontFile3", extraStreamDict: "/Subtype /Type1C", subtype: "Type1", baseFont: "TestCff", text: "(A)");
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        var run = Assert.Single(list.Commands.OfType<DrawGlyphRun>()).Run;
+        Assert.Equal(PdfFontProgramFormat.OpenTypeCff, run.Face!.Format);
+
+        using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
+        var result = await renderer.RenderAsync(list, new RenderRequest { PageNumber = 1, Dpi = 144 }, null, CancellationToken.None);
+        Assert.Empty(result.Fallbacks);
+        using var vector = result.Page;
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(pdf);
+        using var reference = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = 1, Dpi = 144 });
+        var (mean, bad) = DifferentialRenderingTests.Compare(vector, reference);
+        _output.WriteLine($"{label}: mean={mean:F2} bad={bad:P2}");
+        int dark = 0;
+        var span = vector.Pixels.Span;
+        for (int p = 0; p < span.Length; p += 4) if (span[p] < 128) dark++;
+        Assert.True(dark > 200, $"{label}: no glyph pixels drawn");
+        Assert.True(mean <= 1.0 && bad <= 0.005, $"{label}: mean {mean:F2} bad {bad:P2}");
+    }
+
+    [Fact]
+    public void CffFontMatrix_IsRewrittenInPlace_WithoutMovingOffsets()
+    {
+        byte[] notdef = { 14 };
+        byte[] cff = CffWriter.Write("T", new[] { ".notdef" }, new[] { notdef }, new[] { 0.001, 0, 0.000212557, 0.001, 0, 0 }, new double[] { 0, 0, 1000, 1000 });
+        var font = CffFont.TryParse(cff)!;
+        var rewritten = font.WithStandardFontMatrix(1000);
+        Assert.NotNull(rewritten);
+        Assert.Equal(cff.Length, rewritten!.Length);
+        var parsed = CffFont.TryParse(rewritten)!;
+        Assert.Equal(new[] { 0.001, 0, 0, 0.001, 0, 0 }, parsed.FontMatrix);
+        Assert.Equal(font.GlyphCount, parsed.GlyphCount);
     }
 
     [Fact]

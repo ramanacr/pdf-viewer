@@ -100,7 +100,8 @@ public sealed class PdfContentInterpreter
                 f.IsFixedPitch,
                 f.IsSymbolic,
                 NormalizeEm(f.Ascent, 0.8),
-                NormalizeEm(f.Descent, -0.2));
+                NormalizeEm(f.Descent, -0.2),
+                program?.GlyphMatrix);
             return new PreparedFace(face, program);
         });
     }

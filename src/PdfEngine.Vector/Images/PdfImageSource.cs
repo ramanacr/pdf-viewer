@@ -78,13 +78,47 @@ public sealed class PdfImageSource : IPdfImageSource
         if (decoded.ImageFilter == "DCTDecode")
         {
             bool invert = IsInvertedDecode(dict, _colorSpace?.NumberOfComponents ?? 3);
+            bool cmyk = _colorSpace?.NumberOfComponents == 4;
+            // A JPEG's samples are colour-space components like any image's: a /Separation or
+            // /DeviceN JPEG holds tints (1 = full ink), and shown as gray it is a negative. Device
+            // spaces keep the fast path; everything else is mapped by the core.
+            bool mapped = _colorSpace is { } space && (space.Name is not ("DeviceGray" or "DeviceRGB" or "DeviceCMYK" or "ICCBased")
+                                                      || (invert && !cmyk));
+            Func<byte[], int, int, int, byte[]>? map = mapped
+                ? (samples, components, w, h) =>
+                {
+                    if (components != Math.Max(1, _colorSpace!.NumberOfComponents))
+                        throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG components do not match the colour space.");
+                    return DecodeColor(dict, samples, w, h, CancellationToken.None, bitsPerComponent: 8);
+                }
+                : null;
             // Adobe CMYK JPEGs store inverted components; a /Decode [1 0 …] flips them back.
             return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, FromStartOfImage(decoded.Data), alpha,
-                InvertCmykJpeg: _colorSpace?.NumberOfComponents == 4 && !invert);
+                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map);
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
             return DecodeJpx(dict, decoded.Data, alpha, ct);
-        byte[] samples = decoded.Data;
+        byte[] samples = DecodeSamples(decoded, width, height, ct);
+
+        byte[] bgra = isMask
+            ? DecodeStencil(dict, samples, width, height)
+            : DecodeColor(dict, samples, width, height, ct);
+
+        if (alpha != null)
+        {
+            for (int i = 0, p = 3; i < alpha.Length; i++, p += 4)
+                bgra[p] = (byte)(bgra[p] * alpha[i] / 255);
+        }
+
+        return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra);
+    }
+
+    /// <summary>
+    /// Packed samples of a stream whose image codec the vector core decodes itself: CCITT fax and
+    /// JBIG2 (bilevel), or none. Used for images and for their masks alike.
+    /// </summary>
+    private byte[] DecodeSamples(PdfDecodedStream decoded, int width, int height, CancellationToken ct)
+    {
         if (decoded.ImageFilter == "CCITTFaxDecode")
         {
             // Bilevel codec: its output is ordinary 1-bit samples (0 = black unless /BlackIs1).
@@ -100,29 +134,18 @@ public sealed class PdfImageSource : IPdfImageSource
                 DamagedRowsBeforeError: (int)(parms?.GetInteger("DamagedRowsBeforeError") ?? 0));
             if (ccitt.Columns != width)
                 throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "CCITT /Columns differs from the image width.");
-            samples = CcittFaxDecoder.Decode(decoded.Data, ccitt, height, ct);
+            return CcittFaxDecoder.Decode(decoded.Data, ccitt, height, ct);
         }
-        else if (decoded.ImageFilter == "JBIG2Decode")
+        if (decoded.ImageFilter == "JBIG2Decode")
         {
             var globals = decoded.ImageFilterParms is { } jp && _resolver.Resolve(jp["JBIG2Globals"]) is PdfStream g
                 ? _decoder.DecodeStream(g)
                 : null;
-            samples = Jbig2Decoder.Decode(decoded.Data, globals, width, height, ct);
+            return Jbig2Decoder.Decode(decoded.Data, globals, width, height, ct);
         }
-        else if (decoded.ImageFilter != null)
+        if (decoded.ImageFilter != null)
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.UnsupportedImageFilter, $"Image filter {decoded.ImageFilter} is not decoded by the vector core.");
-
-        byte[] bgra = isMask
-            ? DecodeStencil(dict, samples, width, height)
-            : DecodeColor(dict, samples, width, height, ct);
-
-        if (alpha != null)
-        {
-            for (int i = 0, p = 3; i < alpha.Length; i++, p += 4)
-                bgra[p] = (byte)(bgra[p] * alpha[i] / 255);
-        }
-
-        return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra);
+        return decoded.Data;
     }
 
     // ---------------------------------------------------------------- JPEG 2000 (8.9.5.3 / 7.4.9)
@@ -319,11 +342,11 @@ public sealed class PdfImageSource : IPdfImageSource
 
     // ---------------------------------------------------------------- colour images
 
-    private byte[] DecodeColor(PdfDictionary dict, byte[] data, int width, int height, CancellationToken ct)
+    private byte[] DecodeColor(PdfDictionary dict, byte[] data, int width, int height, CancellationToken ct, int? bitsPerComponent = null)
     {
         var cs = _colorSpace ?? PdfColorSpace.DeviceRgb;
         int n = Math.Max(1, cs.NumberOfComponents);
-        int bpc = (int)(dict.GetInteger("BitsPerComponent") ?? 8);
+        int bpc = bitsPerComponent ?? (int)(dict.GetInteger("BitsPerComponent") ?? 8);
         if (bpc is not (1 or 2 or 4 or 8 or 16))
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, $"Unsupported BitsPerComponent {bpc}.");
 
@@ -493,8 +516,12 @@ public sealed class PdfImageSource : IPdfImageSource
             throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "Mask dimensions invalid or too large.");
 
         var decoded = _decoder.DecodeImageStream(maskStream);
-        if (decoded.ImageFilter != null)
+        if (soft && decoded.ImageFilter == "JPXDecode")
+            return Resample(DecodeJpxGray(decoded.Data, mw, mh, IsInvertedDecode(md, 1), ct), mw, mh, width, height);
+        if (decoded.ImageFilter is "DCTDecode" or "JPXDecode")
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.UnsupportedImageFilter, $"Mask filter {decoded.ImageFilter} unsupported.");
+        // CCITT fax and JBIG2 stencil masks (common in scanned and exported documents).
+        byte[] maskSamples = DecodeSamples(decoded, mw, mh, ct);
 
         int bpc = soft ? (int)(md.GetInteger("BitsPerComponent") ?? 8) : 1;
         if (bpc is not (1 or 2 or 4 or 8 or 16))
@@ -503,7 +530,7 @@ public sealed class PdfImageSource : IPdfImageSource
         bool invert = IsInvertedDecode(md, 1);
 
         var plane = new byte[mw * mh];
-        var bits = new BitReader(decoded.Data, mw, 1, bpc);
+        var bits = new BitReader(maskSamples, mw, 1, bpc);
         for (int y = 0; y < mh; y++)
         {
             if ((y & 63) == 0) ct.ThrowIfCancellationRequested();
@@ -527,9 +554,14 @@ public sealed class PdfImageSource : IPdfImageSource
             }
         }
 
+        return Resample(plane, mw, mh, width, height);
+    }
+
+    /// <summary>Nearest-neighbour resampling of a mask plane to the base image size.</summary>
+    private static byte[] Resample(byte[] plane, int mw, int mh, int width, int height)
+    {
         if (mw == width && mh == height)
             return plane;
-
         var resampled = new byte[width * height];
         for (int y = 0; y < height; y++)
         {
@@ -541,6 +573,34 @@ public sealed class PdfImageSource : IPdfImageSource
             }
         }
         return resampled;
+    }
+
+    /// <summary>A JPEG 2000 soft mask: the first component, scaled to 0-255 (opacity).</summary>
+    private byte[] DecodeJpxGray(byte[] data, int mw, int mh, bool invert, CancellationToken ct)
+    {
+        if (!TryReadJpxSize(data, out long w, out long h, out _) || w * h > _limits.MaxImagePixels)
+            throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG 2000 mask size exceeds the image limits.");
+        CoreJ2K.Util.InterleavedImage image;
+        try { image = CoreJ2K.J2kImage.FromBytes(data); }
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+        {
+            throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, $"JPEG 2000 mask could not be decoded ({ex.GetType().Name}).");
+        }
+        using (image)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (image.Width != mw || image.Height != mh)
+                throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 mask size differs from its dictionary.");
+            var plane = image.GetComponent(0);
+            double scale = 255.0 / ((1L << Math.Clamp(image.GetBitDepth(0), 1, 31)) - 1);
+            var result = new byte[mw * mh];
+            for (int i = 0; i < result.Length; i++)
+            {
+                byte a = (byte)Math.Clamp(Math.Round(plane[i] * scale), 0, 255);
+                result[i] = invert ? (byte)(255 - a) : a;
+            }
+            return result;
+        }
     }
 
     private static byte ToByte(float v) => (byte)Math.Clamp((int)Math.Round(v * 255), 0, 255);

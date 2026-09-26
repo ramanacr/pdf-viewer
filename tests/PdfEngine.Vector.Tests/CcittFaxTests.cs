@@ -193,6 +193,44 @@ public class CcittFaxTests
         Assert.True(mean <= 1.0 && bad <= 0.005, $"k1: mean {mean:F2} bad {bad:P2}");
     }
 
+    /// <summary>
+    /// An RGB image with a CCITT G4 stencil /Mask (8.9.6.3), as scanned and exported documents
+    /// carry them: the mask is decoded by the core (it used to send the image to PDFium - 38 images
+    /// in GovDocs1), and the result matches PDFium.
+    /// </summary>
+    [Fact]
+    public async Task StencilMask_CompressedWithGroup4_MatchesPdfium()
+    {
+        var src = SourceImage();
+        var (g4, photometric) = EncodeTiff(src, TiffCompressOption.Ccitt4);
+        bool inverted = photometric == 1;
+        var rgb = new byte[W * H * 3];
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                int i = (y * W + x) * 3;
+                rgb[i] = (byte)(x * 255 / W); rgb[i + 1] = 90; rgb[i + 2] = (byte)(y * 255 / H);
+            }
+        var b = new VectorPdfBuilder();
+        int mask = b.AddStream($"/Type /XObject /Subtype /Image /Width {W} /Height {H} /ImageMask true /BitsPerComponent 1 " +
+                               $"/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns {W} /Rows {H} /BlackIs1 {(inverted ? "true" : "false")} >>", g4);
+        int image = b.AddStream($"/Type /XObject /Subtype /Image /Width {W} /Height {H} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Mask {mask} 0 R", rgb, flate: true);
+        b.AddPage($"0.95 0.9 0.3 rg 0 0 {W} {H} re f q {W} 0 0 {H} 0 0 cm /Im1 Do Q", $"<< /XObject << /Im1 {image} 0 R >> >>", mediaBox: $"[0 0 {W} {H}]");
+        var pdf = b.Build();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        using var renderer = new Direct2DVectorRenderer();
+        var result = await renderer.RenderAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 }, null, null, false, CancellationToken.None);
+        Assert.Empty(result.Fallbacks);
+        using var v = result.Page;
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(pdf);
+        using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = 1, Dpi = 72 });
+        var (mean, bad) = DifferentialRenderingTests.Compare(v, p);
+        _output.WriteLine($"masked: mean={mean:F2} bad={bad:P2}");
+        Assert.True(mean <= 1.0 && bad <= 0.005, $"masked: mean {mean:F2} bad {bad:P2}");
+    }
+
     [Fact]
     public void TruncatedAndCorruptStreams_FailSoft()
     {
