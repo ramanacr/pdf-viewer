@@ -726,6 +726,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return _pdfiumService.ExtractPageTextSegments(pageNumber);
     }
 
+    /// <summary>
+    /// Selection text comes from PDFium's text page on every engine: it has the reading order,
+    /// the inferred spaces and line breaks, and line-end hyphens. It works on the same file (or
+    /// on the decrypted copy of a certificate-encrypted one), so boxes match the vector render.
+    /// </summary>
+    public Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default) =>
+        _pdfiumService.ExtractPageTextLayoutAsync(pageNumber, ct);
+
     public async Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default)
     {
         if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium && IsPageVectorRendered(pageNumber))

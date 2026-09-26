@@ -142,6 +142,9 @@ public partial class MainViewModel : ObservableObject
     private AppTheme _currentTheme = AppTheme.Light;
 
     public ObservableCollection<PageViewModel> Pages { get; } = new();
+
+    /// <summary>Word-processor text selection across the document's pages.</summary>
+    public TextSelectionController TextSelection { get; }
     public ObservableCollection<ThumbnailViewModel> Thumbnails { get; } = new();
     public ObservableCollection<BookmarkItem> Bookmarks { get; } = new();
     public ObservableCollection<SearchMatch> SearchMatches { get; } = new();
@@ -329,6 +332,7 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        TextSelection = new TextSelectionController(() => Pages, UpdateSelectionFromPages);
         Session = new DocumentSession(SecurityPolicy);
         CommandHistory = new CommandHistory(featureGate: FeatureGate);
 
@@ -1401,11 +1405,7 @@ public partial class MainViewModel : ObservableObject
             {
                 page.LoadTextSegmentsAsync(_docService).ContinueWith(_ =>
                 {
-                    void Apply()
-                    {
-                        page.SelectAllText();
-                        UpdateSelectionFromPages();
-                    }
+                    void Apply() => TextSelection.SelectAll(page);
 
                     // Marshalling through Application.Current dropped the selection entirely
                     // whenever there was no Application to marshal through - the null-conditional
@@ -1417,8 +1417,7 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                page.SelectAllText();
-                UpdateSelectionFromPages();
+                TextSelection.SelectAll(page);
             }
         }
     }
@@ -1426,10 +1425,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void ClearSelection()
     {
-        foreach (var page in Pages)
-        {
-            page.ClearTextSelection();
-        }
+        TextSelection.Clear();
         SelectedText = string.Empty;
         HasTextSelection = false;
     }
@@ -1444,26 +1440,20 @@ public partial class MainViewModel : ObservableObject
         {
             if (page.SelectedSegments.Count > 0)
             {
+                // One quad per selected line: the highlight covers the text, not the rectangle
+                // around a multi-line selection.
                 var sorted = page.SelectedSegments.OrderBy(s => s.SegmentIndex).ToList();
-                double minX = sorted.Min(s => s.X);
-                double minY = sorted.Min(s => s.Y);
-                double maxX = sorted.Max(s => s.X + s.Width);
-                double maxY = sorted.Max(s => s.Y + s.Height);
-
                 var annot = new AnnotationModel
                 {
                     PageNumber = page.PageNumber,
                     Type = AnnotationType.Highlight,
-                    X = minX,
-                    Y = minY,
-                    Width = Math.Max(0.01, maxX - minX),
-                    Height = Math.Max(0.01, maxY - minY),
                     ColorHex = SelectedAnnotationColor,
                     Opacity = 0.45,
                     Author = SelectedAnnotationAuthor,
                     Title = "Highlight",
                     Contents = page.GetSelectedText()
                 };
+                annot.SetQuads(sorted.Select(s => new Rect(s.X, s.Y, s.Width, s.Height)).ToList());
 
                 AddAnnotation(annot);
             }

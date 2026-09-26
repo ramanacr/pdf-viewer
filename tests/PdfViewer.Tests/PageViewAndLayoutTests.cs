@@ -55,14 +55,16 @@ public class PageViewAndLayoutTests
         page.TextSegments.Add(new PageTextSegment { Text = "Second", SegmentIndex = 1, X = 0.25, Y = 0.1, Width = 0.1, Height = 0.05 });
         page.TextSegments.Add(new PageTextSegment { Text = "Third", SegmentIndex = 2, X = 0.4, Y = 0.1, Width = 0.1, Height = 0.05 });
 
-        // Select segment range
+        // A drag selects character by character: to the start of "Second" is "First" and the space.
         page.SelectRange(new Point(0.1, 0.1), new Point(0.25, 0.1));
-        Assert.Equal(2, page.SelectedSegments.Count);
+        Assert.Equal("First", page.GetSelectedText());
+        page.SelectRange(new Point(0.1, 0.1), new Point(0.35, 0.1));
         Assert.Equal("First Second", page.GetSelectedText());
+        Assert.Single(page.SelectedSegments); // one band per line, spaces included
 
         // Select all text
         page.SelectAllText();
-        Assert.Equal(3, page.SelectedSegments.Count);
+        Assert.Single(page.SelectedSegments);
         Assert.Equal("First Second Third", page.GetSelectedText());
 
         // Clear text selection

@@ -125,7 +125,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
         page.TextSegments.Add(seg2);
 
         // User selects segment range
-        page.SelectRange(new Point(0.11, 0.11), new Point(0.36, 0.11));
+        page.SelectRange(new Point(0.09, 0.11), new Point(0.56, 0.11)); // from before "Hello" to past "World"
         vm.UpdateSelectionFromPages();
 
         Assert.True(vm.HasTextSelection);
@@ -150,7 +150,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
         page.TextSegments.Clear();
         page.TextSegments.Add(new PageTextSegment { Text = "Important", X = 0.2, Y = 0.3, Width = 0.3, Height = 0.05, SegmentIndex = 0 });
 
-        page.SelectRange(new Point(0.21, 0.31), new Point(0.4, 0.31));
+        page.SelectRange(new Point(0.19, 0.31), new Point(0.51, 0.31)); // across the whole word
         vm.UpdateSelectionFromPages();
 
         Assert.True(vm.HasTextSelection);

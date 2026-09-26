@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Controls;
@@ -123,6 +124,16 @@ public interface IPdfDocumentService : IDisposable
     /// Asynchronously extracts all selectable text segments from a given page.
     /// </summary>
     Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default);
+
+    /// <summary>
+    /// The page's text character by character, in reading order, for word-processor selection.
+    /// The default builds it from the word segments (a space between words, a break between lines).
+    /// </summary>
+    async Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default)
+    {
+        var words = await ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false);
+        return PdfViewer.Text.PageTextLayout.FromWords(words.OrderBy(w => w.SegmentIndex).Select(w => (w.Text, w.NormalizedBounds)));
+    }
 
     /// <summary>
     /// Exports pages to image files (PNG/JPEG) at custom DPI.

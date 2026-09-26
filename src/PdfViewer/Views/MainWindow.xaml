@@ -1148,10 +1148,7 @@
                                                 </ItemsControl.ItemContainerStyle>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type models:PageTextSegment}">
-                                                        <Border Background="#440078D7"
-                                                                BorderBrush="#880078D7"
-                                                                BorderThickness="1"
-                                                                CornerRadius="2" />
+                                                        <Border Background="#5A3390FF" SnapsToDevicePixels="True" /><!-- a word processor's selection: a flat band, no outline -->
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -1263,23 +1260,32 @@
                                                               Cursor="Hand"
                                                               Background="Transparent"
                                                               MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
-                                                            <!-- Highlight -->
-                                                            <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                    Opacity="{Binding Opacity}"
-                                                                    CornerRadius="2"
-                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" />
+                                                            <!-- Highlight: one box, or one band per line of a multi-line highlight -->
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
+                                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            </Grid>
 
                                                             <!-- Underline -->
-                                                            <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                    BorderThickness="0,0,0,2"
-                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
+                                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            </Grid>
 
                                                             <!-- StrikeOut -->
-                                                            <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                                  Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                  StrokeThickness="2"
-                                                                  VerticalAlignment="Center"
-                                                                  Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
+                                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      StrokeThickness="2"
+                                                                      VerticalAlignment="Center"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            </Grid>
 
                                                             <!-- Note -->
                                                             <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
@@ -1467,10 +1473,7 @@
                                     </ItemsControl.ItemContainerStyle>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:PageTextSegment}">
-                                            <Border Background="#440078D7"
-                                                    BorderBrush="#880078D7"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2" />
+                                            <Border Background="#5A3390FF" SnapsToDevicePixels="True" /><!-- a word processor's selection: a flat band, no outline -->
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -1582,23 +1585,32 @@
                                                   Cursor="Hand"
                                                   Background="Transparent"
                                                   MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
-                                                <!-- Highlight -->
-                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                        Opacity="{Binding Opacity}"
-                                                        CornerRadius="2"
-                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" />
+                                                <!-- Highlight: one box, or one band per line of a multi-line highlight -->
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
+                                                    <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                    <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                </Grid>
 
                                                 <!-- Underline -->
-                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                        BorderThickness="0,0,0,2"
-                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
+                                                    <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                    <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                </Grid>
 
                                                 <!-- StrikeOut -->
-                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                      StrokeThickness="2"
-                                                      VerticalAlignment="Center"
-                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
+                                                    <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          StrokeThickness="2"
+                                                          VerticalAlignment="Center"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                    <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                </Grid>
 
                                                 <!-- Note -->
                                                 <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"

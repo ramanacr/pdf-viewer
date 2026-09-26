@@ -1,3 +1,4 @@
+using PdfViewer.Text;
 using System;
 using System.Collections.ObjectModel;
 using System.Threading;
@@ -421,12 +422,22 @@ public partial class PageViewModel : ObservableObject
         IsExtractingText = true;
         try
         {
-            var segments = await docService.ExtractPageTextSegmentsAsync(PageNumber, ct);
+            var layout = await docService.ExtractPageTextLayoutAsync(PageNumber, ct);
             // A result that arrives after the page was already populated must not replace it.
             if (!ct.IsCancellationRequested && !IsTextExtracted)
             {
+                _textLayout = layout;
                 TextSegments.Clear();
-                TextSegments.AddRange(segments);
+                int index = 0;
+                foreach (var (text, box, _, _) in layout.Words())
+                {
+                    TextSegments.Add(new PageTextSegment
+                    {
+                        PageNumber = PageNumber, Text = text, SegmentIndex = index++,
+                        X = box.X, Y = box.Y, Width = box.Width, Height = box.Height,
+                    });
+                }
+                _layoutSegments = (TextSegments.Count, TextSegments.Count > 0 ? TextSegments[0] : null);
                 IsTextExtracted = true;
             }
         }
@@ -438,24 +449,93 @@ public partial class PageViewModel : ObservableObject
         }
     }
 
+    // ------------------------------------------------------------------ text selection (word-processor model)
+
+    private PageTextLayout _textLayout = PageTextLayout.Empty;
+    // The word segments the current layout corresponds to; segments supplied or replaced
+    // directly (a caller that has its own geometry) rebuild the layout from them.
+    private (int Count, PageTextSegment? First) _layoutSegments = (0, null);
+
+    /// <summary>
+    /// The page's text character by character. Built from the extractor; when only word segments
+    /// are present (supplied directly), from those.
+    /// </summary>
+    public PageTextLayout TextLayout
+    {
+        get
+        {
+            var current = (TextSegments.Count, TextSegments.Count > 0 ? TextSegments[0] : null);
+            if (current.Count != _layoutSegments.Count || !ReferenceEquals(current.Item2, _layoutSegments.First))
+            {
+                _textLayout = TextSegments.Count == 0
+                    ? PageTextLayout.Empty
+                    : PageTextLayout.FromWords(TextSegments.OrderBy(t => t.SegmentIndex).Select(t => (t.Text, t.NormalizedBounds)));
+                _layoutSegments = current;
+                SelectionStart = SelectionEnd = -1;
+                SelectedSegments.Clear();
+            }
+            return _textLayout;
+        }
+    }
+
+    /// <summary>Selected characters [<see cref="SelectionStart"/>, <see cref="SelectionEnd"/>); both -1 when none.</summary>
+    public int SelectionStart { get; private set; } = -1;
+    public int SelectionEnd { get; private set; } = -1;
+    public bool HasTextSelection => SelectionEnd > SelectionStart;
+
+    /// <summary>
+    /// Selects the characters between two carets (in either order). <see cref="SelectedSegments"/>
+    /// becomes one band per line — the highlight, and the quads of a highlight annotation.
+    /// </summary>
+    public void SetTextSelection(int caretA, int caretB)
+    {
+        var layout = TextLayout;
+        int s = Math.Clamp(Math.Min(caretA, caretB), 0, layout.Length);
+        int e = Math.Clamp(Math.Max(caretA, caretB), 0, layout.Length);
+        if (s == SelectionStart && e == SelectionEnd)
+            return;
+        SelectionStart = e > s ? s : -1;
+        SelectionEnd = e > s ? e : -1;
+
+        var bands = e > s ? layout.SelectionBands(s, e) : Array.Empty<(Rect, int, int, int)>();
+        // Update in place: during a drag most bands are unchanged, and replacing every element
+        // would rebuild every highlight rectangle on each mouse move.
+        for (int i = 0; i < bands.Count; i++)
+        {
+            var (rect, line, bs, be) = bands[i];
+            if (i < SelectedSegments.Count)
+            {
+                var seg = SelectedSegments[i];
+                seg.SegmentIndex = line;
+                seg.X = rect.X; seg.Y = rect.Y; seg.Width = rect.Width; seg.Height = rect.Height;
+                seg.Text = layout.GetText(bs, be);
+            }
+            else
+            {
+                SelectedSegments.Add(new PageTextSegment
+                {
+                    PageNumber = PageNumber, SegmentIndex = line, IsSelected = true, Text = layout.GetText(bs, be),
+                    X = rect.X, Y = rect.Y, Width = rect.Width, Height = rect.Height,
+                });
+            }
+        }
+        while (SelectedSegments.Count > bands.Count)
+            SelectedSegments.RemoveAt(SelectedSegments.Count - 1);
+    }
+
     public void ClearTextSelection()
     {
-        foreach (var seg in SelectedSegments)
-        {
-            seg.IsSelected = false;
-        }
+        SelectionStart = SelectionEnd = -1;
         SelectedSegments.Clear();
     }
 
-    public void SelectAllText()
-    {
-        ClearTextSelection();
-        foreach (var seg in TextSegments)
-        {
-            seg.IsSelected = true;
-            SelectedSegments.Add(seg);
-        }
-    }
+    public void SelectAllText() => SetTextSelection(0, TextLayout.Length);
+
+    /// <summary>The caret nearest a normalized point.</summary>
+    public int CaretAt(Point normPoint) => TextLayout.HitTest(normPoint);
+
+    /// <summary>True when the point is over a line of text (I-beam cursor).</summary>
+    public bool IsOverText(Point normPoint, double slack = 0.006) => TextLayout.IsOverText(normPoint, slack);
 
     public PageTextSegment? FindSegmentAt(Point normPoint)
     {
@@ -477,103 +557,33 @@ public partial class PageViewModel : ObservableObject
 
         PageTextSegment? closest = null;
         double minSqDist = double.MaxValue;
-
         foreach (var seg in TextSegments)
         {
-            double centerX = seg.X + seg.Width / 2.0;
-            double centerY = seg.Y + seg.Height / 2.0;
-            double dx = centerX - normPoint.X;
-            double dy = centerY - normPoint.Y;
+            double dx = seg.X + seg.Width / 2.0 - normPoint.X;
+            double dy = seg.Y + seg.Height / 2.0 - normPoint.Y;
             double sqDist = dx * dx + dy * dy;
-
             if (sqDist < minSqDist && sqDist <= maxDistance * maxDistance)
             {
                 minSqDist = sqDist;
                 closest = seg;
             }
         }
-
         return closest;
     }
 
-    public void SelectRange(Point normStart, Point normEnd)
-    {
-        var startSeg = FindClosestSegment(normStart);
-        var endSeg = FindClosestSegment(normEnd);
+    /// <summary>Selects the characters between the carets nearest two points (a drag).</summary>
+    public void SelectRange(Point normStart, Point normEnd) =>
+        SetTextSelection(CaretAt(normStart), CaretAt(normEnd));
 
-        ClearTextSelection();
-
-        if (startSeg != null && endSeg != null)
-        {
-            int minIdx = Math.Min(startSeg.SegmentIndex, endSeg.SegmentIndex);
-            int maxIdx = Math.Max(startSeg.SegmentIndex, endSeg.SegmentIndex);
-
-            for (int i = minIdx; i <= maxIdx && i < TextSegments.Count; i++)
-            {
-                var seg = TextSegments[i];
-                seg.IsSelected = true;
-                SelectedSegments.Add(seg);
-            }
-        }
-        else
-        {
-            double left = Math.Min(normStart.X, normEnd.X);
-            double top = Math.Min(normStart.Y, normEnd.Y);
-            double width = Math.Abs(normEnd.X - normStart.X);
-            double height = Math.Abs(normEnd.Y - normStart.Y);
-            var box = new Rect(left, top, width, height);
-
-            foreach (var seg in TextSegments)
-            {
-                if (box.IntersectsWith(seg.NormalizedBounds))
-                {
-                    seg.IsSelected = true;
-                    SelectedSegments.Add(seg);
-                }
-            }
-        }
-    }
-
+    /// <summary>Selects the word under a point — only the word, without its trailing space.</summary>
     public void SelectWordAt(Point normPoint)
     {
-        ClearTextSelection();
-        var seg = FindClosestSegment(normPoint);
-        if (seg != null)
-        {
-            seg.IsSelected = true;
-            SelectedSegments.Add(seg);
-        }
+        int glyph = TextLayout.GlyphAt(normPoint);
+        if (glyph < 0) { ClearTextSelection(); return; }
+        var (s, e) = TextLayout.WordAt(glyph);
+        SetTextSelection(s, e);
     }
 
-    public string GetSelectedText()
-    {
-        if (SelectedSegments.Count == 0) return string.Empty;
-
-        var sorted = SelectedSegments.OrderBy(s => s.SegmentIndex).ToList();
-        var sb = new System.Text.StringBuilder();
-
-        for (int i = 0; i < sorted.Count; i++)
-        {
-            var cur = sorted[i];
-            if (i > 0)
-            {
-                var prev = sorted[i - 1];
-                double yDiff = cur.Y - prev.Y;
-                double lineThreshold = Math.Min(cur.Height, prev.Height) * 0.6;
-                if (lineThreshold <= 0) lineThreshold = 0.01;
-
-                if (yDiff > lineThreshold)
-                {
-                    sb.AppendLine();
-                }
-                else if (!prev.Text.EndsWith(" ") && !cur.Text.StartsWith(" "))
-                {
-                    sb.Append(' ');
-                }
-            }
-            sb.Append(cur.Text);
-        }
-
-        return sb.ToString();
-    }
+    public string GetSelectedText() =>
+        HasTextSelection ? TextLayout.GetText(SelectionStart, SelectionEnd) : string.Empty;
 }
