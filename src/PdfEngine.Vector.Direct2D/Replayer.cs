@@ -1238,6 +1238,12 @@ internal sealed class Replayer : IDisposable
             case PdfRadialShading { IsGeneral: true } general:
                 PaintGeneralRadial(ctx, general, area, full, pageToDevice);
                 break;
+            case PdfMeshShading mesh:
+                PaintMesh(ctx, mesh, area, full, pageToDevice);
+                break;
+            case PdfFunctionShading function:
+                PaintFunctionShading(ctx, function, area, full, pageToDevice);
+                break;
             case PdfRadialShading radial:
             {
                 using var stops = ctx.CreateGradientStopCollection(Stops(radial.Stops, radial.StartColor, radial.EndColor), ExtendMode.Clamp);
@@ -1364,6 +1370,125 @@ internal sealed class Replayer : IDisposable
         {
             handle.Free();
         }
+    }
+
+    /// <summary>Device rectangle of a page-space area, clamped to the current target.</summary>
+    private static bool DeviceRect(ID2D1DeviceContext ctx, PdfRect area, Matrix3x2 pageToDevice, out int x0, out int y0, out int w, out int h)
+    {
+        using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
+        var size = target.PixelSize;
+        var c = new[]
+        {
+            Vector2.Transform(new Vector2((float)area.X, (float)area.Y), pageToDevice),
+            Vector2.Transform(new Vector2((float)area.Right, (float)area.Y), pageToDevice),
+            Vector2.Transform(new Vector2((float)area.X, (float)area.Bottom), pageToDevice),
+            Vector2.Transform(new Vector2((float)area.Right, (float)area.Bottom), pageToDevice),
+        };
+        x0 = Math.Max(0, (int)Math.Floor(c.Min(p => p.X)));
+        y0 = Math.Max(0, (int)Math.Floor(c.Min(p => p.Y)));
+        int x1 = Math.Min(size.Width, (int)Math.Ceiling(c.Max(p => p.X)));
+        int y1 = Math.Min(size.Height, (int)Math.Ceiling(c.Max(p => p.Y)));
+        w = x1 - x0;
+        h = y1 - y0;
+        return w > 0 && h > 0;
+    }
+
+    private static void DrawPixels(ID2D1DeviceContext ctx, uint[] pixels, int w, int h, RawRectF destination, InterpolationMode interpolation)
+    {
+        var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        try
+        {
+            using var bmp = ctx.CreateBitmap(new SizeI(w, h), handle.AddrOfPinnedObject(), (uint)(w * 4),
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+            ctx.Transform = Matrix3x2.Identity;
+            ctx.DrawBitmap(bmp, destination, 1f, interpolation, null, null);
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
+    private uint Opaque(PdfColor c)
+    {
+        var col = Color(c, 1);
+        return 0xFF000000u | ((uint)Math.Round(Math.Clamp(col.R, 0, 1) * 255) << 16) |
+               ((uint)Math.Round(Math.Clamp(col.G, 0, 1) * 255) << 8) | (uint)Math.Round(Math.Clamp(col.B, 0, 1) * 255);
+    }
+
+    /// <summary>
+    /// Mesh shadings (types 4–7): Gouraud triangles and device-resolution patch subdivision on the
+    /// CPU, drawn under the current clip. With a function, t is interpolated and then mapped.
+    /// </summary>
+    private void PaintMesh(ID2D1DeviceContext ctx, PdfMeshShading mesh, PdfRect area, Matrix3x2 userToDevice, Matrix3x2 pageToDevice)
+    {
+        if (!DeviceRect(ctx, area, pageToDevice, out int x0, out int y0, out int w, out int h))
+            return;
+        var target = new ShadingRasterizer.Target(x0, y0, w, h);
+        uint[]? lut = null;
+        if (mesh.FunctionLut is { Count: > 0 } fl)
+        {
+            lut = new uint[fl.Count];
+            for (int i = 0; i < lut.Length; i++) lut[i] = Opaque(fl[i]);
+        }
+        uint ToPixel(ShadingRasterizer.Shade s) => lut != null
+            ? lut[(int)Math.Round(Math.Clamp(s.T, 0, 1) * (lut.Length - 1))]
+            : Opaque(new PdfColor(s.R, s.G, s.B));
+        ShadingRasterizer.Shade ShadeOf(PdfColor c, double t) => new(c.R, c.G, c.B, (float)t);
+
+        var tris = mesh.Triangles;
+        for (int i = 0; i + 2 < tris.Count; i += 3)
+        {
+            if ((i & 0xFFF) == 0) _ct.ThrowIfCancellationRequested();
+            var a = tris[i]; var b = tris[i + 1]; var c = tris[i + 2];
+            ShadingRasterizer.FillTriangle(target,
+                Vector2.Transform(new Vector2((float)a.X, (float)a.Y), userToDevice),
+                Vector2.Transform(new Vector2((float)b.X, (float)b.Y), userToDevice),
+                Vector2.Transform(new Vector2((float)c.X, (float)c.Y), userToDevice),
+                ShadeOf(a.Color, a.T), ShadeOf(b.Color, b.T), ShadeOf(c.Color, c.T), ToPixel);
+        }
+        var corners = new ShadingRasterizer.Shade[4];
+        for (int p = 0; p < mesh.Patches.Count; p++)
+        {
+            if ((p & 0x3F) == 0) _ct.ThrowIfCancellationRequested();
+            var patch = mesh.Patches[p];
+            for (int k = 0; k < 4; k++) corners[k] = ShadeOf(patch.Colors[k], patch.T[k]);
+            ShadingRasterizer.FillPatch(target, patch, userToDevice, corners, ToPixel);
+        }
+        DrawPixels(ctx, target.Pixels, w, h, new RawRectF(x0, y0, x0 + w, y0 + h), InterpolationMode.NearestNeighbor);
+    }
+
+    /// <summary>Largest sample grid side for a function shading (bilinear between samples beyond it).</summary>
+    private const int MaxFunctionSamples = 768;
+
+    /// <summary>
+    /// Type 1 shading: f(x, y) sampled at device pixel centres (up to 768 per side, then bilinear),
+    /// transparent outside /Domain.
+    /// </summary>
+    private void PaintFunctionShading(ID2D1DeviceContext ctx, PdfFunctionShading sh, PdfRect area, Matrix3x2 userToDevice, Matrix3x2 pageToDevice)
+    {
+        if (!DeviceRect(ctx, area, pageToDevice, out int x0, out int y0, out int w, out int h))
+            return;
+        var shadingToDevice = M(sh.Matrix) * userToDevice;
+        if (!Matrix3x2.Invert(shadingToDevice, out var deviceToShading))
+            return;
+        int sw = Math.Min(w, MaxFunctionSamples), sh2 = Math.Min(h, MaxFunctionSamples);
+        var pixels = new uint[sw * sh2];
+        for (int j = 0; j < sh2; j++)
+        {
+            if ((j & 31) == 0) _ct.ThrowIfCancellationRequested();
+            float dy = y0 + (j + 0.5f) * h / sh2;
+            for (int i = 0; i < sw; i++)
+            {
+                float dx = x0 + (i + 0.5f) * w / sw;
+                var s = Vector2.Transform(new Vector2(dx, dy), deviceToShading);
+                var c = sh.Evaluate(s.X, s.Y);
+                if (c.A <= 0) continue;
+                pixels[j * sw + i] = Opaque(c);
+            }
+        }
+        DrawPixels(ctx, pixels, sw, sh2, new RawRectF(x0, y0, x0 + w, y0 + h),
+            sw == w && sh2 == h ? InterpolationMode.NearestNeighbor : InterpolationMode.Linear);
     }
 
     private ID2D1PathGeometry1 Polygon(Matrix3x2 pageToUser, PdfRect r)

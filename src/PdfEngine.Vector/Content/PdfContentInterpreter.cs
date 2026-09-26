@@ -890,13 +890,14 @@ public sealed class PdfContentInterpreter
                 return;
             }
 
-            var shadingDict = _resolver.Resolve(patternDict["Shading"]) switch
+            var shadingObj = _resolver.Resolve(patternDict["Shading"]);
+            var shadingDict = shadingObj switch
             {
                 PdfStream s => s.Dictionary,
                 PdfDictionary d => d,
                 _ => null,
             };
-            if (shadingDict == null || BuildShading(shadingDict, out var reason) is not PdfShading shading)
+            if (shadingDict == null || BuildShading(shadingDict, out var reason, shadingObj as PdfStream) is not PdfShading shading)
             {
                 AddFallback(PdfFallbackReason.Shading, "Unsupported shading pattern", pageBounds);
                 return;
@@ -1688,10 +1689,16 @@ public sealed class PdfContentInterpreter
                 return;
             }
 
-            if (BuildShading(shDict, out var reason) is not PdfShading shading)
+            if (BuildShading(shDict, out var reason, shObj as PdfStream) is not PdfShading shading)
             {
                 AddFallback(reason, "Unsupported shading type", bounds);
                 return;
+            }
+            if (shading is PdfMeshShading mesh)
+            {
+                bounds = Intersect(bounds, gs.CTM.Transform(mesh.Bounds));
+                if (bounds.IsEmpty)
+                    return;
             }
 
             bool group = gs.FillAlpha < 1.0;
@@ -1713,17 +1720,34 @@ public sealed class PdfContentInterpreter
         /// Axial and the radial cases a gradient brush reproduces exactly (point or concentric start
         /// circle). Colours are sampled from the shading function into stops.
         /// </summary>
-        private PdfShading? BuildShading(PdfDictionary sh, out PdfFallbackReason reason)
+        private PdfShading? BuildShading(PdfDictionary sh, out PdfFallbackReason reason, PdfStream? stream = null)
         {
             reason = PdfFallbackReason.Shading;
             long type = sh.GetInteger("ShadingType") ?? 0;
-            if (type is not 2 and not 3)
+            if (type is < 1 or > 7)
                 return null;
 
             var cs = PdfColorSpace.Resolve(sh["ColorSpace"], _resolver, _page.Resources);
             if (cs.IsPattern || cs.UnsupportedReason != null)
             {
                 reason = cs.UnsupportedReason ?? PdfFallbackReason.Shading;
+                return null;
+            }
+
+            try
+            {
+                if (type == 1)
+                    return BuildFunctionShading(sh, cs);
+                if (type >= 4)
+                    return stream == null ? null : BuildMeshShading(sh, stream, cs, (int)type);
+            }
+            catch (PdfResourceLimitException)
+            {
+                reason = PdfFallbackReason.ResourceLimit;
+                return null;
+            }
+            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or IndexOutOfRangeException or ArgumentException or OverflowException)
+            {
                 return null;
             }
 
@@ -1803,6 +1827,92 @@ public sealed class PdfContentInterpreter
             };
         }
 
+        private PdfFunction? ReadShadingFunction(PdfObject? fnObj) =>
+            _resolver.Resolve(fnObj) is { } f ? PdfFunction.ParseMany(f, _resolver, _limits) : null;
+
+        private static PdfColor EvaluateColor(PdfFunction fn, ReadOnlySpan<double> input, PdfColorSpace cs, double[] buffer)
+        {
+            fn.Evaluate(input, buffer);
+            return cs.ToRgbColor(buffer.AsSpan(0, Math.Max(1, cs.NumberOfComponents)), 1f);
+        }
+
+        /// <summary>Type 1: colour = f(x, y) over /Domain, mapped by /Matrix (8.7.4.5.2).</summary>
+        private PdfShading? BuildFunctionShading(PdfDictionary sh, PdfColorSpace cs)
+        {
+            var fn = ReadShadingFunction(sh["Function"]);
+            if (fn == null || fn.InputCount != 2)
+                return null;
+            double x0 = 0, x1 = 1, y0 = 0, y1 = 1;
+            if (_resolver.Resolve(sh["Domain"]) is PdfArray dom && dom.Count >= 4)
+            {
+                dom[0].TryGetNumber(out x0); dom[1].TryGetNumber(out x1);
+                dom[2].TryGetNumber(out y0); dom[3].TryGetNumber(out y1);
+            }
+            var matrix = ReadMatrix(sh["Matrix"]) ?? PdfMatrix.Identity;
+            int outputs = Math.Max(fn.OutputCount, Math.Max(1, cs.NumberOfComponents));
+            var domain = new PdfRect(Math.Min(x0, x1), Math.Min(y0, y1), Math.Abs(x1 - x0), Math.Abs(y1 - y0));
+            object gate = new();
+            return new PdfFunctionShading(domain, matrix, (x, y) =>
+            {
+                if (x < domain.X || x > domain.Right || y < domain.Y || y > domain.Bottom)
+                    return new PdfColor(0, 0, 0, 0);
+                Span<double> input = stackalloc double[2] { x, y };
+                var buffer = new double[outputs];
+                lock (gate) // functions keep no shared state today; the lock keeps that an implementation detail
+                    return EvaluateColor(fn, input, cs, buffer);
+            });
+        }
+
+        /// <summary>Types 4–7: triangles and patches in shading space (8.7.4.5.5–8.7.4.5.8).</summary>
+        private PdfShading? BuildMeshShading(PdfDictionary sh, PdfStream stream, PdfColorSpace cs, int type)
+        {
+            var fn = ReadShadingFunction(sh["Function"]);
+            int bpc = (int)(sh.GetInteger("BitsPerCoordinate") ?? 0);
+            int bpcomp = (int)(sh.GetInteger("BitsPerComponent") ?? 0);
+            int bpf = (int)(sh.GetInteger("BitsPerFlag") ?? 0);
+            int perRow = (int)(sh.GetInteger("VerticesPerRow") ?? 0);
+            if (_resolver.Resolve(sh["Decode"]) is not PdfArray decodeArr)
+                return null;
+            var decode = new double[decodeArr.Count];
+            for (int i = 0; i < decode.Length; i++)
+                if (!(_resolver.Resolve(decodeArr[i])?.TryGetNumber(out decode[i]) ?? false))
+                    return null;
+
+            var decoder = new PdfMeshDecoder(type, bpc, bpcomp, bpf, decode, cs, fn != null, perRow);
+            byte[] data = _owner._streamDecoder.DecodeStream(stream);
+            var (triangles, patches) = decoder.Decode(data);
+            if (triangles.Count == 0 && patches.Count == 0)
+                return null;
+
+            PdfColor[]? lut = null;
+            if (fn != null)
+            {
+                // t is interpolated across each element, then mapped through the function (8.7.4.5.5).
+                double t0 = decode[4], t1 = decode[5];
+                lut = new PdfColor[1024];
+                var buffer = new double[Math.Max(fn.OutputCount, Math.Max(1, cs.NumberOfComponents))];
+                Span<double> input = stackalloc double[1];
+                for (int i = 0; i < lut.Length; i++)
+                {
+                    input[0] = t0 + (t1 - t0) * i / (lut.Length - 1);
+                    lut[i] = EvaluateColor(fn, input, cs, buffer);
+                }
+                // Normalise vertex t to 0..1 over the decode range.
+                double span = t1 - t0;
+                for (int i = 0; i < triangles.Count; i++)
+                    triangles[i] = triangles[i] with { T = span == 0 ? 0 : (triangles[i].T - t0) / span };
+                foreach (var patch in patches)
+                    for (int k = 0; k < 4; k++)
+                        patch.T[k] = span == 0 ? 0 : (patch.T[k] - t0) / span;
+            }
+
+            double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+            foreach (var v in triangles) { minX = Math.Min(minX, v.X); maxX = Math.Max(maxX, v.X); minY = Math.Min(minY, v.Y); maxY = Math.Max(maxY, v.Y); }
+            foreach (var patch in patches)
+                foreach (var pt in patch.Points) { minX = Math.Min(minX, pt.X); maxX = Math.Max(maxX, pt.X); minY = Math.Min(minY, pt.Y); maxY = Math.Max(maxY, pt.Y); }
+            return new PdfMeshShading(triangles, patches, lut, new PdfRect(minX, minY, maxX - minX, maxY - minY));
+        }
+
         private IReadOnlyList<PdfGradientStop> SampleStops(PdfObject? fnObj, PdfColorSpace cs, double t0, double t1)
         {
             var resolved = _resolver.Resolve(fnObj);
@@ -1821,7 +1931,8 @@ public sealed class PdfContentInterpreter
                 return Array.Empty<PdfGradientStop>();
             }
 
-            const int Samples = 33;
+            // 257 samples: stitched and sampled functions with sharp steps keep their edges.
+            const int Samples = 257;
             int n = cs.NumberOfComponents;
             var stops = new List<PdfGradientStop>(Samples);
             var input = new double[1];

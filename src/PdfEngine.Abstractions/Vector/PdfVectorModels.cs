@@ -344,3 +344,32 @@ public sealed record PdfRadialShading(
 
 /// <summary>Gradient colour stop.</summary>
 public readonly record struct PdfGradientStop(double Offset, PdfColor Color);
+
+/// <summary>
+/// Type 1 function-based shading (ISO 32000-2 8.7.4.5.2): colour = f(x, y) over
+/// <see cref="Domain"/> in shading space, mapped to the current user space by <see cref="Matrix"/>.
+/// <see cref="Evaluate"/> returns the RGB colour (alpha 0 outside the domain).
+/// </summary>
+public sealed record PdfFunctionShading(PdfRect Domain, PdfMatrix Matrix, Func<double, double, PdfColor> Evaluate) : PdfShading("Function");
+
+/// <summary>A mesh vertex in shading (user) space: its RGB colour, or its parametric value when the mesh has a <see cref="PdfMeshShading.FunctionLut"/>.</summary>
+public readonly record struct PdfMeshVertex(double X, double Y, PdfColor Color, double T);
+
+/// <summary>
+/// A tensor-product patch (types 6 and 7): 16 control points indexed [i * 4 + j] with u along i and
+/// v along j (p00 = u 0 v 0, p03 = u 0 v 1, p30 = u 1 v 0), and corner values in the order
+/// c00, c03, c33, c30 (8.7.4.5.7). Coons patches arrive with their interior points computed.
+/// </summary>
+public sealed record PdfMeshPatch(PdfPoint[] Points, PdfColor[] Colors, double[] T);
+
+/// <summary>
+/// Free-form, lattice and patch mesh shadings (types 4–7). Triangles are consecutive vertex
+/// triples, Gouraud-shaded; patches are subdivided by the backend at device resolution. When
+/// <see cref="FunctionLut"/> is set, the parametric value is interpolated and then mapped
+/// through the table (t normalised to 0..1 over /Domain), as the specification requires.
+/// </summary>
+public sealed record PdfMeshShading(
+    IReadOnlyList<PdfMeshVertex> Triangles,
+    IReadOnlyList<PdfMeshPatch> Patches,
+    IReadOnlyList<PdfColor>? FunctionLut,
+    PdfRect Bounds) : PdfShading("Mesh");
