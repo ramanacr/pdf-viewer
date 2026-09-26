@@ -333,6 +333,13 @@ public sealed record PdfRadialShading(
 {
     /// <summary>Colour stops sampled from the shading function (offset 0..1 from start to end circle).</summary>
     public IReadOnlyList<PdfGradientStop>? Stops { get; init; }
+
+    /// <summary>
+    /// Two arbitrary circles (ISO 32000-2 8.7.4.5.4), not expressible as a focal/centre radial
+    /// brush: <see cref="Stops"/> are over the shading parameter t (offset 0 = start circle) and the
+    /// backend evaluates the largest t per pixel. Backends that cannot must classify the area.
+    /// </summary>
+    public bool IsGeneral { get; init; }
 }
 
 /// <summary>Gradient colour stop.</summary>

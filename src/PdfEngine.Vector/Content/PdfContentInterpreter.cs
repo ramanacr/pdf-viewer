@@ -1777,10 +1777,15 @@ public sealed class PdfContentInterpreter
                 return null;
             bool concentric = Math.Abs(x0 - x1) < 1e-9 && Math.Abs(y0 - y1) < 1e-9 && r1 > r0;
             bool focalPoint = r0 < 1e-9 && Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) < r1;
-            if (!concentric && !focalPoint)
-                return null;
-            if (concentric && r0 > 0 && !extendStart)
-                return null; // would need an unpainted hole inside r0
+            if ((!concentric && !focalPoint) || (concentric && r0 > 0 && !extendStart))
+            {
+                // Any other circle pair (or an unpainted hole inside r0): evaluated per pixel.
+                return new PdfRadialShading(new(x0, y0), r0, new(x1, y1), r1, stops[0].Color, stops[^1].Color, extendStart, extendEnd)
+                {
+                    Stops = stops,
+                    IsGeneral = true,
+                };
+            }
 
             // Brushes interpolate from the focal point (offset 0) to the end circle (offset 1):
             // remap stops so offset reflects the radius r(t) = r0 + t (r1 - r0).

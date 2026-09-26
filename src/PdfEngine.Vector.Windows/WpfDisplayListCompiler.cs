@@ -204,6 +204,13 @@ internal sealed class WpfDisplayListCompiler
                         PaintImage(dc, di, list.PageNumber, backendFallbacks, ct);
                         break;
 
+                    case DrawShading { Shading: PdfRadialShading { IsGeneral: true } } gds:
+                        if (gds.Bounds is PdfRect sb && !sb.IsEmpty)
+                            backendFallbacks.Add(new PdfFallbackToken(list.PageNumber, new PdfRect(sb.X - 1, sb.Y - 1, sb.Width + 2, sb.Height + 2),
+                                PdfFallbackReason.Shading, "Two-circle radial shading not supported by the WPF backend",
+                                new Dictionary<string, string> { ["origin"] = "backend" }));
+                        break;
+
                     case DrawShading ds:
                         PaintShading(dc, ds, ctm, crop);
                         break;

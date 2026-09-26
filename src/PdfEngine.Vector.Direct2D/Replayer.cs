@@ -1235,6 +1235,9 @@ internal sealed class Replayer : IDisposable
                 if (band) ctx.PopLayer();
                 break;
             }
+            case PdfRadialShading { IsGeneral: true } general:
+                PaintGeneralRadial(ctx, general, area, full, pageToDevice);
+                break;
             case PdfRadialShading radial:
             {
                 using var stops = ctx.CreateGradientStopCollection(Stops(radial.Stops, radial.StartColor, radial.EndColor), ExtendMode.Clamp);
@@ -1252,6 +1255,114 @@ internal sealed class Replayer : IDisposable
                 if (!radial.ExtendEnd) ctx.PopLayer();
                 break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Radial shading between two arbitrary circles, evaluated per device pixel: the colour is
+    /// that of the largest t with r(t) ≥ 0 whose circle passes through the pixel (8.7.4.5.4).
+    /// Drawn under the current clip layers.
+    /// </summary>
+    private void PaintGeneralRadial(ID2D1DeviceContext ctx, PdfRadialShading sh, PdfRect area, Matrix3x2 userToDevice, Matrix3x2 pageToDevice)
+    {
+        using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
+        var size = target.PixelSize;
+        var corners = new[]
+        {
+            Vector2.Transform(new Vector2((float)area.X, (float)area.Y), pageToDevice),
+            Vector2.Transform(new Vector2((float)area.Right, (float)area.Y), pageToDevice),
+            Vector2.Transform(new Vector2((float)area.X, (float)area.Bottom), pageToDevice),
+            Vector2.Transform(new Vector2((float)area.Right, (float)area.Bottom), pageToDevice),
+        };
+        int x0 = Math.Max(0, (int)Math.Floor(corners.Min(c => c.X)));
+        int y0 = Math.Max(0, (int)Math.Floor(corners.Min(c => c.Y)));
+        int x1 = Math.Min(size.Width, (int)Math.Ceiling(corners.Max(c => c.X)));
+        int y1 = Math.Min(size.Height, (int)Math.Ceiling(corners.Max(c => c.Y)));
+        int w = x1 - x0, h = y1 - y0;
+        if (w <= 0 || h <= 0 || !Matrix3x2.Invert(userToDevice, out var deviceToUser))
+            return;
+
+        // 1024-entry colour table over t ∈ [0, 1] (premultiplied BGRA, opaque).
+        var table = new uint[1024];
+        var stops = sh.Stops is { Count: > 0 } st ? st : new[] { new PdfGradientStop(0, sh.StartColor), new PdfGradientStop(1, sh.EndColor) };
+        for (int i = 0, s = 0; i < table.Length; i++)
+        {
+            double t = i / (double)(table.Length - 1);
+            while (s < stops.Count - 2 && stops[s + 1].Offset < t) s++;
+            PdfColor c;
+            if (stops.Count == 1 || t <= stops[0].Offset) c = stops[0].Color;
+            else if (t >= stops[^1].Offset) c = stops[^1].Color;
+            else
+            {
+                var a = stops[s]; var b = stops[s + 1];
+                double f = b.Offset > a.Offset ? (t - a.Offset) / (b.Offset - a.Offset) : 0;
+                c = new PdfColor((float)(a.Color.R + (b.Color.R - a.Color.R) * f), (float)(a.Color.G + (b.Color.G - a.Color.G) * f), (float)(a.Color.B + (b.Color.B - a.Color.B) * f));
+            }
+            var col = Color(c, 1);
+            table[i] = 0xFF000000u | ((uint)Math.Round(col.R * 255) << 16) | ((uint)Math.Round(col.G * 255) << 8) | (uint)Math.Round(col.B * 255);
+        }
+
+        double cx = sh.StartCenter.X, cy = sh.StartCenter.Y, r0 = sh.StartRadius;
+        double dx = sh.EndCenter.X - cx, dy = sh.EndCenter.Y - cy, dr = sh.EndRadius - r0;
+        double qa = dx * dx + dy * dy - dr * dr;
+        bool e0 = sh.ExtendStart, e1 = sh.ExtendEnd;
+        var pixels = new uint[w * h];
+        System.Threading.Tasks.Parallel.For(0, h, row =>
+        {
+            _ct.ThrowIfCancellationRequested();
+            for (int col = 0; col < w; col++)
+            {
+                // One sample at the pixel centre (PDFium does not antialias shading edges either).
+                uint sb = 0, sg = 0, sr = 0, sa = 0;
+                for (int k = 0; k < 1; k++)
+                {
+                    var u = Vector2.Transform(new Vector2(x0 + col + 0.5f, y0 + row + 0.5f), deviceToUser);
+                    double px = u.X - cx, py = u.Y - cy;
+                    double qb = px * dx + py * dy + r0 * dr;
+                    double qc = px * px + py * py - r0 * r0;
+                    double best = double.NaN;
+                    void Try(double t)
+                    {
+                        if (double.IsNaN(t) || r0 + t * dr < 0) return;
+                        if (t < 0 && !e0) return;
+                        if (t > 1 && !e1) return;
+                        if (double.IsNaN(best) || t > best) best = t;
+                    }
+                    if (Math.Abs(qa) < 1e-12)
+                    {
+                        if (Math.Abs(qb) > 1e-12) Try(qc / (2 * qb));
+                    }
+                    else
+                    {
+                        double disc = qb * qb - qa * qc;
+                        if (disc >= 0)
+                        {
+                            double sq = Math.Sqrt(disc);
+                            Try((qb + sq) / qa);
+                            Try((qb - sq) / qa);
+                        }
+                    }
+                    if (double.IsNaN(best))
+                        continue;
+                    uint c = table[(int)Math.Round(Math.Clamp(best, 0, 1) * (table.Length - 1))];
+                    sb += c & 0xFF; sg += (c >> 8) & 0xFF; sr += (c >> 16) & 0xFF; sa += 255;
+                }
+                if (sa != 0)
+                    pixels[row * w + col] = (sa << 24) | (sr << 16) | (sg << 8) | sb;
+            }
+        });
+
+        var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        try
+        {
+            using var bmp = ctx.CreateBitmap(new SizeI(w, h), handle.AddrOfPinnedObject(), (uint)(w * 4),
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+            ctx.Transform = Matrix3x2.Identity;
+            ctx.DrawImage(bmp, new Vector2(x0, y0), null, InterpolationMode.NearestNeighbor, CompositeMode.SourceOver);
+        }
+        finally
+        {
+            handle.Free();
         }
     }
 
