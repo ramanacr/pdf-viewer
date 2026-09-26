@@ -123,8 +123,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 | Measure | Value | Source |
 |---|---|---|
-| Vector engine tests | 418 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
-| Viewer regression tests | 331 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
+| Vector engine tests | 421 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
+| Viewer regression tests | 370 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
 | Differential vs PDFium, geometry fixtures (paths, curves, clip, dash, alpha, inline image) | mean channel diff ≤ 0.37/255, 0 % pixels off by > 64 (72 and 144 dpi) | `DifferentialRenderingTests`; budgets: mean ≤ 1.5, ≤ 1 % |
 | Differential, axial shading | mean 1.17–1.43/255, 0 % | budget: mean ≤ 3.0, ≤ 1 % |
 | Differential, Helvetica text (substituted) | mean 1.08/255, 0.49 % | budget: mean ≤ 3.0, ≤ 2 % |
