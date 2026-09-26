@@ -213,6 +213,125 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         }
     }
 
+    /// <summary>
+    /// Renders a region (at most one GPU tile) into a new Direct3D 11 texture that other devices
+    /// can open (a DXGI shared handle), and waits until the GPU has finished drawing it. A viewer
+    /// shows it with a Direct3D 9Ex surface in a WPF <c>D3DImage</c>: the pixels never leave the
+    /// GPU. Returns null when the region is larger than a tile or the device cannot share
+    /// (WARP, remote sessions); the caller then uses <see cref="RenderAsync(IPdfDisplayList, RenderRequest, IPdfFallbackProvider?, PixelRegion?, bool, CancellationToken)"/>.
+    /// </summary>
+    public async Task<SharedTexture?> RenderToSharedTextureAsync(IPdfDisplayList list, RenderRequest request, IPdfFallbackProvider? provider,
+        PixelRegion region, bool invertColors, CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_res.IsSoftware)
+            return null;
+        var geometry = PageGeometry.From(list, request);
+        var r = ClampRegion(region, geometry);
+        if (r.Width <= 0 || r.Height <= 0 || r.Width > TileSize || r.Height > TileSize)
+            return null;
+
+        Matrix3x2.Invert(geometry.PageUserToPixels(), out var pixelsToPage);
+        var regionPage = TransformRect(pixelsToPage, new Vector2(r.X, r.Y), new Vector2(r.X + r.Width, r.Y + r.Height));
+        var tokens = await AnalyzeAsync(list, ct).ConfigureAwait(false);
+        var overlays = new List<(PdfFallbackToken Token, RenderedPage? Pixels)>(tokens.Count);
+        try
+        {
+            foreach (var token in tokens)
+            {
+                if (!token.Bounds.IntersectsWith(regionPage))
+                    continue;
+                RenderedPage? pixels = provider == null ? null : await provider.RenderFallbackRegionAsync(token, geometry.Dpi, ct).ConfigureAwait(false);
+                overlays.Add((token, pixels));
+            }
+
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var pageToPixels = geometry.PageUserToPixels();
+                var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), invertColors, ct);
+                return await Task.Run(() =>
+                {
+                    for (int attempt = 0; ; attempt++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        try
+                        {
+                            return DrawShared(replay, list, geometry, overlays, r, invertColors);
+                        }
+                        catch (SharpGenException ex) when (attempt == 0 && IsDeviceLost((uint)ex.HResult))
+                        {
+                            _res.CreateDevice();
+                            foreach (var (_, cached) in _replayers) cached.ResetDeviceResources();
+                        }
+                    }
+                }, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+        finally
+        {
+            foreach (var (_, pixels) in overlays) pixels?.Dispose();
+        }
+    }
+
+    private SharedTexture? DrawShared(Replayer replay, IPdfDisplayList list, PageGeometry g,
+        List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, PixelRegion r, bool invert)
+    {
+        var d3d = _res.D3D!;
+        var desc = new Vortice.Direct3D11.Texture2DDescription
+        {
+            Width = (uint)r.Width,
+            Height = (uint)r.Height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Format.B8G8R8A8_UNorm,
+            SampleDescription = new SampleDescription(1, 0),
+            Usage = Vortice.Direct3D11.ResourceUsage.Default,
+            BindFlags = Vortice.Direct3D11.BindFlags.RenderTarget | Vortice.Direct3D11.BindFlags.ShaderResource,
+            MiscFlags = Vortice.Direct3D11.ResourceOptionFlags.Shared,
+        };
+        var texture = d3d.CreateTexture2D(desc);
+        try
+        {
+            IntPtr handle;
+            using (var resource = texture.QueryInterface<IDXGIResource>())
+                handle = resource.SharedHandle;
+            if (handle == IntPtr.Zero)
+            {
+                texture.Dispose();
+                return null;
+            }
+            using (var surface = texture.QueryInterface<IDXGISurface>())
+            using (var target = _res.Context!.CreateBitmapFromDxgiSurface(surface,
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw)))
+            {
+                DrawTile(replay, list, g, overlays, r.X, r.Y, r.Width, r.Height, target, invert);
+            }
+
+            // Another device reads it next: the drawing must have finished on the GPU.
+            var immediate = d3d.ImmediateContext;
+            using var query = d3d.CreateQuery(new Vortice.Direct3D11.QueryDescription(Vortice.Direct3D11.QueryType.Event));
+            immediate.End(query);
+            immediate.Flush();
+            var spin = System.Diagnostics.Stopwatch.StartNew();
+            while (immediate.GetData(query, IntPtr.Zero, 0, Vortice.Direct3D11.AsyncGetDataFlags.None).Code == 1 /* S_FALSE */)
+            {
+                if (spin.ElapsedMilliseconds > 2000) break; // a hung GPU shows a stale tile, never a frozen UI
+                Thread.Yield();
+            }
+            return new SharedTexture(texture, handle, r.Width, r.Height);
+        }
+        catch
+        {
+            texture.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>Full-output pixel size of a request (page /Rotate plus viewer rotation).</summary>
     public static (int Width, int Height) OutputSize(IPdfDisplayList list, RenderRequest request)
     {
@@ -259,6 +378,27 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         using var target = ctx.CreateBitmap(size, IntPtr.Zero, 0, targetProps);
         using var staging = ctx.CreateBitmap(size, IntPtr.Zero, 0, stagingProps);
 
+        int composited = DrawTile(replay, list, g, overlays, tx, ty, w, h, target, invert);
+
+        staging.CopyFromBitmap(target);
+        var map = staging.Map(MapOptions.Read);
+        try
+        {
+            for (int row = 0; row < h; row++)
+                Marshal.Copy(map.Bits + (int)(row * map.Pitch), dest, (ty - originY + row) * destStride + (tx - originX) * 4, w * 4);
+        }
+        finally
+        {
+            staging.Unmap();
+        }
+        return composited;
+    }
+
+    /// <summary>Draws the page's tile at (tx, ty) into <paramref name="target"/> (w × h device pixels).</summary>
+    private int DrawTile(Replayer replay, IPdfDisplayList list, PageGeometry g, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays,
+        int tx, int ty, int w, int h, ID2D1Bitmap1 target, bool invert)
+    {
+        var ctx = _res.Context!;
         var pageToDevice = g.PageUserToPixels() * Matrix3x2.CreateTranslation(-tx, -ty);
         // Page-space rectangle this tile shows (for conservative culling).
         Matrix3x2.Invert(pageToDevice, out var deviceToPage);
@@ -284,18 +424,6 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             var hr = ctx.EndDraw();
             ctx.Target = null;
             if (hr.Failure) throw new SharpGenException(hr);
-        }
-
-        staging.CopyFromBitmap(target);
-        var map = staging.Map(MapOptions.Read);
-        try
-        {
-            for (int row = 0; row < h; row++)
-                Marshal.Copy(map.Bits + (int)(row * map.Pitch), dest, (ty - originY + row) * destStride + (tx - originX) * 4, w * 4);
-        }
-        finally
-        {
-            staging.Unmap();
         }
         return composited;
     }
@@ -416,5 +544,28 @@ internal readonly record struct PageGeometry(double Dpi, int PixelWidth, int Pix
     {
         var flip = new Matrix3x2(1, 0, 0, -1, (float)-Crop.X, (float)(Crop.Y + Crop.Height));
         return flip * PagePointsToPixels();
+    }
+}
+
+/// <summary>A GPU texture another Direct3D device can open by <see cref="SharedHandle"/>; dispose after it is no longer shown.</summary>
+public sealed class SharedTexture : IDisposable
+{
+    private Vortice.Direct3D11.ID3D11Texture2D? _texture;
+    public IntPtr SharedHandle { get; }
+    public int Width { get; }
+    public int Height { get; }
+
+    internal SharedTexture(Vortice.Direct3D11.ID3D11Texture2D texture, IntPtr handle, int width, int height)
+    {
+        _texture = texture;
+        SharedHandle = handle;
+        Width = width;
+        Height = height;
+    }
+
+    public void Dispose()
+    {
+        _texture?.Dispose();
+        _texture = null;
     }
 }

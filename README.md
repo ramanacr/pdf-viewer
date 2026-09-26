@@ -274,7 +274,7 @@ The status-bar badge shows which engine rendered the current page (`⚡ Vector`,
 
 **What stays on PDFium** regardless of mode: search, annotations and forms editing, saving, printing, image export, redaction, signatures and page organisation. **Releases still ship `pdfium.dll`** — it is required for fallback and for those features.
 
-**Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it, for vector and PDFium pages alike. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
+**Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it, for vector and PDFium pages alike. On a GPU in a local session, vector detail tiles go straight from Direct2D to the screen through a shared texture (`D3DImage`), with no copy through the CPU; `PDF_GPU_PRESENT=0` turns that off. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
 
 **Known limitations of the vector path:** the WPF fallback renderer is ~2× slower than PDFium, while Direct2D is faster than PDFium at every zoom (`eng/vectorpdf/baseline-bench.txt`).
 

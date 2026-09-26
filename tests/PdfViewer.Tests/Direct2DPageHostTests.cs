@@ -11,6 +11,7 @@ using PdfEngine.Vector;
 using PdfViewer.Core.Security;
 using PdfViewer.Services;
 using PdfViewer.ViewModels;
+using PdfViewer.Views;
 using Xunit;
 
 namespace PdfViewer.Tests;
@@ -180,5 +181,77 @@ public class Direct2DPageHostTests : IDisposable
         // Scrolling within the margin needs no render.
         await page.UpdateDetailAsync(proxy, new Rect(760, 1440, 400, 300), 1.0, 0, false);
         Assert.Equal(2, recorder.Regions.Count);
+    }
+    /// <summary>
+    /// With a GPU presenter (the window sets one on a hardware tier), a zoomed page's detail tile
+    /// is a D3DImage over a shared texture - no bitmap - and replacing or clearing it releases the
+    /// previous surface. Runs in a real window on an STA thread.
+    /// </summary>
+    [Fact]
+    public void DetailTile_UsesTheGpuPresenter_AndReleasesReplacedSurfaces()
+    {
+        Exception? error = null;
+        var thread = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                // Continuations must come back to this thread, as they do in the viewer.
+                System.Threading.SynchronizationContext.SetSynchronizationContext(
+                    new System.Windows.Threading.DispatcherSynchronizationContext(System.Windows.Threading.Dispatcher.CurrentDispatcher));
+                var window = new Window { Width = 200, Height = 200, Left = -10000, ShowActivated = false, ShowInTaskbar = false };
+                window.Show();
+                using var presenter = GpuTilePresenter.TryCreate(window);
+                if (presenter == null) { window.Close(); return; } // software tier or remote session: bitmap path only
+
+                int presented = 0, released = 0;
+                PageViewModel.GpuPresenter = (texture, lost) =>
+                {
+                    var shown = presenter.Present(texture, lost);
+                    if (shown is not { } s) return null;
+                    presented++;
+                    return (s.Image, new Tracking(s.Lifetime, () => released++));
+                };
+                try
+                {
+                    using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+                    Pump(service.OpenDocumentAsync(SquarePdf()));
+                    var page = new PageViewModel(1, 200, 200);
+                    page.UpdateScale(16);
+                    Pump(page.UpdateDetailAsync(service, new Rect(700, 1400, 400, 300), 1.0, 0, false));
+                    Assert.IsType<System.Windows.Interop.D3DImage>(page.DetailImage);
+                    Assert.Equal(2, presented);  // visible area, then the margin tile
+                    Assert.Equal(1, released);   // the visible-area surface, once replaced
+                    page.ClearDetail();
+                    Assert.Equal(2, released);
+                    Assert.Null(page.DetailImage);
+                }
+                finally
+                {
+                    PageViewModel.GpuPresenter = null;
+                    window.Close();
+                }
+            }
+            catch (Exception ex) { error = ex; }
+        });
+        thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (error != null) throw error;
+    }
+
+    private static void Pump(Task task)
+    {
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        task.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+        task.GetAwaiter().GetResult();
+    }
+
+    private sealed class Tracking : IDisposable
+    {
+        private readonly IDisposable _inner;
+        private readonly Action _onDispose;
+        public Tracking(IDisposable inner, Action onDispose) { _inner = inner; _onDispose = onDispose; }
+        public void Dispose() { _inner.Dispose(); _onDispose(); }
     }
 }

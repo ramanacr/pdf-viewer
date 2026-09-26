@@ -173,8 +173,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private GpuTilePresenter? _gpuPresenter;
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        // Zoomed detail tiles go straight from Direct2D to the screen where the display allows it.
+        _gpuPresenter = GpuTilePresenter.TryCreate(this);
+        if (_gpuPresenter != null)
+        {
+            PageViewModel.GpuPresenter = _gpuPresenter.Present;
+            Closed += (_, _) =>
+            {
+                PageViewModel.GpuPresenter = null;
+                _gpuPresenter.Dispose();
+            };
+        }
+
         if (!string.IsNullOrEmpty(App.StartupPdfPath) && File.Exists(App.StartupPdfPath))
         {
             await _shell.OpenDocumentAsync(App.StartupPdfPath);

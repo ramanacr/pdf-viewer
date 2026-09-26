@@ -62,7 +62,7 @@ internal static class TileBench
         Console.WriteLine($"# vectorpdf tiles ({(d2d.IsSoftware ? "WARP software" : "hardware GPU")}), {ranked.Count} pages ranked, heaviest {heavy.Count}");
         Console.WriteLine(string.Create(inv, $"# window {WindowWidthDip}x{WindowHeightDip} DIP at {DeviceScale * 100:0} % scaling; tile = visible + half a viewport per side, <= {MaxDetailPixels} px"));
 
-        var columns = new[] { "build", "page150", "page200", "page300", "pdfium300", "tile400", "scroll400", "tile800", "scroll800", "tile1600", "scroll1600" };
+        var columns = new[] { "build", "page150", "page200", "page300", "pdfium300", "tile400", "scroll400", "bitmap400", "gpu400", "tile800", "scroll800", "bitmap800", "gpu800", "tile1600", "scroll1600", "bitmap1600", "gpu1600" };
         var samples = columns.ToDictionary(c => c, _ => new List<double>());
         var slow = new List<(double Ms, string What)>();
 
@@ -129,6 +129,25 @@ internal static class TileBench
                     r.Page.Dispose();
                 });
                 samples[$"scroll{zoom * 100:0}"].Add(next);
+
+                // The same next tile straight into a shared GPU texture (the viewer's zero-copy path),
+                // against the readback path plus the WPF bitmap it is turned into.
+                int y2 = (int)Math.Min(Math.Max(0, fullH - h), y1 + visH);
+                double gpu = await Time(async () =>
+                {
+                    using var t = await d2d.RenderToSharedTextureAsync(list, request, null, new PixelRegion(x0, y2, w, h), invertColors: false, CancellationToken.None);
+                });
+                samples[$"gpu{zoom * 100:0}"].Add(gpu);
+                int y3 = (int)Math.Min(Math.Max(0, fullH - h), y2 + visH);
+                double wpf = await Time(async () =>
+                {
+                    var r = await d2d.RenderAsync(list, request, null, new PixelRegion(x0, y3, w, h), invertColors: false, CancellationToken.None);
+                    using var page = r.Page;
+                    var bmp = System.Windows.Media.Imaging.BitmapSource.Create(page.WidthPixels, page.HeightPixels, 96, 96,
+                        System.Windows.Media.PixelFormats.Pbgra32, null, page.Pixels.ToArray(), page.Stride);
+                    bmp.Freeze();
+                });
+                samples[$"bitmap{zoom * 100:0}"].Add(wpf);
             }
         }
 
