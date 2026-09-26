@@ -266,7 +266,7 @@ The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.V
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups, tiling patterns, glyph-outline clips, vertical writing and two-circle radial shadings are rendered natively. Objects it cannot yet render faithfully (knockout groups with translucent elements, mesh shadings, JPX/JBIG2/CCITT images, predefined CJK CMaps, …) are composited **per region** from PDFium. Pages where fallback covers ≥ 50 % of the area, encrypted documents and documents the vector parser cannot open are rendered entirely by PDFium. |
+| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups, tiling patterns, glyph-outline clips, vertical writing, predefined CJK CMaps, JPEG 2000 images and two-circle radial shadings are rendered natively. Objects it cannot yet render faithfully (knockout groups with translucent elements, mesh shadings, JBIG2/CCITT images, …) are composited **per region** from PDFium. Pages where fallback covers ≥ 50 % of the area, encrypted documents and documents the vector parser cannot open are rendered entirely by PDFium. |
 | `Vector` | Strict: unsupported regions are outlined in orange instead of rendered. For development and CI. |
 | `Pdfium` | The original PDFium renderer only (kill switch). |
 
