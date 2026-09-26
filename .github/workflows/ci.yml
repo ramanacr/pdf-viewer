@@ -8,6 +8,7 @@ on:
   schedule:
     # Nightly tier (07_TEST_CORPUS "CI tiers"): deep fuzzing and the corpus report.
     - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -68,3 +69,51 @@ jobs:
     - name: Verify Release Packaging Script
       shell: pwsh
       run: ./scripts/build_publish.ps1 -DryRun
+
+  # Nightly (and on demand): the rights-cleared corpus (eng/vectorpdf/corpus) against the committed
+  # baseline. Files are fetched at pinned commits and hash-verified; nothing is committed and no
+  # document leaves the runner. Runners have no GPU, so the baseline is the WARP one.
+  corpus:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Cache Corpus
+      uses: actions/cache@v4
+      with:
+        path: eng/vectorpdf/corpus/cache
+        key: vector-corpus-${{ hashFiles('eng/vectorpdf/corpus/fetch-corpus.ps1', 'eng/vectorpdf/corpus/manifest.json') }}
+
+    - name: Fetch and Verify Corpus
+      shell: pwsh
+      run: ./eng/vectorpdf/corpus/fetch-corpus.ps1 -Verify
+
+    - name: Build Tool
+      run: dotnet build eng/vectorpdf/tools/VectorPdf.Tool/VectorPdf.Tool.csproj --configuration Release
+
+    - name: Corpus Report
+      shell: pwsh
+      run: dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool/VectorPdf.Tool.csproj --configuration Release --no-build -- corpus eng/vectorpdf/corpus/cache --diff --software --out corpus-report.jsonl --summary corpus-summary.json
+
+    - name: Compare With Baseline
+      shell: pwsh
+      run: ./eng/vectorpdf/corpus/compare-summary.ps1 -Baseline eng/vectorpdf/baseline-corpus-summary.warp.json -Current corpus-summary.json
+
+    - name: Upload Corpus Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: vector-corpus-${{ github.run_number }}
+        path: |
+          corpus-summary.json
+          corpus-report.jsonl
+        retention-days: 90
