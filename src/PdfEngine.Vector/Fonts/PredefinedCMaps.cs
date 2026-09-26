@@ -23,6 +23,75 @@ internal static class PredefinedCMaps
     private static readonly ConcurrentDictionary<string, PdfCMap?> Cache = new(StringComparer.Ordinal);
     private static readonly object ArchiveLock = new();
 
+    private static readonly ConcurrentDictionary<string, System.Collections.Generic.Dictionary<int, string>?> CidUnicode = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Unicode for a CID of an Adobe character collection (Japan1, GB1, CNS1, Korea1), derived by
+    /// inverting the shipped Uni*-UTF16-H CMap (BMP forms first, then the lowest code point).
+    /// Used for text extraction when a font has no /ToUnicode and its encoding is not Unicode.
+    /// </summary>
+    public static string? CidToUnicode(string ordering, int cid)
+    {
+        var map = CidUnicode.GetOrAdd(ordering, static o => BuildCidToUnicode(o switch
+        {
+            "Japan1" => "UniJIS-UTF16-H",
+            "GB1" => "UniGB-UTF16-H",
+            "CNS1" => "UniCNS-UTF16-H",
+            "Korea1" => "UniKS-UTF16-H",
+            _ => null,
+        }));
+        return map != null && map.TryGetValue(cid, out var s) ? s : null;
+    }
+
+    private static System.Collections.Generic.Dictionary<int, string>? BuildCidToUnicode(string? cmapName)
+    {
+        if (cmapName == null || Archive.Value is not { } zip)
+            return null;
+        byte[] data;
+        lock (ArchiveLock)
+        {
+            var entry = zip.GetEntry(cmapName);
+            if (entry == null)
+                return null;
+            using var s = entry.Open();
+            using var ms = new MemoryStream((int)entry.Length);
+            s.CopyTo(ms);
+            data = ms.ToArray();
+        }
+        var parsed = CMapParser.Parse(data);
+        var best = new System.Collections.Generic.Dictionary<int, (string Text, uint Code)>();
+        foreach (var range in parsed.CidRanges)
+        {
+            if (range.High < range.Low || range.High - range.Low > 0xFFFF)
+                continue;
+            for (uint code = range.Low; code <= range.High; code++)
+            {
+                int cid = range.Cid + (int)(code - range.Low);
+                string text;
+                if (range.Length == 2)
+                {
+                    if (code is >= 0xD800 and <= 0xDFFF) continue;
+                    text = ((char)code).ToString();
+                }
+                else if (range.Length == 4)
+                {
+                    char hi = (char)(code >> 16), lo = (char)(code & 0xFFFF);
+                    if (!char.IsSurrogatePair(hi, lo)) continue;
+                    text = new string(new[] { hi, lo });
+                }
+                else continue;
+                // Deterministic choice for CIDs reachable from several code points:
+                // BMP before supplementary, then the lowest code point.
+                if (!best.TryGetValue(cid, out var existing) || existing.Text.Length > text.Length ||
+                    (existing.Text.Length == text.Length && code < existing.Code))
+                    best[cid] = (text, code);
+            }
+        }
+        var map = new System.Collections.Generic.Dictionary<int, string>(best.Count);
+        foreach (var (cid, entry) in best) map[cid] = entry.Text;
+        return map;
+    }
+
     /// <summary>True when <paramref name="name"/> is one of the shipped predefined CMaps.</summary>
     public static bool Contains(string name)
     {

@@ -342,6 +342,11 @@ public sealed class PdfFontResolver
             programData)
         {
             CidFontSubtype = cidSubtype,
+            CidOrdering = _resolver.Resolve(cidFont?["CIDSystemInfo"]) is PdfDictionary csi &&
+                          _resolver.Resolve(csi["Registry"]) is PdfString reg && reg.AsAscii() == "Adobe" &&
+                          _resolver.Resolve(csi["Ordering"]) is PdfString ord && ord.AsAscii() is "Japan1" or "GB1" or "CNS1" or "Korea1"
+                ? ord.AsAscii()
+                : null,
             PostScriptName = StripCMapSuffix(PdfFont.StripSubsetPrefix(descendantName)),
             CMap = cmap,
             CodesAreUnicode = codesAreUnicode,

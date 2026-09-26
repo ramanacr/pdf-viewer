@@ -63,4 +63,15 @@ public class PredefinedCMapTests
         Assert.NotEqual(Cid("UniJIS-UCS2-H", 0x30, 0x01), Cid("UniJIS-UCS2-V", 0x30, 0x01)); // 、 has a vertical form
         Assert.Equal(Cid("UniJIS-UCS2-H", 0x30, 0x42), Cid("UniJIS-UCS2-V", 0x30, 0x42));    // あ does not
     }
+
+    [Fact]
+    public void CidToUnicode_InvertsTheUtf16CMaps()
+    {
+        Assert.Equal("あ", PredefinedCMaps.CidToUnicode("Japan1", 843));
+        Assert.Equal("A", PredefinedCMaps.CidToUnicode("Japan1", 34));
+        Assert.Equal("가", PredefinedCMaps.CidToUnicode("Korea1", Cid("UniKS-UCS2-H", 0xAC, 0x00)));
+        Assert.Equal("中", PredefinedCMaps.CidToUnicode("GB1", Cid("UniGB-UCS2-H", 0x4E, 0x2D)));
+        Assert.Equal("中", PredefinedCMaps.CidToUnicode("CNS1", Cid("UniCNS-UCS2-H", 0x4E, 0x2D)));
+        Assert.Null(PredefinedCMaps.CidToUnicode("Identity", 5));
+    }
 }

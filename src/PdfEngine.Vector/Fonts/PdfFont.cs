@@ -101,6 +101,9 @@ public sealed class PdfFont
     /// <summary>/Subtype of the descendant CIDFont (CIDFontType0 / CIDFontType2) for composite fonts.</summary>
     public string? CidFontSubtype { get; internal init; }
 
+    /// <summary>CIDSystemInfo /Ordering of an Adobe character collection (Japan1, GB1, CNS1, Korea1), else null.</summary>
+    public string? CidOrdering { get; internal init; }
+
     /// <summary>BaseFont without the ABCDEF+ subset prefix (descendant name for composite fonts).</summary>
     public string? PostScriptName { get; internal init; }
 
@@ -304,6 +307,9 @@ public sealed class PdfFont
         {
             if (CodesAreUnicode && code is > 0 and <= 0xFFFF && !(code >= 0xD800 && code <= 0xDFFF))
                 return ((char)code).ToString();
+            // No /ToUnicode: an Adobe collection's CID still identifies the character.
+            if (CidOrdering != null && CMap != null && PredefinedCMaps.CidToUnicode(CidOrdering, CMap.LookupAnyLength(code)) is { } fromCid)
+                return fromCid;
         }
         else if (GetGlyphName(code) is { } glyph && GlyphList.ToUnicode(glyph) is { } fromName)
         {
