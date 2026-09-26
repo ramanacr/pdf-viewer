@@ -69,9 +69,14 @@ public sealed class PdfEncryptedDocumentException : PdfVectorException
 {
     public bool PasswordRequired { get; }
 
-    public PdfEncryptedDocumentException(string message = "Document is encrypted with an unsupported security handler.", bool passwordRequired = false)
+    /// <summary>Public-key encryption: none of the available certificates (with private keys) is a recipient.</summary>
+    public bool CertificateRequired { get; }
+
+    public PdfEncryptedDocumentException(string message = "Document is encrypted with an unsupported security handler.",
+        bool passwordRequired = false, bool certificateRequired = false)
         : base(PdfVectorErrorKind.Encryption, message)
     {
         PasswordRequired = passwordRequired;
+        CertificateRequired = certificateRequired;
     }
 }

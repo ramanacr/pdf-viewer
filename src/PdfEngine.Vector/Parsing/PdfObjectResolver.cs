@@ -26,7 +26,7 @@ public sealed class PdfObjectResolver
     // which object-stream and /Length resolution rely on.
     private readonly object _sync = new();
 
-    private PdfEngine.Vector.Security.PdfStandardSecurityHandler? _security;
+    private PdfEngine.Vector.Security.PdfSecurityHandler? _security;
     private int _encryptObjectNumber = -1;
 
     /// <summary>
@@ -34,7 +34,7 @@ public sealed class PdfObjectResolver
     /// objects inside object streams are covered by their stream. <paramref name="encryptObjectNumber"/>
     /// (the /Encrypt dictionary) stays plain. Earlier resolutions are discarded.
     /// </summary>
-    public void SetSecurityHandler(PdfEngine.Vector.Security.PdfStandardSecurityHandler handler, int encryptObjectNumber)
+    public void SetSecurityHandler(PdfEngine.Vector.Security.PdfSecurityHandler handler, int encryptObjectNumber)
     {
         lock (_sync)
         {

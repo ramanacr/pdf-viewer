@@ -266,7 +266,7 @@ The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.V
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups, tiling patterns, knockout and non-isolated groups, tiling patterns, glyph-outline clips, vertical writing, predefined CJK CMaps, all shading types, and JPEG, JPEG 2000, JBIG2 and CCITT images are rendered natively. Content the vector path cannot reproduce faithfully (damaged images, fonts no backend can load, …) is composited **per region** from PDFium. Encrypted documents (RC4 and AES up to 256-bit, user or owner password) are decrypted by the vector engine itself. Pages where fallback covers ≥ 50 % of the area, certificate-encrypted documents and documents the vector parser cannot open are rendered entirely by PDFium. |
+| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups, tiling patterns, knockout and non-isolated groups, tiling patterns, glyph-outline clips, vertical writing, predefined CJK CMaps, all shading types, and JPEG, JPEG 2000, JBIG2 and CCITT images are rendered natively. Content the vector path cannot reproduce faithfully (damaged images, fonts no backend can load, …) is composited **per region** from PDFium. Encrypted documents (RC4 and AES up to 256-bit, user or owner password, and certificate-encrypted files that PDFium cannot open) are decrypted by the vector engine itself, and their permissions (print, copy, edit, annotate, forms) are enforced unless the owner password is given. Pages where fallback covers ≥ 50 % of the area and documents the vector parser cannot open are rendered entirely by PDFium. |
 | `Vector` | Strict: unsupported regions are outlined in orange instead of rendered. For development and CI. |
 | `Pdfium` | The original PDFium renderer only (kill switch). |
 
@@ -276,7 +276,7 @@ The status-bar badge shows which engine rendered the current page (`⚡ Vector`,
 
 **Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it, for vector and PDFium pages alike. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
 
-**Known limitations of the vector path:** certificate-based (public-key) encryption renders through PDFium; the WPF fallback renderer is ~2× slower than PDFium, while Direct2D is faster than PDFium at every zoom (`eng/vectorpdf/baseline-bench.txt`).
+**Known limitations of the vector path:** the WPF fallback renderer is ~2× slower than PDFium, while Direct2D is faster than PDFium at every zoom (`eng/vectorpdf/baseline-bench.txt`).
 
 **Verification tooling:**
 ```powershell

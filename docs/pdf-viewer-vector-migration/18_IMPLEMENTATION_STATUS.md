@@ -1,6 +1,6 @@
 # Implementation Status and Audit
 
-**Last updated:** 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns, vertical writing, glyph clips, two-circle radials, predefined CJK CMaps, JPEG 2000, mesh shadings, CCITT, JBIG2, knockout and non-isolated groups, encryption) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
+**Last updated:** 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns, vertical writing, glyph clips, two-circle radials, predefined CJK CMaps, JPEG 2000, mesh shadings, CCITT, JBIG2, knockout and non-isolated groups, encryption, certificate encryption, permissions) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
 **Scope of this document:** what the first implementation pass (commits `b0ab63c` … `2e2fdd7`, 2026-09-21) delivered against this bundle, what it got wrong, what the second pass fixed, and what remains — with evidence, not claims.
 
 ---
@@ -98,11 +98,15 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **CMaps:** the 59 predefined CMaps of ISO 32000-2 Table 116 come from Adobe cmap-resources (BSD-3-Clause) at a pinned commit, fetched by `eng/vectorpdf/cmaps/build-cmaps.ps1` (SHA-256 per file in `cmaps-manifest.json`) and embedded deflated (843 KB). Named encodings and `usecmap` chains resolve through `PredefinedCMaps`; only names outside Table 116 (e.g. a collection name such as `Adobe-Korea1-2`, which veraPDF uses in its "fail" files) are still classified.
 - **JPEG 2000:** `JPXDecode` images decode in the core with CoreJ2K (managed, BSD-3-Clause): codestream dimensions and bit depths win, `/ColorSpace` is optional (component count selects Gray/RGB/CMYK), `/SMaskInData` takes opacity from the extra channel, `/Decode` is ignored. The SIZ marker is checked against the pixel limits before the decoder allocates; decoder failures are classified `ImageDecode` (200-mutation fuzz test).
 
-### Encryption (Standard security handler)
+### Encryption (Standard and public-key security handlers)
 - `PdfStandardSecurityHandler` (ISO 32000-2 7.6.4): revisions 2–4 (RC4 40–128 bit; crypt filters `V2`/`AESV2` with `/StmF`, `/StrF` and per-stream `/Crypt` filters) and 5–6 (AES-256, `AESV3`, Algorithm 2.B hashing, SASLprep via NFKC). User and owner passwords (Algorithms 2, 4–7, 2.A); the empty user password opens owner-only protected files without a prompt.
-- The resolver decrypts each object read from the file (strings recursively, stream data once) with its object key (Algorithm 1); objects inside object streams are covered by their stream; cross-reference streams, the `/Encrypt` dictionary and — with `/EncryptMetadata false` — metadata streams stay plain. A missing or wrong password is a typed `PdfEncryptedDocumentException { PasswordRequired }`; only non-Standard handlers (public-key) still go to PDFium.
+- The resolver decrypts each object read from the file (strings recursively, stream data once) with its object key (Algorithm 1); objects inside object streams are covered by their stream; cross-reference streams, the `/Encrypt` dictionary and — with `/EncryptMetadata false` — metadata streams stay plain. A missing or wrong password is a typed `PdfEncryptedDocumentException { PasswordRequired }`.
+- `PdfSecurityHandler` is the shared base (crypt filters, Algorithm 1 object keys, RC4, AES-CBC); `PdfSecurityHandler.Create` dispatches `/Standard` and `/Adobe.PubSec`.
+- **Certificate (public-key) encryption** — which PDFium cannot open at all — is handled by `PdfPublicKeySecurityHandler` (ISO 32000-2 7.6.5): sub-filters `adbe.pkcs7.s3`, `s4` and `s5` (recipients in `/Recipients` or in the crypt filter). `CmsEnvelopedData` decrypts each PKCS#7 envelope with in-box .NET only: key transport RSA PKCS#1 v1.5 or OAEP (hash from the parameters), recipient by issuer+serial or subject key identifier, content cipher AES-CBC, 3DES, RC2 or RC4. The file key is SHA-1 (SHA-256 for AES-256) of the 20-byte seed, every recipient blob and `FFFFFFFF` when metadata is plain; the recipient's permissions are bytes 21–24. Certificates come from the CurrentUser and LocalMachine `My` stores (with a private key); no match is a typed `PdfEncryptedDocumentException { CertificateRequired }`.
+- **Decrypted copy for PDFium:** `PdfDecryptedCopyWriter` serializes every in-use object of a decrypted document into an in-memory unencrypted PDF (no `/Encrypt`, `/Crypt` filters removed, lengths recomputed, classic xref), so text search, selection, printing and annotations keep working through PDFium on certificate-encrypted files. The copy never touches disk: Save is disabled for it, file-path operations explain why they are unavailable, and Save As warns that the result is not encrypted. The writer round-trips all 2 913 corpus files (same page count, first page equal under PDFium).
+- **Permissions enforcement (Table 22):** `PdfDocumentPermissions` (Abstractions) decodes `/P` per revision (R2: bits 9–12 follow bits 5/6) or the recipient's permissions; the owner password or an unrestricted recipient lifts everything. The view model refuses print, copy, export text/images, OCR text, annotate, form fill, edit/redact, organize/merge/split/extract and read aloud (accessibility bit) with an explanation; the status bar shows a lock with the restriction summary; printing without the high-quality bit is limited to 150 dpi.
 - The viewer passes the password PDFium accepted to the vector document, including the lazy open after an engine switch; it is held for the open document only.
-- Tests: a test-side encryptor (independent writer implementation) produces RC4-40/R2, RC4-128/R3, RC4-128/R4, AES-128/R4, AES-256/R5 and AES-256/R6 files; each opens with user and owner passwords, is refused without one, renders identically to the unencrypted document and like PDFium opened with the same password, and survives mutation fuzzing.
+- Tests: a test-side encryptor (independent writer implementation) produces RC4-40/R2, RC4-128/R3, RC4-128/R4, AES-128/R4, AES-256/R5 and AES-256/R6 files; each opens with user and owner passwords, is refused without one, renders identically to the unencrypted document and like PDFium opened with the same password, and survives mutation fuzzing. The same encryptor builds public-key files (s4 RC4, s5 AES-128/256, several recipients, SKI and OAEP recipients, restricted and unrestricted); each opens only with a recipient certificate, renders identically to the unencrypted document, and its decrypted copy opens in PDFium. `SecuredDocumentTests` cover the viewer rules end to end.
 
 ### Vertical writing
 - Identity-V and `/WMode 1` CMaps (named or embedded): each glyph's position vector (`/W2`, `/DW2`) is placed on the current point, the point advances by W1y (TJ adjustments apply vertically), glyph Y offsets reach both backends, and selection boxes follow the column.
@@ -118,8 +122,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 | Measure | Value | Source |
 |---|---|---|
-| Vector engine tests | 409 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
-| Viewer regression tests | 307 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
+| Vector engine tests | 418 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
+| Viewer regression tests | 331 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
 | Differential vs PDFium, geometry fixtures (paths, curves, clip, dash, alpha, inline image) | mean channel diff ≤ 0.37/255, 0 % pixels off by > 64 (72 and 144 dpi) | `DifferentialRenderingTests`; budgets: mean ≤ 1.5, ≤ 1 % |
 | Differential, axial shading | mean 1.17–1.43/255, 0 % | budget: mean ≤ 3.0, ≤ 1 % |
 | Differential, Helvetica text (substituted) | mean 1.08/255, 0.49 % | budget: mean ≤ 3.0, ≤ 2 % |
@@ -133,6 +137,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 | Viewer tests after the Direct2D host | 320 passing | `dotnet test tests/PdfViewer.Tests` |
 | Corpus: documents open (2 913 files) | PDFium 2 913; vector **2 913** (the 4 encrypted files now open with the Standard security handler and render fully vector, mean diff ≤ 0.29/255); 0 untyped errors | `eng/vectorpdf/baseline-corpus-summary.json` |
 | Encryption vs PDFium | RC4 40/128, AES-128, AES-256 (R5, R6), user/owner/empty passwords: decrypted renders equal the unencrypted document and match PDFium | `EncryptionTests` (33), `HybridVectorServiceTests` |
+| Certificate encryption and permissions | s4 RC4, s5 AES-128/256, multiple recipients, SKI/OAEP: only recipients open, renders equal the unencrypted document, decrypted copy opens in PDFium; Table 22 rules enforced in the viewer | `EncryptionTests`, `SecuredDocumentTests` (8) |
+| Decrypted-copy writer round trip | 2 913 / 2 913 corpus files: same page count, first page mean diff ≤ 1/255 under PDFium | one-off corpus run |
 | Corpus: pages with a display list or classified fallback | 100 % (3 003 pages sampled, ≤ 50 per file) | same |
 | Corpus: pages fully vector / vector page area | **95.0 % / 98.67 %** (before the font work: 89.2 % / 98.65 %, with embedded fonts silently substituted) | same |
 | Corpus: fidelity of fully-vector pages vs PDFium (72 dpi) | median mean-channel diff 0.009/255; 12 files > 5/255 — inspected: text antialiasing on text-dense pages, no missing content | `vectorpdf corpus --diff` |
@@ -188,7 +194,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
-7. **Encryption remainder:** public-key security handlers (`/Adobe.PubSec`, certificate-based) are still PDFium-only; enforcing /P permissions in the viewer's copy/print/edit commands is an application decision.
+7. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Package/memory baselines** (A1), SBOM/package test asserting what ships (K7).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
 

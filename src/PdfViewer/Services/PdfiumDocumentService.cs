@@ -92,50 +92,89 @@ public class PdfiumDocumentService : IPdfDocumentService
         return await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException($"File not found: {filePath}", filePath);
+            }
+
+            // Enforce the size ceiling BEFORE reading the file into memory, so an
+            // oversized document is refused rather than allocated twice (managed array
+            // plus unmanaged copy) on the way to failing.
+            _securityPolicy.EnsureDocumentSizeAllowed(new FileInfo(filePath).Length, filePath);
+            return OpenFromBytes(File.ReadAllBytes(filePath), filePath, password);
+        }, ct);
+    }
+
+    /// <summary>
+    /// Opens a document from memory under <paramref name="filePath"/> (shown and used for saving
+    /// defaults). Used for the decrypted copy of a certificate-encrypted file.
+    /// </summary>
+    public async Task<DocumentMetadata> OpenDocumentFromBytesAsync(byte[] bytes, string filePath, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            _securityPolicy.EnsureDocumentSizeAllowed(bytes.Length, filePath);
+            return OpenFromBytes(bytes, filePath, null);
+        }, ct);
+    }
+
+    private DocumentMetadata OpenFromBytes(byte[] bytes, string filePath, string? password)
+    {
+        lock (_docLock)
+        {
+            CloseDocument();
+
+            // Read file bytes into pinned unmanaged native buffer
+            IntPtr nativeBuf = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, nativeBuf, bytes.Length);
+
+            var doc = PdfiumNativeBridge.FPDF_LoadMemDocument(nativeBuf, bytes.Length, password);
+
+            if (doc == null || doc.IsInvalid)
+            {
+                Marshal.FreeHGlobal(nativeBuf);
+                uint error = PdfiumNativeBridge.FPDF_GetLastError();
+                if (error == PdfiumNativeBridge.FPDF_ERR_PASSWORD)
+                {
+                    throw new UnauthorizedAccessException("Password required or incorrect password for PDF document.");
+                }
+                if (error == PdfiumNativeBridge.FPDF_ERR_SECURITY)
+                {
+                    throw new PdfUnsupportedSecurityException("PDFium does not support this document's security handler.");
+                }
+                if (error == PdfiumNativeBridge.FPDF_ERR_FORMAT)
+                {
+                    throw new InvalidDataException("The file format is invalid or corrupted.");
+                }
+                throw new InvalidOperationException($"Failed to load PDF document (PDFium error code {error}).");
+            }
+
+            _document = doc;
+            _nativeBuffer = nativeBuf;
+            _fileBytes = bytes;
+            _currentFilePath = filePath;
+
+            return ExtractMetadata(filePath, doc);
+        }
+    }
+
+    /// <summary>Permissions from PDFium: full when unencrypted or opened with the owner password.</summary>
+    public PdfEngine.Documents.PdfDocumentPermissions Permissions
+    {
+        get
+        {
             lock (_docLock)
             {
-                CloseDocument();
-
-                if (!File.Exists(filePath))
-                {
-                    throw new FileNotFoundException($"File not found: {filePath}", filePath);
-                }
-
-                // Enforce the size ceiling BEFORE reading the file into memory, so an
-                // oversized document is refused rather than allocated twice (managed array
-                // plus unmanaged copy) on the way to failing.
-                _securityPolicy.EnsureDocumentSizeAllowed(new FileInfo(filePath).Length, filePath);
-
-                // Read file bytes into pinned unmanaged native buffer
-                byte[] bytes = File.ReadAllBytes(filePath);
-                IntPtr nativeBuf = Marshal.AllocHGlobal(bytes.Length);
-                Marshal.Copy(bytes, 0, nativeBuf, bytes.Length);
-
-                var doc = PdfiumNativeBridge.FPDF_LoadMemDocument(nativeBuf, bytes.Length, password);
-
-                if (doc == null || doc.IsInvalid)
-                {
-                    Marshal.FreeHGlobal(nativeBuf);
-                    uint error = PdfiumNativeBridge.FPDF_GetLastError();
-                    if (error == PdfiumNativeBridge.FPDF_ERR_PASSWORD)
-                    {
-                        throw new UnauthorizedAccessException("Password required or incorrect password for PDF document.");
-                    }
-                    if (error == PdfiumNativeBridge.FPDF_ERR_FORMAT)
-                    {
-                        throw new InvalidDataException("The file format is invalid or corrupted.");
-                    }
-                    throw new InvalidOperationException($"Failed to load PDF document (PDFium error code {error}).");
-                }
-
-                _document = doc;
-                _nativeBuffer = nativeBuf;
-                _fileBytes = bytes;
-                _currentFilePath = filePath;
-
-                return ExtractMetadata(filePath, doc);
+                if (_document == null || _document.IsInvalid)
+                    return PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+                int revision = PdfiumNativeBridge.FPDF_GetSecurityHandlerRevision(_document);
+                if (revision < 0)
+                    return PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+                uint p = PdfiumNativeBridge.FPDF_GetDocPermissions(_document);
+                return PdfEngine.Documents.PdfDocumentPermissions.FromFlags(unchecked((int)p), revision, p == 0xFFFFFFFF);
             }
-        }, ct);
+        }
     }
 
     /// <summary>
@@ -1448,4 +1487,10 @@ public class PdfiumDocumentService : IPdfDocumentService
         }
         GC.SuppressFinalize(this);
     }
+}
+
+/// <summary>PDFium cannot open the document's security handler (for example public-key encryption).</summary>
+public sealed class PdfUnsupportedSecurityException : InvalidOperationException
+{
+    public PdfUnsupportedSecurityException(string message) : base(message) { }
 }

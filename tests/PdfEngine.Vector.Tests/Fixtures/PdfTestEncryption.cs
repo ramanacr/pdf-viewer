@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Formats.Asn1;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -12,7 +14,7 @@ namespace PdfEngine.Vector.Tests.Fixtures;
 /// 7.6.4, writer side: Algorithms 1, 2, 3, 5, 8–10). Written independently of the decoder; PDFium
 /// opening the result with the same passwords is the oracle.
 /// </summary>
-public enum TestEncryptionKind { Rc4_40_R2, Rc4_128_R3, Rc4_128_R4, Aes128_R4, Aes256_R5, Aes256_R6 }
+public enum TestEncryptionKind { Rc4_40_R2, Rc4_128_R3, Rc4_128_R4, Aes128_R4, Aes256_R5, Aes256_R6, PubSecS4Rc4, PubSecS5Aes128, PubSecS5Aes256 }
 
 internal sealed class PdfTestEncryption
 {
@@ -27,12 +29,116 @@ internal sealed class PdfTestEncryption
     public byte[] Id { get; } = Enumerable.Range(0, 16).Select(i => (byte)(i * 13 + 7)).ToArray();
     public int P { get; } = unchecked((int)0xFFFFF0C4); // print + copy + modify bits clear/set as a typical writer
 
-    private readonly byte[] _o, _u, _oe = Array.Empty<byte>(), _ue = Array.Empty<byte>(), _perms = Array.Empty<byte>();
+    private bool IsPublicKey => Scheme is TestEncryptionKind.PubSecS4Rc4 or TestEncryptionKind.PubSecS5Aes128 or TestEncryptionKind.PubSecS5Aes256;
+
+    private readonly byte[] _o = Array.Empty<byte>(), _u = Array.Empty<byte>(), _oe = Array.Empty<byte>(), _ue = Array.Empty<byte>(), _perms = Array.Empty<byte>();
     private readonly byte[] _key;
     private readonly int _r, _n;
+    private readonly List<byte[]> _recipients = new();
 
-    public PdfTestEncryption(TestEncryptionKind scheme, string user, string owner, bool encryptMetadata = true)
+    /// <summary>
+    /// Public-key encryption (7.6.5): one CMS EnvelopedData per certificate, each carrying the same
+    /// 20-byte seed and <paramref name="permissions"/>; the file key is SHA-1 (SHA-256 for AES-256)
+    /// of the seed, all envelopes and — without metadata encryption — four 0xFF bytes.
+    /// </summary>
+    public PdfTestEncryption(TestEncryptionKind scheme, IReadOnlyList<X509Certificate2> recipients, int permissions,
+        bool subjectKeyId = false, bool oaep = false, bool encryptMetadata = true)
     {
+        Scheme = scheme;
+        EncryptMetadata = encryptMetadata;
+        P = permissions;
+        (_r, _n) = scheme switch { TestEncryptionKind.PubSecS4Rc4 => (4, 16), TestEncryptionKind.PubSecS5Aes128 => (4, 16), _ => (5, 32) };
+        byte[] seed = Enumerable.Range(0, 20).Select(i => (byte)(200 - i * 7)).ToArray();
+        byte[] content = seed.Concat(new[] { (byte)(permissions >> 24), (byte)(permissions >> 16), (byte)(permissions >> 8), (byte)permissions }).ToArray();
+        foreach (var cert in recipients)
+            _recipients.Add(Envelope(cert, content, subjectKeyId, oaep));
+        var input = seed.Concat(_recipients.SelectMany(r => r)).ToList();
+        if (!encryptMetadata) input.AddRange(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        byte[] hash = scheme == TestEncryptionKind.PubSecS5Aes256 ? SHA256.HashData(input.ToArray()) : SHA1.HashData(input.ToArray());
+        _key = hash[.._n];
+    }
+
+    /// <summary>CMS EnvelopedData (RFC 5652): RSA key transport, AES-256-CBC content.</summary>
+    private static byte[] Envelope(X509Certificate2 cert, byte[] content, bool subjectKeyId, bool oaep)
+    {
+        byte[] cek = Enumerable.Range(0, 32).Select(i => (byte)(i * 11 + 3)).ToArray();
+        byte[] iv = Enumerable.Range(0, 16).Select(i => (byte)(i * 5 + 1)).ToArray();
+        using var rsa = cert.GetRSAPublicKey()!;
+        byte[] encryptedKey = rsa.Encrypt(cek, oaep ? RSAEncryptionPadding.OaepSHA256 : RSAEncryptionPadding.Pkcs1);
+        using var aes = System.Security.Cryptography.Aes.Create();
+        aes.Key = cek;
+        byte[] encryptedContent = aes.EncryptCbc(content, iv, PaddingMode.PKCS7);
+
+        var w = new AsnWriter(AsnEncodingRules.DER);
+        using (w.PushSequence())
+        {
+            w.WriteObjectIdentifier("1.2.840.113549.1.7.3");
+            using (w.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 0, true)))
+            using (w.PushSequence())
+            {
+                w.WriteInteger(subjectKeyId ? 2 : 0);
+                using (w.PushSetOf())
+                using (w.PushSequence())
+                {
+                    w.WriteInteger(subjectKeyId ? 2 : 0);
+                    if (subjectKeyId)
+                    {
+                        var ski = cert.Extensions.OfType<X509SubjectKeyIdentifierExtension>().Single().SubjectKeyIdentifier!;
+                        w.WriteOctetString(Convert.FromHexString(ski), new Asn1Tag(TagClass.ContextSpecific, 0));
+                    }
+                    else
+                    {
+                        using (w.PushSequence())
+                        {
+                            w.WriteEncodedValue(cert.IssuerName.RawData);
+                            w.WriteIntegerUnsigned(cert.SerialNumberBytes.Span);
+                        }
+                    }
+                    using (w.PushSequence())
+                    {
+                        if (oaep)
+                        {
+                            w.WriteObjectIdentifier("1.2.840.113549.1.1.7");
+                            using (w.PushSequence())
+                            using (w.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 0, true)))
+                            using (w.PushSequence())
+                                w.WriteObjectIdentifier("2.16.840.1.101.3.4.2.1");
+                        }
+                        else
+                        {
+                            w.WriteObjectIdentifier("1.2.840.113549.1.1.1");
+                            w.WriteNull();
+                        }
+                    }
+                    w.WriteOctetString(encryptedKey);
+                }
+                using (w.PushSequence())
+                {
+                    w.WriteObjectIdentifier("1.2.840.113549.1.7.1");
+                    using (w.PushSequence())
+                    {
+                        w.WriteObjectIdentifier("2.16.840.1.101.3.4.1.42");
+                        w.WriteOctetString(iv);
+                    }
+                    w.WriteOctetString(encryptedContent, new Asn1Tag(TagClass.ContextSpecific, 0));
+                }
+            }
+        }
+        return w.Encode();
+    }
+
+    /// <summary>A self-signed RSA-2048 certificate with its private key and a subject key identifier.</summary>
+    public static X509Certificate2 CreateCertificate(string name)
+    {
+        using var key = RSA.Create(2048);
+        var req = new CertificateRequest($"CN={name}", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, false));
+        return req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+    }
+
+    public PdfTestEncryption(TestEncryptionKind scheme, string user, string owner, bool encryptMetadata = true, int? permissions = null)
+    {
+        if (permissions is int requested) P = requested;
         Scheme = scheme;
         EncryptMetadata = encryptMetadata;
         (_r, _n) = scheme switch
@@ -130,13 +236,13 @@ internal sealed class PdfTestEncryption
         return o;
     }
 
-    private bool Aes128 => Scheme == TestEncryptionKind.Aes128_R4;
+    private bool Aes128 => Scheme is TestEncryptionKind.Aes128_R4 or TestEncryptionKind.PubSecS5Aes128;
 
     /// <summary>Algorithm 1 (or the file key for AES-256), then RC4 or AES-CBC with a deterministic IV and PKCS#7 padding.</summary>
     public byte[] EncryptData(byte[] plain, int num, int gen)
     {
         byte[] key;
-        if (_r >= 5)
+        if (_r >= 5 && !(IsPublicKey && Scheme != TestEncryptionKind.PubSecS5Aes256))
         {
             key = _key;
         }
@@ -158,8 +264,12 @@ internal sealed class PdfTestEncryption
     {
         static string Hex(byte[] b) => "<" + Convert.ToHexString(b) + ">";
         string meta = EncryptMetadata ? "" : " /EncryptMetadata false";
+        string recipients = "[" + string.Join(" ", _recipients.Select(Hex)) + "]";
         return Scheme switch
         {
+            TestEncryptionKind.PubSecS4Rc4 => $"<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s4 /V 2 /Length 128 /Recipients {recipients}{meta} >>",
+            TestEncryptionKind.PubSecS5Aes128 => $"<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s5 /V 4 /Length 128 /CF << /DefaultCryptFilter << /CFM /AESV2 /Length 16 /Recipients {recipients} >> >> /StmF /DefaultCryptFilter /StrF /DefaultCryptFilter{meta} >>",
+            TestEncryptionKind.PubSecS5Aes256 => $"<< /Filter /Adobe.PubSec /SubFilter /adbe.pkcs7.s5 /V 5 /Length 256 /CF << /DefaultCryptFilter << /CFM /AESV3 /Length 32 /Recipients {recipients} >> >> /StmF /DefaultCryptFilter /StrF /DefaultCryptFilter{meta} >>",
             TestEncryptionKind.Rc4_40_R2 => $"<< /Filter /Standard /V 1 /R 2 /O {Hex(_o)} /U {Hex(_u)} /P {P} >>",
             TestEncryptionKind.Rc4_128_R3 => $"<< /Filter /Standard /V 2 /R 3 /Length 128 /O {Hex(_o)} /U {Hex(_u)} /P {P} >>",
             TestEncryptionKind.Rc4_128_R4 => $"<< /Filter /Standard /V 4 /R 4 /Length 128 /CF << /StdCF << /CFM /V2 /Length 16 /AuthEvent /DocOpen >> >> /StmF /StdCF /StrF /StdCF /O {Hex(_o)} /U {Hex(_u)} /P {P}{meta} >>",

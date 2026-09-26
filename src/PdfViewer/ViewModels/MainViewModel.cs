@@ -466,6 +466,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             Metadata = meta;
+            DocumentPermissions = _docService.Permissions;
             PageCount = meta.PageCount;
             CurrentPageNumber = 1;
             RotationAngle = 0;
@@ -570,6 +571,7 @@ public partial class MainViewModel : ObservableObject
     public void CloseDocument()
     {
         _renderCts?.Cancel();
+        DocumentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
         _searchCts?.Cancel();
         _docService.CloseDocument();
         _cache.Clear();
@@ -1363,6 +1365,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void CopySelectedText()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "copying text")) return;
         if (string.IsNullOrEmpty(SelectedText))
         {
             UpdateSelectionFromPages();
@@ -1434,6 +1437,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void HighlightSelectedText()
     {
+        if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         if (!HasTextSelection && Pages.All(p => p.SelectedSegments.Count == 0)) return;
 
         foreach (var page in Pages)
@@ -1499,6 +1503,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task RedactSelectionAsync()
     {
+        if (!Permit(DocumentPermissions.CanModify, "editing") || !PermitFileOperation("Redaction")) return;
         if (string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         var areas = BuildRedactionAreasFromSelection();
@@ -1704,6 +1709,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void ToggleAnnotationTool(string toolName)
     {
+        if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         if (Enum.TryParse<AnnotationType>(toolName, true, out var tool))
         {
             if (ActiveAnnotationTool == tool)
@@ -1763,6 +1769,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void AddAnnotation(AnnotationModel annot)
     {
+        if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         AllAnnotations.Add(annot);
         if (annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count)
         {
@@ -1857,7 +1864,44 @@ public partial class MainViewModel : ObservableObject
     }
 
     public bool CanSave() => IsDocumentLoaded && HasUnsavedChanges && Metadata != null
-                             && !string.IsNullOrEmpty(Metadata.FilePath);
+                             && !string.IsNullOrEmpty(Metadata.FilePath)
+                             // A certificate-encrypted original is never overwritten by its decrypted copy.
+                             && !_docService.IsDecryptedCopy
+                             && (DocumentPermissions.CanAnnotate || DocumentPermissions.CanModify || DocumentPermissions.CanFillForms);
+
+    // ------------------------------------------------------------------ document security (ISO 32000-2 7.6.4.2)
+
+    /// <summary>What the open document's security settings allow (owner password: everything).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSecured), nameof(SecuritySummary))]
+    private PdfEngine.Documents.PdfDocumentPermissions _documentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+
+    /// <summary>The document restricts something for this reader (shown in the status bar).</summary>
+    public bool IsSecured => DocumentPermissions.IsEncrypted && !DocumentPermissions.Unrestricted;
+
+    public string SecuritySummary => DocumentPermissions.RestrictionSummary;
+
+    /// <summary>
+    /// Honours a permission the way Acrobat does: the command explains itself instead of silently
+    /// doing nothing. Opening with the owner password lifts every restriction.
+    /// </summary>
+    private bool Permit(bool allowed, string action)
+    {
+        if (allowed) return true;
+        StatusText = $"This document's security settings do not allow {action}.";
+        ShowAlert($"This document's security settings do not allow {action}.\n\nOpen it with the owner password to lift the restriction.",
+            "Secured document", MessageBoxButton.OK, MessageBoxImage.Information);
+        return false;
+    }
+
+    /// <summary>Operations that re-open the file on disk cannot use the decrypted copy of a certificate-encrypted document.</summary>
+    private bool PermitFileOperation(string operation)
+    {
+        if (!_docService.IsDecryptedCopy) return true;
+        ShowAlert($"{operation} works on the file on disk, which is encrypted for specific recipients. Save an unencrypted copy first (File → Save As) to use it.",
+            "Certificate-encrypted document", MessageBoxButton.OK, MessageBoxImage.Information);
+        return false;
+    }
 
     /// <summary>
     /// Swaps the freshly written file in for the original. File.Replace keeps a backup and
@@ -1927,6 +1971,11 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task SaveAnnotatedAsAsync()
     {
+        if (!Permit(DocumentPermissions.CanAnnotate || DocumentPermissions.CanModify, "saving changes")) return;
+        if (_docService.IsDecryptedCopy &&
+            !Confirm("This document is encrypted for specific recipients. The copy you are about to save will NOT be encrypted, " +
+                     "so anyone with the file can read it.\n\nSave an unencrypted copy?", "Save unencrypted copy"))
+            return;
         if (!IsDocumentLoaded || Metadata == null) return;
 
         if (ShowSaveAnnotatedDialogFunc != null)
@@ -1989,6 +2038,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task EditFormFieldsAsync()
     {
+        if (!Permit(DocumentPermissions.CanFillForms, "filling in forms") || !PermitFileOperation("Form filling")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         StatusText = "Reading form fields...";
@@ -2193,6 +2243,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task SaveCleanCopyAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "copying content") || !PermitFileOperation("A clean copy")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         string sourcePath = _docService.CurrentFilePath;
@@ -2290,6 +2341,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ToggleReadAloudAsync()
     {
+        if (!IsReadingAloud && !Permit(DocumentPermissions.CanExtractForAccessibility, "extracting text for accessibility")) return;
         if (IsReadingAloud)
         {
             StopReadingAloud();
@@ -2475,6 +2527,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task OrganizePagesAsync()
     {
+        if (!Permit(DocumentPermissions.CanAssemble, "reorganising pages") || !PermitFileOperation("Page organisation")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         if (ShowOrganizePagesFunc == null)
@@ -2625,6 +2678,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ExportTextAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "copying text")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         string sourcePath = _docService.CurrentFilePath;
@@ -2758,6 +2812,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task MergeDocumentsAsync()
     {
+        if (IsDocumentLoaded && !Permit(DocumentPermissions.CanAssemble, "combining pages")) return;
         var picker = new OpenFileDialog
         {
             Filter = "PDF Files (*.pdf)|*.pdf",
@@ -2807,6 +2862,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task SplitDocumentAsync()
     {
+        if (!Permit(DocumentPermissions.CanAssemble && DocumentPermissions.CanCopy, "extracting pages") || !PermitFileOperation("Splitting")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         var folder = new OpenFolderDialog { Title = "Choose a folder for the split pages" };
@@ -2842,6 +2898,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ExtractCurrentPageAsync()
     {
+        if (!Permit(DocumentPermissions.CanAssemble && DocumentPermissions.CanCopy, "extracting pages") || !PermitFileOperation("Page extraction")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         int pageNumber = CurrentPageNumber;
@@ -2950,6 +3007,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task RecognizeTextOnPageAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "extracting text")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         int pageNumber = CurrentPageNumber;
@@ -3003,6 +3061,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void Print()
     {
+        if (!Permit(DocumentPermissions.CanPrint, "printing")) return;
         if (!IsDocumentLoaded) return;
 
         try
@@ -3050,6 +3109,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ExportImagesAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "exporting page images")) return;
         if (!IsDocumentLoaded || Metadata == null || ShowExportDialogFunc == null) return;
 
         var (confirmed, outDir, prefix, start, end, format, dpi) = ShowExportDialogFunc(Metadata);

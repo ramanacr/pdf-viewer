@@ -46,6 +46,15 @@ public interface IPdfDocumentService : IDisposable
     /// </summary>
     Task<DocumentMetadata> OpenDocumentAsync(string filePath, string? password = null, CancellationToken ct = default);
 
+    /// <summary>What the document's security settings allow, for the way it was opened.</summary>
+    PdfEngine.Documents.PdfDocumentPermissions Permissions => PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+
+    /// <summary>
+    /// The engine works on an in-memory decrypted copy (certificate-encrypted originals). Saving
+    /// must never overwrite the original, and a saved copy is not encrypted.
+    /// </summary>
+    bool IsDecryptedCopy => false;
+
     /// <summary>
     /// Closes the currently active document and frees all engine resources.
     /// </summary>

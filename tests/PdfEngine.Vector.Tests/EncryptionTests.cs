@@ -148,6 +148,77 @@ public class EncryptionTests
         }
     }
 
+    // ------------------------------------------------------------------ public-key (certificate) encryption
+
+    private static readonly System.Security.Cryptography.X509Certificates.X509Certificate2 Alice = PdfTestEncryption.CreateCertificate("Alice");
+    private static readonly System.Security.Cryptography.X509Certificates.X509Certificate2 Bob = PdfTestEncryption.CreateCertificate("Bob");
+    private static readonly System.Security.Cryptography.X509Certificates.X509Certificate2 Mallory = PdfTestEncryption.CreateCertificate("Mallory");
+
+    [Theory]
+    [InlineData(Kind.PubSecS4Rc4, false, false)]
+    [InlineData(Kind.PubSecS5Aes128, false, false)]
+    [InlineData(Kind.PubSecS5Aes256, false, false)]
+    [InlineData(Kind.PubSecS5Aes256, true, true)] // subject-key-identifier recipient, RSA-OAEP-SHA256
+    public async Task PublicKey_EitherRecipientOpens_OthersAreRefused(Kind scheme, bool ski, bool oaep)
+    {
+        int permissions = unchecked((int)0xFFFFF0C4); // no print, no copy
+        var pdf = Document(new PdfTestEncryption(scheme, new[] { Alice, Bob }, permissions, ski, oaep));
+        using var plainDoc = await PdfVectorDocument.OpenAsync(Document(null));
+        using var renderer = new Direct2DVectorRenderer();
+        using var plain = await renderer.RenderDisplayListAsync(await plainDoc.GetPageDisplayListAsync(1), new RenderRequest { PageNumber = 1, Dpi = 72 });
+
+        foreach (var who in new[] { Alice, Bob })
+        {
+            using var doc = await PdfVectorDocument.OpenAsync(pdf, certificates: new[] { Mallory, who });
+            Assert.IsType<PdfEngine.Vector.Security.PdfPublicKeySecurityHandler>(doc.Security);
+            Assert.Equal(permissions, doc.Security!.Permissions);
+            Assert.False(doc.Security.IsOwner);
+            Assert.Equal("Confidential (draft)", doc.Metadata.Title);
+            var list = await doc.GetPageDisplayListAsync(1);
+            Assert.False(list.HasFallback);
+            using var page = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 });
+            var (mean, _) = DifferentialRenderingTests.Compare(page, plain);
+            Assert.True(mean < 0.01, $"{scheme}: differs from the unencrypted document ({mean:F3})");
+        }
+        var refused = await Assert.ThrowsAsync<PdfEncryptedDocumentException>(async () => await PdfVectorDocument.OpenAsync(pdf, certificates: new[] { Mallory }));
+        Assert.True(refused.CertificateRequired);
+    }
+
+    [Fact]
+    public async Task PublicKey_WithAllPermissions_IsUnrestricted()
+    {
+        var pdf = Document(new PdfTestEncryption(Kind.PubSecS5Aes128, new[] { Alice }, -1));
+        using var doc = await PdfVectorDocument.OpenAsync(pdf, certificates: new[] { Alice });
+        Assert.True(doc.Security!.IsOwner);
+    }
+
+    [Theory]
+    [InlineData(Kind.Aes256_R6)]
+    [InlineData(Kind.Rc4_128_R4)]
+    [InlineData(Kind.PubSecS5Aes256)]
+    [InlineData(Kind.PubSecS4Rc4)]
+    public async Task DecryptedCopy_OpensInPdfium_AndRendersTheSame(Kind scheme)
+    {
+        bool pubSec = scheme is Kind.PubSecS4Rc4 or Kind.PubSecS5Aes128 or Kind.PubSecS5Aes256;
+        var encryption = pubSec ? new PdfTestEncryption(scheme, new[] { Alice }, -1) : new PdfTestEncryption(scheme, "user", "owner");
+        var pdf = Document(encryption);
+        using var doc = await PdfVectorDocument.OpenAsync(pdf, password: "user", certificates: new[] { Alice });
+        byte[] copy = PdfDecryptedCopyWriter.Write(doc);
+        Assert.DoesNotContain("/Encrypt", System.Text.Encoding.Latin1.GetString(copy));
+
+        using var copyDoc = await PdfVectorDocument.OpenAsync(copy);
+        Assert.False(copyDoc.IsEncrypted);
+        Assert.Equal("Confidential (draft)", copyDoc.Metadata.Title);
+        using var renderer = new Direct2DVectorRenderer();
+        using var ours = await renderer.RenderDisplayListAsync(await doc.GetPageDisplayListAsync(1), new RenderRequest { PageNumber = 1, Dpi = 72 });
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(copy);
+        using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = 1, Dpi = 72 });
+        var (mean, bad) = DifferentialRenderingTests.Compare(ours, p);
+        _output.WriteLine($"{scheme} copy: mean={mean:F2} bad={bad:P2}");
+        Assert.True(mean <= 2.0 && bad <= 0.02, $"{scheme}: mean {mean:F2} bad {bad:P2}");
+    }
+
     [Fact]
     public void Rc4_MatchesTheKnownVector()
     {

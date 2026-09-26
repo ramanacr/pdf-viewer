@@ -1702,6 +1702,18 @@
             </StatusBarItem>
 
             <!--
+                Secured-document indicator: the document restricts printing, copying, commenting,
+                form filling, editing or page assembly for this reader (ISO 32000-2 Table 22).
+            -->
+            <StatusBarItem Visibility="{Binding IsSecured, Converter={StaticResource BoolToVis}}"
+                           ToolTip="Opened without the owner password: the author restricted these actions.">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#x1F512;" Margin="0,0,6,0" FontSize="12" />
+                    <TextBlock Text="{Binding SecuritySummary}" />
+                </StackPanel>
+            </StatusBarItem>
+
+            <!--
                 Document safety indicator. Shown only when the document carries active
                 content, so it means something when it appears. Clicking opens the detail.
             -->

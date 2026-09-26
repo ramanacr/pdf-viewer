@@ -315,6 +315,10 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void FPDF_CloseDocument(IntPtr document);
 
+    /// <summary>The permission flags in effect (all bits set when opened with the owner password).</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDF_GetDocPermissions(SafeDocumentHandle document);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint FPDF_GetLastError();
 

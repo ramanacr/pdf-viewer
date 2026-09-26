@@ -282,7 +282,20 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     {
         // PDFium stays open for every non-rendering service (search, annotations, forms, save)
         // and as the fallback renderer.
-        var meta = await _pdfiumService.OpenDocumentAsync(filePath, password, ct).ConfigureAwait(false);
+        DocumentMetadata meta;
+        IsDecryptedCopy = false;
+        try
+        {
+            meta = await _pdfiumService.OpenDocumentAsync(filePath, password, ct).ConfigureAwait(false);
+        }
+        catch (PdfUnsupportedSecurityException)
+        {
+            // Certificate (public-key) encryption, which PDFium cannot open: the vector core opens
+            // it with the user's certificates, and PDFium works on an in-memory decrypted copy so
+            // search, printing and annotations keep working. The copy never replaces the original.
+            meta = await OpenWithVectorSecurityAsync(filePath, password, ct).ConfigureAwait(false);
+            return meta;
+        }
         _metrics = new PdfEngineMetrics();
         _fallbackProvider.Reset();
         ClearSurfaces();
@@ -293,6 +306,48 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             return meta; // opened lazily if the user later switches to Auto/Vector
 
         await OpenVectorDocumentAsync(filePath, ct).ConfigureAwait(false);
+        return meta;
+    }
+
+    public bool IsDecryptedCopy { get; private set; }
+
+    /// <summary>The vector core's security handler when it opened the file, else PDFium's view.</summary>
+    public PdfEngine.Documents.PdfDocumentPermissions Permissions =>
+        _vectorDoc?.Security is { } security
+            ? PdfEngine.Documents.PdfDocumentPermissions.FromFlags(security.Permissions, security.Revision, security.IsOwner)
+            : IsDecryptedCopy ? PdfEngine.Documents.PdfDocumentPermissions.Owner : _pdfiumService.Permissions;
+
+    private async Task<DocumentMetadata> OpenWithVectorSecurityAsync(string filePath, string? password, CancellationToken ct)
+    {
+        _metrics = new PdfEngineMetrics();
+        _fallbackProvider.Reset();
+        ClearSurfaces();
+        _password = password;
+        PdfVectorDocument vector;
+        try
+        {
+            vector = await PdfVectorDocument.OpenAsync(filePath, cancellationToken: ct, password: password).ConfigureAwait(false);
+        }
+        catch (PdfEncryptedDocumentException ex) when (ex.CertificateRequired)
+        {
+            throw new InvalidOperationException(
+                "This document is encrypted for specific recipients, and none of the certificates installed for your account can open it.", ex);
+        }
+        byte[] copy = PdfEngine.Vector.Document.PdfDecryptedCopyWriter.Write(vector);
+        DocumentMetadata meta;
+        try
+        {
+            meta = await _pdfiumService.OpenDocumentFromBytesAsync(copy, filePath, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            vector.Dispose();
+            throw;
+        }
+        _vectorDoc?.Dispose();
+        _vectorDoc = vector;
+        _vectorOpenAttempted = true;
+        IsDecryptedCopy = true;
         return meta;
     }
 
@@ -343,6 +398,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         ClearSurfaces();
         _vectorOpenAttempted = false;
         _password = null;
+        IsDecryptedCopy = false;
         _pageEngineReports.Clear();
         _fallbackProvider.Reset();
         _vectorDoc?.Dispose();
