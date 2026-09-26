@@ -291,7 +291,7 @@ endobj
 << /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>
 endobj
 15 0 obj
-<< /Type /XObject /Subtype /Form /BBox [50 420 562 530] /Group << /S /Transparency /K true >> /Resources << /Font << /F1 9 0 R >> >> /Length 261 >>
+<< /Type /XObject /Subtype /Form /BBox [50 420 562 530] /Group << /S /Transparency /K true >> /Resources << /Font << /F1 9 0 R >> /ExtGState << /T << /ca 0.85 >> >> >> /Length 267 >>
 stream
 0.2 0.55 0.35 rg
 50 420 220 110 re
@@ -304,6 +304,7 @@ BT
 0 -22 Td
 (100% Visual Fidelity) Tj
 ET
+/T gs
 0.3 0.4 0.7 rg
 300 420 262 110 re
 f
@@ -339,5 +340,5 @@ xref
 trailer
 << /Size 16 /Root 1 0 R /Info 14 0 R >>
 startxref
-6005
+6046
 %%EOF

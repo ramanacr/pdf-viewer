@@ -842,7 +842,7 @@ internal sealed class Replayer : IDisposable
     private string _lastTextProblem = string.Empty;
 
     /// <summary>Font face and glyph indices for a run; null when the backend cannot draw it faithfully.</summary>
-    private (IDWriteFontFace Face, ushort[] Indices, float[] Offsets)? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
+    private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets)? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
     {
         var run = cmd.Run;
         byGlyphId = false;
@@ -885,7 +885,7 @@ internal sealed class Replayer : IDisposable
         double th = run.HorizontalScaling / 100.0;
         double sign = run.FontSize < 0 ? -1 : 1;
         var indices = new List<ushort>(run.Glyphs.Count);
-        var offsets = new List<float>(run.Glyphs.Count);
+        var offsets = new List<Vector2>(run.Glyphs.Count);
         int glyphCount = dw.GlyphCount;
         foreach (var g in run.Glyphs)
         {
@@ -910,7 +910,7 @@ internal sealed class Replayer : IDisposable
                 }
             }
             indices.Add(index);
-            offsets.Add((float)(g.OffsetX / th * sign));
+            offsets.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
         }
         return (dw, indices.ToArray(), offsets.ToArray());
     }
@@ -952,7 +952,7 @@ internal sealed class Replayer : IDisposable
             FontEmSize = (float)Math.Abs(run.FontSize),
             Indices = r.Indices,
             Advances = new float[r.Indices.Length],
-            Offsets = r.Offsets.Select(o => new GlyphOffset { AdvanceOffset = o, AscenderOffset = 0 }).ToArray(),
+            Offsets = r.Offsets.Select(o => new GlyphOffset { AdvanceOffset = o.X, AscenderOffset = o.Y }).ToArray(),
         };
 
         int mode = run.RenderingMode;

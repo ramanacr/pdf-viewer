@@ -555,14 +555,14 @@ public static class TestPdfBuilder
         // 14. Info
         WriteObj(infoObj, "<< /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>");
 
-        // 15. Knockout transparency group: still outside the native compositor, so PDFium supplies it.
+        // 15. Knockout transparency group with a translucent element: still outside the native compositor, so PDFium supplies it.
         string knockout =
             "0.2 0.55 0.35 rg\n50 420 220 110 re\nf\n" +
             "BT\n/F1 14 Tf\n1 1 1 rg\n70 485 Td\n(Rendered via PDFium) Tj\n0 -22 Td\n(100% Visual Fidelity) Tj\nET\n" +
-            "0.3 0.4 0.7 rg\n300 420 262 110 re\nf\n" +
+            "/T gs\n0.3 0.4 0.7 rg\n300 420 262 110 re\nf\n" +
             "BT\n/F1 14 Tf\n1 1 1 rg\n320 485 Td\n(Zero Truncation) Tj\n0 -22 Td\n(Safe Content Delivery) Tj\nET\n";
         byte[] bk = Encoding.ASCII.GetBytes(knockout);
-        WriteObj(knockoutObj, $"<< /Type /XObject /Subtype /Form /BBox [50 420 562 530] /Group << /S /Transparency /K true >> /Resources << /Font << /F1 {fontObj} 0 R >> >> /Length {bk.Length} >>\nstream\n{knockout}\nendstream");
+        WriteObj(knockoutObj, $"<< /Type /XObject /Subtype /Form /BBox [50 420 562 530] /Group << /S /Transparency /K true >> /Resources << /Font << /F1 {fontObj} 0 R >> /ExtGState << /T << /ca 0.85 >> >> >> /Length {bk.Length} >>\nstream\n{knockout}\nendstream");
 
         // Xref & Trailer
         writer.Flush();

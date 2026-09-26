@@ -1366,8 +1366,10 @@ public sealed class PdfContentInterpreter
             double th = gs.HorizontalScaling / 100.0;
             var glyphs = new List<PdfGlyph>();
             var text = new StringBuilder();
-            double x = 0;
+            double x = 0, y = 0;
             double minX = double.MaxValue, maxX = double.MinValue;
+            double minY = double.MaxValue, maxY = double.MinValue;
+            bool vertical = font.IsVertical;
             bool allGlyphIdsKnown = true;
             var prepared = _owner.PrepareFont(font);
             var face = prepared.Face;
@@ -1388,15 +1390,31 @@ public sealed class PdfContentInterpreter
 
                     double w0 = font.GetGlyphWidth(font.IsComposite ? cid : code) / 1000.0;
                     double tw = font.IsWordSpaceCode(code, consumed) ? gs.WordSpacing : 0;
-                    double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
 
                     int gid = faceHasProgram ? prepared.Program!.GetGlyphId(code, cid) : -1;
                     if (faceHasProgram && gid < 0) allGlyphIdsKnown = false;
                     string unicode = font.MapToUnicode(code);
+                    ushort glyphId = (ushort)Math.Clamp(gid >= 0 ? gid : cid, 0, ushort.MaxValue);
 
-                    glyphs.Add(new PdfGlyph(
-                        (ushort)Math.Clamp(gid >= 0 ? gid : cid, 0, ushort.MaxValue),
-                        advance, 0, x, 0, unicode, code));
+                    if (vertical)
+                    {
+                        // Vertical writing (9.7.4.3): the glyph's position vector v = (VX, VY) is placed
+                        // on the current point; the point moves by ty = W1y·Tfs + Tc + Tw (no Th).
+                        var vm = font.GetVerticalMetrics(cid);
+                        double ox = -vm.VX / 1000.0 * fs * th, oy = y - vm.VY / 1000.0 * fs;
+                        double ty = vm.W1y / 1000.0 * fs + gs.CharacterSpacing + tw;
+                        glyphs.Add(new PdfGlyph(glyphId, 0, ty, ox, oy, unicode, code));
+                        text.Append(unicode);
+                        minX = Math.Min(minX, ox);
+                        maxX = Math.Max(maxX, ox + w0 * fs * th);
+                        minY = Math.Min(minY, Math.Min(y, y + ty));
+                        maxY = Math.Max(maxY, Math.Max(y, y + ty));
+                        y += ty;
+                        continue;
+                    }
+
+                    double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
+                    glyphs.Add(new PdfGlyph(glyphId, advance, 0, x, 0, unicode, code));
                     text.Append(unicode);
 
                     minX = Math.Min(minX, Math.Min(x, x + advance));
@@ -1416,19 +1434,27 @@ public sealed class PdfContentInterpreter
                     if (item is PdfString s)
                         AddString(s);
                     else if (item.TryGetNumber(out double adj) && !double.IsNaN(adj) && !double.IsInfinity(adj))
-                        x -= adj / 1000.0 * fs * th; // TJ numbers are thousandths of text space, subtracted (9.4.3)
+                    {
+                        // TJ numbers are thousandths of text space, subtracted (9.4.3); vertical: from ty.
+                        if (vertical) y -= adj / 1000.0 * fs;
+                        else x -= adj / 1000.0 * fs * th;
+                    }
                 }
             }
 
             var runStart = gs.TextMatrix;
-            gs.TextMatrix = PdfMatrix.CreateTranslation(x, 0) * gs.TextMatrix;
+            gs.TextMatrix = PdfMatrix.CreateTranslation(x, y) * gs.TextMatrix;
 
             if (glyphs.Count == 0)
                 return;
 
             // Glyph box in text space → page space.
             double ascent = face.Ascent * Math.Abs(fs), descent = face.Descent * Math.Abs(fs);
-            var textBox = new PdfRect(minX, gs.TextRise + Math.Min(ascent, descent), Math.Max(0, maxX - minX), Math.Abs(ascent - descent));
+            var textBox = vertical && glyphs.Count > 0
+                ? new PdfRect(minX, gs.TextRise + glyphs.Min(g => g.OffsetY) + Math.Min(ascent, descent), Math.Max(0, maxX - minX),
+                    glyphs.Max(g => g.OffsetY) - glyphs.Min(g => g.OffsetY) + Math.Abs(ascent - descent))
+                : new PdfRect(minX, gs.TextRise + Math.Min(ascent, descent), Math.Max(0, maxX - minX), Math.Abs(ascent - descent));
+            _ = minY; _ = maxY;
             var textToPage = runStart * gs.CTM;
             int mode = gs.TextRenderingMode;
             bool strokes = mode is 1 or 2 or 5 or 6;
@@ -1436,8 +1462,6 @@ public sealed class PdfContentInterpreter
             var pageBounds = Intersect(textToPage.Transform(Inflate(textBox, inflate)), gs.ClipBoundsPage);
 
             PdfFallbackReason? reason = font.UnsupportedReason;
-            if (reason == null && font.IsVertical)
-                reason = PdfFallbackReason.UnsupportedCMap;
             bool paints = mode is not 3 and not 7;
             if (reason == null && paints)
             {
@@ -1846,17 +1870,18 @@ public sealed class PdfContentInterpreter
                 var groupDict = _resolver.Resolve(dict["Group"]) as PdfDictionary;
                 bool isTransparencyGroup = groupDict?.GetName("S") == "Transparency";
 
+                bool knockout = false;
                 if (isTransparencyGroup && !hidden)
                 {
                     _features |= PdfFeatureSet.Transparency;
-                    bool knockout = groupDict!.TryGetValue("K", out var k) && k != null && k.TryGetBoolean(out bool kb) && kb;
-                    if (knockout || (gs.SoftMaskActive && gs.SoftMask == null))
+                    knockout = groupDict!.TryGetValue("K", out var k) && k != null && k.TryGetBoolean(out bool kb) && kb;
+                    if (gs.SoftMaskActive && gs.SoftMask == null)
                     {
-                        AddFallback(knockout ? PdfFallbackReason.TransparencyGroup : PdfFallbackReason.SoftMask,
-                            "Transparency group composited with unsupported parameters", formBounds);
+                        AddFallback(PdfFallbackReason.SoftMask, "Transparency group composited with unsupported parameters", formBounds);
                         return;
                     }
                 }
+                int formMark = _commands.Count, formFallbackMark = _fallbacks.Count;
 
                 byte[] content = _owner._streamDecoder.DecodeStream(form);
                 var formResources = _resolver.Resolve(dict["Resources"]) as PdfDictionary ?? parentResources;
@@ -1892,6 +1917,7 @@ public sealed class PdfContentInterpreter
                         _commands.Add(new BeginTransparencyGroup(formBounds, gs.FillAlpha, "Normal", isolated, false));
                 }
 
+                int knockoutElements = _commands.Count; // the group's own Begin is not an element
                 var savedBase = _currentPatternBase;
                 _currentPatternBase = formCtm;
                 try
@@ -1905,11 +1931,40 @@ public sealed class PdfContentInterpreter
 
                 if (group) _commands.Add(compositing ? new EndCompositingGroup() : new EndTransparencyGroup());
                 _commands.Add(new RestoreState());
+
+                // Knockout (11.4.8): each element replaces earlier ones by its shape instead of
+                // accumulating. For opaque, Normal-blend elements that is exactly source-over
+                // (C·(1 − shape) + E), so such groups are kept; anything else still falls back.
+                if (knockout && !KnockoutIsSourceOver(knockoutElements))
+                {
+                    _commands.RemoveRange(formMark, _commands.Count - formMark);
+                    _fallbacks.RemoveRange(formFallbackMark, _fallbacks.Count - formFallbackMark);
+                    AddFallback(PdfFallbackReason.TransparencyGroup, "Knockout group with translucent or blended elements", formBounds);
+                }
             }
             finally
             {
                 _activeForms.Remove(form);
             }
+        }
+
+        private bool KnockoutIsSourceOver(int start)
+        {
+            for (int i = start; i < _commands.Count; i++)
+            {
+                switch (_commands[i])
+                {
+                    case FillPath f when f.Paint.Alpha < 1:
+                    case StrokePath sp when sp.Paint.Alpha < 1:
+                    case DrawGlyphRun g when !g.Run.IsInvisible && (g.Paint.Alpha < 1 || g.Run.StrokePaint is { Alpha: < 1 }):
+                    case DrawImage im when im.Image.HasAlpha || im.Image.Opacity < 1:
+                    case BeginTransparencyGroup:
+                    case BeginCompositingGroup:
+                    case DrawFallbackRegion:
+                        return false;
+                }
+            }
+            return true;
         }
 
         private void ExecuteNested(byte[] content, PdfDictionary resources, GraphicsState gs, ContentContext ctx, bool hidden)

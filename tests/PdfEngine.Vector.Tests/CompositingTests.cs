@@ -200,6 +200,38 @@ public class CompositingTests
     }
 
     [Fact]
+    public async Task KnockoutGroupOfOpaqueElements_IsExactAsSourceOver()
+    {
+        var b = new VectorPdfBuilder();
+        int form = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency /K true /I true >>",
+            "0.9 0.4 0.1 rg 20 20 120 120 re f 0.1 0.4 0.9 rg 60 60 120 120 re f 0 0 0 RG 4 w 20 180 m 180 20 l S");
+        b.AddPage(Backdrop + "/Fm1 Do", $"<< /XObject << /Fm1 {form} 0 R >> >>");
+        var (v, p, list, result) = await Render(b.Build(), 72);
+        using (v) using (p)
+        {
+            Assert.False(list.HasFallback);
+            Assert.Empty(result.Fallbacks);
+            var (mean, bad) = DifferentialRenderingTests.Compare(v, p);
+            _output.WriteLine($"knockout opaque: mean={mean:F2} bad={bad:P2}");
+            Assert.True(mean <= 2.0 && bad <= 0.01, $"mean {mean:F2} bad {bad:P2}");
+        }
+    }
+
+    [Fact]
+    public async Task KnockoutGroupWithTranslucentElements_FallsBack()
+    {
+        var b = new VectorPdfBuilder();
+        int form = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency /K true >> /Resources << /ExtGState << /T << /ca 0.5 >> >> >>",
+            "0.9 0.4 0.1 rg 20 20 120 120 re f /T gs 0.1 0.4 0.9 rg 60 60 120 120 re f");
+        b.AddPage("/Fm1 Do", $"<< /XObject << /Fm1 {form} 0 R >> >>");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        var token = Assert.Single(list.FallbackTokens);
+        Assert.Equal(PdfFallbackReason.TransparencyGroup, token.Reason);
+        Assert.DoesNotContain(list.Commands, c => c is FillPath);
+    }
+
+    [Fact]
     public async Task UncapturableSoftMask_StillFallsBack()
     {
         var b = new VectorPdfBuilder();

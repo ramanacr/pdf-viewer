@@ -754,9 +754,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
                 double left = glyph.OffsetX;
                 double right = glyph.OffsetX + glyph.AdvanceX;
+                if (glyph.AdvanceY != 0) right = left + Math.Abs(glyph.AdvanceY); // vertical: one em-ish column
                 if (Math.Abs(right - left) < 1e-6) right = left + fontSize * 0.25;
-                double bottom = run.TextRise + descent;
-                double top = run.TextRise + ascent;
+                double bottom = run.TextRise + glyph.OffsetY + descent;
+                double top = run.TextRise + glyph.OffsetY + ascent;
 
                 var bounds = m.Transform(new PdfRect(Math.Min(left, right), bottom, Math.Abs(right - left), top - bottom));
 

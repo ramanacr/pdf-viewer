@@ -455,7 +455,7 @@ internal sealed class WpfDisplayListCompiler
             indices.Add(index);
             advances.Add(0);
             // All positioning is absolute from the run origin: PDF glyph placement is authored (ADR-006).
-            offsets.Add(new Point(glyph.OffsetX / th * sign, 0));
+            offsets.Add(new Point(glyph.OffsetX / th * sign, glyph.OffsetY * sign));
         }
 
         if (indices.Count == 0)
