@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:PdfViewer.ViewModels"
+        xmlns:views="clr-namespace:PdfViewer.Views"
         xmlns:models="clr-namespace:PdfViewer.Models"
         mc:Ignorable="d"
         Title="PDF Viewer"
@@ -1072,9 +1073,18 @@
                                                          Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
 
                                             <!-- 2. Rendered Page Image -->
-                                            <Image Source="{Binding RenderedImage}"
+                                            <Image Source="{Binding PageSurface}"
+                                                   views:PageSurfaceCache.IsEnabled="True"
                                                    Stretch="Fill"
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
+                                            <!-- Viewport detail tile: the visible part of a zoomed page at exact device resolution
+                                                 (Direct2D host), laid over the coarser page bitmap. Also the page's visibility probe. -->
+                                            <Canvas views:PageDetailHost.IsHost="True" IsHitTestVisible="False" ClipToBounds="True">
+                                                <Image Source="{Binding DetailImage}"
+                                                       Canvas.Left="{Binding DetailRect.X}" Canvas.Top="{Binding DetailRect.Y}"
+                                                       Width="{Binding DetailRect.Width}" Height="{Binding DetailRect.Height}"
+                                                       Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality" />
+                                            </Canvas>
 
                                             <!-- Everything drawn over the page lives in unrotated page space,
                                                  because that is the space text boxes and annotation rectangles
@@ -1138,10 +1148,7 @@
                                                 </ItemsControl.ItemContainerStyle>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type models:PageTextSegment}">
-                                                        <Border Background="#440078D7"
-                                                                BorderBrush="#880078D7"
-                                                                BorderThickness="1"
-                                                                CornerRadius="2" />
+                                                        <Border Background="#5A3390FF" SnapsToDevicePixels="True" /><!-- a word processor's selection: a flat band, no outline -->
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -1253,23 +1260,32 @@
                                                               Cursor="Hand"
                                                               Background="Transparent"
                                                               MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
-                                                            <!-- Highlight -->
-                                                            <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                    Opacity="{Binding Opacity}"
-                                                                    CornerRadius="2"
-                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" />
+                                                            <!-- Highlight: one box, or one band per line of a multi-line highlight -->
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
+                                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            </Grid>
 
                                                             <!-- Underline -->
-                                                            <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                    BorderThickness="0,0,0,2"
-                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
+                                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            </Grid>
 
                                                             <!-- StrikeOut -->
-                                                            <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                                  Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                  StrokeThickness="2"
-                                                                  VerticalAlignment="Center"
-                                                                  Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
+                                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      StrokeThickness="2"
+                                                                      VerticalAlignment="Center"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            </Grid>
 
                                                             <!-- Note -->
                                                             <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
@@ -1386,9 +1402,18 @@
                                              Visibility="{Binding SingleCurrentPage.IsLoading, Converter={StaticResource BoolToVis}}" />
 
                                 <!-- Rendered Page Image -->
-                                <Image Source="{Binding SingleCurrentPage.RenderedImage}"
+                                <Image Source="{Binding SingleCurrentPage.PageSurface}"
+                                                   views:PageSurfaceCache.IsEnabled="True"
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
+                                <!-- Viewport detail tile: the visible part of a zoomed page at exact device resolution
+                                     (Direct2D host), laid over the coarser page bitmap. Also the page's visibility probe. -->
+                                <Canvas views:PageDetailHost.IsHost="True" IsHitTestVisible="False" ClipToBounds="True" DataContext="{Binding SingleCurrentPage}">
+                                    <Image Source="{Binding DetailImage}"
+                                           Canvas.Left="{Binding DetailRect.X}" Canvas.Top="{Binding DetailRect.Y}"
+                                           Width="{Binding DetailRect.Width}" Height="{Binding DetailRect.Height}"
+                                           Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality" />
+                                </Canvas>
 
                                 <!-- The overlay stack, in unrotated page space and then turned to
                                      sit on the picture. Same as the continuous view. -->
@@ -1448,10 +1473,7 @@
                                     </ItemsControl.ItemContainerStyle>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:PageTextSegment}">
-                                            <Border Background="#440078D7"
-                                                    BorderBrush="#880078D7"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2" />
+                                            <Border Background="#5A3390FF" SnapsToDevicePixels="True" /><!-- a word processor's selection: a flat band, no outline -->
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -1563,23 +1585,32 @@
                                                   Cursor="Hand"
                                                   Background="Transparent"
                                                   MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
-                                                <!-- Highlight -->
-                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                        Opacity="{Binding Opacity}"
-                                                        CornerRadius="2"
-                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" />
+                                                <!-- Highlight: one box, or one band per line of a multi-line highlight -->
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
+                                                    <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                    <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                </Grid>
 
                                                 <!-- Underline -->
-                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                        BorderThickness="0,0,0,2"
-                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
+                                                    <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                    <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                </Grid>
 
                                                 <!-- StrikeOut -->
-                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                      StrokeThickness="2"
-                                                      VerticalAlignment="Center"
-                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
+                                                    <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          StrokeThickness="2"
+                                                          VerticalAlignment="Center"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                    <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                </Grid>
 
                                                 <!-- Note -->
                                                 <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
@@ -1680,6 +1711,18 @@
                    BorderThickness="0,1,0,0">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusText}" />
+            </StatusBarItem>
+
+            <!--
+                Secured-document indicator: the document restricts printing, copying, commenting,
+                form filling, editing or page assembly for this reader (ISO 32000-2 Table 22).
+            -->
+            <StatusBarItem Visibility="{Binding IsSecured, Converter={StaticResource BoolToVis}}"
+                           ToolTip="Opened without the owner password: the author restricted these actions.">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#x1F512;" Margin="0,0,6,0" FontSize="12" />
+                    <TextBlock Text="{Binding SecuritySummary}" />
+                </StackPanel>
             </StatusBarItem>
 
             <!--

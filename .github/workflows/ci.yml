@@ -5,6 +5,9 @@ on:
     branches: [ "master", "main" ]
   pull_request:
     branches: [ "master", "main" ]
+  schedule:
+    # Nightly tier (07_TEST_CORPUS "CI tiers"): deep fuzzing and the corpus report.
+    - cron: '0 2 * * *'
 
 jobs:
   build-and-test:
@@ -29,8 +32,31 @@ jobs:
         dotnet build PdfViewer.slnx --configuration Debug --no-restore
         dotnet build PdfViewer.slnx --configuration Release --no-restore
 
-    - name: Run Test Suite & Code Coverage
+    - name: Run Viewer Regression Suite & Code Coverage
       run: dotnet test tests/PdfViewer.Tests/PdfViewer.Tests.csproj --configuration Release --no-build --verbosity normal --collect:"XPlat Code Coverage"
+
+    # Vector engine: unit, fixture, differential (PDFium oracle) and fuzz-regression tests.
+    - name: Run Vector Engine Suite
+      env:
+        VECTOR_FUZZ_ITERATIONS: ${{ github.event_name == 'schedule' && '100000' || '2000' }}
+      run: dotnet test tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj --configuration Release --no-build --verbosity normal
+
+    # Local-only corpus report (no document leaves the runner). Extend by pointing at a
+    # rights-cleared corpus checkout; see eng/vectorpdf/corpus/README.md.
+    - name: Vector Corpus Report
+      shell: pwsh
+      run: |
+        dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool/VectorPdf.Tool.csproj --configuration Release --no-build -- corpus samples --out vector-corpus.jsonl --diff
+        Get-Content vector-corpus.jsonl
+
+    - name: Vector vs PDFium Benchmarks
+      run: dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool/VectorPdf.Tool.csproj --configuration Release --no-build -- bench --pages 10
+
+    - name: Upload Vector Diagnostics
+      uses: actions/upload-artifact@v4
+      with:
+        name: vector-diagnostics
+        path: vector-corpus.jsonl
 
     - name: Run Performance Benchmarks
       run: dotnet run --project benchmarks/PdfViewer.Benchmarks/PdfViewer.Benchmarks.csproj --configuration Release --no-build

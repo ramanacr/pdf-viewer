@@ -13,6 +13,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
 - [Native Engine & PDFium Tooling](#native-engine--pdfium-tooling)
+- [Rendering Engines (Vector Migration)](#rendering-engines-vector-migration)
 - [Prerequisites & System Requirements](#prerequisites--system-requirements)
 - [Project & Directory Structure](#project--directory-structure)
 - [Building & Running](#building--running)
@@ -170,14 +171,14 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 - **Organize Pages** (*File → Organize Pages*): reorder, rotate, duplicate or leave out pages, and save the result as a new document. Applied in a single pass, so the output is always consistent; the original is never modified.
 - **Export Text** (*File → Export Text*): writes the document's text layer to a plain text file, and says so plainly when a page has no text layer rather than handing back an empty file.
 - **Embedded Files** (*File → Embedded Files*): lists what the document carries, flags attachments Windows would treat as executable, and extracts one only when you ask. Nothing is ever unpacked on open or run.
-- **Interactive Text Selection & Clipboard Copying**:
-  - **Accurate Glyph Extraction**: Extracts characters and words directly from PDF text streams with sub-pixel bounding box accuracy.
-  - **I-Beam Cursor**: Dynamic cursor detection when hovering over selectable text.
-  - **Mouse Drag & Multi-Line Selection**: Click and drag across lines or paragraphs to highlight text in translucent blue accent.
-  - **Double-Click Word Selection**: Double-click any word to highlight it instantly.
-  - **Clipboard Copying (`Ctrl+C`)**: Copy formatted text with natural paragraph line breaks to the Windows clipboard.
-  - **Select All on Page (`Ctrl+A`)**: Instantly select all text across the current page.
-  - **Convert Selection to Highlight**: Right-click or use Edit menu to turn selected text into a permanent vector annotation.
+- **Word-processor text selection** (character-level text layout from PDFium's text page: reading order, inferred spaces and line breaks, line-end hyphens):
+  - **Click and drag** selects character by character, across lines, columns and pages; the view scrolls when the pointer nears the edge.
+  - **Double-click** selects only the word (no trailing space or punctuation; `don't`, `3.14` and `snake_case` stay whole); **double-click and drag** extends by whole words.
+  - **Triple-click** selects the paragraph; **Ctrl+click** the sentence.
+  - **Shift+click** extends the selection; **Shift+←/→** by character, **Ctrl+Shift+←/→** by word, **Shift+↑/↓** by line (keeping the column), **Shift+Home/End** to the line's ends, **Ctrl+Shift+Home/End** to the page's.
+  - The selection is a flat band per line at the line's full height, covering the spaces between words.
+  - **Copy (`Ctrl+C`)** keeps line breaks and joins words hyphenated across lines; **Select All (`Ctrl+A`)** selects the current page.
+  - **Highlight from selection** covers each selected line (one quad per line, saved as `/QuadPoints` and XFDF `coords`), not the rectangle around them; text under a highlight can still be selected by dragging.
 - **In-Document Text Search**:
   - Real-time searching powered by PDFium native text search APIs.
   - Case-sensitive / case-insensitive search toggle.
@@ -254,6 +255,37 @@ To re-run or verify the native tooling setup:
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\eng\pdfium\build.ps1
 ```
+
+---
+
+## Rendering Engines (Vector Migration)
+
+The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.Vector`, rendered by Direct2D/DirectWrite in `PdfEngine.Vector.Direct2D`, with the WPF renderer `PdfEngine.Vector.Windows` as fallback). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
+
+**Engine modes** (View → Rendering Engine, or the `PDF_ENGINE_MODE` environment variable: `Auto`, `Hybrid`, `Vector`, `Pdfium`):
+
+| Mode | Behaviour |
+|---|---|
+| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups, tiling patterns, knockout and non-isolated groups, tiling patterns, glyph-outline clips, vertical writing, predefined CJK CMaps, all shading types, and JPEG, JPEG 2000, JBIG2 and CCITT images are rendered natively. Content the vector path cannot reproduce faithfully (damaged images, fonts no backend can load, …) is composited **per region** from PDFium. Encrypted documents (RC4 and AES up to 256-bit, user or owner password, and certificate-encrypted files that PDFium cannot open) are decrypted by the vector engine itself, and their permissions (print, copy, edit, annotate, forms) are enforced unless the owner password is given. Pages where fallback covers ≥ 50 % of the area and documents the vector parser cannot open are rendered entirely by PDFium. |
+| `Vector` | Strict: unsupported regions are outlined in orange instead of rendered. For development and CI. |
+| `Pdfium` | The original PDFium renderer only (kill switch). |
+
+The status-bar badge shows which engine rendered the current page (`⚡ Vector`, `⚡ Hybrid (N PDFium regions)`, `🖼️ PDFium (Fallback)`); its tooltip lists the classified fallback reasons.
+
+**What stays on PDFium** regardless of mode: search, annotations and forms editing, saving, printing, image export, redaction, signatures and page organisation. **Releases still ship `pdfium.dll`** — it is required for fallback and for those features.
+
+**Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it, for vector and PDFium pages alike. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
+
+**Known limitations of the vector path:** the WPF fallback renderer is ~2× slower than PDFium, while Direct2D is faster than PDFium at every zoom (`eng/vectorpdf/baseline-bench.txt`).
+
+**Verification tooling:**
+```powershell
+dotnet test tests/PdfEngine.Vector.Tests                        # unit, fixture, PDFium-differential and fuzz tests
+$env:VECTOR_FUZZ_ITERATIONS=100000; dotnet test tests/PdfEngine.Vector.Tests --filter Fuzz
+dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- bench --pages 20
+dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- corpus <folder> --out report.jsonl --diff
+```
+The corpus runner reads files locally and writes one JSON line per file (SHA-256, open outcome for both engines, fallback reasons and area, pixel difference). No document content leaves the machine.
 
 ---
 
@@ -371,8 +403,8 @@ dotnet test PdfViewer.slnx
 ### Text Selection, Copying & Highlighting
 
 - Hover over any text to see the I-Beam cursor.
-- Click and drag across words or paragraphs to select text.
-- Double-click any word to select it.
+- Click and drag to select character by character (across pages too); Shift+click or Shift+arrows extend it.
+- Double-click a word to select just that word; triple-click selects the paragraph, Ctrl+click the sentence.
 - Press `Ctrl + C` to copy the selected text to clipboard.
 - Right-click or use the toolbar button to convert selected text into a persistent Highlight annotation.
 
@@ -453,4 +485,4 @@ Yes. Open `PdfViewer.slnx` in **Visual Studio 2022 (v17.12 or newer)**. Visual S
 ## License & Third-Party Notices
 
 - **PDF Viewer Application**: Licensed under the MIT License.
-- **PDF Engine**: Google PDFium (BSD 3-Clause / Apache 2.0). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license text.
+- **PDF Engine**: Google PDFium (BSD 3-Clause / Apache 2.0); vector renderer via Vortice.Windows (MIT); predefined CJK CMaps from Adobe cmap-resources (BSD 3-Clause); JPEG 2000 via CoreJ2K (BSD 3-Clause). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license texts.

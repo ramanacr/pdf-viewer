@@ -1,0 +1,27 @@
+# vectorpdf bench --pages 20 --backend d2d (Release, 2026-09-26, developer workstation, hardware D3D11). d2d.* = Direct2D renderer (default); vector.render/raster = WPF fallback renderer; pdfium.* = PDFium
+commands/page=450 imageCacheBytes=0
+vector.open                        0.85 ms
+pdfium.open                        0.25 ms
+vector.build.perPage              14.37 ms
+vector.render.100%                82.62 ms
+d2d.render.100%                   26.36 ms
+pdfium.render.100%                35.02 ms
+vector.render.200%               172.21 ms
+d2d.render.200%                   47.07 ms
+pdfium.render.200%                82.38 ms
+vector.render.400%               355.09 ms
+d2d.render.400%                   89.63 ms
+pdfium.render.400%               193.80 ms
+vector.render.800%               875.38 ms
+d2d.render.800%                  195.89 ms
+pdfium.render.800%               479.87 ms
+vector.render.1600%             2886.47 ms
+d2d.render.1600%                 552.66 ms
+pdfium.render.1600%             1155.80 ms
+vector.compile.100%                3.16 ms
+vector.raster.100%                67.84 ms
+vector.compile.1600%               2.87 ms
+vector.raster.1600%             2791.71 ms
+vector.surface.build               4.01 ms
+vector.warmReplay.150dpi         159.19 ms
+vector.cancel.observedMs          12.39 ms

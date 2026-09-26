@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PdfEngine.Vector.Direct2D</RootNamespace>
+    <AssemblyName>PdfEngine.Vector.Direct2D</AssemblyName>
+    <Description>Direct2D / DirectWrite GPU renderer for the vector engine's display list (ADR-005).</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MIT-licensed Vortice.Windows bindings; pinned. -->
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
+  </ItemGroup>
+
+</Project>

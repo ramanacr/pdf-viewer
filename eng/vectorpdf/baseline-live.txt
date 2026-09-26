@@ -1,0 +1,35 @@
+# vectorpdf live <file> --frames 180 (2026-09-25, developer workstation, 1200x900 window, 6 pages, 40 px/frame scroll)
+## generated path-heavy document (vectorpdf gen --pages 6: 400 page-spanning curves + 50 text lines per page)
+render tier=2 (2 = full GPU)
+Live           zoom 100% scroll     frames= 180 p50=  36.8ms p95=  41.1ms max=   44.9ms
+Live           zoom 200% scroll     frames= 180 p50=  23.8ms p95=  29.4ms max=   31.1ms
+Live           zoom 400% scroll     frames= 180 p50=  33.2ms p95=  33.5ms max=   33.9ms
+Live           zoom 800% scroll     frames= 180 p50=  16.7ms p95=  33.4ms max=   33.6ms
+Live           zoom 1600% scroll    frames= 180 p50=  16.7ms p95=  16.9ms max=   33.2ms
+LiveCached     zoom 100% scroll     frames= 180 p50=  16.7ms p95=  17.1ms max=   32.9ms
+LiveCached     zoom 200% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.3ms
+LiveCached     zoom 400% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.2ms
+LiveCached     zoom 800% scroll     frames= 180 p50=  16.7ms p95=  33.3ms max=   34.0ms
+LiveCached     zoom 1600% scroll    frames= 180 p50=  16.7ms p95=  17.0ms max=   33.1ms
+Bitmap         zoom 100% scroll     frames= 180 p50=  16.7ms p95=  16.9ms max=   17.2ms
+Bitmap         zoom 200% scroll     frames= 180 p50=  16.7ms p95=  16.9ms max=   17.1ms
+Bitmap         zoom 400% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   46.5ms
+Bitmap         zoom 800% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   32.7ms
+Bitmap         zoom 1600% scroll    frames= 180 p50=  16.7ms p95=  17.0ms max=   21.4ms
+## samples/SampleDocument.pdf (text)
+render tier=2 (2 = full GPU)
+Live           zoom 100% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.2ms
+Live           zoom 200% scroll     frames= 180 p50=  16.7ms p95=  17.1ms max=   17.4ms
+Live           zoom 400% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.5ms
+Live           zoom 800% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.2ms
+Live           zoom 1600% scroll    frames= 180 p50=  16.6ms p95=  16.9ms max=   17.5ms
+LiveCached     zoom 100% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.3ms
+LiveCached     zoom 200% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.2ms
+LiveCached     zoom 400% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.4ms
+LiveCached     zoom 800% scroll     frames= 180 p50=  16.7ms p95=  17.1ms max=   17.6ms
+LiveCached     zoom 1600% scroll    frames= 180 p50=  16.7ms p95=  17.0ms max=   17.2ms
+Bitmap         zoom 100% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.1ms
+Bitmap         zoom 200% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   17.2ms
+Bitmap         zoom 400% scroll     frames= 180 p50=  16.7ms p95=  17.0ms max=   33.4ms
+Bitmap         zoom 800% scroll     frames= 180 p50=  16.7ms p95=  16.9ms max=   33.1ms
+Bitmap         zoom 1600% scroll    frames= 180 p50=  16.7ms p95=  17.0ms max=   23.5ms

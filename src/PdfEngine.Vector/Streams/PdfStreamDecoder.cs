@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
@@ -10,138 +11,266 @@ using PdfEngine.Vector.Parsing;
 namespace PdfEngine.Vector.Streams;
 
 /// <summary>
-/// Stream filter pipeline decoder with decompression ratio and memory bomb guards.
+/// Result of <see cref="PdfStreamDecoder.DecodeImageStream"/>: the stream data after every general-purpose
+/// filter has been applied, plus the first image codec filter (if any) that was left for an image decoder.
+/// </summary>
+/// <param name="Data">Decoded bytes; still encoded by <paramref name="ImageFilter"/> when that is non-null.</param>
+/// <param name="ImageFilter">Normalised image filter name ("DCTDecode", "JPXDecode", "JBIG2Decode", "CCITTFaxDecode"), or null.</param>
+/// <param name="ImageFilterParms">The /DecodeParms entry belonging to <paramref name="ImageFilter"/>, if any.</param>
+public sealed record PdfDecodedStream(byte[] Data, string? ImageFilter, PdfDictionary? ImageFilterParms);
+
+/// <summary>
+/// Stream filter pipeline decoder (ISO 32000-2 Clause 7.4) with decompression ratio and memory bomb guards.
+/// Every filter writes into a <see cref="BoundedOutputBuffer"/>, so the ceilings in
+/// <see cref="PdfSecurityLimits"/> are enforced while decoding rather than after the fact.
 /// </summary>
 public sealed class PdfStreamDecoder
 {
-    private readonly PdfSecurityLimits _limits;
+    private const int FlateChunkSize = 64 * 1024;
 
-    public PdfStreamDecoder(PdfSecurityLimits? limits = null)
+    private readonly PdfSecurityLimits _limits;
+    private readonly Func<PdfObject?, PdfObject?> _resolve;
+
+    /// <summary>Creates a decoder.</summary>
+    /// <param name="limits">Security ceilings; defaults to <see cref="PdfSecurityLimits.Default"/>.</param>
+    /// <param name="resolve">
+    /// Optional indirect-object resolver used for /Filter, /DecodeParms and their array elements
+    /// (typically <c>PdfObjectResolver.Resolve</c>). Defaults to identity.
+    /// </param>
+    public PdfStreamDecoder(PdfSecurityLimits? limits = null, Func<PdfObject?, PdfObject?>? resolve = null)
     {
         _limits = limits ?? PdfSecurityLimits.Default;
+        _resolve = resolve ?? (static o => o);
     }
 
+    /// <summary>
+    /// Fully decodes a stream. Throws <see cref="PdfUnsupportedFeatureException"/> with
+    /// <see cref="PdfFallbackReason.UnsupportedImageFilter"/> if the chain contains an image codec
+    /// filter or an unknown filter; use <see cref="DecodeImageStream"/> for image XObjects.
+    /// </summary>
     public byte[] DecodeStream(PdfStream stream)
     {
+        var result = Decode(stream, stopAtImageFilter: false);
+        return result.Data;
+    }
+
+    /// <summary>
+    /// Applies all general-purpose filters in order and stops at the first image codec filter
+    /// (DCTDecode, JPXDecode, JBIG2Decode, CCITTFaxDecode), returning the still-encoded bytes and that
+    /// filter's normalised name and parameters.
+    /// </summary>
+    public PdfDecodedStream DecodeImageStream(PdfStream stream) => Decode(stream, stopAtImageFilter: true);
+
+    private PdfDecodedStream Decode(PdfStream stream, bool stopAtImageFilter)
+    {
         ReadOnlyMemory<byte> rawData = stream.GetRawBytes();
-        if (rawData.IsEmpty)
-            return Array.Empty<byte>();
+        var filters = GetFilters(stream.Dictionary);
 
-        var dict = stream.Dictionary;
-        if (!dict.TryGetValue("Filter", out var filterObj))
-        {
-            // Uncompressed stream
-            return rawData.ToArray();
-        }
-
-        // Filters can be a single name or an array of filter names applied sequentially
-        var filters = new List<string>();
-        if (filterObj is PdfName singleFilter)
-        {
-            filters.Add(singleFilter.Value);
-        }
-        else if (filterObj is PdfArray filterArray)
-        {
-            foreach (var item in filterArray)
-            {
-                if (item is PdfName name)
-                {
-                    filters.Add(name.Value);
-                }
-            }
-        }
+        if (filters.Count == 0)
+            return new PdfDecodedStream(rawData.ToArray(), null, null);
 
         byte[] current = rawData.ToArray();
         for (int i = 0; i < filters.Count; i++)
         {
-            string filter = filters[i];
-            PdfDictionary? decodeParms = GetDecodeParms(dict, i);
-            current = DecodeFilter(current, filter, decodeParms);
+            var (name, parms) = filters[i];
+            if (name == "Crypt" && stream.Decrypted)
+                continue; // the security handler already applied this stream's crypt filter
+            string? imageFilter = NormalizeImageFilter(name);
+            if (imageFilter != null)
+            {
+                if (stopAtImageFilter)
+                    return new PdfDecodedStream(current, imageFilter, parms);
+
+                throw new PdfUnsupportedFeatureException(
+                    PdfFallbackReason.UnsupportedImageFilter,
+                    $"Image codec filter /{name} requires an image decoder; use DecodeImageStream.");
+            }
+
+            current = DecodeFilter(current, name, parms);
         }
 
-        return current;
+        return new PdfDecodedStream(current, null, null);
+    }
+
+    private static string? NormalizeImageFilter(string name) => name switch
+    {
+        "DCTDecode" or "DCT" => "DCTDecode",
+        "JPXDecode" => "JPXDecode",
+        "JBIG2Decode" => "JBIG2Decode",
+        "CCITTFaxDecode" or "CCF" => "CCITTFaxDecode",
+        _ => null,
+    };
+
+    private List<(string Name, PdfDictionary? Parms)> GetFilters(PdfDictionary dict)
+    {
+        var result = new List<(string, PdfDictionary?)>();
+
+        // /F and /DP are the inline-image abbreviations (ISO 32000-2 Table 91). In a regular stream
+        // dictionary /F is a file specification (a string or dictionary), so it is only honoured as a
+        // filter when it is shaped like one.
+        PdfObject? filterObj = _resolve(dict["Filter"]);
+        if (filterObj == null && _resolve(dict["F"]) is PdfName or PdfArray)
+            filterObj = _resolve(dict["F"]);
+        PdfObject? parmsObj = _resolve(dict["DecodeParms"] ?? dict["DP"]);
+
+        var names = new List<string>();
+        switch (filterObj)
+        {
+            case null or PdfNull:
+                return result;
+            case PdfName single:
+                names.Add(single.Value);
+                break;
+            case PdfArray array:
+                foreach (var item in array)
+                {
+                    if (_resolve(item) is PdfName n)
+                        names.Add(n.Value);
+                    else
+                        throw new PdfSyntaxException("Stream /Filter array contains a non-name entry.");
+                }
+                break;
+            default:
+                throw new PdfSyntaxException("Stream /Filter must be a name or an array of names.");
+        }
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            PdfDictionary? parms = parmsObj switch
+            {
+                // A single dictionary is paired with the (first) filter; being lenient, every filter sees it
+                // and only reads the keys it understands.
+                PdfDictionary d => d,
+                PdfArray arr when i < arr.Count => _resolve(arr[i]) as PdfDictionary,
+                _ => null,
+            };
+            result.Add((names[i], parms));
+        }
+
+        return result;
     }
 
     private byte[] DecodeFilter(byte[] input, string filterName, PdfDictionary? parms)
     {
-        byte[] decoded = filterName switch
-        {
-            "FlateDecode" or "Fl" => DecodeFlate(input, parms),
-            "ASCIIHexDecode" or "AHx" => DecodeAsciiHex(input),
-            "ASCII85Decode" or "A85" => DecodeAscii85(input),
-            "RunLengthDecode" or "RL" => DecodeRunLength(input),
-            _ => input // Unsupported filter: return raw to allow fallback/diagnostics
-        };
+        var output = BoundedOutputBuffer.For(_limits, input.Length);
 
-        // Decompression expansion check
-        if (decoded.Length > _limits.MaxDecodedStreamBytes)
+        switch (filterName)
         {
-            throw new InvalidDataException(
-                $"Decoded stream size ({decoded.Length} bytes) exceeded security ceiling ({_limits.MaxDecodedStreamBytes} bytes).");
+            case "FlateDecode" or "Fl":
+                DecodeFlate(input, output);
+                return ApplyPredictor(output.ToArray(), parms);
+
+            case "LZWDecode" or "LZW":
+                int earlyChange = (int)(parms?.GetInteger("EarlyChange") ?? 1);
+                LzwDecoder.Decode(input, earlyChange != 0, output);
+                return ApplyPredictor(output.ToArray(), parms);
+
+            case "ASCIIHexDecode" or "AHx":
+                DecodeAsciiHex(input, output);
+                return output.ToArray();
+
+            case "ASCII85Decode" or "A85":
+                DecodeAscii85(input, output);
+                return output.ToArray();
+
+            case "RunLengthDecode" or "RL":
+                DecodeRunLength(input, output);
+                return output.ToArray();
+
+            case "Crypt":
+                // ISO 32000-2 7.4.10: /Identity (the default when /Name is absent) passes data through.
+                string cryptName = parms?.GetName("Name") ?? "Identity";
+                if (cryptName == "Identity")
+                    return input;
+                throw new PdfUnsupportedFeatureException(
+                    PdfFallbackReason.EncryptedContent,
+                    $"Stream uses crypt filter /{cryptName}; no security handler is available.");
+
+            default:
+                throw new PdfUnsupportedFeatureException(
+                    PdfFallbackReason.UnsupportedImageFilter,
+                    $"Unsupported stream filter /{filterName}.");
         }
-
-        if (input.Length > 0 && (double)decoded.Length / input.Length > _limits.MaxDecompressionRatio)
-        {
-            throw new InvalidDataException(
-                $"Decompression ratio ({(double)decoded.Length / input.Length:F1}x) exceeded safety threshold ({_limits.MaxDecompressionRatio}x).");
-        }
-
-        return decoded;
     }
 
-    private byte[] DecodeFlate(byte[] input, PdfDictionary? parms)
+    private byte[] ApplyPredictor(byte[] data, PdfDictionary? parms)
     {
-        byte[] uncompressed;
-        using (var inStream = new MemoryStream(input))
-        {
-            using var outStream = new MemoryStream();
-            try
-            {
-                // .NET 9 ZLibStream automatically handles zlib header/checksum
-                using (var zlib = new ZLibStream(inStream, CompressionMode.Decompress))
-                {
-                    zlib.CopyTo(outStream);
-                }
-                uncompressed = outStream.ToArray();
-            }
-            catch
-            {
-                // Fallback: try raw DeflateStream if zlib header was absent or malformed
-                inStream.Position = 0;
-                outStream.SetLength(0);
-                // If standard 2-byte zlib header (0x78 0x9C etc) is present, skip it
-                if (input.Length > 2 && (input[0] & 0x0F) == 8)
-                {
-                    inStream.Position = 2;
-                }
-                using (var deflate = new DeflateStream(inStream, CompressionMode.Decompress))
-                {
-                    deflate.CopyTo(outStream);
-                }
-                uncompressed = outStream.ToArray();
-            }
-        }
+        if (parms == null)
+            return data;
 
-        // Apply predictor post-processing if specified
-        if (parms != null)
-        {
-            int predictor = (int)(parms.GetInteger("Predictor") ?? 1);
-            int columns = (int)(parms.GetInteger("Columns") ?? 1);
-            int colors = (int)(parms.GetInteger("Colors") ?? 1);
-            int bpc = (int)(parms.GetInteger("BitsPerComponent") ?? 8);
+        int predictor = ClampToInt(parms.GetInteger("Predictor") ?? 1);
+        if (predictor <= 1)
+            return data;
 
-            if (predictor > 1)
-            {
-                return PredictorDecoder.DecodePredictor(uncompressed, predictor, columns, colors, bpc);
-            }
-        }
-
-        return uncompressed;
+        int columns = ClampToInt(parms.GetInteger("Columns") ?? 1);
+        int colors = ClampToInt(parms.GetInteger("Colors") ?? 1);
+        int bpc = ClampToInt(parms.GetInteger("BitsPerComponent") ?? 8);
+        return PredictorDecoder.DecodePredictor(data, predictor, columns, colors, bpc);
     }
 
+    private static int ClampToInt(long value) => (int)Math.Clamp(value, int.MinValue, int.MaxValue);
+
+    /// <summary>
+    /// Inflates zlib (RFC 1950) data, falling back to raw deflate (RFC 1951) when the zlib header is
+    /// missing or corrupt. Output is streamed in chunks into the bounded buffer. Truncated or corrupt
+    /// trailing data is tolerated once some output has been produced (common in real-world files).
+    /// </summary>
+    private void DecodeFlate(byte[] input, BoundedOutputBuffer output)
+    {
+        if (input.Length == 0)
+            return;
+
+        if (TryInflate(input, 0, zlib: true, output))
+            return;
+
+        // Zlib failed without producing output: retry as raw deflate, skipping a plausible zlib header.
+        int offset = input.Length > 2 && (input[0] & 0x0F) == 8 ? 2 : 0;
+        if (TryInflate(input, offset, zlib: false, output))
+            return;
+
+        throw new PdfSyntaxException("FlateDecode stream data is corrupt.");
+    }
+
+    private static bool TryInflate(byte[] input, int offset, bool zlib, BoundedOutputBuffer output)
+    {
+        int startLength = output.Length;
+        byte[] chunk = ArrayPool<byte>.Shared.Rent(FlateChunkSize);
+        try
+        {
+            using var inStream = new MemoryStream(input, offset, input.Length - offset, writable: false);
+            using Stream inflater = zlib
+                ? new ZLibStream(inStream, CompressionMode.Decompress)
+                : new DeflateStream(inStream, CompressionMode.Decompress);
+
+            int read;
+            while ((read = inflater.Read(chunk, 0, FlateChunkSize)) > 0)
+            {
+                output.Write(chunk.AsSpan(0, read));
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        {
+            // ZLibException (an IOException) is thrown for some corrupt inputs instead of InvalidDataException.
+            // Keep partial output of a truncated/corrupt stream; retry only when nothing was produced.
+            return output.Length > startLength;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(chunk);
+        }
+    }
+
+    /// <summary>Decodes ASCIIHexDecode data (ISO 32000-2 7.4.2). Non-hex, non-whitespace bytes are skipped.</summary>
     public static byte[] DecodeAsciiHex(ReadOnlySpan<byte> input)
     {
-        using var ms = new MemoryStream();
+        var output = BoundedOutputBuffer.Unbounded(input.Length / 2 + 1);
+        DecodeAsciiHex(input, output);
+        return output.ToArray();
+    }
+
+    private static void DecodeAsciiHex(ReadOnlySpan<byte> input, BoundedOutputBuffer output)
+    {
         int firstNibble = -1;
 
         for (int i = 0; i < input.Length; i++)
@@ -162,93 +291,98 @@ public sealed class PdfStreamDecoder
             }
             else
             {
-                ms.WriteByte((byte)((firstNibble << 4) | nibble));
+                output.WriteByte((byte)((firstNibble << 4) | nibble));
                 firstNibble = -1;
             }
         }
 
+        // An odd final digit behaves as if followed by 0 (ISO 32000-2 7.4.2).
         if (firstNibble >= 0)
-        {
-            ms.WriteByte((byte)(firstNibble << 4));
-        }
-
-        return ms.ToArray();
+            output.WriteByte((byte)(firstNibble << 4));
     }
 
+    /// <summary>
+    /// Decodes ASCII85Decode data (ISO 32000-2 7.4.3). Accepts an optional leading "&lt;~", treats "~" as EOD,
+    /// expands "z" only at a group boundary, and decodes a final partial group of 2-4 characters to 1-3 bytes.
+    /// </summary>
+    /// <exception cref="PdfSyntaxException">"z" inside a group, or a group whose value exceeds 2^32 - 1.</exception>
     public static byte[] DecodeAscii85(ReadOnlySpan<byte> input)
     {
-        using var ms = new MemoryStream();
+        var output = BoundedOutputBuffer.Unbounded(input.Length);
+        DecodeAscii85(input, output);
+        return output.ToArray();
+    }
+
+    private static void DecodeAscii85(ReadOnlySpan<byte> input, BoundedOutputBuffer output)
+    {
+        int start = 0;
+        while (start < input.Length && PdfLexer.IsWhitespace(input[start])) start++;
+        if (start + 1 < input.Length && input[start] == '<' && input[start + 1] == '~')
+            start += 2;
+
         Span<byte> tuple = stackalloc byte[5];
         int count = 0;
 
-        for (int i = 0; i < input.Length; i++)
+        for (int i = start; i < input.Length; i++)
         {
             byte b = input[i];
-            if (b == '~')
-            {
-                // Check for ~> EOD
-                if (i + 1 < input.Length && input[i + 1] == '>')
-                    break;
-            }
+            if (b == '~') break; // "~>" EOD; a lone '~' is also treated as end of data.
             if (PdfLexer.IsWhitespace(b)) continue;
 
-            if (b == 'z' && count == 0)
+            if (b == 'z')
             {
-                // 'z' represents 4 zero bytes
-                ms.Write([0, 0, 0, 0]);
+                if (count != 0)
+                    throw new PdfSyntaxException("ASCII85 'z' appears inside a 5-character group.");
+                output.Fill(0, 4);
                 continue;
             }
 
-            if (b >= '!' && b <= 'u')
-            {
-                tuple[count++] = (byte)(b - '!');
-                if (count == 5)
-                {
-                    uint val = (uint)(
-                        tuple[0] * 85 * 85 * 85 * 85 +
-                        tuple[1] * 85 * 85 * 85 +
-                        tuple[2] * 85 * 85 +
-                        tuple[3] * 85 +
-                        tuple[4]);
+            if (b < '!' || b > 'u')
+                continue; // Invalid characters are skipped rather than aborting the stream.
 
-                    ms.WriteByte((byte)((val >> 24) & 0xFF));
-                    ms.WriteByte((byte)((val >> 16) & 0xFF));
-                    ms.WriteByte((byte)((val >> 8) & 0xFF));
-                    ms.WriteByte((byte)(val & 0xFF));
-                    count = 0;
-                }
+            tuple[count++] = (byte)(b - '!');
+            if (count == 5)
+            {
+                WriteAscii85Group(tuple, 4, output);
+                count = 0;
             }
         }
 
+        // A final partial group of n (2..4) characters is padded with 'u' and yields n-1 bytes.
+        // A single leftover character carries no complete byte and is ignored.
         if (count > 1)
         {
-            // Pad remaining tuple elements with 'u' (84)
-            for (int i = count; i < 5; i++)
-            {
-                tuple[i] = 84;
-            }
-
-            uint val = (uint)(
-                tuple[0] * 85 * 85 * 85 * 85 +
-                tuple[1] * 85 * 85 * 85 +
-                tuple[2] * 85 * 85 +
-                tuple[3] * 85 +
-                tuple[4]);
-
-            for (int i = 0; i < count - 1; i++)
-            {
-                ms.WriteByte((byte)((val >> (24 - i * 8)) & 0xFF));
-            }
+            for (int i = count; i < 5; i++) tuple[i] = 84;
+            WriteAscii85Group(tuple, count - 1, output);
         }
-
-        return ms.ToArray();
     }
 
+    private static void WriteAscii85Group(ReadOnlySpan<byte> tuple, int byteCount, BoundedOutputBuffer output)
+    {
+        ulong value = 0;
+        for (int i = 0; i < 5; i++) value = value * 85 + tuple[i];
+        if (value > uint.MaxValue)
+            throw new PdfSyntaxException("ASCII85 group value exceeds 2^32 - 1.");
+
+        Span<byte> bytes = stackalloc byte[4];
+        bytes[0] = (byte)(value >> 24);
+        bytes[1] = (byte)(value >> 16);
+        bytes[2] = (byte)(value >> 8);
+        bytes[3] = (byte)value;
+        output.Write(bytes[..byteCount]);
+    }
+
+    /// <summary>Decodes RunLengthDecode data (ISO 32000-2 7.4.5). Truncated runs are dropped.</summary>
     public static byte[] DecodeRunLength(ReadOnlySpan<byte> input)
     {
-        using var ms = new MemoryStream();
-        int i = 0;
+        var output = BoundedOutputBuffer.Unbounded(input.Length);
+        DecodeRunLength(input, output);
+        return output.ToArray();
+    }
 
+    private static void DecodeRunLength(ReadOnlySpan<byte> input, BoundedOutputBuffer output)
+    {
+        int i = 0;
         while (i < input.Length)
         {
             byte len = input[i++];
@@ -259,43 +393,16 @@ public sealed class PdfStreamDecoder
             {
                 // Literal run of len + 1 bytes
                 int count = len + 1;
-                if (i + count <= input.Length)
-                {
-                    ms.Write(input.Slice(i, count));
-                    i += count;
-                }
-                else break;
+                if (i + count > input.Length) break;
+                output.Write(input.Slice(i, count));
+                i += count;
             }
             else
             {
                 // Replicated byte (257 - len) times
-                int count = 257 - len;
-                if (i < input.Length)
-                {
-                    byte repeatByte = input[i++];
-                    for (int k = 0; k < count; k++)
-                    {
-                        ms.WriteByte(repeatByte);
-                    }
-                }
-                else break;
+                if (i >= input.Length) break;
+                output.Fill(input[i++], 257 - len);
             }
         }
-
-        return ms.ToArray();
-    }
-
-    private static PdfDictionary? GetDecodeParms(PdfDictionary dict, int index)
-    {
-        if (!dict.TryGetValue("DecodeParms", out var parmsObj))
-            return null;
-
-        if (parmsObj is PdfDictionary d)
-            return d;
-
-        if (parmsObj is PdfArray arr && index < arr.Count && arr[index] is PdfDictionary itemDict)
-            return itemDict;
-
-        return null;
     }
 }

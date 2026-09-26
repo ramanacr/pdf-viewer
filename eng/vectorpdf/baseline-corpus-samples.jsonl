@@ -1,0 +1,2 @@
+﻿{"file":"EngineShowcase.pdf","sha256":"497a76697c197bd543a689afe624ea74f1ebf0b2a02bae5dec60fc249cb0672d","bytes":6231,"pdfiumPages":3,"vectorPages":3,"repaired":false,"fallbackReasons":{"BlendMode":6},"fallbackAreaMean":0.0374,"meanPixelDiff":1.378,"vectorMs":407}
+{"file":"SampleDocument.pdf","sha256":"7822945540e2cdcd2187973f6e84e286b96f61d78672a216a35bd4e6a125011b","bytes":10066,"pdfiumPages":8,"vectorPages":8,"repaired":false,"fallbackReasons":{},"fallbackAreaMean":0,"meanPixelDiff":2.109,"vectorMs":160.4}

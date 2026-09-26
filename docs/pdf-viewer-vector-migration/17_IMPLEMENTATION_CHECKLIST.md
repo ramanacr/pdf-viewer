@@ -1,65 +1,69 @@
 # Implementation Checklist
 
+Status as of 2026-09-25. `[x]` done with tests/evidence, `[~]` partial (see note), `[ ]` open.
+Details and evidence: `18_IMPLEMENTATION_STATUS.md`.
+
 ## Before coding
-- [ ] Capture current `main` SHA.
-- [ ] Run complete tests.
+- [x] Capture current `main` SHA. (`2e2fdd7` before the second pass)
+- [x] Run complete tests.
 - [ ] Publish current release artifact and record size.
-- [ ] Record cold start, open, first page, zoom, scroll, memory.
-- [ ] Select initial legal test corpus.
-- [ ] Create migration branch.
+- [~] Record cold start, open, first page, zoom, scroll, memory. (open/first page/zoom/cancel in `eng/vectorpdf/baseline-bench.txt`; cold start, scroll, memory not yet)
+- [x] Select initial legal test corpus. (veraPDF corpus CC BY 4.0 + PDF 2.0 examples CC BY-SA 4.0, pinned, `eng/vectorpdf/corpus/`)
+- [x] Create migration branch.
 
 ## Foundation
-- [ ] Add `PdfEngine.Vector`.
-- [ ] Add Windows vector backend project or isolated folder.
-- [ ] Add engine mode.
-- [ ] Add fallback reason enum.
-- [ ] Add diagnostic counters.
-- [ ] Add PDFium differential harness.
-- [ ] Ensure Vector project has no Pdfium reference.
+- [x] Add `PdfEngine.Vector`.
+- [x] Add Windows vector backend project or isolated folder.
+- [x] Add engine mode.
+- [x] Add fallback reason enum.
+- [x] Add diagnostic counters. (`PdfEngineMetrics`, recorded per page, `ToJsonReport()`)
+- [x] Add PDFium differential harness. (`DifferentialRenderingTests`, `vectorpdf corpus --diff`)
+- [x] Ensure Vector project has no Pdfium reference.
 
 ## Parser
-- [ ] checked arithmetic
-- [ ] token limits
-- [ ] nesting limits
-- [ ] classic xref
-- [ ] xref streams
-- [ ] object streams
-- [ ] incremental updates
-- [ ] cycle detection
-- [ ] decompression limits
+- [x] checked arithmetic
+- [x] token limits
+- [x] nesting limits
+- [x] classic xref
+- [x] xref streams
+- [x] object streams
+- [x] incremental updates
+- [x] cycle detection
+- [x] decompression limits (bounded streaming Flate/LZW)
+- [x] damaged-xref reconstruction and object-header validation
 
 ## IR
-- [ ] immutable
-- [ ] backend-neutral
-- [ ] glyph-position preserving
-- [ ] path preserving
-- [ ] bounds
-- [ ] explicit fallback
-- [ ] deterministic diagnostics
+- [x] immutable
+- [x] backend-neutral
+- [x] glyph-position preserving
+- [x] path preserving
+- [x] bounds (conservative, page space)
+- [x] explicit fallback
+- [~] deterministic diagnostics (JSON metrics report; no display-list serializer yet)
 
 ## Renderer
-- [ ] Direct2D paths
-- [ ] DirectWrite glyphs
-- [ ] images
-- [ ] clips
-- [ ] transforms
-- [ ] dirty region
-- [ ] device loss
-- [ ] cancellation
-- [ ] resource eviction
+- [~] Direct2D paths (WPF retained drawing instead — ADR-011, proposed)
+- [~] DirectWrite glyphs (WPF `GlyphRun` from embedded TrueType/OpenType; bare CFF/Type1 fall back)
+- [x] images
+- [x] clips
+- [x] transforms
+- [~] dirty region (culling by page-space bounds implemented in the compiler; hosts do not pass a region yet)
+- [~] device loss (handled inside WPF; no explicit test)
+- [x] cancellation
+- [x] resource eviction (display-list LRU, image cache LRU)
 
 ## Verification
-- [ ] 25–1600% zoom
-- [ ] no full-page bitmap enlargement
-- [ ] differential render
-- [ ] text geometry
-- [ ] malformed files
-- [ ] fuzz regressions
+- [x] 25–1600% zoom (surface reused across zoom; hard edge verified at 16×)
+- [x] no full-page bitmap enlargement (live vector page surface; bitmap path only for night mode, PDFium and very dense pages)
+- [x] differential render
+- [x] text geometry (selection boxes vs PDFium)
+- [x] malformed files
+- [x] fuzz regressions
 - [ ] long documents
-- [ ] path-heavy documents
+- [~] path-heavy documents (benchmark fixture only)
 - [ ] image-heavy documents
-- [ ] memory ceilings
-- [ ] existing viewer tests
+- [x] memory ceilings
+- [x] existing viewer tests
 
 ## Before PDFium removal
 - [ ] zero production fallback

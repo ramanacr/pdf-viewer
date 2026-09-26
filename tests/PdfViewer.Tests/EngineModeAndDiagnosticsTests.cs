@@ -105,15 +105,17 @@ public class EngineModeAndDiagnosticsTests
         Assert.False(r1.IsFallback);
         Assert.Contains("Vector", r1.BadgeText);
 
-        // Page 2: Triggers fallback due to 'ri'
+        // Page 2: a damaged JPEG is composited from PDFium; the rest (knockout group included) stays vector.
+        // ('ri' is a valid operator and must NOT trigger fallback.)
         var p2 = await service.RenderPageAsync(2, 150);
         Assert.NotNull(p2);
         var r2 = service.GetPageEngineReport(2);
         Assert.NotNull(r2);
-        Assert.Equal(PdfEngineMode.Pdfium, r2.Engine);
+        Assert.Equal(PdfEngineMode.Hybrid, r2.Engine);
         Assert.True(r2.IsFallback);
-        Assert.Contains("PDFium (Fallback)", r2.BadgeText);
-        Assert.Contains(r2.FallbackReasons, r => r.Contains("ri"));
+        Assert.Contains("Hybrid", r2.BadgeText);
+        Assert.Contains(r2.FallbackReasons, r => r.Contains("ImageDecode"));
+        Assert.DoesNotContain(r2.FallbackReasons, r => r.Contains("UnknownOperator"));
 
         // Page 3: Native Vector
         var p3 = await service.RenderPageAsync(3, 150);

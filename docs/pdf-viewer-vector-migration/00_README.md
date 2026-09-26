@@ -47,6 +47,8 @@ The current viewer is .NET 9/WPF. Keep it during the engine migration. UI/native
 14. `14_ADRS.md`
 15. `15_BACKLOG.md`
 16. `16_REFERENCE_AND_STANDARDS.md`
+17. `17_IMPLEMENTATION_CHECKLIST.md`
+18. `18_IMPLEMENTATION_STATUS.md` — audit, evidence, gate status and remaining work (keep current)
 
 ## Non-negotiable principles
 

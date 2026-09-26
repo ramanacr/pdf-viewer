@@ -101,3 +101,18 @@
 **Decision:** prioritize features by representative corpus/fallback telemetry, not by easiest implementation order after foundation.
 
 **Rationale:** maximizes real-world coverage and creates objective PDFium exit evidence.
+
+---
+
+## ADR-011 — WPF retained drawing as the interim Windows backend
+
+**Status:** Superseded 2026-09-26 — Direct2D/DirectWrite adopted per ADR-005 (`PdfEngine.Vector.Direct2D`, Vortice.Windows). WPF remains the application shell and the fallback renderer; see 18_IMPLEMENTATION_STATUS.md §2.
+
+**Context:** ADR-005 selects Direct2D + DirectWrite. The first implementation pass built the backend on WPF (`DrawingVisual`, `StreamGeometry`, `GlyphRun`, `RenderTargetBitmap`) while describing it as Direct2D. WPF's composition engine is Direct3D-based, but `RenderTargetBitmap` rasterizes in software, and measured first-render latency is 2.4× PDFium's (eng/vectorpdf/baseline-bench.txt).
+
+**Decision (proposed):** keep WPF retained drawing as the interim backend, behind `IPdfVectorRenderer`, and make the vector *host* display the frozen page `Drawing` directly (hardware-composed, no full-page raster per zoom) before investing in Direct2D. Revisit Direct2D when (a) the host is in place and latency still misses the gate, or (b) a non-WPF shell is started.
+
+**Rationale:** the host removes the dominant cost (software rasterization) for on-screen viewing without a COM interop layer; the display-list/IR boundary keeps a later Direct2D backend a replacement of one project, not a rewrite.
+
+**Consequences:** product text must not claim Direct2D/DirectWrite; glyph rendering uses WPF `GlyphTypeface` (TrueType/OpenType only — bare CFF/Type1 need wrapping or fall back per region); device loss is handled by WPF, not by our code; print/export still need an off-screen rasterizer.
+

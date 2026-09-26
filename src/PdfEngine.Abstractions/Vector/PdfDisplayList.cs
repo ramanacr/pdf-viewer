@@ -75,18 +75,35 @@ public sealed class PdfDisplayList : IPdfDisplayList
         FallbackTokens = fallbackTokens ?? Array.Empty<PdfFallbackToken>();
     }
 
+    /// <summary>
+    /// Fraction of the crop box covered by fallback regions. Overlapping regions are counted once
+    /// (sampled on a 64×64 grid) so many small tokens over the same object do not inflate the metric.
+    /// </summary>
     public double ComputeFallbackAreaRatio()
     {
-        double pageArea = PageSize.Width * PageSize.Height;
-        if (pageArea <= 0 || FallbackTokens.Count == 0)
+        var crop = CropBox.IsEmpty ? new PdfRect(0, 0, PageSize.Width, PageSize.Height) : CropBox;
+        if (crop.IsEmpty || FallbackTokens.Count == 0)
             return 0.0;
 
-        double fallbackArea = 0.0;
-        foreach (var fb in FallbackTokens)
+        const int Grid = 64;
+        int covered = 0;
+        for (int gy = 0; gy < Grid; gy++)
         {
-            fallbackArea += fb.Bounds.Width * fb.Bounds.Height;
+            double y = crop.Y + (gy + 0.5) * crop.Height / Grid;
+            for (int gx = 0; gx < Grid; gx++)
+            {
+                double x = crop.X + (gx + 0.5) * crop.Width / Grid;
+                foreach (var fb in FallbackTokens)
+                {
+                    if (fb.Bounds.Contains(x, y))
+                    {
+                        covered++;
+                        break;
+                    }
+                }
+            }
         }
 
-        return Math.Clamp(fallbackArea / pageArea, 0.0, 1.0);
+        return covered / (double)(Grid * Grid);
     }
 }

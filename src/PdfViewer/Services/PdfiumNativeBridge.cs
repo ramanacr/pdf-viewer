@@ -315,6 +315,10 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void FPDF_CloseDocument(IntPtr document);
 
+    /// <summary>The permission flags in effect (all bits set when opened with the owner password).</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDF_GetDocPermissions(SafeDocumentHandle document);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern uint FPDF_GetLastError();
 
@@ -471,6 +475,14 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFText_GetLooseCharBox(SafeTextPageHandle text_page, int index, out FS_RECTF rect);
 
+    /// <summary>1 when PDFium inserted the character (a space or line break the content lacks).</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFText_IsGenerated(SafeTextPageHandle text_page, int index);
+
+    /// <summary>1 when the character is a hyphen that breaks a word at a line end.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFText_IsHyphen(SafeTextPageHandle text_page, int index);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFText_GetText(SafeTextPageHandle text_page, int start_index, int count, byte[] result);
 
@@ -540,6 +552,12 @@ public static class PdfiumNativeBridge
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFAnnot_AppendAttachmentPoints(SafeAnnotHandle annot, ref FS_QUADPOINTSF quad_points);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern UIntPtr FPDFAnnot_CountAttachmentPoints(SafeAnnotHandle annot);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFAnnot_GetAttachmentPoints(SafeAnnotHandle annot, UIntPtr quad_index, out FS_QUADPOINTSF quad_points);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFAnnot_AddInkStroke(SafeAnnotHandle annot, [In] FS_POINTF[] points, int point_count);

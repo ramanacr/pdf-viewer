@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vector engine corpus manifest",
+  "type": "object",
+  "required": ["entries"],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "sha256", "source", "license", "redistributable"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable corpus identifier." },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "source": { "type": "string", "description": "URL or suite name the file is fetched from." },
+          "license": { "type": "string" },
+          "redistributable": { "type": "boolean", "description": "False: never commit the file itself." },
+          "pdfVersion": { "type": "string" },
+          "pages": { "type": "integer", "minimum": 0 },
+          "tags": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "linearized", "xref-table", "xref-stream", "hybrid-xref", "object-streams", "encrypted",
+                "font-type1", "font-cff", "font-truetype", "font-type0", "font-type3", "cjk", "vertical",
+                "color-icc", "color-separation", "color-lab", "images-jpeg", "images-jpx", "images-jbig2",
+                "images-ccitt", "transparency", "soft-mask", "blend-modes", "patterns", "shadings",
+                "forms", "annotations", "optional-content", "malformed", "repaired", "scanned", "born-digital"
+              ]
+            }
+          },
+          "producer": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

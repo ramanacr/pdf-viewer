@@ -218,6 +218,12 @@ public sealed record PdfStream(
     IPdfByteSource? Source,
     ReadOnlyMemory<byte>? CachedRawBytes = null) : PdfObject
 {
+    /// <summary>
+    /// The data was decrypted by the security handler (or is exempt): a <c>/Crypt</c> filter in
+    /// /Filter has already been applied and passes the bytes through.
+    /// </summary>
+    public bool Decrypted { get; init; }
+
     public ReadOnlyMemory<byte> GetRawBytes()
     {
         if (CachedRawBytes.HasValue)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
@@ -49,21 +50,35 @@ public sealed class PdfPageTree
         int depth)
     {
         if (depth > _limits.MaxPageTreeDepth)
-            throw new InvalidDataException($"PDF Page tree recursion depth exceeded limit ({_limits.MaxPageTreeDepth}).");
+            throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxPageTreeDepth), $"PDF Page tree recursion depth exceeded limit ({_limits.MaxPageTreeDepth}).");
 
         if (!visited.Add(node))
             return; // Cycle guard
 
+        if (_pages.Count >= _limits.MaxObjectsCount)
+            return;
+
         // Inherited boxes and attributes
         PdfRect mediaBox = ParseRect(node["MediaBox"]) ?? inheritedMediaBox;
-        PdfRect cropBox = ParseRect(node["CropBox"]) ?? (inheritedCropBox.IsEmpty ? mediaBox : inheritedCropBox);
-        int rotate = (int)(node.GetInteger("Rotate") ?? inheritedRotate);
+        // Only an explicitly specified /CropBox is inherited; the default (the media box) is the
+        // leaf's own media box, not an ancestor's.
+        PdfRect specifiedCropBox = ParseRect(node["CropBox"]) ?? inheritedCropBox;
+        // /Rotate must be a multiple of 90 (ISO 32000-2 Table 31); snap anything else.
+        int rotate = (int)(Math.Round((node.GetInteger("Rotate") ?? inheritedRotate) / 90.0) * 90) % 360;
         PdfDictionary mergedResources = MergeResources(inheritedResources, _resolver.Resolve(node["Resources"]) as PdfDictionary);
 
         string? type = node.GetName("Type");
         if (type == "Page" || (!node.ContainsKey("Kids") && node.ContainsKey("Contents")))
         {
-            // Leaf Page Node
+            // Leaf Page Node. The crop box is clipped to the media box (ISO 32000-2 14.11.2) —
+            // only here, once both boxes are final.
+            PdfRect cropBox = specifiedCropBox.IsEmpty ? mediaBox : specifiedCropBox;
+            if (!mediaBox.IsEmpty && !cropBox.IsEmpty)
+            {
+                double x0 = Math.Max(mediaBox.Left, cropBox.Left), y0 = Math.Max(mediaBox.Top, cropBox.Top);
+                double x1 = Math.Min(mediaBox.Right, cropBox.Right), y1 = Math.Min(mediaBox.Bottom, cropBox.Bottom);
+                cropBox = x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : mediaBox;
+            }
             int pageNum = _pages.Count + 1;
             var contentsList = ResolveContents(node["Contents"]);
             var page = new PdfPageNode(pageNum, node, mediaBox, cropBox, rotate, mergedResources, contentsList);
@@ -80,7 +95,7 @@ public sealed class PdfPageTree
                     var kidNode = _resolver.Resolve(kidRef);
                     if (kidNode is PdfDictionary kidDict)
                     {
-                        CollectPages(kidDict, mediaBox, cropBox, rotate, mergedResources, visited, depth + 1);
+                        CollectPages(kidDict, mediaBox, specifiedCropBox, rotate, mergedResources, visited, depth + 1);
                     }
                 }
             }

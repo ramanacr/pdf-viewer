@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using PdfEngine.Geometry;
 
 namespace PdfEngine.Vector;
@@ -157,17 +158,61 @@ public sealed class PdfPath
 /// <summary>
 /// Individual positioned glyph in a glyph run.
 /// </summary>
+/// <param name="GlyphId">
+/// Glyph index inside the run's font program when <see cref="PdfGlyphRun.Face"/> carries one;
+/// otherwise the character code / CID (kept for diagnostics).
+/// </param>
+/// <param name="AdvanceX">Horizontal displacement in text space (font size, Tc, Tw and Tz applied).</param>
+/// <param name="OffsetX">Glyph origin relative to the run origin, in text space.</param>
+/// <param name="Unicode">Semantic text for selection/search/copy. Never used to lay out glyphs (ADR-006).</param>
+/// <param name="CharCode">Original PDF character code (or CID for composite fonts); -1 when unknown.</param>
 public sealed record PdfGlyph(
     ushort GlyphId,
     double AdvanceX,
     double AdvanceY,
     double OffsetX = 0.0,
     double OffsetY = 0.0,
-    string? Unicode = null);
+    string? Unicode = null,
+    int CharCode = -1);
+
+/// <summary>Font program container format a backend may load directly.</summary>
+public enum PdfFontProgramFormat
+{
+    /// <summary>No embedded program usable by a backend; render with a metric-compatible substitute.</summary>
+    None = 0,
+    /// <summary>sfnt with TrueType outlines (FontFile2, or FontFile3/OpenType with glyf).</summary>
+    TrueType = 1,
+    /// <summary>sfnt with CFF outlines (FontFile3/OpenType).</summary>
+    OpenTypeCff = 2,
+    /// <summary>Embedded but in a container the backend cannot load (bare Type1 / CFF). Backends must classify.</summary>
+    Unsupported = 3,
+}
+
+/// <summary>
+/// Backend-neutral identity of the font used by a glyph run. Carries the embedded program so a
+/// backend can render the author's glyphs; carries style hints for substitution when it cannot.
+/// </summary>
+public sealed record PdfFontFace(
+    string Key,
+    string? PostScriptName,
+    PdfFontProgramFormat Format,
+    ReadOnlyMemory<byte> ProgramData,
+    bool IsBold = false,
+    bool IsItalic = false,
+    bool IsSerif = false,
+    bool IsFixedPitch = false,
+    bool IsSymbolic = false,
+    double Ascent = 0.8,
+    double Descent = -0.2);
 
 /// <summary>
 /// Glyph run preserving exact PDF positioning, font identity, and text matrix.
 /// </summary>
+/// <remarks>
+/// <see cref="TextMatrix"/> maps text space to the current user space (the renderer's CTM stack
+/// supplies user→page). <see cref="TextToPage"/> is the full text space → default user space
+/// transform, for semantic consumers (selection, search hit boxes) that do not replay the stack.
+/// </remarks>
 public sealed record PdfGlyphRun(
     string FontResourceName,
     double FontSize,
@@ -179,11 +224,32 @@ public sealed record PdfGlyphRun(
     double TextRise = 0.0,
     int RenderingMode = 0,
     string? FontFamilyName = null,
-    string? FullText = null);
+    string? FullText = null)
+{
+    /// <summary>Text space → default user (page) space. Identity-based when produced by older builders.</summary>
+    public PdfMatrix TextToPage { get; init; } = TextMatrix;
+
+    /// <summary>Font program and style hints; null for runs built without font resolution.</summary>
+    public PdfFontFace? Face { get; init; }
+
+    /// <summary>Stroke paint for rendering modes that stroke (1, 2, 5, 6).</summary>
+    public PdfPaint? StrokePaint { get; init; }
+
+    /// <summary>Stroke parameters (line width etc.) for stroking rendering modes.</summary>
+    public PdfStroke? Stroke { get; init; }
+
+    /// <summary>True when mode 3/7 (invisible): kept for selection/search, never painted.</summary>
+    public bool IsInvisible => RenderingMode == 3 || RenderingMode == 7;
+}
 
 /// <summary>
 /// Reference to an embedded image or image XObject.
 /// </summary>
+/// <remarks>
+/// Pixels are produced lazily by <see cref="Source"/> so a display list does not pin decoded
+/// bitmaps (08_PERFORMANCE_MEMORY_BUDGETS: decoded images are separately budgeted).
+/// <see cref="ImageData"/> is retained for builders/tests that hand over raw RGB24.
+/// </remarks>
 public sealed record PdfImageRef(
     string ImageId,
     int Width,
@@ -192,7 +258,45 @@ public sealed record PdfImageRef(
     string ColorSpaceName,
     bool HasAlpha,
     ReadOnlyMemory<byte> ImageData,
-    string? Filter = null);
+    string? Filter = null)
+{
+    public IPdfImageSource? Source { get; init; }
+    public bool Interpolate { get; init; }
+
+    /// <summary>Constant alpha (ExtGState /ca) applied when the image is painted.</summary>
+    public double Opacity { get; init; } = 1.0;
+}
+
+/// <summary>Pixel layout of a decoded image.</summary>
+public enum PdfDecodedImageFormat
+{
+    /// <summary>Straight (non-premultiplied) 8-bit B,G,R,A per pixel, top row first.</summary>
+    Bgra32 = 0,
+    /// <summary>Still-encoded JPEG (DCTDecode) bytes; the backend's codec decodes them.</summary>
+    Jpeg = 1,
+}
+
+/// <summary>Decoded image pixels plus an optional separate alpha plane (SMask / Mask).</summary>
+/// <param name="Alpha">Width×Height 8-bit alpha applied on top of <see cref="Data"/>; null when opaque or already in Bgra32.</param>
+/// <param name="InvertCmykJpeg">JPEG is Adobe-style inverted CMYK that the backend must un-invert.</param>
+public sealed record PdfDecodedImage(
+    int Width,
+    int Height,
+    PdfDecodedImageFormat Format,
+    ReadOnlyMemory<byte> Data,
+    ReadOnlyMemory<byte>? Alpha = null,
+    bool InvertCmykJpeg = false)
+{
+    public long ByteSize => Data.Length + (Alpha?.Length ?? 0);
+}
+
+/// <summary>Lazy, cacheable producer of image pixels. Implementations must be thread-safe.</summary>
+public interface IPdfImageSource
+{
+    /// <summary>Stable identity (document + object) used by backend image caches.</summary>
+    string CacheKey { get; }
+    PdfDecodedImage Decode(CancellationToken cancellationToken = default);
+}
 
 /// <summary>
 /// Base record for smooth shading specifications (ISO 32000-2 Clause 8.7).
@@ -208,7 +312,11 @@ public sealed record PdfAxialShading(
     PdfColor StartColor,
     PdfColor EndColor,
     bool ExtendStart = true,
-    bool ExtendEnd = true) : PdfShading("Axial");
+    bool ExtendEnd = true) : PdfShading("Axial")
+{
+    /// <summary>Colour stops sampled from the shading function (offset 0..1 along the axis).</summary>
+    public IReadOnlyList<PdfGradientStop>? Stops { get; init; }
+}
 
 /// <summary>
 /// Type 3 Radial Shading defined between two circles with centers and radii.
@@ -221,4 +329,47 @@ public sealed record PdfRadialShading(
     PdfColor StartColor,
     PdfColor EndColor,
     bool ExtendStart = true,
-    bool ExtendEnd = true) : PdfShading("Radial");
+    bool ExtendEnd = true) : PdfShading("Radial")
+{
+    /// <summary>Colour stops sampled from the shading function (offset 0..1 from start to end circle).</summary>
+    public IReadOnlyList<PdfGradientStop>? Stops { get; init; }
+
+    /// <summary>
+    /// Two arbitrary circles (ISO 32000-2 8.7.4.5.4), not expressible as a focal/centre radial
+    /// brush: <see cref="Stops"/> are over the shading parameter t (offset 0 = start circle) and the
+    /// backend evaluates the largest t per pixel. Backends that cannot must classify the area.
+    /// </summary>
+    public bool IsGeneral { get; init; }
+}
+
+/// <summary>Gradient colour stop.</summary>
+public readonly record struct PdfGradientStop(double Offset, PdfColor Color);
+
+/// <summary>
+/// Type 1 function-based shading (ISO 32000-2 8.7.4.5.2): colour = f(x, y) over
+/// <see cref="Domain"/> in shading space, mapped to the current user space by <see cref="Matrix"/>.
+/// <see cref="Evaluate"/> returns the RGB colour (alpha 0 outside the domain).
+/// </summary>
+public sealed record PdfFunctionShading(PdfRect Domain, PdfMatrix Matrix, Func<double, double, PdfColor> Evaluate) : PdfShading("Function");
+
+/// <summary>A mesh vertex in shading (user) space: its RGB colour, or its parametric value when the mesh has a <see cref="PdfMeshShading.FunctionLut"/>.</summary>
+public readonly record struct PdfMeshVertex(double X, double Y, PdfColor Color, double T);
+
+/// <summary>
+/// A tensor-product patch (types 6 and 7): 16 control points indexed [i * 4 + j] with u along i and
+/// v along j (p00 = u 0 v 0, p03 = u 0 v 1, p30 = u 1 v 0), and corner values in the order
+/// c00, c03, c33, c30 (8.7.4.5.7). Coons patches arrive with their interior points computed.
+/// </summary>
+public sealed record PdfMeshPatch(PdfPoint[] Points, PdfColor[] Colors, double[] T);
+
+/// <summary>
+/// Free-form, lattice and patch mesh shadings (types 4–7). Triangles are consecutive vertex
+/// triples, Gouraud-shaded; patches are subdivided by the backend at device resolution. When
+/// <see cref="FunctionLut"/> is set, the parametric value is interpolated and then mapped
+/// through the table (t normalised to 0..1 over /Domain), as the specification requires.
+/// </summary>
+public sealed record PdfMeshShading(
+    IReadOnlyList<PdfMeshVertex> Triangles,
+    IReadOnlyList<PdfMeshPatch> Patches,
+    IReadOnlyList<PdfColor>? FunctionLut,
+    PdfRect Bounds) : PdfShading("Mesh");

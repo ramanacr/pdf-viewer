@@ -670,7 +670,7 @@ public class PdfServiceTests : IDisposable
         // Test Select All
         pageVm.SelectAllText();
         Assert.NotEmpty(pageVm.SelectedSegments);
-        Assert.Equal(pageVm.TextSegments.Count, pageVm.SelectedSegments.Count);
+        Assert.Equal(pageVm.TextLayout.Lines.Count, pageVm.SelectedSegments.Count); // one band per line
         string selectedAllText = pageVm.GetSelectedText();
         Assert.Contains("document", selectedAllText);
 

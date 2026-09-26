@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 
@@ -21,7 +22,7 @@ public sealed class PdfParser
     public PdfObject? ParseObject(PdfLexer lexer, int depth = 0)
     {
         if (depth > _limits.MaxNestingDepth)
-            throw new InvalidDataException($"PDF object nesting depth exceeded limit ({_limits.MaxNestingDepth}).");
+            throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxNestingDepth), $"PDF object nesting depth exceeded limit ({_limits.MaxNestingDepth}).");
 
         var token = lexer.NextToken();
         if (token.Type == PdfTokenType.EndOfFile)

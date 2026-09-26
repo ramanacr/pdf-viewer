@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\PdfEngine.Vector\PdfEngine.Vector.csproj" />
     <ProjectReference Include="..\..\src\PdfEngine.Vector.Windows\PdfEngine.Vector.Windows.csproj" />
+    <ProjectReference Include="..\..\src\PdfEngine.Vector.Direct2D\PdfEngine.Vector.Direct2D.csproj" />
     <!-- PDFium reference allowed ONLY in test project as differential validation oracle -->
     <ProjectReference Include="..\..\src\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
   </ItemGroup>

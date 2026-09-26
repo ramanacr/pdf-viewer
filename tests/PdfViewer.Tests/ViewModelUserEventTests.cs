@@ -160,12 +160,20 @@ public class ViewModelUserEventTests : IDisposable
         Assert.Equal(PageFitMode.Custom, vm.FitMode);
         Assert.Equal(1.0, vm.ZoomLevel);
 
-        // Zoom Clamping (0.25 to 5.0)
+        // Zoom Clamping (MinZoom to MaxZoom: 25 % to 1600 %, the vector engine's verified range)
         vm.SetZoom(0.05);
-        Assert.Equal(0.25, vm.ZoomLevel);
+        Assert.Equal(MainViewModel.MinZoom, vm.ZoomLevel);
 
         vm.SetZoom(10.0);
-        Assert.Equal(5.0, vm.ZoomLevel);
+        Assert.Equal(10.0, vm.ZoomLevel);
+
+        vm.SetZoom(100.0);
+        Assert.Equal(MainViewModel.MaxZoom, vm.ZoomLevel);
+
+        // Proportional steps above 200 % reach the ceiling.
+        vm.SetZoom(2.0);
+        for (int i = 0; i < 20; i++) vm.ZoomIn();
+        Assert.Equal(MainViewModel.MaxZoom, vm.ZoomLevel);
     }
 
     [Fact]

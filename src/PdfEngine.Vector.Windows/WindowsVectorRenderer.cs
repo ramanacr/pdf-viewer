@@ -1,8 +1,5 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -13,553 +10,341 @@ using PdfEngine.Rendering;
 
 namespace PdfEngine.Vector.Windows;
 
+/// <summary>Outcome of a vector render, including every region that needed fallback.</summary>
+/// <param name="Fallbacks">Interpreter tokens plus regions the backend could not draw faithfully.</param>
+/// <param name="BackendFallbackCount">How many of <paramref name="Fallbacks"/> the backend added.</param>
+/// <param name="FallbackRegionsComposited">Regions filled with fallback-provider pixels (the rest show placeholders).</param>
+public sealed record PdfVectorRenderResult(
+    RenderedPage Page,
+    IReadOnlyList<PdfFallbackToken> Fallbacks,
+    int BackendFallbackCount,
+    int FallbackRegionsComposited,
+    TimeSpan CompileTime,
+    TimeSpan RasterTime);
+
+/// <summary>Frozen on-screen page surface and what it needed from fallback.</summary>
+public sealed record PdfVectorSurfaceResult(
+    ImageSource Surface,
+    double WidthPoints,
+    double HeightPoints,
+    IReadOnlyList<PdfFallbackToken> Fallbacks,
+    int BackendFallbackCount,
+    int FallbackRegionsComposited,
+    int CommandCount);
+
 /// <summary>
-/// Hardware-accelerated Windows vector renderer implementing IPdfVectorRenderer.
-/// Replays immutable PdfDisplayList draw commands onto high-fidelity rendering targets.
+/// Windows vector renderer: replays an immutable display list through WPF's retained drawing
+/// stack and rasterizes at the requested resolution. Unsupported regions are composited from an
+/// <see cref="IPdfFallbackProvider"/> (hybrid) or marked with placeholders (strict vector mode).
 /// </summary>
 public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 {
-    private static readonly ThreadLocal<Dictionary<string, FontFamily>> FontCache = new(() => new());
+    private readonly StaRenderThread _sta = new("PdfVectorRender");
+    private readonly WpfFontCache _fonts = new();
+    private readonly WpfImageCache _images;
+    private readonly WpfDisplayListCompiler _compiler;
+    private bool _disposed;
 
-    public ValueTask<RenderedPage> RenderDisplayListAsync(
+    /// <param name="imageCacheBytes">Budget for decoded image bitmaps shared across pages.</param>
+    public WindowsVectorRenderer(long imageCacheBytes = 256L * 1024 * 1024)
+    {
+        _images = new WpfImageCache(imageCacheBytes);
+        _compiler = new WpfDisplayListCompiler(_fonts, _images);
+    }
+
+    /// <summary>Bytes currently held by decoded images (for diagnostics / memory tests).</summary>
+    public long CachedImageBytes => _images.CachedBytes;
+
+    public async ValueTask<RenderedPage> RenderDisplayListAsync(
         IPdfDisplayList displayList,
         RenderRequest request,
         IPdfFallbackProvider? fallbackProvider = null,
         CancellationToken cancellationToken = default)
     {
-        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
-        {
-            var result = RenderCore(displayList, request, fallbackProvider, cancellationToken);
-            return ValueTask.FromResult(result);
-        }
-
-        var tcs = new TaskCompletionSource<RenderedPage>();
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var page = RenderCore(displayList, request, fallbackProvider, cancellationToken);
-                tcs.SetResult(page);
-            }
-            catch (Exception ex)
-            {
-                tcs.SetException(ex);
-            }
-        });
-
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.IsBackground = true;
-        thread.Start();
-
-        return new ValueTask<RenderedPage>(tcs.Task);
+        var result = await RenderAsync(displayList, request, fallbackProvider, cancellationToken).ConfigureAwait(false);
+        return result.Page;
     }
 
-    private static RenderedPage RenderCore(
+    /// <summary>
+    /// Compiles without rasterizing and returns every region that needs fallback, including those
+    /// only the backend can detect (font programs it cannot load, glyphs a substitute lacks, images
+    /// that fail to decode). Hosts use it to decide between vector, hybrid and full fallback.
+    /// </summary>
+    public Task<IReadOnlyList<PdfFallbackToken>> AnalyzeAsync(IPdfDisplayList displayList, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _sta.InvokeAsync<IReadOnlyList<PdfFallbackToken>>(
+            () => _compiler.Compile(displayList, null, cancellationToken).Fallbacks,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Frozen, resolution-independent drawing of the page in top-left page points (crop box, before
+    /// /Rotate). A vector-capable host can display it at any zoom without re-rasterizing.
+    /// Fallback regions are not included.
+    /// </summary>
+    public Task<Drawing> BuildPageDrawingAsync(IPdfDisplayList displayList, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _sta.InvokeAsync<Drawing>(() => _compiler.Compile(displayList, null, cancellationToken).Drawing, cancellationToken);
+    }
+
+    public async Task<PdfVectorRenderResult> RenderAsync(
         IPdfDisplayList displayList,
         RenderRequest request,
         IPdfFallbackProvider? fallbackProvider,
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(displayList);
 
-        double dpi = request.Dpi > 0 ? request.Dpi : 96.0;
-        double scale = dpi / 72.0;
+        var geometry = RenderGeometry.From(displayList, request);
+        var compileClock = System.Diagnostics.Stopwatch.StartNew();
+        var compiled = await _sta.InvokeAsync(() => _compiler.Compile(displayList, null, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+        compileClock.Stop();
 
-        double pageWidth = displayList.PageSize.Width;
-        double pageHeight = displayList.PageSize.Height;
-
-        int userRotation = ((int)request.Rotation / 90) % 4;
-        if (userRotation < 0) userRotation += 4;
-
-        int pixelW = request.TargetWidthPixels;
-        int pixelH = request.TargetHeightPixels;
-
-        if (pixelW <= 0 || pixelH <= 0)
+        // Fetch fallback pixels off the STA thread (the provider may call into PDFium).
+        var overlays = new List<(PdfFallbackToken Token, RenderedPage? Pixels)>(compiled.Fallbacks.Count);
+        foreach (var token in compiled.Fallbacks)
         {
-            if (userRotation == 1 || userRotation == 3)
+            RenderedPage? pixels = null;
+            if (fallbackProvider != null)
             {
-                pixelW = (int)Math.Max(1, Math.Round(pageHeight * scale));
-                pixelH = (int)Math.Max(1, Math.Round(pageWidth * scale));
+                pixels = await fallbackProvider.RenderFallbackRegionAsync(token, geometry.Dpi, cancellationToken).ConfigureAwait(false);
             }
-            else
-            {
-                pixelW = (int)Math.Max(1, Math.Round(pageWidth * scale));
-                pixelH = (int)Math.Max(1, Math.Round(pageHeight * scale));
-            }
+            overlays.Add((token, pixels));
         }
 
-        int stride = pixelW * 4;
-        long bufferSize = (long)stride * pixelH;
-        var memoryOwner = new ManagedMemoryOwner((int)bufferSize);
+        try
+        {
+            var rasterClock = System.Diagnostics.Stopwatch.StartNew();
+            var (page, composited) = await _sta.InvokeAsync(
+                () => Rasterize(displayList, compiled, geometry, overlays, request, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            rasterClock.Stop();
+
+            return new PdfVectorRenderResult(page, compiled.Fallbacks, compiled.BackendFallbacks.Count, composited,
+                compileClock.Elapsed, rasterClock.Elapsed);
+        }
+        finally
+        {
+            foreach (var (_, pixels) in overlays)
+                pixels?.Dispose();
+        }
+    }
+
+    /// <summary>Output size and page-points → pixel transform for a request.</summary>
+    private readonly record struct RenderGeometry(double Dpi, int PixelWidth, int PixelHeight, int TotalRotation, double WidthPoints, double HeightPoints)
+    {
+        public static RenderGeometry From(IPdfDisplayList list, RenderRequest request)
+        {
+            double dpi = request.Dpi > 0 ? request.Dpi : 96.0;
+            var crop = list.CropBox.IsEmpty ? new PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
+
+            // The page's own /Rotate plus the viewer's rotation, like FPDF_RenderPageBitmap.
+            int total = (((list.RotationDegrees + (int)request.Rotation) % 360) + 360) % 360;
+            bool sideways = total is 90 or 270;
+            double wPts = sideways ? crop.Height : crop.Width;
+            double hPts = sideways ? crop.Width : crop.Height;
+
+            int pw = request.TargetWidthPixels > 0 ? request.TargetWidthPixels : (int)Math.Max(1, Math.Round(wPts * dpi / 72.0));
+            int ph = request.TargetHeightPixels > 0 ? request.TargetHeightPixels : (int)Math.Max(1, Math.Round(hPts * dpi / 72.0));
+            return new RenderGeometry(dpi, pw, ph, total, crop.Width, crop.Height);
+        }
+
+        /// <summary>Unrotated page points (top-left origin) → output pixels.</summary>
+        public Matrix PageToPixels()
+        {
+            var m = Matrix.Identity;
+            switch (TotalRotation)
+            {
+                case 90:
+                    m.Rotate(90);
+                    m.Translate(HeightPoints, 0);
+                    break;
+                case 180:
+                    m.Rotate(180);
+                    m.Translate(WidthPoints, HeightPoints);
+                    break;
+                case 270:
+                    m.Rotate(270);
+                    m.Translate(0, WidthPoints);
+                    break;
+            }
+            bool sideways = TotalRotation is 90 or 270;
+            double sx = PixelWidth / (sideways ? HeightPoints : WidthPoints);
+            double sy = PixelHeight / (sideways ? WidthPoints : HeightPoints);
+            m.Scale(sx, sy);
+            return m;
+        }
+    }
+
+    private static (RenderedPage Page, int Composited) Rasterize(
+        IPdfDisplayList list,
+        WpfDisplayListCompiler.CompiledPage compiled,
+        RenderGeometry geometry,
+        IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays,
+        RenderRequest request,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var crop = list.CropBox.IsEmpty ? new PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
+        int composited = 0;
 
         var visual = new DrawingVisual();
         using (var dc = visual.RenderOpen())
         {
-            // Clear background to opaque white
-            dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, pixelW, pixelH));
+            dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, geometry.PixelWidth, geometry.PixelHeight));
+            dc.PushTransform(new MatrixTransform(geometry.PageToPixels()));
+            dc.DrawDrawing(compiled.Drawing);
 
-            double minX = displayList.CropBox.X;
-            double minY = displayList.CropBox.Y;
+            composited = DrawOverlays(dc, crop, overlays);
 
-            // Setup viewport scaling and orientation
-            var rootTransformGroup = new TransformGroup();
-
-            // PDF origin is bottom-left (minX, minY); WPF origin is top-left (0, 0).
-            // First translate by (-minX, -(minY + pageHeight)), then scale by (scale, -scale):
-            // X' = (x - minX) * scale
-            // Y' = (minY + pageHeight - y) * scale
-            rootTransformGroup.Children.Add(new TranslateTransform(-minX, -(minY + pageHeight)));
-            rootTransformGroup.Children.Add(new ScaleTransform(scale, -scale));
-
-            // Apply user rotation if requested
-            if (userRotation != 0)
-            {
-                rootTransformGroup.Children.Add(new RotateTransform(userRotation * 90));
-                switch (userRotation)
-                {
-                    case 1: rootTransformGroup.Children.Add(new TranslateTransform(pixelW, 0)); break;
-                    case 2: rootTransformGroup.Children.Add(new TranslateTransform(pixelW, pixelH)); break;
-                    case 3: rootTransformGroup.Children.Add(new TranslateTransform(0, pixelH)); break;
-                }
-            }
-
-            dc.PushTransform(rootTransformGroup);
-
-            // Replay draw commands with robust LIFO state tracking
-            var pushStack = new Stack<DrawingPushKind>();
-            var stateFrameStack = new Stack<int>();
-
-            foreach (var cmd in displayList.Commands)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                switch (cmd)
-                {
-                    case SaveState:
-                        stateFrameStack.Push(pushStack.Count);
-                        break;
-
-                    case RestoreState:
-                        if (stateFrameStack.Count > 0)
-                        {
-                            int targetDepth = stateFrameStack.Pop();
-                            while (pushStack.Count > targetDepth)
-                            {
-                                dc.Pop();
-                                pushStack.Pop();
-                            }
-                        }
-                        break;
-
-                    case ConcatTransform ct:
-                        var m = ct.Matrix;
-                        var matrix = new Matrix(m.A, m.B, m.C, m.D, m.E, m.F);
-                        dc.PushTransform(new MatrixTransform(matrix));
-                        pushStack.Push(DrawingPushKind.Transform);
-                        break;
-
-                    case FillPath fp:
-                        var fillGeom = ConvertPathToStreamGeometry(fp.Path, fp.Rule);
-                        if (fillGeom != null)
-                        {
-                            var brush = CreateBrush(fp.Paint);
-                            dc.DrawGeometry(brush, null, fillGeom);
-                        }
-                        break;
-
-                    case StrokePath sp:
-                        var strokeGeom = ConvertPathToStreamGeometry(sp.Path, PdfFillRule.NonZero);
-                        if (strokeGeom != null)
-                        {
-                            var pen = CreatePen(sp.Stroke, sp.Paint);
-                            dc.DrawGeometry(null, pen, strokeGeom);
-                        }
-                        break;
-
-                    case PushClip pc:
-                        var clipGeom = ConvertPathToStreamGeometry(pc.Path, pc.Rule);
-                        if (clipGeom != null)
-                        {
-                            dc.PushClip(clipGeom);
-                            pushStack.Push(DrawingPushKind.Clip);
-                        }
-                        break;
-
-                    case PopClip:
-                        if (pushStack.Count > 0 && pushStack.Peek() == DrawingPushKind.Clip)
-                        {
-                            dc.Pop();
-                            pushStack.Pop();
-                        }
-                        break;
-
-                    case DrawGlyphRun dgr:
-                        RenderGlyphRun(dc, dgr.Run, dgr.Paint);
-                        break;
-
-                    case DrawImage di:
-                        RenderImage(dc, di.Image, di.Transform);
-                        break;
-
-                    case DrawFallbackRegion dfr:
-                        // Draw fallback region bounds or placeholder
-                        var fbRect = dfr.Bounds ?? dfr.Token.Bounds;
-                        var fbBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
-                        fbBrush.Freeze();
-                        dc.DrawRectangle(fbBrush, new Pen(Brushes.Orange, 1), new Rect(fbRect.X, fbRect.Y, fbRect.Width, fbRect.Height));
-                        break;
-
-                    case BeginTransparencyGroup btg:
-                        dc.PushOpacity(Math.Clamp(btg.Alpha, 0.0, 1.0));
-                        pushStack.Push(DrawingPushKind.Opacity);
-                        break;
-
-                    case EndTransparencyGroup:
-                        if (pushStack.Count > 0 && pushStack.Peek() == DrawingPushKind.Opacity)
-                        {
-                            dc.Pop();
-                            pushStack.Pop();
-                        }
-                        break;
-
-                    case DrawShading ds:
-                        RenderShading(dc, ds.Shading, ds.Bounds, displayList.PageSize);
-                        break;
-                }
-            }
-
-            // Unwind any remaining open transforms/clips/transparency
-            while (pushStack.Count > 0)
-            {
-                dc.Pop();
-                pushStack.Pop();
-            }
-
-            // Unwind root viewport transform
             dc.Pop();
         }
 
-        // Render visual to RenderTargetBitmap
-        var rtb = new RenderTargetBitmap(pixelW, pixelH, 96, 96, PixelFormats.Pbgra32);
+        var rtb = new RenderTargetBitmap(geometry.PixelWidth, geometry.PixelHeight, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(visual);
+        int stride = geometry.PixelWidth * 4;
+        var memoryOwner = new ManagedMemoryOwner(checked(stride * geometry.PixelHeight));
+        rtb.CopyPixels(new Int32Rect(0, 0, geometry.PixelWidth, geometry.PixelHeight), memoryOwner.Buffer, stride, 0);
 
-        // Copy pixels into memory owner
-        rtb.CopyPixels(new Int32Rect(0, 0, pixelW, pixelH), memoryOwner.Buffer, stride, 0);
-
-        return new RenderedPage(
-            displayList.PageNumber,
-            pixelW,
-            pixelH,
-            stride,
-            dpi,
-            request.Rotation,
-            memoryOwner);
+        return (new RenderedPage(list.PageNumber, geometry.PixelWidth, geometry.PixelHeight, stride, geometry.Dpi, request.Rotation, memoryOwner), composited);
     }
 
-    private static StreamGeometry? ConvertPathToStreamGeometry(PdfPath path, PdfFillRule rule)
+    /// <summary>
+    /// Fallback regions are drawn last: the provider's pixels are the full truth for the region
+    /// (every object in it), so nothing vector may paint over them. Coordinates are unrotated
+    /// top-left page points.
+    /// </summary>
+    private static int DrawOverlays(DrawingContext dc, PdfRect crop, IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert = false)
     {
-        if (path.Segments.Count == 0)
-            return null;
-
-        var geom = new StreamGeometry
+        int composited = 0;
+        foreach (var (token, pixels) in overlays)
         {
-            FillRule = rule == PdfFillRule.EvenOdd ? FillRule.EvenOdd : FillRule.Nonzero
-        };
+            var b = token.Bounds;
+            var rect = new Rect(b.X - crop.X, crop.Y + crop.Height - (b.Y + b.Height), b.Width, b.Height);
+            if (rect.Width <= 0 || rect.Height <= 0)
+                continue;
 
-        using (var ctx = geom.Open())
-        {
-            int i = 0;
-            int count = path.Segments.Count;
-            Point currentPt = new Point(0, 0);
-
-            while (i < count)
+            if (pixels != null && pixels.WidthPixels > 0 && pixels.HeightPixels > 0)
             {
-                Point startPt = currentPt;
-                if (path.Segments[i] is PdfMoveTo m)
-                {
-                    startPt = new Point(m.Point.X, m.Point.Y);
-                    currentPt = startPt;
-                    i++;
-                }
-
-                // Scan forward to determine the end of this subpath and whether it is closed
-                int subpathEnd = i;
-                bool isClosed = false;
-                while (subpathEnd < count)
-                {
-                    var seg = path.Segments[subpathEnd];
-                    if (seg is PdfMoveTo)
-                    {
-                        break;
-                    }
-                    if (seg is PdfCloseSubpath)
-                    {
-                        isClosed = true;
-                        subpathEnd++; // Include close segment in this subpath
-                        break;
-                    }
-                    subpathEnd++;
-                }
-
-                // If there are segments to draw or the figure is closed, begin figure
-                if (subpathEnd > i || isClosed)
-                {
-                    ctx.BeginFigure(startPt, isFilled: true, isClosed: isClosed);
-
-                    while (i < subpathEnd)
-                    {
-                        var seg = path.Segments[i++];
-                        switch (seg)
-                        {
-                            case PdfLineTo l:
-                                currentPt = new Point(l.Point.X, l.Point.Y);
-                                ctx.LineTo(currentPt, isStroked: true, isSmoothJoin: false);
-                                break;
-
-                            case PdfCubicBezierTo c:
-                                currentPt = new Point(c.EndPoint.X, c.EndPoint.Y);
-                                ctx.BezierTo(
-                                    new Point(c.Control1.X, c.Control1.Y),
-                                    new Point(c.Control2.X, c.Control2.Y),
-                                    currentPt,
-                                    isStroked: true,
-                                    isSmoothJoin: false);
-                                break;
-
-                            case PdfCloseSubpath:
-                                currentPt = startPt;
-                                break;
-                        }
-                    }
-                }
-            }
-        }
-
-        geom.Freeze();
-        return geom;
-    }
-
-    private static SolidColorBrush CreateBrush(PdfPaint paint)
-    {
-        byte a = (byte)Math.Clamp((int)(paint.Alpha * 255), 0, 255);
-        byte r = (byte)Math.Clamp((int)(paint.Color.R * 255), 0, 255);
-        byte g = (byte)Math.Clamp((int)(paint.Color.G * 255), 0, 255);
-        byte b = (byte)Math.Clamp((int)(paint.Color.B * 255), 0, 255);
-        var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(a, r, g, b));
-        brush.Freeze();
-        return brush;
-    }
-
-    private static Pen CreatePen(PdfStroke stroke, PdfPaint paint)
-    {
-        var brush = CreateBrush(paint);
-        var pen = new Pen(brush, Math.Max(0.5, stroke.Width));
-
-        pen.StartLineCap = stroke.Cap switch
-        {
-            PdfLineCap.Round => PenLineCap.Round,
-            PdfLineCap.Square => PenLineCap.Square,
-            _ => PenLineCap.Flat
-        };
-        pen.EndLineCap = pen.StartLineCap;
-
-        pen.LineJoin = stroke.Join switch
-        {
-            PdfLineJoin.Round => PenLineJoin.Round,
-            PdfLineJoin.Bevel => PenLineJoin.Bevel,
-            _ => PenLineJoin.Miter
-        };
-
-        pen.MiterLimit = stroke.MiterLimit;
-
-        if (stroke.DashArray != null && stroke.DashArray.Count > 0)
-        {
-            var dashes = new DoubleCollection();
-            foreach (var d in stroke.DashArray)
-            {
-                dashes.Add(Math.Max(0.1, d / stroke.Width));
-            }
-            pen.DashStyle = new DashStyle(dashes, stroke.DashPhase / stroke.Width);
-        }
-
-        pen.Freeze();
-        return pen;
-    }
-
-    private static void RenderGlyphRun(DrawingContext dc, PdfGlyphRun run, PdfPaint paint)
-    {
-        var textMatrix = run.TextMatrix;
-        // Invert Y locally in text space so FormattedText (which renders top-down) renders upright in PDF Y-up space
-        var wpMatrix = new Matrix(textMatrix.A, textMatrix.B, -textMatrix.C, -textMatrix.D, textMatrix.E, textMatrix.F);
-
-        dc.PushTransform(new MatrixTransform(wpMatrix));
-
-        string fontName = !string.IsNullOrEmpty(run.FontFamilyName) ? run.FontFamilyName : run.FontResourceName;
-        var fontFamily = ResolveFontFamily(fontName);
-        var typeface = new Typeface(fontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-        var brush = CreateBrush(paint);
-
-        if (!string.IsNullOrEmpty(run.FullText))
-        {
-            var ft = new FormattedText(
-                run.FullText,
-                CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight,
-                typeface,
-                run.FontSize,
-                brush,
-                1.0);
-
-            dc.DrawText(ft, new Point(0, -ft.Baseline));
-        }
-        else
-        {
-            foreach (var glyph in run.Glyphs)
-            {
-                if (string.IsNullOrEmpty(glyph.Unicode) || glyph.Unicode == " ")
-                    continue;
-
-                var ft = new FormattedText(
-                    glyph.Unicode,
-                    CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight,
-                    typeface,
-                    run.FontSize,
-                    brush,
-                    1.0);
-
-                dc.DrawText(ft, new Point(glyph.OffsetX, -ft.Baseline));
-            }
-        }
-
-        dc.Pop();
-    }
-
-    private static void RenderImage(DrawingContext dc, PdfImageRef img, PdfMatrix transform)
-    {
-        if (img.ImageData.IsEmpty || img.Width <= 0 || img.Height <= 0)
-            return;
-
-        try
-        {
-            BitmapSource bmp;
-            if (img.ImageData.Span.Length >= img.Width * img.Height * 3)
-            {
-                // Raw 24-bit RGB
-                int stride = img.Width * 3;
-                bmp = BitmapSource.Create(
-                    img.Width,
-                    img.Height,
-                    96,
-                    96,
-                    PixelFormats.Rgb24,
-                    null,
-                    img.ImageData.ToArray(),
-                    stride);
+                var data = pixels.Pixels.ToArray();
+                if (invert)
+                    WpfImageCache.InvertBgra(data);
+                var bmp = BitmapSource.Create(pixels.WidthPixels, pixels.HeightPixels, 96, 96, PixelFormats.Bgra32, null,
+                    data, pixels.Stride);
+                bmp.Freeze();
+                dc.PushClip(new RectangleGeometry(rect));
+                dc.DrawImage(bmp, rect);
+                dc.Pop();
+                composited++;
             }
             else
             {
-                // Decode from standard image stream (JPEG, PNG, etc.)
-                using var stream = new MemoryStream(img.ImageData.ToArray());
-                var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                bmp = decoder.Frames[0];
+                // Strict vector mode: make the unsupported region visible, never silently wrong.
+                var fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
+                fill.Freeze();
+                var pen = new Pen(Brushes.DarkOrange, 0.75);
+                pen.Freeze();
+                dc.DrawRectangle(fill, pen, rect);
+            }
+        }
+        return composited;
+    }
+
+    /// <summary>
+    /// Builds a frozen, resolution-independent page surface for on-screen display (backlog E8):
+    /// white page, vector content, and fallback regions composited from <paramref name="fallbackProvider"/>
+    /// rasterized at <paramref name="fallbackDpi"/> (or outlined when no provider is given).
+    /// Its size is the page in points after /Rotate and <paramref name="rotation"/>; a host stretches
+    /// it to any zoom and WPF re-renders the vectors at that scale — no page bitmap exists.
+    /// </summary>
+    public async Task<PdfVectorSurfaceResult> BuildPageSurfaceAsync(
+        IPdfDisplayList displayList,
+        PageRotation rotation,
+        IPdfFallbackProvider? fallbackProvider,
+        double fallbackDpi,
+        CancellationToken cancellationToken,
+        bool invertColors = false)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(displayList);
+
+        var compiled = await _sta.InvokeAsync(() => _compiler.Compile(displayList, null, cancellationToken, invertColors), cancellationToken)
+            .ConfigureAwait(false);
+
+        var overlays = new List<(PdfFallbackToken Token, RenderedPage? Pixels)>(compiled.Fallbacks.Count);
+        try
+        {
+            foreach (var token in compiled.Fallbacks)
+            {
+                RenderedPage? pixels = fallbackProvider == null
+                    ? null
+                    : await fallbackProvider.RenderFallbackRegionAsync(token, fallbackDpi, cancellationToken).ConfigureAwait(false);
+                overlays.Add((token, pixels));
             }
 
-            dc.PushTransform(new MatrixTransform(transform.A, transform.B, transform.C, transform.D, transform.E, transform.F));
-            dc.DrawImage(bmp, new Rect(0, 0, 1, 1)); // In PDF, image XObjects are mapped to a 1x1 unit square
-            dc.Pop();
-        }
-        catch
-        {
-            // Ignore corrupted images
-        }
-    }
+            return await _sta.InvokeAsync(() =>
+            {
+                var crop = displayList.CropBox.IsEmpty ? new PdfRect(0, 0, displayList.PageSize.Width, displayList.PageSize.Height) : displayList.CropBox;
+                int total = (((displayList.RotationDegrees + (int)rotation) % 360) + 360) % 360;
+                bool sideways = total is 90 or 270;
+                double w = sideways ? crop.Height : crop.Width;
+                double h = sideways ? crop.Width : crop.Height;
 
-    private static FontFamily ResolveFontFamily(string fontName)
-    {
-        if (FontCache.Value!.TryGetValue(fontName, out var cached))
-            return cached;
-
-        string clean = fontName;
-        int plusIdx = clean.IndexOf('+');
-        if (plusIdx >= 0) clean = clean.Substring(plusIdx + 1);
-
-        FontFamily family;
-        if (clean.Contains("Courier", StringComparison.OrdinalIgnoreCase))
-            family = new FontFamily("Courier New");
-        else if (clean.Contains("Times", StringComparison.OrdinalIgnoreCase))
-            family = new FontFamily("Times New Roman");
-        else if (clean.Contains("Arial", StringComparison.OrdinalIgnoreCase) ||
-                 clean.Contains("Helvetica", StringComparison.OrdinalIgnoreCase) ||
-                 clean.Contains("Sans", StringComparison.OrdinalIgnoreCase))
-            family = new FontFamily("Arial");
-        else
-            family = new FontFamily("Segoe UI");
-
-        FontCache.Value[fontName] = family;
-        return family;
-    }
-
-    private static void RenderShading(DrawingContext dc, PdfShading shading, PdfRect? bounds, PdfSize pageSize)
-    {
-        var rect = bounds.HasValue && !bounds.Value.IsEmpty
-            ? new Rect(bounds.Value.X, bounds.Value.Y, bounds.Value.Width, bounds.Value.Height)
-            : new Rect(0, 0, pageSize.Width, pageSize.Height);
-
-        switch (shading)
-        {
-            case PdfAxialShading axial:
+                var group = new DrawingGroup();
+                int composited;
+                using (var dc = group.Open())
                 {
-                    var startColor = ConvertColor(axial.StartColor);
-                    var endColor = ConvertColor(axial.EndColor);
-                    var brush = new LinearGradientBrush(
-                        startColor,
-                        endColor,
-                        new Point(axial.StartPoint.X, axial.StartPoint.Y),
-                        new Point(axial.EndPoint.X, axial.EndPoint.Y))
-                    {
-                        MappingMode = BrushMappingMode.Absolute
-                    };
-                    brush.Freeze();
-                    dc.DrawRectangle(brush, null, rect);
+                    dc.DrawRectangle(invertColors ? Brushes.Black : Brushes.White, null, new Rect(0, 0, w, h));
+                    dc.PushTransform(new MatrixTransform(RotationMatrix(total, crop.Width, crop.Height)));
+                    dc.DrawDrawing(compiled.Drawing);
+                    composited = DrawOverlays(dc, crop, overlays, invertColors);
+                    dc.Pop();
                 }
-                break;
+                // Pin the bounds: an empty page must still measure as the full page.
+                group.ClipGeometry = new RectangleGeometry(new Rect(0, 0, w, h));
+                group.Freeze();
 
-            case PdfRadialShading radial:
-                {
-                    var startColor = ConvertColor(radial.StartColor);
-                    var endColor = ConvertColor(radial.EndColor);
-                    var brush = new RadialGradientBrush(startColor, endColor)
-                    {
-                        Center = new Point(radial.EndCenter.X, radial.EndCenter.Y),
-                        GradientOrigin = new Point(radial.StartCenter.X, radial.StartCenter.Y),
-                        RadiusX = Math.Max(0.1, radial.EndRadius),
-                        RadiusY = Math.Max(0.1, radial.EndRadius),
-                        MappingMode = BrushMappingMode.Absolute
-                    };
-                    brush.Freeze();
-                    dc.DrawRectangle(brush, null, rect);
-                }
-                break;
+                var image = new DrawingImage(group);
+                image.Freeze();
+                return new PdfVectorSurfaceResult(image, w, h, compiled.Fallbacks, compiled.BackendFallbacks.Count, composited,
+                    displayList.Commands.Count);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (var (_, pixels) in overlays)
+                pixels?.Dispose();
         }
     }
 
-    private static System.Windows.Media.Color ConvertColor(PdfColor color)
+    /// <summary>Unrotated top-left page points → rotated top-left page points.</summary>
+    private static Matrix RotationMatrix(int totalRotation, double widthPoints, double heightPoints)
     {
-        byte a = (byte)Math.Clamp((int)(color.A * 255), 0, 255);
-        byte r = (byte)Math.Clamp((int)(color.R * 255), 0, 255);
-        byte g = (byte)Math.Clamp((int)(color.G * 255), 0, 255);
-        byte b = (byte)Math.Clamp((int)(color.B * 255), 0, 255);
-        return System.Windows.Media.Color.FromArgb(a, r, g, b);
+        var m = Matrix.Identity;
+        switch (totalRotation)
+        {
+            case 90: m.Rotate(90); m.Translate(heightPoints, 0); break;
+            case 180: m.Rotate(180); m.Translate(widthPoints, heightPoints); break;
+            case 270: m.Rotate(270); m.Translate(0, widthPoints); break;
+        }
+        return m;
     }
 
-    private enum DrawingPushKind
+    private void ThrowIfDisposed()
     {
-        Transform,
-        Clip,
-        Opacity
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _images.Clear();
+        _sta.InvokeAsync(() => { _fonts.Dispose(); return 0; }, CancellationToken.None).Wait(TimeSpan.FromSeconds(2));
+        _sta.Dispose();
+    }
 }

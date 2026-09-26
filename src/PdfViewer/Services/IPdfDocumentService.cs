@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Controls;
@@ -46,6 +47,15 @@ public interface IPdfDocumentService : IDisposable
     /// </summary>
     Task<DocumentMetadata> OpenDocumentAsync(string filePath, string? password = null, CancellationToken ct = default);
 
+    /// <summary>What the document's security settings allow, for the way it was opened.</summary>
+    PdfEngine.Documents.PdfDocumentPermissions Permissions => PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+
+    /// <summary>
+    /// The engine works on an in-memory decrypted copy (certificate-encrypted originals). Saving
+    /// must never overwrite the original, and a saved copy is not encrypted.
+    /// </summary>
+    bool IsDecryptedCopy => false;
+
     /// <summary>
     /// Closes the currently active document and frees all engine resources.
     /// </summary>
@@ -78,6 +88,24 @@ public interface IPdfDocumentService : IDisposable
     Task<BitmapSource?> RenderPageAsync(int pageNumber, int dpi = 150, int rotationAngle = 0, CancellationToken ct = default);
 
     /// <summary>
+    /// A frozen, resolution-independent surface for the page (a vector drawing sized in points
+    /// after rotation), or null when the page must be shown as a bitmap from
+    /// <see cref="RenderPageAsync"/>. A surface is stretched to any zoom without re-rendering.
+    /// <paramref name="nightMode"/> returns the colour-inverted page.
+    /// </summary>
+    Task<System.Windows.Media.ImageSource?> GetVectorPageSurfaceAsync(int pageNumber, int rotationAngle = 0, CancellationToken ct = default, bool nightMode = false)
+        => Task.FromResult<System.Windows.Media.ImageSource?>(null);
+
+    /// <summary>
+    /// A pixel window (x, y, width, height) of the page as it appears at <paramref name="pixelsPerPoint"/>
+    /// after rotation — the visible part of a zoomed page at exact device resolution. Null when the
+    /// service cannot render regions.
+    /// </summary>
+    Task<BitmapSource?> RenderPageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+        => Task.FromResult<BitmapSource?>(null);
+
+    /// <summary>
     /// Extracts the hierarchical bookmarks / outline tree.
     /// </summary>
     ObservableCollection<BookmarkItem> ExtractBookmarks();
@@ -96,6 +124,16 @@ public interface IPdfDocumentService : IDisposable
     /// Asynchronously extracts all selectable text segments from a given page.
     /// </summary>
     Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default);
+
+    /// <summary>
+    /// The page's text character by character, in reading order, for word-processor selection.
+    /// The default builds it from the word segments (a space between words, a break between lines).
+    /// </summary>
+    async Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default)
+    {
+        var words = await ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false);
+        return PdfViewer.Text.PageTextLayout.FromWords(words.OrderBy(w => w.SegmentIndex).Select(w => (w.Text, w.NormalizedBounds)));
+    }
 
     /// <summary>
     /// Exports pages to image files (PNG/JPEG) at custom DPI.

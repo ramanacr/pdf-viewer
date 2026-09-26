@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,6 +18,13 @@ public interface IPdfVectorRenderer : IDisposable
         RenderRequest request,
         IPdfFallbackProvider? fallbackProvider = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Every region needing fallback for this backend: the display list's own tokens plus what only
+    /// the backend can detect (font programs it cannot load, glyphs a substitute lacks, images it
+    /// cannot decode).
+    /// </summary>
+    Task<IReadOnlyList<PdfFallbackToken>> AnalyzeAsync(IPdfDisplayList displayList, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

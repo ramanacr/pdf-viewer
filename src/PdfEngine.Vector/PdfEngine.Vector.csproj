@@ -15,8 +15,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Predefined CJK CMaps (Adobe cmap-resources, BSD-3-Clause); built by eng/vectorpdf/cmaps/build-cmaps.ps1. -->
+    <EmbeddedResource Include="Fonts\CMaps\PredefinedCMaps.zip" LogicalName="PdfEngine.Vector.PredefinedCMaps.zip" />
+    <None Include="Fonts\CMaps\LICENSE-cmap-resources.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
     <InternalsVisibleTo Include="PdfViewer.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CoreJ2K" Version="2.3.3.91" />
   </ItemGroup>
 
 </Project>

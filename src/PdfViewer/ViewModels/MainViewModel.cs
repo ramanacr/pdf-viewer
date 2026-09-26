@@ -142,6 +142,9 @@ public partial class MainViewModel : ObservableObject
     private AppTheme _currentTheme = AppTheme.Light;
 
     public ObservableCollection<PageViewModel> Pages { get; } = new();
+
+    /// <summary>Word-processor text selection across the document's pages.</summary>
+    public TextSelectionController TextSelection { get; }
     public ObservableCollection<ThumbnailViewModel> Thumbnails { get; } = new();
     public ObservableCollection<BookmarkItem> Bookmarks { get; } = new();
     public ObservableCollection<SearchMatch> SearchMatches { get; } = new();
@@ -329,6 +332,7 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        TextSelection = new TextSelectionController(() => Pages, UpdateSelectionFromPages);
         Session = new DocumentSession(SecurityPolicy);
         CommandHistory = new CommandHistory(featureGate: FeatureGate);
 
@@ -466,6 +470,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             Metadata = meta;
+            DocumentPermissions = _docService.Permissions;
             PageCount = meta.PageCount;
             CurrentPageNumber = 1;
             RotationAngle = 0;
@@ -570,6 +575,7 @@ public partial class MainViewModel : ObservableObject
     public void CloseDocument()
     {
         _renderCts?.Cancel();
+        DocumentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
         _searchCts?.Cancel();
         _docService.CloseDocument();
         _cache.Clear();
@@ -842,25 +848,37 @@ public partial class MainViewModel : ObservableObject
         _ = RenderVisiblePagesAsync();
     }
 
+    /// <summary>Smallest zoom factor.</summary>
+    public const double MinZoom = 0.25;
+
+    /// <summary>
+    /// Largest zoom factor. Vector pages stay sharp at any zoom (viewport tiles are rendered at
+    /// device resolution), so the ceiling is the plan's verification range, not a raster limit.
+    /// </summary>
+    public const double MaxZoom = 16.0;
+
     [RelayCommand]
     public void ZoomIn()
     {
         FitMode = PageFitMode.Custom;
-        ZoomLevel = Math.Min(5.0, Math.Round(ZoomLevel + 0.15, 2));
+        // Fine steps up to 200 %, then proportional steps so 1600 % is reachable.
+        double next = ZoomLevel < 2.0 ? ZoomLevel + 0.15 : ZoomLevel * 1.25;
+        ZoomLevel = Math.Min(MaxZoom, Math.Round(next, 2));
     }
 
     [RelayCommand]
     public void ZoomOut()
     {
         FitMode = PageFitMode.Custom;
-        ZoomLevel = Math.Max(0.25, Math.Round(ZoomLevel - 0.15, 2));
+        double next = ZoomLevel <= 2.0 ? ZoomLevel - 0.15 : Math.Max(2.0, ZoomLevel / 1.25);
+        ZoomLevel = Math.Max(MinZoom, Math.Round(next, 2));
     }
 
     [RelayCommand]
     public void SetZoom(double zoom)
     {
         FitMode = PageFitMode.Custom;
-        ZoomLevel = Math.Clamp(zoom, 0.25, 5.0);
+        ZoomLevel = Math.Clamp(zoom, MinZoom, MaxZoom);
     }
 
     [RelayCommand]
@@ -899,7 +917,7 @@ public partial class MainViewModel : ObservableObject
             double availableWidth = viewportWidth - 40; // account for scrollbar & margins
             if (availableWidth > 0 && requiredWidth > 0)
             {
-                ZoomLevel = Math.Clamp(availableWidth / requiredWidth, 0.25, 5.0);
+                ZoomLevel = Math.Clamp(availableWidth / requiredWidth, MinZoom, MaxZoom);
             }
         }
         else if (FitMode == PageFitMode.FitPage)
@@ -910,7 +928,7 @@ public partial class MainViewModel : ObservableObject
             {
                 double scaleX = availableWidth / requiredWidth;
                 double scaleY = availableHeight / docPageHeight;
-                ZoomLevel = Math.Clamp(Math.Min(scaleX, scaleY), 0.25, 5.0);
+                ZoomLevel = Math.Clamp(Math.Min(scaleX, scaleY), MinZoom, MaxZoom);
             }
         }
     }
@@ -1204,6 +1222,10 @@ public partial class MainViewModel : ObservableObject
 
     #endregion
 
+    /// <summary>Viewport detail tile for a visible page (see <see cref="PageViewModel.UpdateDetailAsync"/>).</summary>
+    public Task RequestPageDetailAsync(PageViewModel page, System.Windows.Rect visibleDips, double devicePixelsPerDip) =>
+        page.UpdateDetailAsync(_docService, visibleDips, devicePixelsPerDip, RotationAngle, IsNightMode);
+
     public void RenderPagesInViewport(double viewportTop, double viewportHeight)
     {
         if (!IsDocumentLoaded || Pages.Count == 0 || !IsMultiPageLayout) return;
@@ -1221,7 +1243,7 @@ public partial class MainViewModel : ObservableObject
             for (int i = row.FirstPageIndex; i < row.FirstPageIndex + row.PageCount; i++)
             {
                 var page = Pages[i];
-                if (page.RenderedImage == null && !page.IsLoading)
+                if (!page.HasSurface && !page.IsLoading)
                 {
                     _ = page.LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
                 }
@@ -1263,7 +1285,7 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var idx in priorityIndices)
         {
-            if (Pages[idx].RenderedImage == null && !Pages[idx].IsLoading)
+            if (!Pages[idx].HasSurface && !Pages[idx].IsLoading)
             {
                 _ = Pages[idx].LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
             }
@@ -1284,7 +1306,7 @@ public partial class MainViewModel : ObservableObject
         {
             if (!IsDocumentLoaded || ViewMode == ViewLayoutMode.SinglePage) break;
             var page = Pages[i];
-            if (page.RenderedImage == null && !page.IsLoading)
+            if (!page.HasSurface && !page.IsLoading)
             {
                 await page.LoadImageAsync(_renderer, dpi, rotation, IsNightMode, CancellationToken.None);
                 await Task.Delay(25); // Gentle yield to maintain smooth 60 FPS UI
@@ -1347,6 +1369,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void CopySelectedText()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "copying text")) return;
         if (string.IsNullOrEmpty(SelectedText))
         {
             UpdateSelectionFromPages();
@@ -1382,11 +1405,7 @@ public partial class MainViewModel : ObservableObject
             {
                 page.LoadTextSegmentsAsync(_docService).ContinueWith(_ =>
                 {
-                    void Apply()
-                    {
-                        page.SelectAllText();
-                        UpdateSelectionFromPages();
-                    }
+                    void Apply() => TextSelection.SelectAll(page);
 
                     // Marshalling through Application.Current dropped the selection entirely
                     // whenever there was no Application to marshal through - the null-conditional
@@ -1398,8 +1417,7 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                page.SelectAllText();
-                UpdateSelectionFromPages();
+                TextSelection.SelectAll(page);
             }
         }
     }
@@ -1407,10 +1425,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void ClearSelection()
     {
-        foreach (var page in Pages)
-        {
-            page.ClearTextSelection();
-        }
+        TextSelection.Clear();
         SelectedText = string.Empty;
         HasTextSelection = false;
     }
@@ -1418,32 +1433,27 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void HighlightSelectedText()
     {
+        if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         if (!HasTextSelection && Pages.All(p => p.SelectedSegments.Count == 0)) return;
 
         foreach (var page in Pages)
         {
             if (page.SelectedSegments.Count > 0)
             {
+                // One quad per selected line: the highlight covers the text, not the rectangle
+                // around a multi-line selection.
                 var sorted = page.SelectedSegments.OrderBy(s => s.SegmentIndex).ToList();
-                double minX = sorted.Min(s => s.X);
-                double minY = sorted.Min(s => s.Y);
-                double maxX = sorted.Max(s => s.X + s.Width);
-                double maxY = sorted.Max(s => s.Y + s.Height);
-
                 var annot = new AnnotationModel
                 {
                     PageNumber = page.PageNumber,
                     Type = AnnotationType.Highlight,
-                    X = minX,
-                    Y = minY,
-                    Width = Math.Max(0.01, maxX - minX),
-                    Height = Math.Max(0.01, maxY - minY),
                     ColorHex = SelectedAnnotationColor,
                     Opacity = 0.45,
                     Author = SelectedAnnotationAuthor,
                     Title = "Highlight",
                     Contents = page.GetSelectedText()
                 };
+                annot.SetQuads(sorted.Select(s => new Rect(s.X, s.Y, s.Width, s.Height)).ToList());
 
                 AddAnnotation(annot);
             }
@@ -1483,6 +1493,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task RedactSelectionAsync()
     {
+        if (!Permit(DocumentPermissions.CanModify, "editing") || !PermitFileOperation("Redaction")) return;
         if (string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         var areas = BuildRedactionAreasFromSelection();
@@ -1688,6 +1699,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void ToggleAnnotationTool(string toolName)
     {
+        if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         if (Enum.TryParse<AnnotationType>(toolName, true, out var tool))
         {
             if (ActiveAnnotationTool == tool)
@@ -1747,6 +1759,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void AddAnnotation(AnnotationModel annot)
     {
+        if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         AllAnnotations.Add(annot);
         if (annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count)
         {
@@ -1841,7 +1854,44 @@ public partial class MainViewModel : ObservableObject
     }
 
     public bool CanSave() => IsDocumentLoaded && HasUnsavedChanges && Metadata != null
-                             && !string.IsNullOrEmpty(Metadata.FilePath);
+                             && !string.IsNullOrEmpty(Metadata.FilePath)
+                             // A certificate-encrypted original is never overwritten by its decrypted copy.
+                             && !_docService.IsDecryptedCopy
+                             && (DocumentPermissions.CanAnnotate || DocumentPermissions.CanModify || DocumentPermissions.CanFillForms);
+
+    // ------------------------------------------------------------------ document security (ISO 32000-2 7.6.4.2)
+
+    /// <summary>What the open document's security settings allow (owner password: everything).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSecured), nameof(SecuritySummary))]
+    private PdfEngine.Documents.PdfDocumentPermissions _documentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+
+    /// <summary>The document restricts something for this reader (shown in the status bar).</summary>
+    public bool IsSecured => DocumentPermissions.IsEncrypted && !DocumentPermissions.Unrestricted;
+
+    public string SecuritySummary => DocumentPermissions.RestrictionSummary;
+
+    /// <summary>
+    /// Honours a permission the way Acrobat does: the command explains itself instead of silently
+    /// doing nothing. Opening with the owner password lifts every restriction.
+    /// </summary>
+    private bool Permit(bool allowed, string action)
+    {
+        if (allowed) return true;
+        StatusText = $"This document's security settings do not allow {action}.";
+        ShowAlert($"This document's security settings do not allow {action}.\n\nOpen it with the owner password to lift the restriction.",
+            "Secured document", MessageBoxButton.OK, MessageBoxImage.Information);
+        return false;
+    }
+
+    /// <summary>Operations that re-open the file on disk cannot use the decrypted copy of a certificate-encrypted document.</summary>
+    private bool PermitFileOperation(string operation)
+    {
+        if (!_docService.IsDecryptedCopy) return true;
+        ShowAlert($"{operation} works on the file on disk, which is encrypted for specific recipients. Save an unencrypted copy first (File → Save As) to use it.",
+            "Certificate-encrypted document", MessageBoxButton.OK, MessageBoxImage.Information);
+        return false;
+    }
 
     /// <summary>
     /// Swaps the freshly written file in for the original. File.Replace keeps a backup and
@@ -1911,6 +1961,11 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task SaveAnnotatedAsAsync()
     {
+        if (!Permit(DocumentPermissions.CanAnnotate || DocumentPermissions.CanModify, "saving changes")) return;
+        if (_docService.IsDecryptedCopy &&
+            !Confirm("This document is encrypted for specific recipients. The copy you are about to save will NOT be encrypted, " +
+                     "so anyone with the file can read it.\n\nSave an unencrypted copy?", "Save unencrypted copy"))
+            return;
         if (!IsDocumentLoaded || Metadata == null) return;
 
         if (ShowSaveAnnotatedDialogFunc != null)
@@ -1973,6 +2028,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task EditFormFieldsAsync()
     {
+        if (!Permit(DocumentPermissions.CanFillForms, "filling in forms") || !PermitFileOperation("Form filling")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         StatusText = "Reading form fields...";
@@ -2177,6 +2233,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task SaveCleanCopyAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "copying content") || !PermitFileOperation("A clean copy")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         string sourcePath = _docService.CurrentFilePath;
@@ -2274,6 +2331,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ToggleReadAloudAsync()
     {
+        if (!IsReadingAloud && !Permit(DocumentPermissions.CanExtractForAccessibility, "extracting text for accessibility")) return;
         if (IsReadingAloud)
         {
             StopReadingAloud();
@@ -2459,6 +2517,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task OrganizePagesAsync()
     {
+        if (!Permit(DocumentPermissions.CanAssemble, "reorganising pages") || !PermitFileOperation("Page organisation")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         if (ShowOrganizePagesFunc == null)
@@ -2609,6 +2668,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ExportTextAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "copying text")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         string sourcePath = _docService.CurrentFilePath;
@@ -2742,6 +2802,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task MergeDocumentsAsync()
     {
+        if (IsDocumentLoaded && !Permit(DocumentPermissions.CanAssemble, "combining pages")) return;
         var picker = new OpenFileDialog
         {
             Filter = "PDF Files (*.pdf)|*.pdf",
@@ -2791,6 +2852,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task SplitDocumentAsync()
     {
+        if (!Permit(DocumentPermissions.CanAssemble && DocumentPermissions.CanCopy, "extracting pages") || !PermitFileOperation("Splitting")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         var folder = new OpenFolderDialog { Title = "Choose a folder for the split pages" };
@@ -2826,6 +2888,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ExtractCurrentPageAsync()
     {
+        if (!Permit(DocumentPermissions.CanAssemble && DocumentPermissions.CanCopy, "extracting pages") || !PermitFileOperation("Page extraction")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         int pageNumber = CurrentPageNumber;
@@ -2934,6 +2997,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task RecognizeTextOnPageAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "extracting text")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
         int pageNumber = CurrentPageNumber;
@@ -2987,6 +3051,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void Print()
     {
+        if (!Permit(DocumentPermissions.CanPrint, "printing")) return;
         if (!IsDocumentLoaded) return;
 
         try
@@ -3034,6 +3099,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task ExportImagesAsync()
     {
+        if (!Permit(DocumentPermissions.CanCopy, "exporting page images")) return;
         if (!IsDocumentLoaded || Metadata == null || ShowExportDialogFunc == null) return;
 
         var (confirmed, outDir, prefix, start, end, format, dpi) = ShowExportDialogFunc(Metadata);

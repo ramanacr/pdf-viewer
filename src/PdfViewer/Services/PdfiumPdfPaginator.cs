@@ -39,7 +39,9 @@ public class PdfiumPdfPaginator : DocumentPaginator
     public override DocumentPage GetPage(int pageNumber)
     {
         int actualPageNum = _startPage + pageNumber;
-        var bitmap = _service.RenderPage(actualPageNum, dpi: 300, rotationAngle: _rotationAngle);
+        // Documents that allow only low-quality printing are printed at 150 dpi (Table 22, bit 12).
+        int dpi = _service.Permissions.CanPrintHighQuality ? 300 : 150;
+        var bitmap = _service.RenderPage(actualPageNum, dpi: dpi, rotationAngle: _rotationAngle);
 
         var visual = new DrawingVisual();
         using (var dc = visual.RenderOpen())

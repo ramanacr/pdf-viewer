@@ -1,8 +1,10 @@
+using PdfViewer.Text;
 using System;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using PdfViewer.Models;
@@ -26,6 +28,31 @@ public partial class PageViewModel : ObservableObject
 
     [ObservableProperty]
     private BitmapSource? _renderedImage;
+
+    /// <summary>
+    /// Resolution-independent page drawing from the vector engine. When set, the page view shows
+    /// it instead of <see cref="RenderedImage"/> and zooming never re-renders a bitmap.
+    /// </summary>
+    [ObservableProperty]
+    private ImageSource? _vectorSurface;
+
+    /// <summary>What the page view displays: the live vector surface, else the bitmap.</summary>
+    public ImageSource? PageSurface => VectorSurface ?? RenderedImage;
+
+    /// <summary>True once the page has something to show, vector or bitmap.</summary>
+    public bool HasSurface => VectorSurface != null || RenderedImage != null;
+
+    partial void OnRenderedImageChanged(BitmapSource? value)
+    {
+        OnPropertyChanged(nameof(PageSurface));
+        OnPropertyChanged(nameof(HasSurface));
+    }
+
+    partial void OnVectorSurfaceChanged(ImageSource? value)
+    {
+        OnPropertyChanged(nameof(PageSurface));
+        OnPropertyChanged(nameof(HasSurface));
+    }
 
     [ObservableProperty]
     private bool _isLoading;
@@ -132,14 +159,124 @@ public partial class PageViewModel : ObservableObject
 
     public void UpdateScale(double scale)
     {
+        if (Math.Abs(DisplayScale - scale) > 1e-9)
+            ClearDetail(); // the tile belongs to the previous zoom
         DisplayScale = scale;
         RaiseGeometryChanged();
     }
 
     public void UpdateRotation(int angle)
     {
+        if (RotationAngle != angle)
+            ClearDetail();
         RotationAngle = angle;
         RaiseGeometryChanged();
+    }
+
+    // ------------------------------------------------------------------ viewport detail tile
+
+    /// <summary>
+    /// The visible part of the page rendered at exact device resolution when the page bitmap is
+    /// coarser than the screen (zoomed in). Positioned by <see cref="DetailRect"/> in page DIPs.
+    /// </summary>
+    [ObservableProperty]
+    private BitmapSource? _detailImage;
+
+    [ObservableProperty]
+    private Rect _detailRect;
+
+    private CancellationTokenSource? _detailCts;
+    private (double PixelsPerPoint, int Rotation, bool Night) _detailKey;
+    private Rect _detailPixels;
+
+    /// <summary>Largest detail tile side in device pixels (memory bound: 64 MB at 4096²).</summary>
+    public const double MaxDetailPixels = 4096;
+
+    private void SetDetail(BitmapSource tile, (double, int, bool) key, Rect pixels, double devicePixelsPerDip)
+    {
+        DetailImage = tile;
+        DetailRect = new Rect(pixels.X / devicePixelsPerDip, pixels.Y / devicePixelsPerDip, pixels.Width / devicePixelsPerDip, pixels.Height / devicePixelsPerDip);
+        _detailKey = key;
+        _detailPixels = pixels;
+    }
+
+    public void ClearDetail()
+    {
+        _detailCts?.Cancel();
+        _detailCts = null;
+        DetailImage = null;
+        _detailPixels = Rect.Empty;
+    }
+
+    /// <summary>
+    /// Ensures a detail tile covers <paramref name="visibleDips"/> (the page's visible rectangle in
+    /// its own DIPs) at the current zoom. Renders visible area plus a margin so small scrolls reuse
+    /// the tile; does nothing when the page bitmap is already sharp enough.
+    /// </summary>
+    public async Task UpdateDetailAsync(IPdfDocumentService service, Rect visibleDips, double devicePixelsPerDip, int rotation, bool nightMode)
+    {
+        if (VectorSurface != null || visibleDips.IsEmpty || visibleDips.Width < 1 || visibleDips.Height < 1)
+        {
+            ClearDetail();
+            return;
+        }
+
+        double pxPerPt = DisplayScale * devicePixelsPerDip;
+        var baseImage = RenderedImage;
+        double basePxPerPt = baseImage != null ? baseImage.PixelWidth / Math.Max(1, OrientedWidthPt) : 0;
+        if (baseImage != null && basePxPerPt >= pxPerPt * 0.95)
+        {
+            ClearDetail(); // the page bitmap already matches the screen
+            return;
+        }
+
+        double fullW = DisplayWidth * devicePixelsPerDip, fullH = DisplayHeight * devicePixelsPerDip;
+        var visiblePx = new Rect(visibleDips.X * devicePixelsPerDip, visibleDips.Y * devicePixelsPerDip,
+            visibleDips.Width * devicePixelsPerDip, visibleDips.Height * devicePixelsPerDip);
+
+        var key = (Math.Round(pxPerPt, 4), rotation, nightMode);
+        if (DetailImage != null && _detailKey == key && _detailPixels.Contains(visiblePx))
+            return;
+
+        // Visible area plus half a viewport on every side, clamped to the page and the memory bound.
+        double mx = Math.Min(visiblePx.Width / 2, Math.Max(0, (MaxDetailPixels - visiblePx.Width) / 2));
+        double my = Math.Min(visiblePx.Height / 2, Math.Max(0, (MaxDetailPixels - visiblePx.Height) / 2));
+        double x0 = Math.Max(0, Math.Floor(visiblePx.X - mx)), y0 = Math.Max(0, Math.Floor(visiblePx.Y - my));
+        double x1 = Math.Min(fullW, Math.Ceiling(visiblePx.Right + mx)), y1 = Math.Min(fullH, Math.Ceiling(visiblePx.Bottom + my));
+        int w = (int)Math.Min(MaxDetailPixels, x1 - x0), h = (int)Math.Min(MaxDetailPixels, y1 - y0);
+        if (w <= 0 || h <= 0)
+            return;
+
+        _detailCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _detailCts = cts;
+        try
+        {
+            // Visible area first: the margin quadruples the pixels, and the user is waiting for
+            // what is on screen. The margin tile follows and replaces it.
+            double vx0 = Math.Max(0, Math.Floor(visiblePx.X)), vy0 = Math.Max(0, Math.Floor(visiblePx.Y));
+            int vw = (int)Math.Min(MaxDetailPixels, Math.Min(fullW, Math.Ceiling(visiblePx.Right)) - vx0);
+            int vh = (int)Math.Min(MaxDetailPixels, Math.Min(fullH, Math.Ceiling(visiblePx.Bottom)) - vy0);
+            if (vw > 0 && vh > 0 && (double)w * h > 1.5 * vw * vh && !(DetailImage != null && _detailKey == key))
+            {
+                var visibleTile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)vx0, (int)vy0, vw, vh, nightMode, cts.Token);
+                if (cts.IsCancellationRequested)
+                    return;
+                if (visibleTile != null)
+                    SetDetail(visibleTile, key, new Rect(vx0, vy0, vw, vh), devicePixelsPerDip);
+            }
+
+            var tile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)x0, (int)y0, w, h, nightMode, cts.Token);
+            if (cts.IsCancellationRequested || tile == null)
+                return;
+            SetDetail(tile, key, new Rect(x0, y0, w, h), devicePixelsPerDip);
+        }
+        catch (OperationCanceledException) { }
+        catch (PdfEngine.Exceptions.PdfSecurityPolicyException) { }
+        catch (Exception) when (!cts.IsCancellationRequested)
+        {
+            // A failed tile leaves the (coarser) page bitmap visible; never an empty page.
+        }
     }
 
     private void RaiseGeometryChanged()
@@ -167,10 +304,53 @@ public partial class PageViewModel : ObservableObject
     public Action<int, string>? RenderRefused { get; set; }
 
     private bool _renderedNightMode;
+    private int _surfaceRotation = -1;
+    private bool _surfaceNightMode;
 
     public async Task LoadImageAsync(
         AsyncPageRenderer renderer, int dpi, int rotation, bool nightMode = false, CancellationToken ct = default)
     {
+        // Live vector surface first (night mode gets a colour-inverted drawing); bitmap otherwise.
+        {
+            // A surface does not depend on zoom: a DPI change is not a reason to rebuild it.
+            if (VectorSurface != null && _surfaceRotation == rotation && _surfaceNightMode == nightMode)
+                return;
+
+            IsLoading = true;
+            try
+            {
+                var surface = await renderer.GetVectorSurfaceAsync(PageNumber, rotation, ct, nightMode);
+                if (ct.IsCancellationRequested)
+                    return;
+                if (surface != null)
+                {
+                    VectorSurface = surface;
+                    _surfaceRotation = rotation;
+                    _surfaceNightMode = nightMode;
+                    // Release the bitmap: the surface replaces it at every zoom.
+                    RenderedImage = null;
+                    _renderedDpi = 0;
+                    RenderErrorMessage = string.Empty;
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception)
+            {
+                // Any surface failure falls through to the bitmap path, which reports errors.
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+
+        VectorSurface = null;
+        _surfaceRotation = -1;
+
         if (RenderedImage != null && RotationAngle == rotation && _renderedDpi == dpi
             && _renderedNightMode == nightMode)
         {
@@ -208,6 +388,9 @@ public partial class PageViewModel : ObservableObject
 
     public void UnloadImage()
     {
+        ClearDetail();
+        VectorSurface = null;
+        _surfaceRotation = -1;
         RenderedImage = null;
         _renderedDpi = 0;
         _renderedNightMode = false;
@@ -239,11 +422,22 @@ public partial class PageViewModel : ObservableObject
         IsExtractingText = true;
         try
         {
-            var segments = await docService.ExtractPageTextSegmentsAsync(PageNumber, ct);
-            if (!ct.IsCancellationRequested)
+            var layout = await docService.ExtractPageTextLayoutAsync(PageNumber, ct);
+            // A result that arrives after the page was already populated must not replace it.
+            if (!ct.IsCancellationRequested && !IsTextExtracted)
             {
+                _textLayout = layout;
                 TextSegments.Clear();
-                TextSegments.AddRange(segments);
+                int index = 0;
+                foreach (var (text, box, _, _) in layout.Words())
+                {
+                    TextSegments.Add(new PageTextSegment
+                    {
+                        PageNumber = PageNumber, Text = text, SegmentIndex = index++,
+                        X = box.X, Y = box.Y, Width = box.Width, Height = box.Height,
+                    });
+                }
+                _layoutSegments = (TextSegments.Count, TextSegments.Count > 0 ? TextSegments[0] : null);
                 IsTextExtracted = true;
             }
         }
@@ -255,24 +449,93 @@ public partial class PageViewModel : ObservableObject
         }
     }
 
+    // ------------------------------------------------------------------ text selection (word-processor model)
+
+    private PageTextLayout _textLayout = PageTextLayout.Empty;
+    // The word segments the current layout corresponds to; segments supplied or replaced
+    // directly (a caller that has its own geometry) rebuild the layout from them.
+    private (int Count, PageTextSegment? First) _layoutSegments = (0, null);
+
+    /// <summary>
+    /// The page's text character by character. Built from the extractor; when only word segments
+    /// are present (supplied directly), from those.
+    /// </summary>
+    public PageTextLayout TextLayout
+    {
+        get
+        {
+            var current = (TextSegments.Count, TextSegments.Count > 0 ? TextSegments[0] : null);
+            if (current.Count != _layoutSegments.Count || !ReferenceEquals(current.Item2, _layoutSegments.First))
+            {
+                _textLayout = TextSegments.Count == 0
+                    ? PageTextLayout.Empty
+                    : PageTextLayout.FromWords(TextSegments.OrderBy(t => t.SegmentIndex).Select(t => (t.Text, t.NormalizedBounds)));
+                _layoutSegments = current;
+                SelectionStart = SelectionEnd = -1;
+                SelectedSegments.Clear();
+            }
+            return _textLayout;
+        }
+    }
+
+    /// <summary>Selected characters [<see cref="SelectionStart"/>, <see cref="SelectionEnd"/>); both -1 when none.</summary>
+    public int SelectionStart { get; private set; } = -1;
+    public int SelectionEnd { get; private set; } = -1;
+    public bool HasTextSelection => SelectionEnd > SelectionStart;
+
+    /// <summary>
+    /// Selects the characters between two carets (in either order). <see cref="SelectedSegments"/>
+    /// becomes one band per line — the highlight, and the quads of a highlight annotation.
+    /// </summary>
+    public void SetTextSelection(int caretA, int caretB)
+    {
+        var layout = TextLayout;
+        int s = Math.Clamp(Math.Min(caretA, caretB), 0, layout.Length);
+        int e = Math.Clamp(Math.Max(caretA, caretB), 0, layout.Length);
+        if (s == SelectionStart && e == SelectionEnd)
+            return;
+        SelectionStart = e > s ? s : -1;
+        SelectionEnd = e > s ? e : -1;
+
+        var bands = e > s ? layout.SelectionBands(s, e) : Array.Empty<(Rect, int, int, int)>();
+        // Update in place: during a drag most bands are unchanged, and replacing every element
+        // would rebuild every highlight rectangle on each mouse move.
+        for (int i = 0; i < bands.Count; i++)
+        {
+            var (rect, line, bs, be) = bands[i];
+            if (i < SelectedSegments.Count)
+            {
+                var seg = SelectedSegments[i];
+                seg.SegmentIndex = line;
+                seg.X = rect.X; seg.Y = rect.Y; seg.Width = rect.Width; seg.Height = rect.Height;
+                seg.Text = layout.GetText(bs, be);
+            }
+            else
+            {
+                SelectedSegments.Add(new PageTextSegment
+                {
+                    PageNumber = PageNumber, SegmentIndex = line, IsSelected = true, Text = layout.GetText(bs, be),
+                    X = rect.X, Y = rect.Y, Width = rect.Width, Height = rect.Height,
+                });
+            }
+        }
+        while (SelectedSegments.Count > bands.Count)
+            SelectedSegments.RemoveAt(SelectedSegments.Count - 1);
+    }
+
     public void ClearTextSelection()
     {
-        foreach (var seg in SelectedSegments)
-        {
-            seg.IsSelected = false;
-        }
+        SelectionStart = SelectionEnd = -1;
         SelectedSegments.Clear();
     }
 
-    public void SelectAllText()
-    {
-        ClearTextSelection();
-        foreach (var seg in TextSegments)
-        {
-            seg.IsSelected = true;
-            SelectedSegments.Add(seg);
-        }
-    }
+    public void SelectAllText() => SetTextSelection(0, TextLayout.Length);
+
+    /// <summary>The caret nearest a normalized point.</summary>
+    public int CaretAt(Point normPoint) => TextLayout.HitTest(normPoint);
+
+    /// <summary>True when the point is over a line of text (I-beam cursor).</summary>
+    public bool IsOverText(Point normPoint, double slack = 0.006) => TextLayout.IsOverText(normPoint, slack);
 
     public PageTextSegment? FindSegmentAt(Point normPoint)
     {
@@ -294,103 +557,33 @@ public partial class PageViewModel : ObservableObject
 
         PageTextSegment? closest = null;
         double minSqDist = double.MaxValue;
-
         foreach (var seg in TextSegments)
         {
-            double centerX = seg.X + seg.Width / 2.0;
-            double centerY = seg.Y + seg.Height / 2.0;
-            double dx = centerX - normPoint.X;
-            double dy = centerY - normPoint.Y;
+            double dx = seg.X + seg.Width / 2.0 - normPoint.X;
+            double dy = seg.Y + seg.Height / 2.0 - normPoint.Y;
             double sqDist = dx * dx + dy * dy;
-
             if (sqDist < minSqDist && sqDist <= maxDistance * maxDistance)
             {
                 minSqDist = sqDist;
                 closest = seg;
             }
         }
-
         return closest;
     }
 
-    public void SelectRange(Point normStart, Point normEnd)
-    {
-        var startSeg = FindClosestSegment(normStart);
-        var endSeg = FindClosestSegment(normEnd);
+    /// <summary>Selects the characters between the carets nearest two points (a drag).</summary>
+    public void SelectRange(Point normStart, Point normEnd) =>
+        SetTextSelection(CaretAt(normStart), CaretAt(normEnd));
 
-        ClearTextSelection();
-
-        if (startSeg != null && endSeg != null)
-        {
-            int minIdx = Math.Min(startSeg.SegmentIndex, endSeg.SegmentIndex);
-            int maxIdx = Math.Max(startSeg.SegmentIndex, endSeg.SegmentIndex);
-
-            for (int i = minIdx; i <= maxIdx && i < TextSegments.Count; i++)
-            {
-                var seg = TextSegments[i];
-                seg.IsSelected = true;
-                SelectedSegments.Add(seg);
-            }
-        }
-        else
-        {
-            double left = Math.Min(normStart.X, normEnd.X);
-            double top = Math.Min(normStart.Y, normEnd.Y);
-            double width = Math.Abs(normEnd.X - normStart.X);
-            double height = Math.Abs(normEnd.Y - normStart.Y);
-            var box = new Rect(left, top, width, height);
-
-            foreach (var seg in TextSegments)
-            {
-                if (box.IntersectsWith(seg.NormalizedBounds))
-                {
-                    seg.IsSelected = true;
-                    SelectedSegments.Add(seg);
-                }
-            }
-        }
-    }
-
+    /// <summary>Selects the word under a point — only the word, without its trailing space.</summary>
     public void SelectWordAt(Point normPoint)
     {
-        ClearTextSelection();
-        var seg = FindClosestSegment(normPoint);
-        if (seg != null)
-        {
-            seg.IsSelected = true;
-            SelectedSegments.Add(seg);
-        }
+        int glyph = TextLayout.GlyphAt(normPoint);
+        if (glyph < 0) { ClearTextSelection(); return; }
+        var (s, e) = TextLayout.WordAt(glyph);
+        SetTextSelection(s, e);
     }
 
-    public string GetSelectedText()
-    {
-        if (SelectedSegments.Count == 0) return string.Empty;
-
-        var sorted = SelectedSegments.OrderBy(s => s.SegmentIndex).ToList();
-        var sb = new System.Text.StringBuilder();
-
-        for (int i = 0; i < sorted.Count; i++)
-        {
-            var cur = sorted[i];
-            if (i > 0)
-            {
-                var prev = sorted[i - 1];
-                double yDiff = cur.Y - prev.Y;
-                double lineThreshold = Math.Min(cur.Height, prev.Height) * 0.6;
-                if (lineThreshold <= 0) lineThreshold = 0.01;
-
-                if (yDiff > lineThreshold)
-                {
-                    sb.AppendLine();
-                }
-                else if (!prev.Text.EndsWith(" ") && !cur.Text.StartsWith(" "))
-                {
-                    sb.Append(' ');
-                }
-            }
-            sb.Append(cur.Text);
-        }
-
-        return sb.ToString();
-    }
+    public string GetSelectedText() =>
+        HasTextSelection ? TextLayout.GetText(SelectionStart, SelectionEnd) : string.Empty;
 }

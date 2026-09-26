@@ -44,6 +44,7 @@
     <ProjectReference Include="..\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
     <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
     <ProjectReference Include="..\PdfEngine.Vector.Windows\PdfEngine.Vector.Windows.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector.Direct2D\PdfEngine.Vector.Direct2D.csproj" />
     <ProjectReference Include="..\PdfViewer.Core\PdfViewer.Core.csproj" />
   </ItemGroup>
 

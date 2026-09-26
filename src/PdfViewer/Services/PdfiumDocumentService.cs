@@ -92,50 +92,89 @@ public class PdfiumDocumentService : IPdfDocumentService
         return await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException($"File not found: {filePath}", filePath);
+            }
+
+            // Enforce the size ceiling BEFORE reading the file into memory, so an
+            // oversized document is refused rather than allocated twice (managed array
+            // plus unmanaged copy) on the way to failing.
+            _securityPolicy.EnsureDocumentSizeAllowed(new FileInfo(filePath).Length, filePath);
+            return OpenFromBytes(File.ReadAllBytes(filePath), filePath, password);
+        }, ct);
+    }
+
+    /// <summary>
+    /// Opens a document from memory under <paramref name="filePath"/> (shown and used for saving
+    /// defaults). Used for the decrypted copy of a certificate-encrypted file.
+    /// </summary>
+    public async Task<DocumentMetadata> OpenDocumentFromBytesAsync(byte[] bytes, string filePath, CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            _securityPolicy.EnsureDocumentSizeAllowed(bytes.Length, filePath);
+            return OpenFromBytes(bytes, filePath, null);
+        }, ct);
+    }
+
+    private DocumentMetadata OpenFromBytes(byte[] bytes, string filePath, string? password)
+    {
+        lock (_docLock)
+        {
+            CloseDocument();
+
+            // Read file bytes into pinned unmanaged native buffer
+            IntPtr nativeBuf = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, nativeBuf, bytes.Length);
+
+            var doc = PdfiumNativeBridge.FPDF_LoadMemDocument(nativeBuf, bytes.Length, password);
+
+            if (doc == null || doc.IsInvalid)
+            {
+                Marshal.FreeHGlobal(nativeBuf);
+                uint error = PdfiumNativeBridge.FPDF_GetLastError();
+                if (error == PdfiumNativeBridge.FPDF_ERR_PASSWORD)
+                {
+                    throw new UnauthorizedAccessException("Password required or incorrect password for PDF document.");
+                }
+                if (error == PdfiumNativeBridge.FPDF_ERR_SECURITY)
+                {
+                    throw new PdfUnsupportedSecurityException("PDFium does not support this document's security handler.");
+                }
+                if (error == PdfiumNativeBridge.FPDF_ERR_FORMAT)
+                {
+                    throw new InvalidDataException("The file format is invalid or corrupted.");
+                }
+                throw new InvalidOperationException($"Failed to load PDF document (PDFium error code {error}).");
+            }
+
+            _document = doc;
+            _nativeBuffer = nativeBuf;
+            _fileBytes = bytes;
+            _currentFilePath = filePath;
+
+            return ExtractMetadata(filePath, doc);
+        }
+    }
+
+    /// <summary>Permissions from PDFium: full when unencrypted or opened with the owner password.</summary>
+    public PdfEngine.Documents.PdfDocumentPermissions Permissions
+    {
+        get
+        {
             lock (_docLock)
             {
-                CloseDocument();
-
-                if (!File.Exists(filePath))
-                {
-                    throw new FileNotFoundException($"File not found: {filePath}", filePath);
-                }
-
-                // Enforce the size ceiling BEFORE reading the file into memory, so an
-                // oversized document is refused rather than allocated twice (managed array
-                // plus unmanaged copy) on the way to failing.
-                _securityPolicy.EnsureDocumentSizeAllowed(new FileInfo(filePath).Length, filePath);
-
-                // Read file bytes into pinned unmanaged native buffer
-                byte[] bytes = File.ReadAllBytes(filePath);
-                IntPtr nativeBuf = Marshal.AllocHGlobal(bytes.Length);
-                Marshal.Copy(bytes, 0, nativeBuf, bytes.Length);
-
-                var doc = PdfiumNativeBridge.FPDF_LoadMemDocument(nativeBuf, bytes.Length, password);
-
-                if (doc == null || doc.IsInvalid)
-                {
-                    Marshal.FreeHGlobal(nativeBuf);
-                    uint error = PdfiumNativeBridge.FPDF_GetLastError();
-                    if (error == PdfiumNativeBridge.FPDF_ERR_PASSWORD)
-                    {
-                        throw new UnauthorizedAccessException("Password required or incorrect password for PDF document.");
-                    }
-                    if (error == PdfiumNativeBridge.FPDF_ERR_FORMAT)
-                    {
-                        throw new InvalidDataException("The file format is invalid or corrupted.");
-                    }
-                    throw new InvalidOperationException($"Failed to load PDF document (PDFium error code {error}).");
-                }
-
-                _document = doc;
-                _nativeBuffer = nativeBuf;
-                _fileBytes = bytes;
-                _currentFilePath = filePath;
-
-                return ExtractMetadata(filePath, doc);
+                if (_document == null || _document.IsInvalid)
+                    return PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+                int revision = PdfiumNativeBridge.FPDF_GetSecurityHandlerRevision(_document);
+                if (revision < 0)
+                    return PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+                uint p = PdfiumNativeBridge.FPDF_GetDocPermissions(_document);
+                return PdfEngine.Documents.PdfDocumentPermissions.FromFlags(unchecked((int)p), revision, p == 0xFFFFFFFF);
             }
-        }, ct);
+        }
     }
 
     /// <summary>
@@ -373,6 +412,60 @@ public class PdfiumDocumentService : IPdfDocumentService
 
                 wpfBitmap.Freeze();
                 return wpfBitmap;
+            }
+            finally
+            {
+                PdfiumNativeBridge.FPDFBitmap_Destroy(bitmap);
+            }
+        }
+    }
+
+    public async Task<BitmapSource?> RenderPageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+    {
+        if (width <= 0 || height <= 0 || width > 8192 || height > 8192 || pixelsPerPoint <= 0)
+            return null;
+        var bmp = await Task.Run(() => RenderPageRegion(pageNumber, pixelsPerPoint * 72.0, rotationAngle, x, y, width, height), ct).ConfigureAwait(false);
+        return bmp != null && nightMode ? NightModeImage.Invert(bmp) : bmp;
+    }
+
+    /// <summary>
+    /// Renders only a pixel window of the page as it would appear at <paramref name="dpi"/>
+    /// (FPDF_RenderPageBitmap with a negative origin), so a small region of a highly zoomed page
+    /// never allocates a full-page raster. Used for vector fallback regions.
+    /// </summary>
+    public BitmapSource? RenderPageRegion(int pageNumber, double dpi, int rotationAngle, int x, int y, int width, int height)
+    {
+        lock (_docLock)
+        {
+            if (_document == null || _document.IsInvalid || pageNumber < 1 || pageNumber > PageCount || width <= 0 || height <= 0)
+                return null;
+            _securityPolicy.EnsureRenderDimensionsAllowed(width, height);
+
+            if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var size) == 0)
+                return null;
+            double widthPt = size.width > 0 ? size.width : 612;
+            double heightPt = size.height > 0 ? size.height : 792;
+            int pdfRotation = ((rotationAngle % 360) + 360) % 360 / 90;
+            bool isRotated90 = pdfRotation == 1 || pdfRotation == 3;
+            int fullW = Math.Max(1, (int)Math.Round((isRotated90 ? heightPt : widthPt) * dpi / 72.0));
+            int fullH = Math.Max(1, (int)Math.Round((isRotated90 ? widthPt : heightPt) * dpi / 72.0));
+
+            using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
+            if (page == null || page.IsInvalid) return null;
+
+            IntPtr bitmap = PdfiumNativeBridge.FPDFBitmap_CreateEx(width, height, PdfiumNativeBridge.FPDFBitmap_BGRA, IntPtr.Zero, 0);
+            if (bitmap == IntPtr.Zero) return null;
+            try
+            {
+                PdfiumNativeBridge.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFFFFFF);
+                int renderFlags = PdfiumNativeBridge.FPDF_ANNOT | PdfiumNativeBridge.FPDF_LCD_TEXT;
+                PdfiumNativeBridge.FPDF_RenderPageBitmap(bitmap, page, -x, -y, fullW, fullH, pdfRotation, renderFlags);
+                IntPtr buffer = PdfiumNativeBridge.FPDFBitmap_GetBuffer(bitmap);
+                int stride = PdfiumNativeBridge.FPDFBitmap_GetStride(bitmap);
+                var result = BitmapSource.Create(width, height, dpi, dpi, PixelFormats.Bgra32, null, buffer, stride * height, stride);
+                result.Freeze();
+                return result;
             }
             finally
             {
@@ -721,6 +814,68 @@ public class PdfiumDocumentService : IPdfDocumentService
     }
 
     /// <summary>
+    /// The page's characters in PDFium's reading order with their loose boxes (font ascent to
+    /// descent, so a line's characters share one height), the spaces and line breaks PDFium
+    /// infers, and line-end hyphens — the input of word-processor selection.
+    /// </summary>
+    public PdfViewer.Text.PageTextLayout ExtractPageTextLayout(int pageNumber)
+    {
+        var glyphs = new List<PdfViewer.Text.TextGlyph>();
+        lock (_docLock)
+        {
+            if (_document == null || _document.IsInvalid || pageNumber < 1 || pageNumber > PageCount)
+                return PdfViewer.Text.PageTextLayout.Empty;
+            using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
+            if (page == null || page.IsInvalid) return PdfViewer.Text.PageTextLayout.Empty;
+            using var textPage = PdfiumNativeBridge.FPDFText_LoadPage(page);
+            if (textPage == null || textPage.IsInvalid) return PdfViewer.Text.PageTextLayout.Empty;
+            if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var size) == 0)
+                return PdfViewer.Text.PageTextLayout.Empty;
+            GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
+
+            int count = PdfiumNativeBridge.FPDFText_CountChars(textPage);
+            for (int i = 0; i < count; i++)
+            {
+                uint cp = PdfiumNativeBridge.FPDFText_GetUnicode(textPage, i);
+                if (cp == 0) continue;
+                string text;
+                if (cp is >= 0xD800 and <= 0xDBFF && i + 1 < count)
+                {
+                    uint low = PdfiumNativeBridge.FPDFText_GetUnicode(textPage, i + 1);
+                    text = low is >= 0xDC00 and <= 0xDFFF ? new string(new[] { (char)cp, (char)low }) : ((char)cp).ToString();
+                    if (text.Length == 2) i++;
+                }
+                else if (cp > 0xFFFF && cp <= 0x10FFFF)
+                    text = char.ConvertFromUtf32((int)cp);
+                else if (cp is >= 0xD800 and <= 0xDFFF)
+                    continue; // unpaired surrogate
+                else
+                    text = ((char)cp).ToString();
+
+                bool generated = PdfiumNativeBridge.FPDFText_IsGenerated(textPage, i) == 1;
+                bool hyphen = PdfiumNativeBridge.FPDFText_IsHyphen(textPage, i) == 1;
+                var box = Rect.Empty;
+                if (text is not ("\r" or "\n"))
+                {
+                    if (PdfiumNativeBridge.FPDFText_GetLooseCharBox(textPage, i, out var r) != 0 && r.right > r.left && r.top > r.bottom)
+                        box = new Rect(r.left / pageWidth, 1.0 - r.top / pageHeight, (r.right - r.left) / pageWidth, (r.top - r.bottom) / pageHeight);
+                    else if (PdfiumNativeBridge.FPDFText_GetCharBox(textPage, i, out double l, out double rt, out double b, out double t) != 0 && rt > l && t > b)
+                        box = new Rect(l / pageWidth, 1.0 - t / pageHeight, (rt - l) / pageWidth, (t - b) / pageHeight);
+                }
+                glyphs.Add(new PdfViewer.Text.TextGlyph(text, box, generated, hyphen));
+            }
+        }
+        return new PdfViewer.Text.PageTextLayout(glyphs);
+    }
+
+    public Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default) =>
+        Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return ExtractPageTextLayout(pageNumber);
+        }, ct);
+
+    /// <summary>
     /// Asynchronously extracts all text segments from a given page.
     /// </summary>
     public async Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default)
@@ -919,6 +1074,24 @@ public class PdfiumDocumentService : IPdfDocumentService
                         Title = title,
                         CreationDate = created
                     };
+
+                    // Text markup over several lines: one rectangle per quad.
+                    if (type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
+                    {
+                        int quadCount = (int)PdfiumNativeBridge.FPDFAnnot_CountAttachmentPoints(annot);
+                        if (quadCount > 1)
+                        {
+                            var quads = new List<Rect>(quadCount);
+                            for (int qi = 0; qi < quadCount; qi++)
+                            {
+                                if (PdfiumNativeBridge.FPDFAnnot_GetAttachmentPoints(annot, (UIntPtr)qi, out var q) == 0) continue;
+                                float qx0 = Math.Min(Math.Min(q.x1, q.x2), Math.Min(q.x3, q.x4)), qx1 = Math.Max(Math.Max(q.x1, q.x2), Math.Max(q.x3, q.x4));
+                                float qy0 = Math.Min(Math.Min(q.y1, q.y2), Math.Min(q.y3, q.y4)), qy1 = Math.Max(Math.Max(q.y1, q.y2), Math.Max(q.y3, q.y4));
+                                quads.Add(new Rect(qx0 / pageWidth, 1.0 - qy1 / pageHeight, (qx1 - qx0) / pageWidth, (qy1 - qy0) / pageHeight));
+                            }
+                            if (quads.Count > 1) model.SetQuads(quads);
+                        }
+                    }
 
                     // Load ink strokes if Ink annotation. Every path in the /InkList, not just
                     // the first: reading one and saving back used to drop the rest.
@@ -1151,14 +1324,21 @@ public class PdfiumDocumentService : IPdfDocumentService
                         // Foxit and Edge - it was only ever visible in this viewer.
                         if (annot.Type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
                         {
-                            var quad = new FS_QUADPOINTSF
+                            // One quad per line of a multi-line markup, else the box.
+                            var boxes = annot.Quads.Count > 0 ? annot.Quads : new List<Rect> { new(annot.X, annot.Y, annot.Width, annot.Height) };
+                            foreach (var q in boxes)
                             {
-                                x1 = left,  y1 = top,
-                                x2 = right, y2 = top,
-                                x3 = left,  y3 = bottom,
-                                x4 = right, y4 = bottom
-                            };
-                            PdfiumNativeBridge.FPDFAnnot_AppendAttachmentPoints(nativeAnnot, ref quad);
+                                float ql = (float)(q.X * pageWidth), qr = (float)((q.X + q.Width) * pageWidth);
+                                float qt = (float)((1.0 - q.Y) * pageHeight), qb = (float)((1.0 - (q.Y + q.Height)) * pageHeight);
+                                var quad = new FS_QUADPOINTSF
+                                {
+                                    x1 = ql, y1 = qt,
+                                    x2 = qr, y2 = qt,
+                                    x3 = ql, y3 = qb,
+                                    x4 = qr, y4 = qb
+                                };
+                                PdfiumNativeBridge.FPDFAnnot_AppendAttachmentPoints(nativeAnnot, ref quad);
+                            }
                         }
 
                         // The line width a shape or a pen stroke is drawn with. Without /BS
@@ -1353,9 +1533,13 @@ public class PdfiumDocumentService : IPdfDocumentService
             // render nothing for highlight/underline/strikeout.
             if (a.Type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
             {
-                string coords = string.Format(CultureInfo.InvariantCulture,
-                    "{0:F4},{1:F4},{2:F4},{3:F4},{4:F4},{5:F4},{6:F4},{7:F4}",
-                    left, top, right, top, left, bottom, right, bottom);
+                var boxes = a.Quads.Count > 0 ? a.Quads : new List<Rect> { new(a.X, a.Y, a.Width, a.Height) };
+                string coords = string.Join(",", boxes.Select(q =>
+                {
+                    double ql = q.X * pw, qr = (q.X + q.Width) * pw, qt = (1.0 - q.Y) * ph, qb = (1.0 - q.Y - q.Height) * ph;
+                    return string.Format(CultureInfo.InvariantCulture,
+                        "{0:F4},{1:F4},{2:F4},{3:F4},{4:F4},{5:F4},{6:F4},{7:F4}", ql, qt, qr, qt, ql, qb, qr, qb);
+                }));
                 writer.Write($" coords=\"{coords}\"");
             }
 
@@ -1394,4 +1578,10 @@ public class PdfiumDocumentService : IPdfDocumentService
         }
         GC.SuppressFinalize(this);
     }
+}
+
+/// <summary>PDFium cannot open the document's security handler (for example public-key encryption).</summary>
+public sealed class PdfUnsupportedSecurityException : InvalidOperationException
+{
+    public PdfUnsupportedSecurityException(string message) : base(message) { }
 }

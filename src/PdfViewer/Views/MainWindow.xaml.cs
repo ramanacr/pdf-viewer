@@ -410,6 +410,12 @@ public partial class MainWindow : Window
     {
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
 
+        if (TryExtendSelectionWithKeyboard(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.F11:
@@ -434,6 +440,29 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
         }
+    }
+
+    /// <summary>
+    /// Shift+Left/Right (by character), Ctrl+Shift+Left/Right (by word), Shift+Up/Down (by line),
+    /// Shift+Home/End (line), Ctrl+Shift+Home/End (page) move the selection's active end.
+    /// </summary>
+    private bool TryExtendSelectionWithKeyboard(KeyEventArgs e)
+    {
+        if (_shell.ActiveDocument == null || !_vm.TextSelection.HasAnchor) return false;
+        var mods = Keyboard.Modifiers;
+        if ((mods & ModifierKeys.Shift) == 0 || (mods & ModifierKeys.Alt) != 0) return false;
+        bool ctrl = (mods & ModifierKeys.Control) != 0;
+        SelectionMove? move = e.Key switch
+        {
+            Key.Left => ctrl ? SelectionMove.WordLeft : SelectionMove.CharacterLeft,
+            Key.Right => ctrl ? SelectionMove.WordRight : SelectionMove.CharacterRight,
+            Key.Up when !ctrl => SelectionMove.LineUp,
+            Key.Down when !ctrl => SelectionMove.LineDown,
+            Key.Home => ctrl ? SelectionMove.PageStart : SelectionMove.LineStart,
+            Key.End => ctrl ? SelectionMove.PageEnd : SelectionMove.LineEnd,
+            _ => null,
+        };
+        return move is { } m && _vm.TextSelection.Extend(m);
     }
 
     #endregion
@@ -500,9 +529,46 @@ public partial class MainWindow : Window
         ScrollThumbnailIntoView(pageNumber);
     }
 
+    private System.Windows.Threading.DispatcherTimer? _detailTimer;
+
+    /// <summary>
+    /// Debounced: once scrolling/zooming pauses, ask every visible page for a viewport detail tile
+    /// at device resolution (the page bitmap is shown, stretched, until it arrives).
+    /// </summary>
+    private void ScheduleDetailTiles()
+    {
+        if (_detailTimer == null)
+        {
+            _detailTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(90),
+            };
+            _detailTimer.Tick += (_, _) =>
+            {
+                _detailTimer!.Stop();
+                RequestDetailTiles();
+            };
+        }
+        _detailTimer.Stop();
+        _detailTimer.Start();
+    }
+
+    private void RequestDetailTiles()
+    {
+        if (!_vm.IsDocumentLoaded || DocumentScrollViewer == null)
+            return;
+        double deviceScale = System.Windows.Media.VisualTreeHelper.GetDpi(DocumentScrollViewer).DpiScaleX;
+        var viewport = new Size(DocumentScrollViewer.ViewportWidth, DocumentScrollViewer.ViewportHeight);
+        foreach (var (page, visible) in PageDetailHost.VisiblePages(DocumentScrollViewer, viewport))
+        {
+            _ = _vm.RequestPageDetailAsync(page, visible, deviceScale);
+        }
+    }
+
     private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+        ScheduleDetailTiles();
 
         if (_vm.IsMultiPageLayout)
         {
@@ -783,6 +849,11 @@ public partial class MainWindow : Window
 
     private bool _isSelectingText;
     private Point _textSelectStartPoint;
+    private Canvas? _selectionCanvas;
+    private AnnotationModel? _pendingAnnotationClick;
+    private System.Windows.Threading.DispatcherTimer? _selectionScrollTimer;
+    private readonly System.Collections.Generic.List<Canvas> _selectionCanvases = new();
+    private DateTime _selectionCanvasesAt;
 
     private void PageCanvas_MouseDown(object sender, MouseButtonEventArgs e)
     {
@@ -891,53 +962,152 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Mode 2: Normal Selection Mode (No annotation tool and not panning)
+        // Mode 2: text selection, as in a word processor. Click places the caret, drag selects by
+        // character, double-click selects a word (only the word), triple-click a paragraph,
+        // Ctrl+click a sentence; dragging after a double/triple click extends by that unit, and
+        // Shift+click extends the current selection. A drag may cross pages.
         if (!_vm.IsPanningEnabled)
         {
             var clickPos = e.GetPosition(canvas);
             double normClickX = clickPos.X / page.UnrotatedDisplayWidth;
             double normClickY = clickPos.Y / page.UnrotatedDisplayHeight;
 
-            // Check if user clicked an existing annotation to open its editor.
-            // (This interactive canvas sits above the annotation layer, so
-            // Annotation_MouseLeftButtonDown on the annotation Grid never fires;
-            // hit-test explicitly here for every annotation type instead.)
-            var hitAnnotation = page.AnnotationsOnPage.FirstOrDefault(a =>
-                normClickX >= a.X && normClickX <= a.X + a.Width &&
-                normClickY >= a.Y && normClickY <= a.Y + a.Height);
+            // A single click on an annotation opens it - on release, when the press did not
+            // become a drag, so text under a highlight can still be selected by dragging.
+            _pendingAnnotationClick = e.ClickCount == 1 && Keyboard.Modifiers == ModifierKeys.None
+                ? page.AnnotationsOnPage.FirstOrDefault(a => a.HasQuads
+                    ? a.Quads.Any(q => q.Contains(new Point(normClickX, normClickY)))
+                    : normClickX >= a.X && normClickX <= a.X + a.Width &&
+                      normClickY >= a.Y && normClickY <= a.Y + a.Height)
+                : null;
 
-            if (hitAnnotation != null)
-            {
-                var dialog = new EditCommentDialog(hitAnnotation, isNew: false) { Owner = this };
-                dialog.ShowDialog();
-                e.Handled = true;
-                return;
-            }
+            if (!page.IsTextExtracted)
+                _ = page.LoadTextSegmentsAsync(_vm.DocumentService);
 
-            // Double-click word selection
-            if (e.ClickCount == 2)
-            {
-                page.SelectWordAt(new Point(normClickX, normClickY));
-                _vm.UpdateSelectionFromPages();
-                return;
-            }
-
-            // Clear text selection on other pages
-            foreach (var otherPage in _vm.Pages)
-            {
-                if (otherPage != page)
-                {
-                    otherPage.ClearTextSelection();
-                }
-            }
+            bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+            bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+            _vm.TextSelection.PointerDown(page, new Point(normClickX, normClickY), e.ClickCount, shift, ctrl);
+            // Keys go to the document now (Shift+arrows extend, Ctrl+C copies), not to a search box.
+            if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase)
+                Keyboard.Focus(DocumentScrollViewer);
 
             _isSelectingText = true;
             _textSelectStartPoint = clickPos;
+            _selectionCanvas = canvas;
+            RefreshSelectionCanvases(force: true);
             canvas.CaptureMouse();
-
-            page.SelectWordAt(new Point(normClickX, normClickY));
-            _vm.UpdateSelectionFromPages();
+            canvas.Cursor = Cursors.IBeam;
+            StartSelectionAutoScroll();
+            e.Handled = true;
         }
+    }
+
+    // ------------------------------------------------------------------ selection drag helpers
+
+    /// <summary>The realized page canvases (the pages a drag can reach), refreshed as pages are realized.</summary>
+    private void RefreshSelectionCanvases(bool force = false)
+    {
+        if (!force && (DateTime.UtcNow - _selectionCanvasesAt).TotalMilliseconds < 150) return;
+        _selectionCanvasesAt = DateTime.UtcNow;
+        _selectionCanvases.Clear();
+        void Walk(DependencyObject node)
+        {
+            int n = VisualTreeHelper.GetChildrenCount(node);
+            for (int i = 0; i < n; i++)
+            {
+                var child = VisualTreeHelper.GetChild(node, i);
+                if (child is Canvas c && c.Tag is PageViewModel && c.IsVisible)
+                {
+                    _selectionCanvases.Add(c);
+                    continue;
+                }
+                Walk(child);
+            }
+        }
+        if (_selectionCanvas != null)
+        {
+            // The single-page view has one canvas; the continuous view has one per realized page.
+            DependencyObject root = _vm.IsMultiPageLayout ? DocumentScrollViewer : (DependencyObject?)VisualTreeHelper.GetParent(_selectionCanvas) ?? _selectionCanvas;
+            Walk(root);
+        }
+        if (_selectionCanvas != null && !_selectionCanvases.Contains(_selectionCanvas))
+            _selectionCanvases.Add(_selectionCanvas);
+    }
+
+    /// <summary>While a selection drag is near the viewport's top or bottom edge, scroll and keep extending.</summary>
+    private void StartSelectionAutoScroll()
+    {
+        _selectionScrollTimer ??= CreateSelectionScrollTimer();
+        _selectionScrollTimer.Start();
+    }
+
+    private System.Windows.Threading.DispatcherTimer CreateSelectionScrollTimer()
+    {
+        var timer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
+        {
+            Interval = TimeSpan.FromMilliseconds(16),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (!_isSelectingText || Mouse.LeftButton != MouseButtonState.Pressed)
+            {
+                timer.Stop();
+                return;
+            }
+            var pos = Mouse.GetPosition(DocumentScrollViewer);
+            double h = DocumentScrollViewer.ActualHeight, w = DocumentScrollViewer.ActualWidth;
+            const double edge = 28;
+            double vy = pos.Y < edge ? pos.Y - edge : pos.Y > h - edge ? pos.Y - (h - edge) : 0;
+            double vx = pos.X < edge ? pos.X - edge : pos.X > w - edge ? pos.X - (w - edge) : 0;
+            if (vy == 0 && vx == 0) return;
+            // Speed grows with the distance past the edge, like a word processor's.
+            double Speed(double v) => Math.Sign(v) * Math.Min(60, 2 + Math.Abs(v) * 0.6);
+            if (vy != 0) DocumentScrollViewer.ScrollToVerticalOffset(DocumentScrollViewer.VerticalOffset + Speed(vy));
+            if (vx != 0) DocumentScrollViewer.ScrollToHorizontalOffset(DocumentScrollViewer.HorizontalOffset + Speed(vx));
+            DocumentScrollViewer.UpdateLayout();
+            RefreshSelectionCanvases();
+            ExtendSelectionToPointer();
+        };
+        return timer;
+    }
+
+    /// <summary>
+    /// Extends the selection to the pointer: to the page it is over or - between pages and in
+    /// the margins - the nearest one, with the point unclamped in that page's normalized space
+    /// (points beyond the text map to the nearest line, as in a word processor).
+    /// </summary>
+    private void ExtendSelectionToPointer()
+    {
+        (PageViewModel Page, Point Norm)? hit = null;
+        double bestDist = double.MaxValue;
+        var screen = Mouse.GetPosition(this);
+        foreach (var c in _selectionCanvases)
+        {
+            if (c.Tag is not PageViewModel p || p.UnrotatedDisplayWidth <= 0 || p.UnrotatedDisplayHeight <= 0) continue;
+            Rect bounds;
+            Point local;
+            try
+            {
+                bounds = c.TransformToAncestor(this).TransformBounds(new Rect(0, 0, c.ActualWidth, c.ActualHeight));
+                local = Mouse.GetPosition(c); // the canvas's own, unrotated coordinates
+            }
+            catch (InvalidOperationException) { continue; } // no longer in the tree
+            double dx = Math.Max(0, Math.Max(bounds.Left - screen.X, screen.X - bounds.Right));
+            double dy = Math.Max(0, Math.Max(bounds.Top - screen.Y, screen.Y - bounds.Bottom));
+            double d = dx * dx + dy * dy;
+            if (d < bestDist)
+            {
+                bestDist = d;
+                hit = (p, new Point(local.X / p.UnrotatedDisplayWidth, local.Y / p.UnrotatedDisplayHeight));
+            }
+        }
+        if (hit is not { } h) return;
+        if (!h.Page.IsTextExtracted)
+        {
+            _ = h.Page.LoadTextSegmentsAsync(_vm.DocumentService);
+            return;
+        }
+        _vm.TextSelection.PointerMove(h.Page, h.Norm);
     }
 
     private void PageCanvas_MouseMove(object sender, MouseEventArgs e)
@@ -965,29 +1135,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 2. Updating text selection range during mouse drag
+        // 2. Extending the text selection while dragging (possibly onto another page)
         if (_isSelectingText)
         {
             var currentPoint = e.GetPosition(canvas);
-            double startNormX = Math.Max(0, Math.Min(1, _textSelectStartPoint.X / page.UnrotatedDisplayWidth));
-            double startNormY = Math.Max(0, Math.Min(1, _textSelectStartPoint.Y / page.UnrotatedDisplayHeight));
-            double currNormX = Math.Max(0, Math.Min(1, currentPoint.X / page.UnrotatedDisplayWidth));
-            double currNormY = Math.Max(0, Math.Min(1, currentPoint.Y / page.UnrotatedDisplayHeight));
-
-            page.SelectRange(new Point(startNormX, startNormY), new Point(currNormX, currNormY));
-            _vm.UpdateSelectionFromPages();
+            if (_pendingAnnotationClick != null &&
+                (Math.Abs(currentPoint.X - _textSelectStartPoint.X) > 4 || Math.Abs(currentPoint.Y - _textSelectStartPoint.Y) > 4))
+                _pendingAnnotationClick = null; // it became a drag
+            ExtendSelectionToPointer();
             return;
         }
 
-        // 3. Hovering over text segments: change cursor to I-beam
+        // 3. Hovering over text: I-beam cursor
         if (_vm.ActiveAnnotationTool == null && !_vm.IsPanningEnabled)
         {
             var hoverPt = e.GetPosition(canvas);
-            double hoverNormX = hoverPt.X / page.UnrotatedDisplayWidth;
-            double hoverNormY = hoverPt.Y / page.UnrotatedDisplayHeight;
-            var hitSegment = page.FindClosestSegment(new Point(hoverNormX, hoverNormY), maxDistance: 0.025);
-
-            canvas.Cursor = hitSegment != null ? Cursors.IBeam : null;
+            var norm = new Point(hoverPt.X / page.UnrotatedDisplayWidth, hoverPt.Y / page.UnrotatedDisplayHeight);
+            if (!page.IsTextExtracted && !page.IsExtractingText)
+                _ = page.LoadTextSegmentsAsync(_vm.DocumentService);
+            canvas.Cursor = page.IsOverText(norm) ? Cursors.IBeam : null;
         }
         else
         {
@@ -1131,30 +1297,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 2. Finalizing text selection
+        // 2. Finishing a selection drag
         if (_isSelectingText)
         {
             _isSelectingText = false;
-            canvas.ReleaseMouseCapture();
+            _selectionScrollTimer?.Stop();
+            (_selectionCanvas ?? canvas).ReleaseMouseCapture();
+            _selectionCanvas = null;
 
-            var currentPoint = e.GetPosition(canvas);
-            double startNormX = Math.Max(0, Math.Min(1, _textSelectStartPoint.X / page.UnrotatedDisplayWidth));
-            double startNormY = Math.Max(0, Math.Min(1, _textSelectStartPoint.Y / page.UnrotatedDisplayHeight));
-            double currNormX = Math.Max(0, Math.Min(1, currentPoint.X / page.UnrotatedDisplayWidth));
-            double currNormY = Math.Max(0, Math.Min(1, currentPoint.Y / page.UnrotatedDisplayHeight));
-
-            // If user simply clicked on an empty area without dragging, clear selection
-            double dx = Math.Abs(currentPoint.X - _textSelectStartPoint.X);
-            double dy = Math.Abs(currentPoint.Y - _textSelectStartPoint.Y);
-            if (dx < 4 && dy < 4)
+            if (_pendingAnnotationClick is { } annot)
             {
-                var hit = page.FindClosestSegment(new Point(startNormX, startNormY));
-                if (hit == null)
-                {
-                    page.ClearTextSelection();
-                }
+                _pendingAnnotationClick = null;
+                _vm.ClearSelection();
+                var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
+                dialog.ShowDialog();
+                return;
             }
-
             _vm.UpdateSelectionFromPages();
         }
     }
