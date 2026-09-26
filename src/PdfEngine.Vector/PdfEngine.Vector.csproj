@@ -25,4 +25,8 @@
     <InternalsVisibleTo Include="PdfViewer.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="CoreJ2K" Version="2.3.3.91" />
+  </ItemGroup>
+
 </Project>

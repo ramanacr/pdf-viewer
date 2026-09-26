@@ -81,6 +81,8 @@ public sealed class PdfImageSource : IPdfImageSource
             return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, decoded.Data, alpha,
                 InvertCmykJpeg: _colorSpace?.NumberOfComponents == 4 && !invert);
         }
+        if (decoded.ImageFilter == "JPXDecode" && !isMask)
+            return DecodeJpx(dict, decoded.Data, alpha, ct);
         if (decoded.ImageFilter != null)
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.UnsupportedImageFilter, $"Image filter {decoded.ImageFilter} is not decoded by the vector core.");
 
@@ -95,6 +97,110 @@ public sealed class PdfImageSource : IPdfImageSource
         }
 
         return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra);
+    }
+
+    // ---------------------------------------------------------------- JPEG 2000 (8.9.5.3 / 7.4.9)
+
+    /// <summary>
+    /// Decodes a JPXDecode image with CoreJ2K (managed). The codestream's dimensions and bit depths
+    /// win over the dictionary's; without /ColorSpace the component count selects Gray/RGB/CMYK;
+    /// /SMaskInData 1 or 2 takes opacity from the extra component; /Decode is ignored (7.4.9).
+    /// </summary>
+    private PdfDecodedImage DecodeJpx(PdfDictionary dict, byte[] data, byte[]? alpha, CancellationToken ct)
+    {
+        // The decoder allocates from the header: check the SIZ marker against the limits first.
+        if (!TryReadJpxSize(data, out long sizW, out long sizH, out int sizComponents))
+            throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 data has no image size (SIZ) marker.");
+        if (sizW <= 0 || sizH <= 0 || sizW * sizH > _limits.MaxImagePixels || sizComponents is <= 0 or > 16)
+            throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG 2000 size exceeds the image limits.");
+
+        CoreJ2K.Util.InterleavedImage image;
+        try
+        {
+            image = CoreJ2K.J2kImage.FromBytes(data);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+        {
+            throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, $"JPEG 2000 codestream could not be decoded ({ex.GetType().Name}).");
+        }
+        using (image)
+        {
+            ct.ThrowIfCancellationRequested();
+            int width = image.Width, height = image.Height, count = image.NumberOfComponents;
+            if (width <= 0 || height <= 0 || (long)width * height > _limits.MaxImagePixels || count <= 0)
+                throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG 2000 dimensions are invalid or exceed the pixel limit.");
+
+            long smaskInData = dict.GetInteger("SMaskInData") ?? 0;
+            int colourCount = smaskInData != 0 && count > 1 ? count - 1 : count; // the opacity channel is not colour
+            var cs = _colorSpace ?? (colourCount >= 4 ? PdfColorSpace.DeviceCmyk : colourCount >= 3 ? PdfColorSpace.DeviceRgb : PdfColorSpace.DeviceGray);
+            int n = Math.Max(1, cs.NumberOfComponents);
+            if (count < n)
+                throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 has fewer components than its colour space.");
+            bool indexed = cs.Name == "Indexed";
+            int alphaComponent = smaskInData != 0 && count > n && alpha == null ? n : -1;
+
+            var planes = new int[count][];
+            var scale = new double[count];
+            for (int c = 0; c < count; c++)
+            {
+                planes[c] = image.GetComponent(c);
+                int depth = Math.Clamp(image.GetBitDepth(c), 1, 31);
+                scale[c] = 1.0 / ((1L << depth) - 1);
+                if (planes[c].Length < width * height)
+                    throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 components are subsampled.");
+            }
+
+            var bgra = new byte[checked(width * height * 4)];
+            var comps = new double[n];
+            Span<byte> rgb = stackalloc byte[3];
+            for (int y = 0; y < height; y++)
+            {
+                if ((y & 63) == 0) ct.ThrowIfCancellationRequested();
+                for (int x = 0; x < width; x++)
+                {
+                    int i = y * width + x;
+                    for (int c = 0; c < n; c++)
+                        comps[c] = indexed ? planes[c][i] : Math.Clamp(planes[c][i] * scale[c], 0, 1);
+                    cs.ToRgb24(comps, rgb);
+                    int p = i * 4;
+                    bgra[p] = rgb[2];
+                    bgra[p + 1] = rgb[1];
+                    bgra[p + 2] = rgb[0];
+                    bgra[p + 3] = alphaComponent >= 0 ? (byte)Math.Round(Math.Clamp(planes[alphaComponent][i] * scale[alphaComponent], 0, 1) * 255) : (byte)255;
+                }
+            }
+
+            if (alpha != null && alpha.Length == width * height)
+            {
+                for (int i = 0, p = 3; i < alpha.Length; i++, p += 4)
+                    bgra[p] = (byte)(bgra[p] * alpha[i] / 255);
+            }
+            return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra);
+        }
+    }
+
+    /// <summary>Image size and component count from the codestream's SIZ marker (ISO/IEC 15444-1 A.5.1).</summary>
+    internal static bool TryReadJpxSize(ReadOnlySpan<byte> data, out long width, out long height, out int components)
+    {
+        width = height = 0;
+        components = 0;
+        // SOC (FF 4F) is immediately followed by SIZ (FF 51) in a codestream, also inside a JP2 jp2c box.
+        for (int i = 0; i + 42 <= data.Length; i++)
+        {
+            if (data[i] != 0xFF || data[i + 1] != 0x4F || data[i + 2] != 0xFF || data[i + 3] != 0x51)
+                continue;
+            var siz = data[(i + 4)..];
+            // Lsiz(2) Rsiz(2) Xsiz(4) Ysiz(4) XOsiz(4) YOsiz(4) XTsiz YTsiz XTOsiz YTOsiz (16) Csiz(2)
+            long xsiz = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(siz[4..]);
+            long ysiz = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(siz[8..]);
+            long xo = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(siz[12..]);
+            long yo = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(siz[16..]);
+            width = xsiz - xo;
+            height = ysiz - yo;
+            components = siz[36] << 8 | siz[37];
+            return true;
+        }
+        return false;
     }
 
     private static bool IsInvertedDecode(PdfDictionary dict, int comps)

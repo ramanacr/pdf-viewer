@@ -2020,7 +2020,7 @@ public sealed class PdfContentInterpreter
         private static readonly HashSet<string> NativeImageFilters = new(StringComparer.Ordinal)
         {
             "FlateDecode", "Fl", "LZWDecode", "LZW", "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85",
-            "RunLengthDecode", "RL", "DCTDecode", "DCT", "Crypt",
+            "RunLengthDecode", "RL", "DCTDecode", "DCT", "Crypt", "JPXDecode",
         };
 
         private void PaintImage(PdfStream stream, PdfDictionary dict, GraphicsState gs, PdfDictionary resources, bool isInline, string key)
@@ -2070,13 +2070,15 @@ public sealed class PdfContentInterpreter
             if (!isMask)
             {
                 var csObj = dict["ColorSpace"];
-                if (csObj == null)
+                bool jpx = FilterNames(dict).Contains("JPXDecode");
+                if (csObj == null && !jpx)
                 {
                     AddFallback(PdfFallbackReason.UnsupportedColorSpace, "Image without colour space", pageBounds);
                     return;
                 }
-                cs = PdfColorSpace.Resolve(csObj, _resolver, resources);
-                if (cs.IsPattern || cs.UnsupportedReason != null)
+                // JPX images may omit /ColorSpace: the codestream's own colour applies (8.9.5).
+                cs = csObj == null ? null : PdfColorSpace.Resolve(csObj, _resolver, resources);
+                if (cs != null && (cs.IsPattern || cs.UnsupportedReason != null))
                 {
                     AddFallback(cs.UnsupportedReason ?? PdfFallbackReason.UnsupportedColorSpace, "Image colour space unsupported", pageBounds);
                     return;
@@ -2115,8 +2117,8 @@ public sealed class PdfContentInterpreter
                 (int)width,
                 (int)height,
                 (int)(dict.GetInteger("BitsPerComponent") ?? (isMask ? 1 : 8)),
-                cs?.Name ?? "ImageMask",
-                HasAlpha: isMask || dict.ContainsKey("SMask") || dict.ContainsKey("Mask"),
+                cs?.Name ?? (isMask ? "ImageMask" : "JPX"),
+                HasAlpha: isMask || dict.ContainsKey("SMask") || dict.ContainsKey("Mask") || (dict.GetInteger("SMaskInData") ?? 0) != 0,
                 ReadOnlyMemory<byte>.Empty,
                 FilterNames(dict) is { Count: > 0 } f ? string.Join(",", f) : null)
             {

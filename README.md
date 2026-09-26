@@ -485,4 +485,4 @@ Yes. Open `PdfViewer.slnx` in **Visual Studio 2022 (v17.12 or newer)**. Visual S
 ## License & Third-Party Notices
 
 - **PDF Viewer Application**: Licensed under the MIT License.
-- **PDF Engine**: Google PDFium (BSD 3-Clause / Apache 2.0); vector renderer via Vortice.Windows (MIT); predefined CJK CMaps from Adobe cmap-resources (BSD 3-Clause). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license texts.
+- **PDF Engine**: Google PDFium (BSD 3-Clause / Apache 2.0); vector renderer via Vortice.Windows (MIT); predefined CJK CMaps from Adobe cmap-resources (BSD 3-Clause); JPEG 2000 via CoreJ2K (BSD 3-Clause). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license texts.
