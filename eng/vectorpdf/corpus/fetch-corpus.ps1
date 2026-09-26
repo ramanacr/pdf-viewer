@@ -35,6 +35,17 @@ $suites = @(
         Commit = 'c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa'
         License = 'CC-BY-SA-4.0'
         Tags = @('born-digital')
+    },
+    @{
+        # Real-world documents from US government web servers (scans, forms, reports, maps):
+        # "freely available for research and ... freely redistributed" (Digital Corpora).
+        # The published SHA-1/MD5 lists predate a rebuild of the zips, so the pin is our own.
+        Id = 'govdocs1-001'
+        Url = 'https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip'
+        Sha256 = 'bb3d9c7a68c00b5da108a5614efd2922b53604a6824324f6ab392282d786e384'
+        License = 'LicenseRef-GovDocs1'
+        Tags = @('real-world')
+        PdfOnly = $true
     }
 )
 
@@ -44,6 +55,32 @@ $entries = [System.Collections.Generic.List[object]]::new()
 foreach ($suite in $suites) {
     $dir = Join-Path $cache $suite.Id
     if ($Force -and (Test-Path $dir)) { Remove-Item -Recurse -Force $dir }
+
+    if (-not (Test-Path $dir) -and $suite.Url) {
+        # A pinned archive: verify its hash, keep only the PDFs (by their %PDF header - the
+        # suite's file extensions are not reliable).
+        $zip = Join-Path $cache "$($suite.Id).zip"
+        if (-not (Test-Path $zip)) {
+            Write-Host "Downloading $($suite.Url)..."
+            Invoke-WebRequest -Uri $suite.Url -OutFile $zip -UseBasicParsing
+        }
+        $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne $suite.Sha256) { throw "$($suite.Id): archive hash $hash does not match the pin $($suite.Sha256)" }
+        $staging = Join-Path $cache "$($suite.Id).staging"
+        if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
+        Expand-Archive -Path $zip -DestinationPath $staging
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        Get-ChildItem $staging -Recurse -File | ForEach-Object {
+            $head = [byte[]]::new(1024)
+            $fs = [System.IO.File]::OpenRead($_.FullName)
+            try { $n = $fs.Read($head, 0, $head.Length) } finally { $fs.Dispose() }
+            if ([System.Text.Encoding]::ASCII.GetString($head, 0, $n).Contains('%PDF-')) {
+                Move-Item $_.FullName (Join-Path $dir ([System.IO.Path]::ChangeExtension($_.Name, '.pdf')))
+            }
+        }
+        Remove-Item -Recurse -Force $staging
+        Remove-Item -Force $zip
+    }
 
     if (-not (Test-Path $dir)) {
         $zip = Join-Path $cache "$($suite.Id).zip"
@@ -65,7 +102,7 @@ foreach ($suite in $suites) {
         $entries.Add([ordered]@{
             id = "$($suite.Id)/$rel"
             sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            source = "https://github.com/$($suite.Repo)/blob/$($suite.Commit)/$([uri]::EscapeUriString($rel))"
+            source = if ($suite.Url) { "$($suite.Url)#$rel" } else { "https://github.com/$($suite.Repo)/blob/$($suite.Commit)/$([uri]::EscapeUriString($rel))" }
             license = $suite.License
             redistributable = $false   # policy: never committed here, even when the licence would allow it
             tags = $suite.Tags

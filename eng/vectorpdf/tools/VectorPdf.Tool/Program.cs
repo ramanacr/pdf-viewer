@@ -48,12 +48,13 @@ public static class Program
         return 0;
     }
 
-    /// <summary>--backend wpf|d2d (default d2d).</summary>
+    /// <summary>--backend wpf|d2d (default d2d); --software renders Direct2D on WARP.</summary>
     internal static IPdfVectorRenderer CreateRenderer(string[] args) =>
         (Option(args, "--backend") ?? "d2d") switch
         {
             "wpf" => new WindowsVectorRenderer(),
-            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(),
+            // --software: WARP, as on a CI runner without a GPU (the nightly corpus baseline).
+            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(forceSoftware: args.Contains("--software")),
         };
 
     internal static string? Option(string[] args, string name) =>

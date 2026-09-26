@@ -29129,6 +29129,2846 @@
       "tags": [
         "born-digital"
       ]
+    },
+    {
+      "id": "govdocs1-001/001024.pdf",
+      "sha256": "58711fbe3c949f107873eb89d423a682422e891a9dda9a6404a14596ff9d4d19",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001024.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001028.pdf",
+      "sha256": "944a15d32ff64dc2fce0836f502c2f29e8b6c650dc9f3949b455de943d2f2de2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001028.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001029.pdf",
+      "sha256": "ec2bee6100dd9d7d50a4f6f5400618403ccfadf5f82cb1a3ca8b6b2cebcd8b49",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001029.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001030.pdf",
+      "sha256": "51af1f89b9a4747d75f8777908eedf8b945d5aaeced9211651ca6c881110811e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001030.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001031.pdf",
+      "sha256": "068bd51d5c74ad032d97a0ccf7964a92c48e19c3b51a87929f35c11018322ad6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001031.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001032.pdf",
+      "sha256": "4674cd019e9463f5766ee553e16cd067fcb7b793ac0a82e6973d3d95e4654cea",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001032.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001033.pdf",
+      "sha256": "055db9930276ac42d0c12f3ea0babb65ef8ff4414b6c5033e415450a16afc84d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001033.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001034.pdf",
+      "sha256": "72fa826808b7e0fa049692c93ea59155cd0c6d3e77641d5b7cc85d21ab258e77",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001034.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001035.pdf",
+      "sha256": "cdbc61c3ebb7ea0724706028f8b9f43f85a5790bfef89a4da0de3c5f550e3b88",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001035.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001036.pdf",
+      "sha256": "24cf5b6736214b8c47fdce90c5dffdd1148a9230b8731eee1fc1252af5a1d268",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001036.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001037.pdf",
+      "sha256": "40056fcc4f430680f3a98ad73e5b6ad6a3504de8fe9862e1cc27e367ca05d274",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001037.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001038.pdf",
+      "sha256": "feb775427f37db1f5c41581098499663784bff7cd3f5b8d88e744532f1b6279b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001038.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001039.pdf",
+      "sha256": "242c30c27cf1b8b44891d12c4ef81369b05403e3c47714d99379e44748e7b7d7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001039.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001040.pdf",
+      "sha256": "fa657aff19eb954904ab75283cee0b11702216dfbff8aadada3895850ec63389",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001040.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001041.pdf",
+      "sha256": "9a5a44139a69aec87bfa9b7e2b27ea833fb35e57db611ed9d309c2fa9fba6735",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001041.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001042.pdf",
+      "sha256": "cd1939be34ba0c8bd7c50d8cdc4fc409a32b984b98cb07f9d3a0187e677827f3",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001042.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001043.pdf",
+      "sha256": "4b57138cb4cc959165fc3abbbe953a2bf9bef714805acdada63a6d772bdfcd81",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001043.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001044.pdf",
+      "sha256": "2ca99a85360640b90251cb8ece8717dd48bc21df73b293250b8e98d2bb64ec45",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001044.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001045.pdf",
+      "sha256": "17dbd42e0c77d1b4eda930f5282b3604a198e738cb5c0bb0f28a4722d6772385",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001045.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001046.pdf",
+      "sha256": "e463c7152f150cbdc679128e2f0d613ed1f9dccde72053cc42445a59de00dc3b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001046.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001047.pdf",
+      "sha256": "a6704f012ebe59cbb8b12e481b56670258561a483e201ad3a54cbdeac92e99a1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001047.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001049.pdf",
+      "sha256": "e850d2a5d2e53d69859447e62a7b6e590e0006fe5b89fbfa6f26c22e0b95e2df",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001049.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001050.pdf",
+      "sha256": "1c424d27131fcff1385f9ae45cb4abffd08002263179920ec6634a60a8156c0d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001050.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001053.pdf",
+      "sha256": "28c418089cc15034bf9f323e583a4ab5da309a44495fb1aeba0d8d105419ab9d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001053.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001057.pdf",
+      "sha256": "ad28765a10d39215feb850381f05ed272cbf1b544c4512ab5af425afea3ca267",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001057.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001058.pdf",
+      "sha256": "54ed79eb721c9fad40e86bdb78cb53f749f14fb28c90860510b4d72f8784633d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001058.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001059.pdf",
+      "sha256": "16bb2d27ca3b1226b93e1f0ee2f80f7a29f03f56f35d872799ade28885f666a0",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001059.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001060.pdf",
+      "sha256": "a384abcc170de6a4a390fba84c7272644fa211fa439095f85423177f790af720",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001060.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001061.pdf",
+      "sha256": "a846c199ca42e4361d10d20ebef7620aacd149811381596316b83e40a49d8808",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001061.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001062.pdf",
+      "sha256": "1ffc2264594fe4ba547972d29ee57e8b54e91d28b5ceb3ca5d8b2234af4374b2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001062.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001063.pdf",
+      "sha256": "471880e5232589c9937b3caf128d96e8cb3fdb44692a35f08878337c0d497179",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001063.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001064.pdf",
+      "sha256": "72215f7eea789ebdc63c668ddfd1a2eb54bdc91a84408fbd9744971cbaf492b2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001064.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001065.pdf",
+      "sha256": "807ad703c439d212b2b376660814c4c550bbbac32bb641e6ae79335d29ac0d3f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001065.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001067.pdf",
+      "sha256": "ea81f44d4d5bcb35fc26b49742939f875d21a698a0409bf7026ec17c7ee52178",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001067.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001068.pdf",
+      "sha256": "2e5a55395fc894ccb662d7b114b51331e1e3b8895a44549c6a9bc7af0b8ca2dd",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001068.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001069.pdf",
+      "sha256": "bc252205ae14a167f9a50cfb3a293fccf786d25c55d41ac54074764378d84c20",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001069.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001070.pdf",
+      "sha256": "f9d0642315de0f87fec8b10771789b756f48013491d87bff670f34f96cf8921e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001070.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001071.pdf",
+      "sha256": "768da0d4ebba9d0c5dcff1cfc185ea1e2998425bb0c8c0e4da4c8b9f6ec24ef8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001071.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001072.pdf",
+      "sha256": "794a66bde5c303838597e5f41358f18cfdb950ccc1a22305a84c49c646e37d0e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001072.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001073.pdf",
+      "sha256": "af8c6e460242a9be68adf402cd14c9a0081f19d9e6c2da1230323444aa8e0bb7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001073.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001074.pdf",
+      "sha256": "5b8e5f496e52b1f3c7e2f4c617c8f030d0779f431b0b5ea269dc5bb6ab6ea800",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001074.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001075.pdf",
+      "sha256": "858479b71f181007567215f04bd32d032683f2f7570895034da8d8737eddebc0",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001075.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001081.pdf",
+      "sha256": "60a56a041eeec05c5973a0483312e23f0a3faccd2b7f7d21cc8b8dacdd7d7953",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001081.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001090.pdf",
+      "sha256": "2fcf2280715ad7e085c56b03733dd368bad9e5c8bdb40c93fdbe1a81989789f7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001090.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001092.pdf",
+      "sha256": "7cec1d3df64e4a4cd4495a3c157979c0fd24a4217d7c15ffe0e235c29c113977",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001092.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001094.pdf",
+      "sha256": "0cd94ba1b11a980d76e357752f39e2c0e8c1b48c4f85343488b8280bc77d34c2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001094.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001097.pdf",
+      "sha256": "542b13f237d35a1675b0d55ce1ba2dbd58d22445a59efe6e78f1691afb36207b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001097.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001099.pdf",
+      "sha256": "ef971121359985d955a696e56faaaa2df0eeb9a918a4727b8b934d5f49b03dc3",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001099.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001103.pdf",
+      "sha256": "a4ae79ca2014283bb36d6374fca20157677713f5f5e67bed60f835bb6f7549a2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001103.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001106.pdf",
+      "sha256": "60acef14ee97ac0c7ef884fd15344fa8e069359e7560e4ccd15bb19ba34a8800",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001106.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001107.pdf",
+      "sha256": "1f1bf8778e0521fb42f1929bcf6522aa2f48bcc24ae12ad4681bd22dfafaff1b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001107.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001116.pdf",
+      "sha256": "98fd4275e0ca79e88652fa27587f4282015c2477ce34019e8434f9d3287bdd7e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001116.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001117.pdf",
+      "sha256": "78e0cada8fea42d35bcb835c06b57c3d00273a09caf286fe7294f28d17466622",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001117.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001124.pdf",
+      "sha256": "e20cb29dec75c3267532181c74737629938df2e9af7e6bfa2e0e32d903edf9f7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001124.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001127.pdf",
+      "sha256": "4b49375744ea82d2c6b53673d2be7629e022adaf31075bd0b197dfd162ecd1c7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001127.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001129.pdf",
+      "sha256": "c00262bf9c12d6869fd3cbc4d90e4e564f3bd496dd7c189c0be0592cbfd9ce28",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001129.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001131.pdf",
+      "sha256": "df61926807d0f70a94e5fc0c09dd7926f221f7471639cf010c9fe3c7b58a9b8a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001131.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001132.pdf",
+      "sha256": "2c1220e554abba87fc4933b3705ccbd24a47843c578c46484652eb7c4fa38f5f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001132.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001134.pdf",
+      "sha256": "0e9bbafb929cd4b74580298ad67733ee3ea685ddf0bf542013d246052f280c0c",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001134.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001135.pdf",
+      "sha256": "24d47654f345193e404ddb859d6fd56f4e0103c547cb990849cf941f60fb25da",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001135.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001147.pdf",
+      "sha256": "ee217f61f8e6eee98c92ee01458230afc89648b6212937a7d9ee6c0260eb3a65",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001147.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001148.pdf",
+      "sha256": "bc8948da37a8010f1bc70b32f26fa648347587e588a9ee32ec6c01a7d80bae9a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001148.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001149.pdf",
+      "sha256": "622ccacfaf7e7e31eec8cdb37c0e614b1db195a7a7287912fd33d401117dae37",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001149.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001150.pdf",
+      "sha256": "abae64aa3142e09cedcf23219cd9b8c61d417f43e2aa29754bf41f82793e7cbb",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001150.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001152.pdf",
+      "sha256": "33bedcac6deaadd51119674605f1f9dcea09ec76e2894dab77c1acf608c8e7c8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001152.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001154.pdf",
+      "sha256": "3c06e6283f898d1c64a9243cec6d27ca92b2c663c80d2de9cd8acb4069ee4710",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001154.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001155.pdf",
+      "sha256": "fb6733773d2f630ebe484260bb2ec9230f8b6087505018a64643870f2d6c5419",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001155.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001157.pdf",
+      "sha256": "5e35cfd71bf58da392e29b0f633f37b921648fcb9b195eb645b7a90298178ffd",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001157.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001256.pdf",
+      "sha256": "cafca459d62c6dbf7a86e37ab4b71d4bf560ecd51a006f3719884d964a1699da",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001256.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001257.pdf",
+      "sha256": "70c6a05b03f04e451ea54c3bb117afd1eb39f8d56199d4e3029559712a5731f3",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001257.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001266.pdf",
+      "sha256": "2a15ed1dd718d419dfb1e25a89c0de99d08d2377d8686dd97611ed1bc1c79334",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001266.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001269.pdf",
+      "sha256": "d6a27be5f326def49b2ea30725f778eeef84c996dd9e02eda35ec2ceab8e7644",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001269.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001270.pdf",
+      "sha256": "2a4a4c661bc302606ae7d5a259fbe2585d4ed4b493720a69ae3f5f1580e44cab",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001270.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001271.pdf",
+      "sha256": "20963bbd4eb21384a35962f8a73633aec80496b25a0fb835672a0cd8986c66bb",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001271.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001273.pdf",
+      "sha256": "c9f243dc713d1a8d9229d8f94ca203921d59b27c0b3c0dfa5cc879d0c9d1acc9",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001273.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001274.pdf",
+      "sha256": "890637993ff3d7fe8ed31cf7df6342388a01bf72b91e946831247b4c2933a6f7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001274.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001276.pdf",
+      "sha256": "2790f9d8593da43bf4e9a839f5a9c286e058baf0d595aa19e42e916c3dd4d26b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001276.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001278.pdf",
+      "sha256": "1eb1d5435ca566a9eacdc8c143cebf87abac6ace1503f642ee7cde18f2212bae",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001278.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001279.pdf",
+      "sha256": "307b2efb6183bf585443dacb72428c0286d8f50bb3cac756b7adf07e0e74f911",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001279.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001280.pdf",
+      "sha256": "aa8323dd3df1eb00a536f30a6a961d0ec299347bbfc09c16cec929120ca28b41",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001280.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001281.pdf",
+      "sha256": "96ca274306576dd3831803d515963c30ce84bd6b0d91d5d9e8782a011fe9a412",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001281.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001284.pdf",
+      "sha256": "40d1ccec75ba292fb884b3cb41b9375f440ba2c0945fb748cb9f27e364db3a61",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001284.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001285.pdf",
+      "sha256": "f7df05867d39aef9699b40370273721dda708ae3efeb57089e587acb3b2bea43",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001285.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001286.pdf",
+      "sha256": "0557b1be3dd333e54ee5f06d28173a615923dc0c4729879fb86dba30a36bde4f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001286.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001288.pdf",
+      "sha256": "7dfbcc7ea3b0deec341702ce97f64f664180d6f3d5813f0e76de2c5fdd5e4335",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001288.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001290.pdf",
+      "sha256": "b78fc39cc38085bd91f9886d74dcae660d75601f698045d8456466660f7e8b67",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001290.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001291.pdf",
+      "sha256": "1f16453dec97f19d12955be9d495ac76664cf97779e8723e2f885cbbeb6dc797",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001291.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001292.pdf",
+      "sha256": "4294a2ec666981e80bd9412037834da72d8de002d4769e6652abbff43f7eea0f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001292.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001293.pdf",
+      "sha256": "8766550c35bd557d658b95c86daacd8044a2b0f5878d5e41d98d8a227c7dee40",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001293.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001294.pdf",
+      "sha256": "75977d71762523ca9b47e2d243c298b75d41cbfacba596953dafcfdfeefff7e6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001294.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001296.pdf",
+      "sha256": "53adb339d579dad3529110c65d412730e689f24ce5a0a769d9e11c1072aa0651",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001296.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001297.pdf",
+      "sha256": "85d855a10084d79cb7a43544de3e36cea1853a6f5755cefa2aa2e87b1ae52fc7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001297.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001298.pdf",
+      "sha256": "c77925bb8bf2404cdd9ec4c2db0ddd1914db9c20140ea63226d34828004ecc30",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001298.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001299.pdf",
+      "sha256": "0a7e681aae08c4f00b54b0c95a4abc4025583758357e810623fa6a78f3c5f12a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001299.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001300.pdf",
+      "sha256": "9cb78afa1fb2eaf5a73a8872157b190f468dfa1e9065b0e92f75840fa6cf3182",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001300.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001301.pdf",
+      "sha256": "4bd217424751e22495b3d84db328c6734577839453c50a24f7540c84f6860f84",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001301.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001302.pdf",
+      "sha256": "d3af286b36a9fd87500f2bfe6f3c21683dce7089428b59962913503f9b8b6fd5",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001302.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001303.pdf",
+      "sha256": "244b176839ef89d6dd9fe6c7bec5d6d035830026c390897ec7c27a1b1e31ca36",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001303.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001304.pdf",
+      "sha256": "e2316b33f717f78cc8995563308b3ecead7dafdd737b4c8cc82bb64941ad5128",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001304.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001305.pdf",
+      "sha256": "d87ecd2eef81de27db1478ad19869f9a4e134b4c2692c943162a57198c852071",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001305.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001306.pdf",
+      "sha256": "d605a34ce8ec8361e4d8e2206f933d15289cc386adab30eb43278604b2c355b9",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001306.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001307.pdf",
+      "sha256": "dc0545e6490894c350ea83f0a1def9e307ddb91960ed51306484756d86e93fd8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001307.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001309.pdf",
+      "sha256": "524536cfbb73fd6ba9da7dce99f493ca94fd0b5b960d81aa8fe98682e5b0b8d6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001309.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001310.pdf",
+      "sha256": "c626367f9403e59a25bd7e3b821d05e016cbcbc422fe13fcc9229139c0394e8a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001310.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001311.pdf",
+      "sha256": "155e9c06aaf88f69533ea80fb1e603dafb51c3b2917c2e910c1e8daedaf33bb8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001311.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001312.pdf",
+      "sha256": "a69c0c9b57b36bb9aff6c1c91a5253025f5cda7367a408db22aa7289352370c4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001312.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001313.pdf",
+      "sha256": "01d7fd6e5c605607831352506ce9e388c6e1dbf7b6dcea4277af4ee5165ff7bd",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001313.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001341.pdf",
+      "sha256": "4e0a05115f13949a49f3db04f8cb98f686653f82c5ba31663ac0347d8042ea7d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001341.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001343.pdf",
+      "sha256": "d51ec913e693e451dd99ec6b8b62462675a144cfe45cd843205d07ee2507c412",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001343.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001355.pdf",
+      "sha256": "54117328d42b9da5cb7357ee2a40dd10e2c8dcdfbdc736478427cfd53f274ae6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001355.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001358.pdf",
+      "sha256": "44ef0807044caf26741dec8fb5efb7220667a0bb2dc790d6fe5860bcf79bf028",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001358.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001359.pdf",
+      "sha256": "ecbd5bce53452b77d2480ec3b38ffabbfb2bb4c37d6b8efeaefa06a7df0de74f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001359.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001363.pdf",
+      "sha256": "ef55036af91c72dc508ecbedcecd8adec8cc5277e94f8ea7c579a47f3daa3fe7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001363.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001364.pdf",
+      "sha256": "fe1b365819d95df53697c34fb82bf26412934d3c786772166e42476e02f74ac6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001364.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001367.pdf",
+      "sha256": "4d822720bc0d59af43b9dd8ffbc11f9aa7631dfbaa7061740b7718add0992a5c",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001367.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001368.pdf",
+      "sha256": "642e372dae527f3c3b5e14adc3e61f51f6bc8bfb57ec44029ad1ba538809f9e2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001368.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001369.pdf",
+      "sha256": "8b978722b6e2a559746622fbf91a4d097c356f6156acdb644c89e0738a4bf902",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001369.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001370.pdf",
+      "sha256": "0142b23c0caa2f74a4a7aa890db4a9427320f6c0936eedbfd7a05478b7a15da7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001370.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001371.pdf",
+      "sha256": "f65a29063be9e2cdc3125f1236826a37e1885b4bb9190011ad1db0ef41000205",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001371.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001372.pdf",
+      "sha256": "0631b09456b584fe3e4c598eb27403b153d37b7cff58b8305729977b3720624d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001372.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001373.pdf",
+      "sha256": "73f5777897c55b1b1cf6101172bc86221c8cbc485985cb6159e53ae9000577b2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001373.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001374.pdf",
+      "sha256": "e5f092d1a86d5deb1046857bbd7933a829bb4266769040a1addf5d93a7143d0e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001374.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001375.pdf",
+      "sha256": "9f1081308a151b8359413124197cc9248894efb7f698e3414eff3755f362e48c",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001375.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001376.pdf",
+      "sha256": "95f6771f53486cf626f0eca3808e397ff4311c76137e0d09c865713a98cea977",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001376.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001377.pdf",
+      "sha256": "9ffec6ca9b01778bfba1e99b43b817ff4d45e5a530858d83c9a6c1afdac50653",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001377.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001378.pdf",
+      "sha256": "46f3da23647885bf3251ec9fe3fc1c58ea0afbd617b2a04e5cd37a77b12322e4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001378.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001379.pdf",
+      "sha256": "7d24df418fb2e29d27283e2ac42e36e89983d0266455daaa01ffcbc031626ae0",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001379.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001380.pdf",
+      "sha256": "dbc8c5d9bbfdbc14b90b44781ef9ca3abde26887dfd7f20db658e7fb0f54632f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001380.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001381.pdf",
+      "sha256": "e7a1a8d1dd44544a6e58437b49604fe728f8cccaca6dfdc61224e6b451348701",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001381.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001382.pdf",
+      "sha256": "92250a29a9aaf24876de3355ab810ed3110c32ce4b6920140b351f944a1c1af1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001382.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001383.pdf",
+      "sha256": "630dbd66baefb701237dd2a08c894c99bb2936b747b74a6dd125c888ebb4dd9a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001383.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001384.pdf",
+      "sha256": "1cb4e7a99180ff3ae42fa250840996ffffe61f0c51b1eeeef2b0e4b7d193ff34",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001384.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001385.pdf",
+      "sha256": "d20a3597433f82922c094823d5e3669cd33c5253d94ed4abd299bbb0e0268ed7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001385.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001386.pdf",
+      "sha256": "ed24398fd6f361d83d748e0e1f4e578d28fd2c7e39f746bc21fc3e51883f75d4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001386.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001387.pdf",
+      "sha256": "54dbea9dfd7d5b56650c61eaf0a2671247862e989984b74c73582ad327675905",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001387.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001388.pdf",
+      "sha256": "ec0d6cf2ae2ad41e1fce8e12b5e84e5b24500b68492c4f75ad13543580b21b89",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001388.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001389.pdf",
+      "sha256": "24917ca3158fefaf4328bfc9a7666c02f2c0eb6a12e28eca1dbb9e793487d0eb",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001389.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001390.pdf",
+      "sha256": "5cb3e6779d8bcfbb18ea0088528fde522730d9b70b92ea1664d77bce80f0f73b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001390.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001391.pdf",
+      "sha256": "f2ab9b6b78623d968a6124da99141de35aec3da22a2eb044284f99f86fefd301",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001391.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001392.pdf",
+      "sha256": "0c6f911d23546bdfcfc494299408008b7723feb4b786a57b87b49bdad1f5b0bb",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001392.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001406.pdf",
+      "sha256": "ebe9162a0eba170fd268f0082de298a4ffa95acd79bf2ff9fd7aabed1a0015dd",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001406.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001418.pdf",
+      "sha256": "20aa15aa59d1ec826179b1d2b191251d251617bde574302c52d4e55ac3d52607",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001418.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001465.pdf",
+      "sha256": "db5d7a6bc138da6b04906ea8faa992793f243a8ce4cfc2d3785abd1acd31ccd6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001465.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001466.pdf",
+      "sha256": "a74ba87ca7975404c9e0bdf8722a26eb2318f887fc2113f17797c282ec366e8a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001466.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001467.pdf",
+      "sha256": "5481e03fcd854e9a46c86594c8ba6659ba2ab5678add39edf702b6d0923a186f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001467.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001481.pdf",
+      "sha256": "59e1cc3b7968d5d5f6104d7f6cf473875dda4a62c4024d53d4cae011a7ec8ca4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001481.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001482.pdf",
+      "sha256": "733e14735cfbe326abcb34acae927f7f0dbd68e2bde0b44d321c330ef93d6294",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001482.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001483.pdf",
+      "sha256": "0c54597b5d1a7246db3d5223502cd3d565ed7531a8e118cb8f0e56e925b4cc54",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001483.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001484.pdf",
+      "sha256": "3882cfee5df84f9cc1f395fe00cec843c3e81ff09a8026ea05da818243854ad5",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001484.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001487.pdf",
+      "sha256": "03273035246a5998805ee73345470a9ead16a017e30aa0367435f685257b6d2d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001487.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001488.pdf",
+      "sha256": "c82f128d16fc2adcb3ef6310f7191c112bf2e2480d75ff8d14c34c0a5a2f37a8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001488.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001489.pdf",
+      "sha256": "0a35ab2fecf46bbcd3f92341dfbe68b8fb1e0970d294e80c037aedbdaf13c037",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001489.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001490.pdf",
+      "sha256": "09997c49543ee0251e6b7ff9d42b933fe51d1d9a77e7ffc3a9a6e198176113ec",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001490.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001492.pdf",
+      "sha256": "c386926adc9df9d836c23f8fe419e73e335bb3b6117201e6c3234d4d27b1f2b7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001492.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001493.pdf",
+      "sha256": "ac0267a902815415cf896f2ff9319358bd5f080cbba9ac29f80efe4bc83a2d34",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001493.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001494.pdf",
+      "sha256": "0ed24113f57fc5016d8cc42ee040ce6b7cbb245d80c896dcef7b4eacd81254c6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001494.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001495.pdf",
+      "sha256": "b4914e037ec5548fff847bef542f4b2a0922018df4909259dd206d6c7b5b4ba3",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001495.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001497.pdf",
+      "sha256": "a4e6bcbb64308d6065d88ce9fde5ef9b1e8da29af67c4f54ad0d6c22af6b778c",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001497.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001498.pdf",
+      "sha256": "98cf1078d1f895d9fabd6bb4c20b8145b204ea7e6ca99bc8fe30fa3b849b3664",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001498.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001499.pdf",
+      "sha256": "b4b87fd5bb1ab49b6f9577360a594f3dbbf5e6d4876bd3b9fe536fddd91cda7d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001499.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001501.pdf",
+      "sha256": "94f35c62aac2e408e87d1f111fa0e7a0e4abc73795b6ebab3713797aadb60c86",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001501.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001503.pdf",
+      "sha256": "e6b8ea7afbcfcf82e27438f6dd39bcd30397214d0ebb9d0ac27c784055e27435",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001503.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001504.pdf",
+      "sha256": "1b030172ed8b1e35503264a1dbbb7a3f0086ed4ed2e016c752a5bf5fd889cf69",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001504.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001505.pdf",
+      "sha256": "320c62e61aa8bafdfb25fcdb3c395d0cbd2be3472f1a076c325bbb6c923ef0a5",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001505.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001506.pdf",
+      "sha256": "986ae226999ded84a06860ff9896490e354f1add06147dca39bdf2d3edd74d82",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001506.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001508.pdf",
+      "sha256": "98444fd9518430837927ce16588a5e9e9ae4ac8badb313e93f1c5060abdac536",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001508.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001509.pdf",
+      "sha256": "615ed9aed2241913893a355978db90b1ad414b9bb92668850aff0216ecb7e444",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001509.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001510.pdf",
+      "sha256": "3003d3e1797b27b9d293fde86387bf71a1d38424b0ab548afa6183a23666a194",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001510.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001511.pdf",
+      "sha256": "e51b46a22829885e59a3a3e7bdecd5c4a8009a83587b4ff18078ed2be9634162",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001511.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001512.pdf",
+      "sha256": "f9f519280f3fc808eeb0e19a7551429e4678799146c609e5dfa40969a7c28e48",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001512.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001514.pdf",
+      "sha256": "99f222ddc2527acb2d1837f7ddfee28f927973bbce53915b3d3d4a4aef1b8114",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001514.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001528.pdf",
+      "sha256": "b36aa47bbfa70b55c0356c0d4eda68a65b0f16f774883630bdf8410fbf059f6d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001528.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001564.pdf",
+      "sha256": "8a7c31d13e0a9e734bae0e33a3eee3a4c9e41b180ebaa83f5a4d62db5efdac14",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001564.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001565.pdf",
+      "sha256": "121503ca5216c29d1352013743677aa3e6d619b2126a38af7072cc75ded1ef8a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001565.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001644.pdf",
+      "sha256": "7f226f694969bd3938bb82af4952b07baad982aba94a1f420bd8a6072e0f0761",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001644.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001647.pdf",
+      "sha256": "eab593c18c28e56d3899254b5d3d99091926ee938d8529e5cbe5b34ee1d62e29",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001647.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001649.pdf",
+      "sha256": "403c1ed27a9abbd352a3bfe9672f334fbb61d83f18e1d64924cbd6ca6256b207",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001649.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001650.pdf",
+      "sha256": "59f09efd009164b8561b4639c10c0a07c6e12dc705782a31cd3efc1d3ca7e4fc",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001650.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001655.pdf",
+      "sha256": "eaaf63c4c69062b0dc5040cc84f78c581929744074e52a8b6b5d489f0e06faa8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001655.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001656.pdf",
+      "sha256": "b57b0aa670b32cfd31291113f4930ce426363cc2b758746f442b56001a60e680",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001656.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001657.pdf",
+      "sha256": "bb27396ff231d5fa173a556953c508eb727f442ee5665f39c9987e3da49596c8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001657.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001658.pdf",
+      "sha256": "4fc781fe55f35531487fc01c5a2c29cb375f7d1d8a3e7fbbe75d98dd0e5f593d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001658.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001659.pdf",
+      "sha256": "17ec1816b5aa8988ddfa81315310a05ce47ea013ce25856fe5e5d4234df3d9cd",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001659.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001660.pdf",
+      "sha256": "a6a425d194d36c33141ed311d39e35a411622b8a870e287863b727a33015cff3",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001660.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001661.pdf",
+      "sha256": "d14c740e9caed94eae6aca27e864c0bf3c8e197826cb68f078c48b1d8563cdf5",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001661.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001663.pdf",
+      "sha256": "7ed3a0a486c19e4fa93fc4668bdd6368226f2679897a2128817937169c6f781b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001663.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001664.pdf",
+      "sha256": "5cbd927f2c5950c5d039a7090003434d4fe5412a73354b0bc4c40a3deae4a9fe",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001664.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001665.pdf",
+      "sha256": "9900299707bf8ef153841b9ab29ed46c2402d29e50f930b78647215aff3f1d34",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001665.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001666.pdf",
+      "sha256": "d1530bb964574f16307607eb57917ffe2020ec0cebab61018472e75c51096bdb",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001666.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001668.pdf",
+      "sha256": "11ec543de9872c281b237b8bfafd0be240fe95e517992b11f6b10b3337f71ff8",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001668.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001669.pdf",
+      "sha256": "4382e3953ee9b0645c6cbfb125a68e5f5c7048d3ada1a48edcc870235f532835",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001669.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001670.pdf",
+      "sha256": "cf1443d744c46ccec4b720d6aa7c425aed21677476bee05314b667ddf332b382",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001670.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001672.pdf",
+      "sha256": "2565358aad53cee7dfdfd7053a4bc1f06a8f2e0891edb3943b8336e88c642564",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001672.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001673.pdf",
+      "sha256": "d3d0abd295120f7208a75b1a799443cee79a9981d99909c574990cd0e8953452",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001673.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001674.pdf",
+      "sha256": "2f35d0d3ac993e300450104272cb8c78d11cec8845ecdce8cacc347b4741d9db",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001674.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001675.pdf",
+      "sha256": "bf594aa33655a802d362987482b40d03fbf806d7077d74ac84419153d9b73180",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001675.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001676.pdf",
+      "sha256": "16383d8c953637f4dd196059e808904c49ffa878b9cfd7a320a0de38a029c854",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001676.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001677.pdf",
+      "sha256": "dd68fc0c8d2366b64c9c54b726715e1c931b612845a6eacbe5e5e8843825c359",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001677.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001678.pdf",
+      "sha256": "8b5e4a01507a7b88517483709d2df362f1e2175c7d18aa4bc6a816acd494d64c",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001678.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001679.pdf",
+      "sha256": "e42a1ac1760fe7e8ebf327e42d78984ed64036837c2a4814f61f0c8f8bf7b958",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001679.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001680.pdf",
+      "sha256": "eff17e4e1d6daf68a75347fde5c20853b8000ab2092b594ceab4f743f6dc5e2b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001680.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001681.pdf",
+      "sha256": "3c4fc76391eb97abe34f4d7070a78d719da5a15fb6023d318c08af004266f821",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001681.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001682.pdf",
+      "sha256": "8d927b5141047eed9f6b6a5e95100b75eb400dd885604602d5a817c03529feee",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001682.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001683.pdf",
+      "sha256": "9525f8ad57315a13df74e448d0d4ecf57e7ad5518c713d21d7bbf3d22922e5b2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001683.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001684.pdf",
+      "sha256": "1ae9c2c581d6ba2f1d43e50b987352d03077da740390e454d48e1acb2f89cdc9",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001684.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001685.pdf",
+      "sha256": "6158506c62f3e220e090722cbdfbfef9f7d8b02179d3c1294c15e15c330f8cf4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001685.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001686.pdf",
+      "sha256": "a6c4bc57d052f8bc224fffd0816ef70e138fc728ab3148d4c6fc877d3de05eac",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001686.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001687.pdf",
+      "sha256": "4259f1a3f94e632a1a4752aa8732f70bdc629c4fbfab1ec2ab3a5a8339ece1e0",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001687.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001688.pdf",
+      "sha256": "68051a0dbaf7e9f7ace12ed47e90ccd56628f945ab81961d46468accc421e06b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001688.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001689.pdf",
+      "sha256": "80b2743d756ef142c096ee2399a4a9ca0917c747cfea36b6010e976b50c7d0f9",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001689.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001690.pdf",
+      "sha256": "b658db0976b9848ff674bfb843b06ec7b9b3e4a9b5e02aee92d3041f147ac140",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001690.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001691.pdf",
+      "sha256": "ca0da96e0804a0843dca55695045ddb679a0e60590aaddfdd77b48fd83bbaa80",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001691.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001692.pdf",
+      "sha256": "e96dd72e26c075f9fae3b64958e93812de3cbb9a5e2727e16e7648d9ef106766",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001692.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001693.pdf",
+      "sha256": "5a0152d2f816cb6c1bde6dea8e0724fccbe39c6de65b2a7a96dd020e7c7abac4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001693.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001694.pdf",
+      "sha256": "20ecb5fef98e111f57d0278d2f3d32fa9ce7a1c1bea72f393fbdd2a35bec6b89",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001694.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001695.pdf",
+      "sha256": "dd9964aef544ec041d800df6137754bdde467967456b14337e2e7585aaa64864",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001695.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001696.pdf",
+      "sha256": "f58d1faa6ca8d7fa0067a00116517af313d0c6b0d72cfc11f3adf9925fc2fb6d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001696.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001720.pdf",
+      "sha256": "ec8624ea0a43972255b0b2d6a3a38e4e8b4c76d1cc17970782ff7bf72022ab85",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001720.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001730.pdf",
+      "sha256": "71fb82a58fa1306a05c80ccce35d32dd32ee5e9e1f74676be165b00f754feddd",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001730.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001737.pdf",
+      "sha256": "4b78c3e1c3c4e84f3b01d9267525e64afdbc88cdd0400828220ffba07c730c9d",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001737.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001765.pdf",
+      "sha256": "2fd9f65bbe35b6a9cec99d5c712d524a00361969e207acfa2f4623a213194ce2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001765.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001766.pdf",
+      "sha256": "609b16c61762032dc5e548c98d64bf574286876c35e261d5e47f981e9976da79",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001766.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001767.pdf",
+      "sha256": "09b1078098ed75012944990257864925eb4fd10110817691d8111859de6a6218",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001767.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001768.pdf",
+      "sha256": "33048b7da688291d43a8360d6f9bd4b959bb502b4dd77e8f51f4320f31cf3590",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001768.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001769.pdf",
+      "sha256": "929c4d5aa93229db2dc823b1980b5c0ee0655b304b350082338b3b805701f838",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001769.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001770.pdf",
+      "sha256": "2d1a5f1e34c5317d3c66059c02fd1ce652c49662bbfb2cd8a314ddaa2b4a5d26",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001770.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001775.pdf",
+      "sha256": "f78c7740fb9b40c7048ed397b5ca760e82c781698ea28abc864d744f3e2fdfe5",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001775.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001780.pdf",
+      "sha256": "b9479c640eb2cfc7efff12f50aa08980f28f71da7e13f33e182af373a41223fa",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001780.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001785.pdf",
+      "sha256": "68329e7779b7d5a22d011539dc8166156c689dd6d448d2a0fa8632d66090314f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001785.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001787.pdf",
+      "sha256": "705376da83276925279389fd072bc1c56a0769a2876e72106e731eb4d8038ce1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001787.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001793.pdf",
+      "sha256": "f84e784c6bc5866bea390a19105f0d8fb6a1b0af7b1c67a645f34df936685914",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001793.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001796.pdf",
+      "sha256": "be136aafd5a9fcf53cb0d56183be52f753cc7ed77af98f060344a3fa076f8ba1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001796.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001799.pdf",
+      "sha256": "cc245ca682df7d12d94033aa516fbe73f766ec665eac13dcf487b58588750955",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001799.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001800.pdf",
+      "sha256": "dca0f2973dadee57fb53eaeff9f313607c7d8c8299669fa9793db004018a1e0f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001800.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001814.pdf",
+      "sha256": "5e252c1ab676dec9a20c3109dab4e85b5b29d0f5479b2c9890d7e2e13fd7ec2a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001814.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001815.pdf",
+      "sha256": "e6933ccb77308a96d04d3f4d19a201f46f99a91a298a1947c4ac87602e1feaa1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001815.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001852.pdf",
+      "sha256": "7792dfa2540ad326473b7c399c7a7f3cf968629bc60a35be855ed63bfee50fbe",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001852.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001854.pdf",
+      "sha256": "62414ae4904adc0495239b37339b1e4c450361457674f204ab7e8bdc8afefc49",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001854.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001869.pdf",
+      "sha256": "8238b6c6451a73233786d90d03f855691103654ac8f030675b37d03f9c8cacd7",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001869.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001871.pdf",
+      "sha256": "0354da3250bc4890e02f364b81f6475ee34d71597daf02021099007bec4c7cfa",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001871.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001878.pdf",
+      "sha256": "3a8e37417ea8ded3fe0c68a8e0ed3bf0564c6bcb4a693ebf8e75b04c5c6799ba",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001878.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001882.pdf",
+      "sha256": "1f597c5232c54581217f7bd100114156aeec6baa1137e1dd850e6919aff9cded",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001882.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001897.pdf",
+      "sha256": "d2194af514c53cd619a6339dad2707bfc52a7111f660f94a4b5462d5a98392aa",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001897.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001926.pdf",
+      "sha256": "c852547b9076008d505d7440dd5fc55b78b7eeabfede116d0d40f9b87cd21f3f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001926.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001927.pdf",
+      "sha256": "6452bacf4e4e2a0b09e69f165bfb10494ea9225373d09bb921108c863c70a35b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001927.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001928.pdf",
+      "sha256": "2c4df6924224582b292a4a4982fbc603d17305d749b2cc750c03cee036913610",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001928.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001929.pdf",
+      "sha256": "5202d1fd32284cf2e6466eefcb178ea3f6620c374ba03cd14c2f6f8236d78c35",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001929.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001930.pdf",
+      "sha256": "f566a31ddd77c7e5764ab14453aded183fdf492eaa90a2a6932803ed6c284bf9",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001930.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001931.pdf",
+      "sha256": "8503dce0cdf9ffd57d46d40bd80a0ac92bfe3fb8af2ccc71bc381edfbbba5812",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001931.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001932.pdf",
+      "sha256": "b6fb0c24fe80134af7c98c032ff291714239b7cb8bad598cc62d1f8e6f44b0cb",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001932.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001933.pdf",
+      "sha256": "e8e0c8ee5fa8b1436d669d730c4d26481b5732dfdaffe2fc355479fff7078a90",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001933.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001934.pdf",
+      "sha256": "c7a0d2a0f7a2d4dbc70977a68e6573345896d48027f79f5481bd4917a2850ed4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001934.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001938.pdf",
+      "sha256": "18c4fec5985bc0e752eb99ff5d63b0df6007b4e96201aae36cffd8908ef1373e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001938.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001940.pdf",
+      "sha256": "7557f7466e3f647c5cbcd32573c41e288cb13e3ffb3052edca7f6429366cc57e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001940.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001941.pdf",
+      "sha256": "40072da519c596e4b2de7ced7426644398465146c854bea8302384da827f3941",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001941.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001943.pdf",
+      "sha256": "e2240ff6cf2a22b693f463cd5b78f73dc388e48ebe3a72fc12da42109f7fe5c4",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001943.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001945.pdf",
+      "sha256": "fecfaafa7f8c784be32d03abfd91199762bae7013f622c81d89d1953c41d87ec",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001945.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001946.pdf",
+      "sha256": "7d04d227d42eb1ceed5454ae570ce709f715644dabf3bfdf2c7fcc7d2c508921",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001946.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001947.pdf",
+      "sha256": "e945d80b554723aba223b33df449517a319ad3b9add6810e1d79a0d19c750615",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001947.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001948.pdf",
+      "sha256": "2dede39ea1958b8df3108cecda0c584b3a76a6cf7f1e3b501ed1d4bc1ee78ec6",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001948.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001949.pdf",
+      "sha256": "77dde7c4abe625be60386b045e605991eda4acf9f9a4b1f38c25e696400a95e1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001949.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001950.pdf",
+      "sha256": "73e1ea616e7d19aec19b2eb5f1733ce84c7d74e80b89cb5a8fb020830ce5f406",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001950.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001951.pdf",
+      "sha256": "5786c42aa1481fbfefff31d0bfe6a56e266dae871bd5e6de810d4acdd49714d1",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001951.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001953.pdf",
+      "sha256": "59c9205afef0573d96266dadcbfc08091229944d60044d37037bbd02a3642baa",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001953.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001954.pdf",
+      "sha256": "717f530dfe7db5be925db375750049a662115ff620a1b6e07132be4c0ef8e087",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001954.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001955.pdf",
+      "sha256": "b11d4e4aeb11bbaf3cf12065cd867fed898eb9a8765906dca28a51a239f5db04",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001955.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001956.pdf",
+      "sha256": "0475a4800e5bc59a1664003742821b00eecd611704425b616559410640d81f70",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001956.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001957.pdf",
+      "sha256": "e23180374894155794577c112c60bd1e58604eda4eb6372d30eeefe3159988d9",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001957.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001958.pdf",
+      "sha256": "a14e9c0fa4f67701312c2cfe17c96c15751e2c31313ae664ab6303eee4e1d495",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001958.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001959.pdf",
+      "sha256": "aef9d83ad693c7353d1e5f1f7e572e9b106d61b341f505da6d25e14359d41188",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001959.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001960.pdf",
+      "sha256": "c0fd0ee8f02d38098aab0df94bc3c172883579a5539900ac2ca092928271967c",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001960.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001961.pdf",
+      "sha256": "24bea35c7c411439a52f484655963c603ee0919ce072be0be67f08461ca4d2e2",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001961.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001964.pdf",
+      "sha256": "83b145a345b7c2403771313bbe8c054115d9922d8096a35d841afcb17c045334",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001964.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001967.pdf",
+      "sha256": "a91d2f2b3fa5ac6ee60ca42d4bde47cb6104cfcb926f28afd87f259175f4ce49",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001967.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001977.pdf",
+      "sha256": "52a6c47cad5cc94998463bb519ad93ae55adec852c807af53888a7081134c081",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001977.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001978.pdf",
+      "sha256": "99297cfcee5d500dadba12712795a9c9f94e571e432f3d6263f12291ec5d666f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001978.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001980.pdf",
+      "sha256": "8b0f616d7f4330a2d7d07c0d19c9a27d186c0c44008ddd6fcb12c008bd5a083e",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001980.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001985.pdf",
+      "sha256": "68be3c7bd58b2dd0aae5a9f0aaaac90f19d73ffc92ad091b2aabe44ea6ca4c9a",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001985.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001987.pdf",
+      "sha256": "0ea339f3f36ebbfebf44f785715ff22c843dfbc1c72a17d4cc52a2bd81a9675b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001987.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001988.pdf",
+      "sha256": "8b90fa9fdbc8dd333b68f082a56050f4ff9e0150ecc6b8441ea295bce9f90f61",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001988.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001989.pdf",
+      "sha256": "1c5dcefba2948e78a3d7ebe8573eb7119dea3149477e252a15636fbcd85cd120",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001989.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001991.pdf",
+      "sha256": "eaa34bd41ac63c329336b59e75fc43a735a0cd0b9a13c3741735748b20ca748f",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001991.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001994.pdf",
+      "sha256": "8ae9472ac65c6f463854184490c02e726744a00a4722682fdafe0d21e89a0afe",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001994.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
+    },
+    {
+      "id": "govdocs1-001/001995.pdf",
+      "sha256": "a803ce3e57ed5d6aa493b490f98a86c1039e76c038eee9c5efa93830c924a63b",
+      "source": "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip#001995.pdf",
+      "license": "LicenseRef-GovDocs1",
+      "redistributable": false,
+      "tags": [
+        "real-world"
+      ]
     }
   ]
 }

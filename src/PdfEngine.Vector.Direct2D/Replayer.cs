@@ -434,6 +434,7 @@ internal sealed class Replayer : IDisposable
             gctx.BeginDraw();
             gctx.AntialiasMode = AntialiasMode.PerPrimitive;
             gctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            if (_res.DocumentTextParams != null) gctx.TextRenderingParams = _res.DocumentTextParams;
             gctx.Clear(new Color4(0, 0, 0, 0));
             if (fromBackdrop)
                 gctx.DrawImage(initialBackdrop!, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
@@ -626,6 +627,7 @@ internal sealed class Replayer : IDisposable
             ectx.BeginDraw();
             ectx.AntialiasMode = AntialiasMode.PerPrimitive;
             ectx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            if (_res.DocumentTextParams != null) ectx.TextRenderingParams = _res.DocumentTextParams;
             ectx.Clear(new Color4(0, 0, 0, 0));
             using var ectx1 = surface.Ctx1 != null ? ectx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
             var sub = new Surface { Ctx = ectx, Ctx1 = ectx1, Target = bmp, Width = surface.Width, Height = surface.Height };
@@ -754,6 +756,7 @@ internal sealed class Replayer : IDisposable
         mctx.BeginDraw();
         mctx.AntialiasMode = AntialiasMode.PerPrimitive;
         mctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        if (_res.DocumentTextParams != null) mctx.TextRenderingParams = _res.DocumentTextParams;
         try
         {
             var bc = mask.Backdrop;
@@ -837,6 +840,7 @@ internal sealed class Replayer : IDisposable
         cctx.BeginDraw();
         cctx.AntialiasMode = AntialiasMode.PerPrimitive;
         cctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        if (_res.DocumentTextParams != null) cctx.TextRenderingParams = _res.DocumentTextParams;
         try
         {
             cctx.Clear(new Color4(0, 0, 0, 0));
