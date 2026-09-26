@@ -191,7 +191,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 ## 5. Remaining work, in priority order
 
 1. **Live host tuning, remainder:** readback (GPU → CPU → WPF bitmap) is now the floor for light pages (≈ 25 ms per 16 MP); presenting Direct2D output without the copy (D3DImage / DirectComposition) would remove it. First tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); scrolling reuses it.
-3. **Real-world corpus additions:** the nightly corpus gate runs (CI `corpus` job, WARP baseline, `compare-summary.ps1`); the corpus itself is still conformance-heavy — add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
+3. **Real-world corpus:** GovDocs1 batch 001 (284 US-government PDFs) joined the corpus (3 197 files; pages fully vector 98.03 %, area 99.87 %; GovDocs alone 97.4 %). Its gaps lead the work: 1 393 font fallbacks (embedded program not loadable 807, substitute lacks glyph 457, no substitute 129), 39 image decodes, residual JPX noise on one indexed map. More batches, CAD and scanned books to follow.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
