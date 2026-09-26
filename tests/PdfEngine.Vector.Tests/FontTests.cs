@@ -383,8 +383,13 @@ public class FontTests
         Assert.Equal(0x42, cid2);
         Assert.Null(withIdentity.UnsupportedReason);
 
+        // usecmap of a shipped predefined CMap resolves (Adobe cmap-resources); an unknown name is flagged.
         var withPredefined = Resolve(Type0(Stream("/UniJIS-UCS2-H usecmap"), CidFont()));
-        Assert.Equal(PdfFallbackReason.UnsupportedCMap, withPredefined.UnsupportedReason);
+        Assert.Null(withPredefined.UnsupportedReason);
+        withPredefined.ReadCode(new byte[] { 0x30, 0x42 }, 0, out _, out int hiraganaA);
+        Assert.Equal(843, hiraganaA);
+        var withUnknown = Resolve(Type0(Stream("/No-Such-CMap-H usecmap"), CidFont()));
+        Assert.Equal(PdfFallbackReason.UnsupportedCMap, withUnknown.UnsupportedReason);
 
         var vertical = Resolve(Type0(Stream("/WMode 1 def 1 begincodespacerange <0000> <FFFF> endcodespacerange"), CidFont()));
         Assert.True(vertical.IsVertical);
@@ -403,15 +408,20 @@ public class FontTests
     }
 
     [Fact]
-    public void PredefinedCMap_IsFlaggedUnsupported()
+    public void PredefinedCMap_IsResolved_UnknownNameIsFlagged()
     {
         var font = Resolve(Type0(N("UniJIS-UCS2-H"), CidFont()));
-        Assert.Equal(PdfFallbackReason.UnsupportedCMap, font.UnsupportedReason);
+        Assert.Null(font.UnsupportedReason);
         Assert.Equal("あ", font.MapToUnicode(0x3042));
 
         var rksj = Resolve(Type0(N("90ms-RKSJ-H"), CidFont()));
-        Assert.Equal(PdfFallbackReason.UnsupportedCMap, rksj.UnsupportedReason);
-        Assert.Equal(1, rksj.ReadCode(new byte[] { 0x82 }, 0, out _, out _));
+        Assert.Null(rksj.UnsupportedReason);
+        Assert.Equal(2, rksj.ReadCode(new byte[] { 0x82, 0xA0 }, 0, out _, out int cid)); // Shift-JIS lead byte
+        Assert.Equal(843, cid);
+        Assert.Equal(1, rksj.ReadCode(new byte[] { 0x41 }, 0, out _, out _));
+
+        var unknown = Resolve(Type0(N("Adobe-Korea1-2"), CidFont()));
+        Assert.Equal(PdfFallbackReason.UnsupportedCMap, unknown.UnsupportedReason);
     }
 
     [Fact]

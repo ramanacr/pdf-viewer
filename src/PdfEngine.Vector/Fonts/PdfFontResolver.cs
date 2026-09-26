@@ -254,11 +254,16 @@ public sealed class PdfFontResolver
                     cmap = PdfCMap.IdentityV;
                     break;
                 default:
-                    // Predefined CJK CMaps are not shipped: flag, keep 2-byte identity as the best effort.
-                    reason = PdfFallbackReason.UnsupportedCMap;
-                    cmap = encName.Value.EndsWith("-V", StringComparison.Ordinal) ? PdfCMap.IdentityV : PdfCMap.IdentityH;
                     codesAreUnicode = encName.Value.Contains("UCS2", StringComparison.Ordinal) ||
                                       encName.Value.Contains("UTF16", StringComparison.Ordinal);
+                    if (PredefinedCMaps.Get(encName.Value) is { } predefined)
+                    {
+                        cmap = predefined; // ISO 32000-2 Table 116 (shipped Adobe CMaps)
+                        break;
+                    }
+                    // Not a predefined CMap: flag, keep 2-byte identity as the best effort.
+                    reason = PdfFallbackReason.UnsupportedCMap;
+                    cmap = encName.Value.EndsWith("-V", StringComparison.Ordinal) ? PdfCMap.IdentityV : PdfCMap.IdentityH;
                     break;
             }
         }

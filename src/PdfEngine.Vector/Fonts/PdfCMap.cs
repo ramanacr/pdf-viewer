@@ -90,12 +90,7 @@ internal sealed class PdfCMap
         unsupportedBase = false;
         if (baseCMap == null && parsed.UseCMapName != null)
         {
-            baseCMap = parsed.UseCMapName switch
-            {
-                "Identity-H" => IdentityH,
-                "Identity-V" => IdentityV,
-                _ => null
-            };
+            baseCMap = PredefinedCMaps.Get(parsed.UseCMapName);
             unsupportedBase = baseCMap == null;
         }
         bool vertical = verticalOverride ?? (parsed.WMode == 1 || (baseCMap?.IsVertical ?? false));
