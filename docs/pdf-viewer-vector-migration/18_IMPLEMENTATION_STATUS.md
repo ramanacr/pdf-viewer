@@ -1,6 +1,6 @@
 # Implementation Status and Audit
 
-**Last updated:** 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns, vertical writing, glyph clips, two-circle radials, predefined CJK CMaps, JPEG 2000) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
+**Last updated:** 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns, vertical writing, glyph clips, two-circle radials, predefined CJK CMaps, JPEG 2000, mesh shadings, CCITT, JBIG2, knockout and non-isolated groups) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
 **Scope of this document:** what the first implementation pass (commits `b0ab63c` … `2e2fdd7`, 2026-09-21) delivered against this bundle, what it got wrong, what the second pass fixed, and what remains — with evidence, not claims.
 
 ---
@@ -81,10 +81,18 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Interpreter:** an object painted under a non-Normal blend mode or a soft mask is wrapped in a group of its own (the specified single-object result); transparency-group XObjects painted with a blend mode or soft mask become one compositing group; the soft-mask group is recorded when the ExtGState is set, with the CTM of that moment (cached per mask and CTM, depth-limited). Tiling cells are recorded once in pattern space (cached per pattern and, for uncoloured patterns, per colour; self-reference and depth are guarded); uncoloured patterns take their colour from `scn`. A mask or cell that itself needs fallback keeps the whole object on the fallback path.
 - **Direct2D:** a group renders into an offscreen bitmap on its own device context; soft masks are rendered over their backdrop colour, turned into alpha with a luminosity colour matrix and `/TR` via a table transfer, and applied with an alpha-mask effect; blend modes use the Blend effect against a backdrop copied from the surface after its layers are popped (enclosing clips are re-applied to the group content), written back with a clipped source-copy. Opacity groups that contain a blend group are composited offscreen as a whole. Night mode blends true colours and inverts the result, because blend modes do not commute with inversion. Tiling patterns rasterize one period at device resolution (every overlapping tile contributes) and fill with a wrapping bitmap brush, so the period is exact at any zoom.
 - **WPF backend:** compositing groups, tiling patterns, glyph-outline clips and two-circle radials are classified as backend fallback (PDFium pixels) — WPF has no blend modes.
-- **Knockout groups:** for opaque, Normal-blend elements knockout equals source-over (C·(1 − shape) + E), so those groups render natively; groups with translucent or blended elements still fall back.
-- **Glyph-outline clips:** text rendering modes 4–7 and pattern-filled text become `PushTextClip`; Direct2D unions the DirectWrite outlines of the runs into a layer mask. Type 3 clip text still falls back.
+- **Knockout groups (exact):** each element is composited as G·(1 − f) + E + (f − αE)·C0, where E is the element rendered alone with the current clips, f its shape from a shape-mode render (every paint opaque, images as their parallelogram, pattern fills as their area) and C0 the initial backdrop of a non-isolated group. Knockouts of opaque, Normal-blend elements are downgraded to ordinary groups.
+- **Non-isolated groups (exact on opaque backdrops):** a group whose content blends (or knocks out) starts from a copy of the backdrop, and the backdrop is removed again with R = Cn − C0·(1 − αg) (αg from an isolated render of the same content) before the group's alpha, soft mask and blend mode apply. PDFium composites non-isolated groups as isolated and ignores knockout, so these are verified against hand-computed values from 11.4.
+- **Glyph-outline clips:** text rendering modes 4–7 and pattern-filled text become `PushTextClip`; Direct2D unions the DirectWrite outlines of the runs into a layer mask. Type 3 glyphs add nothing to the clip and modes 3/7 draw nothing, as ISO 32000-2 9.3.6 specifies (PDFium agrees).
 - **Radial shadings between arbitrary circles** (and holed concentric ones): Direct2D evaluates the largest t per pixel (sampled at pixel centres; PDFium samples at pixel corners, a half-pixel phase difference of ≤ 3/255).
-- Still classified: knockout groups with translucent elements, mesh shadings (types 4–7), Type 3 text used as a clip.
+- **Mesh and function shadings:** types 4–7 are decoded by `PdfMeshDecoder` (bit widths, `/Decode`, shared-edge flags, Coons interior points) and rasterized by Direct2D as Gouraud triangles, with patches subdivided at device resolution in the specified fold order; parametric meshes interpolate t and then map it through the function. Type 1 shadings sample f(x, y) at device pixels. Gradient stops are sampled at 257 points.
+- Still classified: nothing in these areas for valid files; groups over transparent backdrops are composited as isolated.
+
+### Bilevel image codecs
+- **CCITTFaxDecode:** T.4 Modified Huffman (K = 0), mixed MR (K > 0) and T.6 MMR (K < 0) with EOL/RTC/EOFB, `/EncodedByteAlign`, `/BlackIs1`, `/Rows` and damaged-row recovery; bit-exact on Windows-encoded G3/G4 streams and a hand-coded MR stream.
+- **JBIG2Decode:** MQ arithmetic decoder, IAx/IAID, the standard Huffman tables B.1–B.15 (canonical codes checked against Annex B) and custom tables; generic regions (templates 0–3, TPGDON, AT, MMR, unknown length), refinement regions (TPGRON), symbol dictionaries (arithmetic, Huffman, refinement/aggregation, context reuse), text regions (all corners, transposition, strips, refinement, symbol-ID run codes), pattern dictionaries, halftone regions and `/JBIG2Globals`. A test-side T.88 encoder produces streams that PDFium must decode identically (all cases bit-exact).
+- **JPEG:** bytes before the SOI marker are skipped, as libjpeg does.
+- **Text extraction:** CJK fonts without `/ToUnicode` map CIDs of the Adobe collections to Unicode through the inverted `Uni*-UTF16-H` CMaps.
 
 ### Predefined CJK CMaps and JPEG 2000
 - **CMaps:** the 59 predefined CMaps of ISO 32000-2 Table 116 come from Adobe cmap-resources (BSD-3-Clause) at a pinned commit, fetched by `eng/vectorpdf/cmaps/build-cmaps.ps1` (SHA-256 per file in `cmaps-manifest.json`) and embedded deflated (843 KB). Named encodings and `usecmap` chains resolve through `PredefinedCMaps`; only names outside Table 116 (e.g. a collection name such as `Adobe-Korea1-2`, which veraPDF uses in its "fail" files) are still classified.
@@ -104,7 +112,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 | Measure | Value | Source |
 |---|---|---|
-| Vector engine tests | 326 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
+| Vector engine tests | 376 passing (13 before the second pass) | `dotnet test tests/PdfEngine.Vector.Tests` |
 | Viewer regression tests | 307 passing (300 before; none weakened — the showcase test's `ri` expectation was *corrected*, see §1 #5) | `dotnet test tests/PdfViewer.Tests` |
 | Differential vs PDFium, geometry fixtures (paths, curves, clip, dash, alpha, inline image) | mean channel diff ≤ 0.37/255, 0 % pixels off by > 64 (72 and 144 dpi) | `DifferentialRenderingTests`; budgets: mean ≤ 1.5, ≤ 1 % |
 | Differential, axial shading | mean 1.17–1.43/255, 0 % | budget: mean ≤ 3.0, ≤ 1 % |
@@ -124,7 +132,10 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 | Corpus: remaining fallback reasons | BlendMode 76, Pattern 53, UnsupportedCMap 37, SoftMask 17, TransparencyGroup 11, UnsupportedImageFilter 9 (JPX), UnsupportedFontType 6 (deliberately broken PDF/A "fail" samples) | same |
 | Direct2D vs PDFium, all 15 blend modes, luminosity/alpha soft masks (with `/BC`, `/TR`), blended and nested groups, soft-masked image | mean channel diff 0.00–0.44/255, 0 % pixels off by > 64 | `CompositingTests` (25 tests) |
 | Direct2D vs PDFium, tiling patterns (coloured, uncoloured, rotated `/Matrix`, overlapping cells, alpha, pattern strokes) | mean 0.00–1.08/255, ≤ 1.08 % off (72 and 144 dpi; at fractional cell sizes PDFium snaps cells to whole pixels, so the exact period is asserted separately) | `TilingPatternTests` |
-| Corpus with the Direct2D backend (2 913 files) | pages fully vector **98.77 %** (95.07 % before this phase), vector page area **99.65 %** (98.67 %); BlendMode and SoftMask 0 (76, 17), Pattern 53 → 2, UnsupportedCMap 37 → 12 (all invalid encoding names), JPX 7 → 0, Shading 4 → 1. Every remaining class is in deliberately non-conforming veraPDF/Isartor files or knockout groups with translucent elements | `eng/vectorpdf/baseline-corpus-summary.json` |
+| Corpus with the Direct2D backend (2 913 files) | pages fully vector **99.17 %** (95.07 % before this phase), vector page area **99.72 %** (98.67 %); BlendMode, SoftMask, TransparencyGroup, Shading, JPX and TextClipping 0; Pattern 53 → 2 (a degenerate YStep of −1.2·10⁻³⁸, which PDFium paints as nothing — the fallback shows exactly that); UnsupportedCMap 37 → 12 (invalid encoding names). The rest are deliberately broken fonts, unknown operators and misspelt filters in veraPDF/Isartor "fail" files | `eng/vectorpdf/baseline-corpus-summary.json` |
+| Mesh and function shadings vs PDFium | mean ≤ 1.2/255 at 144 dpi (types 1, 4 incl. shared edges, 4-bit data and a function, 5, 6 with a shared edge, 7) | `MeshShadingTests` |
+| CCITT and JBIG2 | bit-exact decodes; renders equal PDFium (mean 0.00/255) | `CcittFaxTests`, `Jbig2Tests` (29 cases) |
+| Knockout and non-isolated groups | within 1/255 of hand-computed results | `CompositingTests` |
 | JPEG 2000 vs PDFium (OpenJPEG) | mean 0.43–2.23/255 (gray without `/ColorSpace`, RGB, JP2 RGBA with `/SMaskInData`) | `Jpeg2000Tests` |
 | Vertical writing vs PDFium (Identity-V, `/W2`, embedded WMode 1 CMap) | mean 0.54–0.71/255 on Direct2D and WPF | `VerticalTextTests` |
 | Glyph-outline clips and pattern-filled text vs PDFium | mean 0.10–0.18/255 | `TextClipTests` |
@@ -167,9 +178,9 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 1. **Live host tuning on real-world documents:** repeat `vectorpdf live` on corpus CAD/map/scanned files and on a software render tier (RDP/VM); the 800 % p95 on the path-heavy fixture (33 ms) suggests tiled caching above 4096 px; tune `MaxLiveSurfaceCommands` (40 000) from that evidence.
 3. **Nightly corpus job:** run `fetch-corpus.ps1` + `vectorpdf corpus --summary` in the scheduled CI tier and track trends; add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
-4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified); Unicode for non-Unicode CJK encodings without `/ToUnicode` (needs the Adobe *-UCS2 CID→Unicode tables).
-5. **Transparency (M7 remainder):** knockout groups with translucent elements (11 corpus regions, all PDF/A test files), non-isolated group backdrops (groups are composited as isolated today), mesh shadings.
-6. **Images:** JBIG2 and CCITT fax decoding; a few 1×1 JPEGs WIC rejects (5 regions) are left to PDFium.
+4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
+5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
+6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
 7. **Encryption (L1):** Standard Security Handler with platform crypto; today encrypted documents are PDFium-only.
 8. **Package/memory baselines** (A1), SBOM/package test asserting what ships (K7).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
