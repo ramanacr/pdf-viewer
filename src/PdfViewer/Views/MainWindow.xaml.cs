@@ -66,6 +66,7 @@ public partial class MainWindow : Window
     {
         document.RequestPasswordFunc = PromptForPasswordAsync;
         document.ShowPropertiesAction = ShowPropertiesDialog;
+        document.ShowReadModeAction = () => ShowReadMode(document);
         document.ShowFormFieldsFunc = ShowFormFieldsDialog;
         document.ShowExportDialogFunc = ShowExportImagesDialog;
         document.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
@@ -171,6 +172,14 @@ public partial class MainWindow : Window
                 _vm.ApplyFitMode();
             }, System.Windows.Threading.DispatcherPriority.Loaded);
         }
+    }
+
+    private void ShowReadMode(MainViewModel document)
+    {
+        string title = System.IO.Path.GetFileName(document.Metadata?.FilePath ?? "Document");
+        var window = new ReadModeWindow(title, document.IsNightMode || document.CurrentTheme == PdfViewer.Services.AppTheme.Dark) { Owner = this };
+        window.Show();
+        _ = window.FillAsync(document.ExtractAccessibleContentAsync, document.PageCount, document.CurrentPageNumber);
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)

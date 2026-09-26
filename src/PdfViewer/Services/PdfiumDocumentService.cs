@@ -868,6 +868,157 @@ public class PdfiumDocumentService : IPdfDocumentService
         return new PdfViewer.Text.PageTextLayout(glyphs);
     }
 
+    /// <summary>
+    /// Tagged content (ISO 32000-2 14.8): the page's structure tree walked in order; each block
+    /// element (heading, paragraph, list item, figure, cell...) collects the text of the marked
+    /// content it owns, in content order, or its /ActualText; figures carry /Alt. Untagged pages
+    /// (or trees that yield nothing) fall back to the layout.
+    /// </summary>
+    public async Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default)
+    {
+        var tagged = await Task.Run(() => ExtractTaggedContent(pageNumber), ct).ConfigureAwait(false);
+        if (tagged != null && tagged.Blocks.Count > 0)
+            return tagged;
+        var layout = await ExtractPageTextLayoutAsync(pageNumber, ct).ConfigureAwait(false);
+        return PdfViewer.Text.PageAccessibleContent.FromLayout(pageNumber, layout);
+    }
+
+    private PdfViewer.Text.PageAccessibleContent? ExtractTaggedContent(int pageNumber)
+    {
+        lock (_docLock)
+        {
+            if (_document == null || _document.IsInvalid || pageNumber < 1 || pageNumber > PageCount)
+                return null;
+            using var page = PdfiumNativeBridge.FPDF_LoadPage(_document, pageNumber - 1);
+            if (page == null || page.IsInvalid) return null;
+            IntPtr tree = PdfiumNativeBridge.FPDF_StructTree_GetForPage(page);
+            if (tree == IntPtr.Zero) return null;
+            try
+            {
+                int roots = PdfiumNativeBridge.FPDF_StructTree_CountChildren(tree);
+                if (roots <= 0) return null;
+
+                // Marked-content ID -> its text and where it starts in content order.
+                var byMcid = new Dictionary<int, (StringBuilder Text, int First)>();
+                using (var textPage = PdfiumNativeBridge.FPDFText_LoadPage(page))
+                {
+                    if (textPage != null && !textPage.IsInvalid)
+                    {
+                        int count = PdfiumNativeBridge.FPDFText_CountChars(textPage);
+                        int lastMcid = -1;
+                        for (int i = 0; i < count; i++)
+                        {
+                            uint cp = PdfiumNativeBridge.FPDFText_GetUnicode(textPage, i);
+                            if (cp == 0) continue;
+                            IntPtr obj = PdfiumNativeBridge.FPDFText_GetTextObject(textPage, i);
+                            int mcid = obj == IntPtr.Zero ? lastMcid : PdfiumNativeBridge.FPDFPageObj_GetMarkedContentID(obj);
+                            if (mcid < 0) continue; // artifacts and untagged content
+                            lastMcid = mcid;
+                            if (!byMcid.TryGetValue(mcid, out var entry))
+                                byMcid[mcid] = entry = (new StringBuilder(), i);
+                            char ch = (char)cp;
+                            entry.Text.Append(ch is '\r' or '\n' ? ' ' : ch);
+                        }
+                    }
+                }
+
+                var blocks = new List<PdfViewer.Text.ContentBlock>();
+                for (int r = 0; r < roots; r++)
+                    WalkStructure(PdfiumNativeBridge.FPDF_StructTree_GetChildAtIndex(tree, r), byMcid, blocks, depth: 0);
+                return new PdfViewer.Text.PageAccessibleContent(pageNumber, fromTags: true, blocks);
+            }
+            finally
+            {
+                PdfiumNativeBridge.FPDF_StructTree_Close(tree);
+            }
+        }
+    }
+
+    private static void WalkStructure(IntPtr element, Dictionary<int, (StringBuilder Text, int First)> byMcid,
+        List<PdfViewer.Text.ContentBlock> blocks, int depth)
+    {
+        if (element == IntPtr.Zero || depth > 64) return;
+        string type = StructString(element, PdfiumNativeBridge.FPDF_StructElement_GetType) ?? string.Empty;
+        if (PdfViewer.Text.PageAccessibleContent.RoleForStructureType(type) is { } role)
+        {
+            string? lang = StructString(element, PdfiumNativeBridge.FPDF_StructElement_GetLang);
+            string? actual = StructString(element, PdfiumNativeBridge.FPDF_StructElement_GetActualText);
+            if (role == PdfViewer.Text.ContentRole.Figure)
+            {
+                string? alt = StructString(element, PdfiumNativeBridge.FPDF_StructElement_GetAltText);
+                blocks.Add(new PdfViewer.Text.ContentBlock(role, actual ?? string.Empty, alt, lang));
+                return;
+            }
+            string text = actual ?? CollectText(element, byMcid, depth);
+            text = PdfViewer.Text.PageAccessibleContent.Reflow(text);
+            if (text.Length > 0)
+                blocks.Add(new PdfViewer.Text.ContentBlock(role, text, null, lang));
+            return;
+        }
+        // A grouping (Document, Sect, Div, L, Table, TR, Span at the top ...): its own marked
+        // content reads as a paragraph, its children in order.
+        string own = string.Concat(OwnMcids(element).Where(byMcid.ContainsKey).OrderBy(m => byMcid[m].First).Select(m => byMcid[m].Text.ToString()));
+        own = PdfViewer.Text.PageAccessibleContent.Reflow(own);
+        if (own.Length > 0)
+            blocks.Add(new PdfViewer.Text.ContentBlock(PdfViewer.Text.ContentRole.Paragraph, own));
+        int n = PdfiumNativeBridge.FPDF_StructElement_CountChildren(element);
+        for (int i = 0; i < n; i++)
+            WalkStructure(PdfiumNativeBridge.FPDF_StructElement_GetChildAtIndex(element, i), byMcid, blocks, depth + 1);
+    }
+
+    /// <summary>The text of every marked content in an element's subtree, in content order (inline /ActualText honoured).</summary>
+    private static string CollectText(IntPtr element, Dictionary<int, (StringBuilder Text, int First)> byMcid, int depth)
+    {
+        var parts = new List<(int First, string Text)>();
+        void Visit(IntPtr e, int d)
+        {
+            if (e == IntPtr.Zero || d > 64) return;
+            if (d > depth && StructString(e, PdfiumNativeBridge.FPDF_StructElement_GetActualText) is { } actual)
+            {
+                int first = SubtreeMcids(e, d).Where(byMcid.ContainsKey).Select(m => byMcid[m].First).DefaultIfEmpty(int.MaxValue).Min();
+                parts.Add((first, actual));
+                return;
+            }
+            foreach (int m in OwnMcids(e))
+                if (byMcid.TryGetValue(m, out var t)) parts.Add((t.First, t.Text.ToString()));
+            int n = PdfiumNativeBridge.FPDF_StructElement_CountChildren(e);
+            for (int i = 0; i < n; i++) Visit(PdfiumNativeBridge.FPDF_StructElement_GetChildAtIndex(e, i), d + 1);
+        }
+        Visit(element, depth);
+        return string.Concat(parts.OrderBy(p => p.First).Select(p => p.Text));
+    }
+
+    private static IEnumerable<int> OwnMcids(IntPtr element)
+    {
+        int count = PdfiumNativeBridge.FPDF_StructElement_GetMarkedContentIdCount(element);
+        for (int i = 0; i < count; i++)
+        {
+            int m = PdfiumNativeBridge.FPDF_StructElement_GetMarkedContentIdAtIndex(element, i);
+            if (m >= 0) yield return m;
+        }
+    }
+
+    private static IEnumerable<int> SubtreeMcids(IntPtr element, int depth)
+    {
+        if (element == IntPtr.Zero || depth > 64) yield break;
+        foreach (int m in OwnMcids(element)) yield return m;
+        int n = PdfiumNativeBridge.FPDF_StructElement_CountChildren(element);
+        for (int i = 0; i < n; i++)
+            foreach (int m in SubtreeMcids(PdfiumNativeBridge.FPDF_StructElement_GetChildAtIndex(element, i), depth + 1))
+                yield return m;
+    }
+
+    /// <summary>A structure element string (UTF-16LE from PDFium), or null when absent or empty.</summary>
+    private static string? StructString(IntPtr element, Func<IntPtr, byte[]?, uint, uint> get)
+    {
+        uint len = get(element, null, 0);
+        if (len <= 2) return null;
+        var buffer = new byte[len];
+        get(element, buffer, len);
+        string s = Encoding.Unicode.GetString(buffer, 0, (int)len - 2);
+        return string.IsNullOrWhiteSpace(s) ? null : s;
+    }
+
     public Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default) =>
         Task.Run(() =>
         {

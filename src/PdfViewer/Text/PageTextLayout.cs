@@ -302,11 +302,24 @@ public sealed class PageTextLayout
                 bool endsSentence = prevText.Length > 0 && ".!?:;。！？".Contains(prevText[^1]);
                 double blockRight = Math.Max(prev.UMax, cur.UMax);
                 bool shortLine = prev.UMax < blockRight - 4 * h;
-                newParagraph = largeGap || sizeChange || columnChange || (endsSentence && shortLine);
+                // A list marker starts an item, however tight the list is set.
+                bool listItem = StartsWithListMarker(LineText(cur).TrimStart());
+                newParagraph = largeGap || sizeChange || columnChange || (endsSentence && shortLine) || listItem;
             }
             starts[i] = newParagraph ? i : starts[i - 1];
         }
         return starts;
+    }
+
+    /// <summary>"• ", "– ", "1. ", "12) ", "a) ", "iv. " at the start of a line.</summary>
+    internal static bool StartsWithListMarker(string text)
+    {
+        if (text.Length < 2) return false;
+        if ("•▪▫◦‣∙·–—-*".Contains(text[0]) && char.IsWhiteSpace(text[1])) return true;
+        int i = 0;
+        while (i < text.Length && i < 4 && char.IsLetterOrDigit(text[i])) i++;
+        return i > 0 && i + 1 < text.Length && (text[i] == '.' || text[i] == ')') && char.IsWhiteSpace(text[i + 1])
+               && (char.IsDigit(text[0]) || i == 1 || text[..i].All(c => "ivxlcIVXLC".Contains(c)));
     }
 
     private double TypicalGap(int line)
@@ -320,7 +333,9 @@ public sealed class PageTextLayout
         }
         if (gaps.Count == 0) return 0;
         gaps.Sort();
-        return gaps[gaps.Count / 2];
+        // Lines inside a paragraph are the closest ones: the lower quartile is the leading, the
+        // median would already include the paragraph gaps being looked for.
+        return gaps[gaps.Count / 4];
     }
 
     private string LineText(TextLine line)
@@ -560,6 +575,19 @@ public sealed class PageTextLayout
     {
         var line = _lines[Math.Clamp(lineIndex, 0, _lines.Length - 1)];
         return (line.Start, line.End);
+    }
+
+    /// <summary>Paragraphs in reading order: first and last line, and their characters.</summary>
+    public IEnumerable<(int FirstLine, int LastLine, int Start, int End)> Paragraphs()
+    {
+        int i = 0;
+        while (i < _lines.Length)
+        {
+            int first = i;
+            while (i + 1 < _lines.Length && _paragraphStartLine[i + 1] == first) i++;
+            yield return (first, i, _lines[first].Start, _lines[i].End);
+            i++;
+        }
     }
 
     /// <summary>The paragraph of a line: its lines' characters, the final break excluded.</summary>

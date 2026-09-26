@@ -179,6 +179,10 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - The selection is a flat band per line at the line's full height, covering the spaces between words.
   - **Copy (`Ctrl+C`)** keeps line breaks and joins words hyphenated across lines; **Select All (`Ctrl+A`)** selects the current page.
   - **Highlight from selection** covers each selected line (one quad per line, saved as `/QuadPoints` and XFDF `coords`), not the rectangle around them; text under a highlight can still be selected by dragging.
+- **Accessibility and Read Mode (`Ctrl+4`)**:
+  - **Tagged PDFs** (ISO 32000-2 14.8) are read in structure order: headings, paragraphs, list items, table cells, quotes and code keep their roles, figures are described by their `/Alt` text, `/ActualText` replaces what it stands for, and artifacts (running headers, page numbers) are left out.
+  - **Untagged pages** get paragraphs from the text layout, headings from their larger text, list items from their markers, and vertical text read as words.
+  - **Read mode** reflows that content (size with `Ctrl+Plus/Minus`, follows the dark theme and night mode). It is a WPF FlowDocument, which UI Automation exposes as a text document, so Narrator, NVDA and JAWS read and navigate it by paragraph, line, word and character. Pages carry accessible names. The document's accessibility-extraction permission is honoured.
 - **In-Document Text Search**:
   - Real-time searching powered by PDFium native text search APIs.
   - Case-sensitive / case-insensitive search toggle.
