@@ -60,7 +60,8 @@ public static class PredictorDecoder
         int fullRows = input.Length / rowLengthWithTag;
         int tail = input.Length % rowLengthWithTag;
         int partialBytes = tail > 1 ? tail - 1 : 0;
-        byte[] output = new byte[(long)fullRows * bytesPerRow + partialBytes];
+        // Bounded by input.Length, so the product fits in an int.
+        byte[] output = new byte[fullRows * bytesPerRow + partialBytes];
 
         byte[] priorRow = new byte[bytesPerRow];
         byte[] currentRow = new byte[bytesPerRow];
