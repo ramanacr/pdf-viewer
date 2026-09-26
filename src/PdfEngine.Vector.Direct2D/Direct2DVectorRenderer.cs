@@ -273,6 +273,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             ctx.Clear(invert ? new Color4(0, 0, 0, 1) : new Color4(1, 1, 1, 1));
             ctx.AntialiasMode = AntialiasMode.PerPrimitive;
             ctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            if (_res.DocumentTextParams != null) ctx.TextRenderingParams = _res.DocumentTextParams;
 
             replay.Draw(ctx, pageToDevice, visible);
 

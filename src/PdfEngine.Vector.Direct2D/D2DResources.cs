@@ -19,6 +19,15 @@ internal sealed class D2DResources : IDisposable
 {
     public ID2D1Factory1 Factory { get; }
     public IDWriteFactory5 DWrite { get; }
+
+    /// <summary>
+    /// Document text is filled as glyph outlines (exact geometric coverage, no hinting, linear
+    /// blending), so its weight is the same at every zoom. DirectWrite's default glyph rasterizer
+    /// is tuned for UI text: on a real-world text page at 144 dpi it drew 13 % more ink than
+    /// PDFium (outlines: 3.6 %), although at 600 dpi the two agree within 0.2 % - small document
+    /// text looked bold. Same speed on text-heavy pages (`vectorpdf tiles`).
+    /// </summary>
+    public IDWriteRenderingParams? DocumentTextParams { get; }
     public IWICImagingFactory Wic { get; }
     private readonly IDWriteInMemoryFontFileLoader _fontLoader;
 
@@ -49,6 +58,7 @@ internal sealed class D2DResources : IDisposable
         _fontLoader = DWrite.CreateInMemoryFontFileLoader();
         DWrite.RegisterFontFileLoader(_fontLoader);
         Wic = new IWICImagingFactory();
+        DocumentTextParams = DWrite.CreateCustomRenderingParams(1.0f, 0f, 0f, 0f, PixelGeometry.Flat, RenderingMode1.Outline, GridFitMode.Disabled);
         CreateDevice();
     }
 
@@ -197,6 +207,7 @@ internal sealed class D2DResources : IDisposable
         _systemCollection?.Dispose();
         DWrite.UnregisterFontFileLoader(_fontLoader);
         _fontLoader.Dispose();
+        DocumentTextParams?.Dispose();
         DWrite.Dispose();
         Wic.Dispose();
         Factory.Dispose();
