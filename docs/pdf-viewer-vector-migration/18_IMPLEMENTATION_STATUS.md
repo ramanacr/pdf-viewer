@@ -191,7 +191,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 ## 5. Remaining work, in priority order
 
-1. **Live host tuning, remainder:** the first tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); building the realizations in the background while the zoom settles would hide it. Page bitmaps (not detail tiles) still take the readback path; they are cached and reused, so this matters less.
+1. **Live host tuning, remainder:** the first tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); building the realizations in the background while the zoom settles would hide it. Tried and rejected: sharing tessellations across zoom steps (scale buckets of √2, tessellated at the bucket top) — `vectorpdf tiles` zoom-step p50 unchanged and p95 worse in two of three A/B runs, because the finer tessellation costs what the reuse saves. Page bitmaps (not detail tiles) still take the readback path; they are cached and reused, so this matters less.
 3. **Nightly corpus job:** run `fetch-corpus.ps1` + `vectorpdf corpus --summary` in the scheduled CI tier and track trends; add real-world producer PDFs (LaTeX, InDesign, CAD, scans) under their licences.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.

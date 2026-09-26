@@ -62,7 +62,7 @@ internal static class TileBench
         Console.WriteLine($"# vectorpdf tiles ({(d2d.IsSoftware ? "WARP software" : "hardware GPU")}), {ranked.Count} pages ranked, heaviest {heavy.Count}");
         Console.WriteLine(string.Create(inv, $"# window {WindowWidthDip}x{WindowHeightDip} DIP at {DeviceScale * 100:0} % scaling; tile = visible + half a viewport per side, <= {MaxDetailPixels} px"));
 
-        var columns = new[] { "build", "page150", "page200", "page300", "pdfium300", "tile400", "scroll400", "bitmap400", "gpu400", "tile800", "scroll800", "bitmap800", "gpu800", "tile1600", "scroll1600", "bitmap1600", "gpu1600" };
+        string[] columns = new[] { "build", "page150", "page200", "page300", "pdfium300", "tile400", "scroll400", "bitmap400", "gpu400", "tile800", "scroll800", "bitmap800", "gpu800", "tile1600", "scroll1600", "bitmap1600", "gpu1600" };
         var samples = columns.ToDictionary(c => c, _ => new List<double>());
         var slow = new List<(double Ms, string What)>();
 
@@ -150,6 +150,30 @@ internal static class TileBench
                 samples[$"bitmap{zoom * 100:0}"].Add(wpf);
             }
         }
+
+        // Ctrl+wheel zooming: 25 % steps from 400 %, the visible area at each step (a new scale every time).
+        foreach (var (file, page, commands, _) in heavy)
+        {
+            byte[] bytes = await File.ReadAllBytesAsync(file);
+            using var doc = await PdfVectorDocument.OpenAsync(bytes);
+            var list = await doc.GetPageDisplayListAsync(page);
+            for (double zoom = 4.0; zoom <= 16.0; zoom *= 1.25)
+            {
+                double pxPerPt = zoom * DeviceScale * 96.0 / 72.0;
+                var request = new RenderRequest { PageNumber = page, Dpi = pxPerPt * 72 };
+                var (fullW, fullH) = Direct2DVectorRenderer.OutputSize(list, request);
+                int w = (int)Math.Min(fullW, WindowWidthDip * DeviceScale), h = (int)Math.Min(fullH, WindowHeightDip * DeviceScale);
+                int x0 = (fullW - w) / 2, y0 = (fullH - h) / 2;
+                double ms = await Time(async () =>
+                {
+                    var r = await d2d.RenderAsync(list, request, null, new PixelRegion(x0, y0, w, h), invertColors: false, CancellationToken.None);
+                    r.Page.Dispose();
+                });
+                if (!samples.ContainsKey("zoomstep")) samples["zoomstep"] = new List<double>();
+                samples["zoomstep"].Add(ms);
+            }
+        }
+        columns = columns.Append("zoomstep").ToArray();
 
         Console.WriteLine(string.Create(inv, $"commands: max {(heavy.Count > 0 ? heavy[0].Commands : 0)}, median of heaviest {(heavy.Count > 0 ? heavy[heavy.Count / 2].Commands : 0)}"));
         foreach (var c in columns)
