@@ -2131,7 +2131,7 @@ public sealed class PdfContentInterpreter
         private static readonly HashSet<string> NativeImageFilters = new(StringComparer.Ordinal)
         {
             "FlateDecode", "Fl", "LZWDecode", "LZW", "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85",
-            "RunLengthDecode", "RL", "DCTDecode", "DCT", "Crypt", "JPXDecode",
+            "RunLengthDecode", "RL", "DCTDecode", "DCT", "Crypt", "JPXDecode", "CCITTFaxDecode", "CCF", "JBIG2Decode",
         };
 
         private void PaintImage(PdfStream stream, PdfDictionary dict, GraphicsState gs, PdfDictionary resources, bool isInline, string key)

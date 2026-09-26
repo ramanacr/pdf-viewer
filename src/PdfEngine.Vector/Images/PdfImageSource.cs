@@ -5,6 +5,7 @@ using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
+using PdfEngine.Vector.Images.Jbig2;
 using PdfEngine.Vector.Streams;
 
 namespace PdfEngine.Vector.Images;
@@ -83,12 +84,37 @@ public sealed class PdfImageSource : IPdfImageSource
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
             return DecodeJpx(dict, decoded.Data, alpha, ct);
-        if (decoded.ImageFilter != null)
+        byte[] samples = decoded.Data;
+        if (decoded.ImageFilter == "CCITTFaxDecode")
+        {
+            // Bilevel codec: its output is ordinary 1-bit samples (0 = black unless /BlackIs1).
+            var parms = decoded.ImageFilterParms;
+            var ccitt = new CcittFaxDecoder.Parameters(
+                K: (int)(parms?.GetInteger("K") ?? 0),
+                EndOfLine: ReadBool(parms, "EndOfLine", false),
+                EncodedByteAlign: ReadBool(parms, "EncodedByteAlign", false),
+                Columns: (int)(parms?.GetInteger("Columns") ?? 1728),
+                Rows: (int)(parms?.GetInteger("Rows") ?? 0),
+                EndOfBlock: ReadBool(parms, "EndOfBlock", true),
+                BlackIs1: ReadBool(parms, "BlackIs1", false),
+                DamagedRowsBeforeError: (int)(parms?.GetInteger("DamagedRowsBeforeError") ?? 0));
+            if (ccitt.Columns != width)
+                throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "CCITT /Columns differs from the image width.");
+            samples = CcittFaxDecoder.Decode(decoded.Data, ccitt, height, ct);
+        }
+        else if (decoded.ImageFilter == "JBIG2Decode")
+        {
+            var globals = decoded.ImageFilterParms is { } jp && _resolver.Resolve(jp["JBIG2Globals"]) is PdfStream g
+                ? _decoder.DecodeStream(g)
+                : null;
+            samples = Jbig2Decoder.Decode(decoded.Data, globals, width, height, ct);
+        }
+        else if (decoded.ImageFilter != null)
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.UnsupportedImageFilter, $"Image filter {decoded.ImageFilter} is not decoded by the vector core.");
 
         byte[] bgra = isMask
-            ? DecodeStencil(dict, decoded.Data, width, height)
-            : DecodeColor(dict, decoded.Data, width, height, ct);
+            ? DecodeStencil(dict, samples, width, height)
+            : DecodeColor(dict, samples, width, height, ct);
 
         if (alpha != null)
         {
@@ -202,6 +228,9 @@ public sealed class PdfImageSource : IPdfImageSource
         }
         return false;
     }
+
+    private bool ReadBool(PdfDictionary? parms, string key, bool fallback) =>
+        parms != null && _resolver.Resolve(parms[key]) is PdfBoolean b ? b.Value : fallback;
 
     private static bool IsInvertedDecode(PdfDictionary dict, int comps)
     {
