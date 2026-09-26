@@ -215,7 +215,8 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
 
     /// <summary>
     /// Renders a region (at most one GPU tile) into a new Direct3D 11 texture that other devices
-    /// can open (a DXGI shared handle), and waits until the GPU has finished drawing it. A viewer
+    /// can open (a DXGI shared handle), and waits (up to 2 s) for the GPU to finish drawing it; past
+    /// that the texture is returned anyway, so a hung GPU shows a stale tile, never a frozen UI. A viewer
     /// shows it with a Direct3D 9Ex surface in a WPF <c>D3DImage</c>: the pixels never leave the
     /// GPU. Returns null when the region is larger than a tile or the device cannot share
     /// (WARP, remote sessions); the caller then uses <see cref="RenderAsync(IPdfDisplayList, RenderRequest, IPdfFallbackProvider?, PixelRegion?, bool, CancellationToken)"/>.

@@ -48,20 +48,27 @@ internal sealed class GpuTilePresenter : IDisposable
         if (surface == null)
             return null;
         var image = new D3DImage(96, 96);
+        bool locked = false;
         try
         {
             image.Lock();
+            locked = true;
             // Software fallback on: if WPF drops to software rendering the surface is copied, not lost.
             image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface.Surface, enableSoftwareFallback: true);
             image.AddDirtyRect(new Int32Rect(0, 0, texture.Width, texture.Height));
         }
-        catch
+        catch (Exception)
         {
-            image.Unlock();
+            // The caller falls back to a bitmap tile.
+            if (locked) image.Unlock();
+            locked = false;
             surface.Dispose();
             return null;
         }
-        image.Unlock();
+        finally
+        {
+            if (locked) image.Unlock();
+        }
         DependencyPropertyChangedEventHandler lost = (_, e) =>
         {
             if (e.NewValue is false) onLost();
@@ -88,14 +95,24 @@ internal sealed class GpuTilePresenter : IDisposable
         public void Dispose()
         {
             if (_image == null) return;
-            _image.IsFrontBufferAvailableChanged -= _lost;
-            // Detach before releasing, so WPF never composes a released surface.
-            _image.Lock();
-            _image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
-            _image.Unlock();
+            var image = _image;
             _image = null;
-            _surface.Dispose();
-            _texture.Dispose();
+            image.IsFrontBufferAvailableChanged -= _lost;
+            bool locked = false;
+            try
+            {
+                // Detach before releasing, so WPF never composes a released surface.
+                image.Lock();
+                locked = true;
+                image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
+            }
+            finally
+            {
+                if (locked) image.Unlock();
+                // Released whatever happened above: a failed detach must not leak GPU memory.
+                _surface.Dispose();
+                _texture.Dispose();
+            }
         }
     }
 

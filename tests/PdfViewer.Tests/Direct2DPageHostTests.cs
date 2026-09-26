@@ -234,15 +234,18 @@ public class Direct2DPageHostTests : IDisposable
             catch (Exception ex) { error = ex; }
         });
         thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.IsBackground = true; // a hung GPU or dispatcher must not keep the test host alive
         thread.Start();
-        thread.Join();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(60)), "the GPU presenter test did not finish within 60 s");
         if (error != null) throw error;
     }
 
     private static void Pump(Task task)
     {
         var frame = new System.Windows.Threading.DispatcherFrame();
-        task.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+        var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+        // End the frame on the dispatcher itself, so PushFrame is woken reliably.
+        task.ContinueWith(_ => dispatcher.BeginInvoke(() => frame.Continue = false), TaskScheduler.Default);
         System.Windows.Threading.Dispatcher.PushFrame(frame);
         task.GetAwaiter().GetResult();
     }

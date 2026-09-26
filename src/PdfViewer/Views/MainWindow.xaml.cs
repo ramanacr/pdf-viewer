@@ -178,14 +178,15 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         // Zoomed detail tiles go straight from Direct2D to the screen where the display allows it.
-        _gpuPresenter = GpuTilePresenter.TryCreate(this);
-        if (_gpuPresenter != null)
+        // Loaded can fire again (the window re-enters the tree): create the presenter once.
+        if (_gpuPresenter == null && GpuTilePresenter.TryCreate(this) is { } presenter)
         {
-            PageViewModel.GpuPresenter = _gpuPresenter.Present;
+            _gpuPresenter = presenter;
+            PageViewModel.GpuPresenter = presenter.Present;
             Closed += (_, _) =>
             {
                 PageViewModel.GpuPresenter = null;
-                _gpuPresenter.Dispose();
+                presenter.Dispose();
             };
         }
 
