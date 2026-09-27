@@ -115,6 +115,15 @@ public interface IPdfDocumentService : IDisposable
         => Task.FromResult<PdfEngine.Vector.Direct2D.SharedTexture?>(null);
 
     /// <summary>
+    /// Builds in the background what a later render of the region reuses (Direct2D: the
+    /// tessellations at that scale), so a new zoom's tile only has to draw. Cancel it when the
+    /// zoom changes again. Does nothing where regions are not rendered by Direct2D.
+    /// </summary>
+    Task PreparePageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    /// <summary>
     /// Extracts the hierarchical bookmarks / outline tree.
     /// </summary>
     ObservableCollection<BookmarkItem> ExtractBookmarks();

@@ -175,7 +175,7 @@ public partial class PageViewModel : ObservableObject
     public void UpdateScale(double scale)
     {
         if (Math.Abs(DisplayScale - scale) > 1e-9)
-            ClearDetail(); // the tile belongs to the previous zoom
+            ScaleDetail(scale / DisplayScale); // the tile belongs to the previous zoom: shown scaled until the new one is ready
         DisplayScale = scale;
         RaiseGeometryChanged();
     }
@@ -230,10 +230,89 @@ public partial class PageViewModel : ObservableObject
     {
         _detailCts?.Cancel();
         _detailCts = null;
+        CancelPreparation();
         DetailImage = null;
         _detailLifetime?.Dispose();
         _detailLifetime = null;
         _detailPixels = Rect.Empty;
+    }
+
+    /// <summary>
+    /// A zoom change: stale work stops, and the tile stays on screen stretched to the new zoom
+    /// (sharper than the page bitmap) until the crisp one replaces it.
+    /// </summary>
+    private void ScaleDetail(double ratio)
+    {
+        _detailCts?.Cancel();
+        _detailCts = null;
+        CancelPreparation();
+        if (DetailImage == null)
+            return;
+        if (!double.IsFinite(ratio) || ratio <= 0)
+        {
+            ClearDetail();
+            return;
+        }
+        var r = DetailRect;
+        DetailRect = new Rect(r.X * ratio, r.Y * ratio, r.Width * ratio, r.Height * ratio);
+    }
+
+    private CancellationTokenSource? _prepareCts;
+    private ((double, int, bool) Key, Rect Pixels)? _preparing;
+
+    private void CancelPreparation()
+    {
+        _prepareCts?.Cancel();
+        _prepareCts = null;
+        _preparing = null;
+    }
+
+    /// <summary>The visible part of the page in device pixels, as the first detail tile renders it.</summary>
+    private Rect VisibleTile(Rect visibleDips, double devicePixelsPerDip)
+    {
+        double fullW = DisplayWidth * devicePixelsPerDip, fullH = DisplayHeight * devicePixelsPerDip;
+        double vx0 = Math.Max(0, Math.Floor(visibleDips.X * devicePixelsPerDip)), vy0 = Math.Max(0, Math.Floor(visibleDips.Y * devicePixelsPerDip));
+        int vw = (int)Math.Min(MaxDetailPixels, Math.Min(fullW, Math.Ceiling(visibleDips.Right * devicePixelsPerDip)) - vx0);
+        int vh = (int)Math.Min(MaxDetailPixels, Math.Min(fullH, Math.Ceiling(visibleDips.Bottom * devicePixelsPerDip)) - vy0);
+        return vw > 0 && vh > 0 ? new Rect(vx0, vy0, vw, vh) : Rect.Empty;
+    }
+
+    /// <summary>
+    /// Called as soon as a zoom is requested, before the debounced <see cref="UpdateDetailAsync"/>:
+    /// builds in the background what the detail tile for <paramref name="visibleDips"/> will need, so
+    /// that tile only has to draw. The previous tile (scaled) or the page bitmap shows meanwhile;
+    /// the next zoom change cancels it.
+    /// </summary>
+    public void PrepareDetail(IPdfDocumentService service, Rect visibleDips, double devicePixelsPerDip, int rotation, bool nightMode)
+    {
+        if (VectorSurface != null || visibleDips.IsEmpty || visibleDips.Width < 1 || visibleDips.Height < 1)
+            return;
+        double pxPerPt = DisplayScale * devicePixelsPerDip;
+        if (RenderedImage is { } baseImage && baseImage.PixelWidth / Math.Max(1, OrientedWidthPt) >= pxPerPt * 0.95)
+            return; // the page bitmap is sharp enough: no tile
+        var key = (Math.Round(pxPerPt, 4), rotation, nightMode);
+        var visible = VisibleTile(visibleDips, devicePixelsPerDip);
+        if (visible.IsEmpty || DetailImage != null && _detailKey == key && _detailPixels.Contains(visible))
+            return;
+        if (_preparing is { } p && p.Key == key && p.Pixels.Contains(visible))
+            return;
+        _prepareCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _prepareCts = cts;
+        _preparing = (key, visible);
+        _ = PrepareRegionAsync(service, rotation, pxPerPt, visible, nightMode, cts.Token);
+    }
+
+    private async Task PrepareRegionAsync(IPdfDocumentService service, int rotation, double pxPerPt, Rect r, bool nightMode, CancellationToken ct)
+    {
+        try
+        {
+            await service.PreparePageRegionAsync(PageNumber, rotation, pxPerPt, (int)r.X, (int)r.Y, (int)r.Width, (int)r.Height, nightMode, ct);
+        }
+        catch (Exception)
+        {
+            // Cancelled or failed: only a head start is lost; the tile's own render reports errors.
+        }
     }
 
     /// <summary>
@@ -278,23 +357,23 @@ public partial class PageViewModel : ObservableObject
         _detailCts?.Cancel();
         var cts = new CancellationTokenSource();
         _detailCts = cts;
+        if (_preparing is { } preparing && preparing.Key != key)
+            CancelPreparation(); // a preparation for this key keeps going: the render reuses what it builds
         try
         {
             // Visible area first: the margin quadruples the pixels, and the user is waiting for
             // what is on screen. The margin tile follows and replaces it.
-            double vx0 = Math.Max(0, Math.Floor(visiblePx.X)), vy0 = Math.Max(0, Math.Floor(visiblePx.Y));
-            int vw = (int)Math.Min(MaxDetailPixels, Math.Min(fullW, Math.Ceiling(visiblePx.Right)) - vx0);
-            int vh = (int)Math.Min(MaxDetailPixels, Math.Min(fullH, Math.Ceiling(visiblePx.Bottom)) - vy0);
-            if (vw > 0 && vh > 0 && (double)w * h > 1.5 * vw * vh && !(DetailImage != null && _detailKey == key))
+            var vt = VisibleTile(visibleDips, devicePixelsPerDip);
+            if (!vt.IsEmpty && (double)w * h > 1.5 * vt.Width * vt.Height && !(DetailImage != null && _detailKey == key))
             {
-                var visibleTile = await RenderRegionAsync(service, rotation, pxPerPt, (int)vx0, (int)vy0, vw, vh, nightMode, cts.Token);
+                var visibleTile = await RenderRegionAsync(service, rotation, pxPerPt, (int)vt.X, (int)vt.Y, (int)vt.Width, (int)vt.Height, nightMode, cts.Token);
                 if (cts.IsCancellationRequested)
                 {
                     visibleTile?.Lifetime?.Dispose();
                     return;
                 }
                 if (visibleTile is { } v)
-                    SetDetail(v.Image, v.Lifetime, key, new Rect(vx0, vy0, vw, vh), devicePixelsPerDip);
+                    SetDetail(v.Image, v.Lifetime, key, vt, devicePixelsPerDip);
             }
 
             var tile = await RenderRegionAsync(service, rotation, pxPerPt, (int)x0, (int)y0, w, h, nightMode, cts.Token);
