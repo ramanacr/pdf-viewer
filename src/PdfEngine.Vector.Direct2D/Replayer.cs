@@ -19,7 +19,7 @@ namespace PdfEngine.Vector.Direct2D;
 /// fonts and images and reports what the backend cannot draw (so the host can fetch fallback
 /// pixels before drawing).
 /// </summary>
-internal sealed class Replayer : IDisposable
+internal sealed partial class Replayer : IDisposable
 {
     // Device-independent geometry, built once per render and shared by every tile.
     // PdfPath has reference equality, so (path, rule) keys identify one command's geometry.
@@ -224,6 +224,7 @@ internal sealed class Replayer : IDisposable
             ResetDeviceResources();
             _realizationScale = renderScale;
         }
+        BeginWindow(pageToDevice, visiblePage);
 
         // ctx.Target hands back a new reference to the target (GetTarget AddRefs it): released
         // here, or every render leaked its page-sized target bitmap (about 8 MB a page at 150 dpi).
@@ -276,6 +277,7 @@ internal sealed class Replayer : IDisposable
             }
 
             var full = ctm * pageToDevice;
+            _rangePageToDevice = pageToDevice;
             if (knockout != null && cmd is FillPath or StrokePath or DrawGlyphRun or DrawImage or DrawShading or DrawTilingPattern
                     or BeginCompositingGroup or BeginTransparencyGroup)
             {
@@ -1044,27 +1046,8 @@ internal sealed class Replayer : IDisposable
     /// pixel — draws the thinnest line the device can (8.4.3.2), which Direct2D renders natively.
     /// </summary>
     private ID2D1GeometryRealization? Realize(ID2D1DeviceContext1 ctx1, PdfDrawCommand cmd, ID2D1Geometry geom, Matrix3x2 full,
-        (float Width, ID2D1StrokeStyle1 Style)? stroke)
-    {
-        if (_realizations.TryGetValue(cmd, out var cached))
-            return cached;
-        ID2D1GeometryRealization? r = null;
-        try
-        {
-            // Default tolerance (0.25 device px) expressed in user space for this transform.
-            float scale = D2D1.D2D1ComputeMaximumScaleFactor(ref full);
-            float tolerance = 0.25f / Math.Max(scale, 1e-6f);
-            r = stroke is { } s
-                ? ctx1.CreateStrokedGeometryRealization(geom, tolerance, s.Width, s.Style)
-                : ctx1.CreateFilledGeometryRealization(geom, tolerance);
-        }
-        catch (SharpGenException)
-        {
-            r = null;
-        }
-        _realizations[cmd] = r;
-        return r;
-    }
+        (float Width, ID2D1StrokeStyle1 Style)? stroke) =>
+        RealizeWindowed(ctx1, cmd, geom, full, stroke); // Replayer.Realizations.cs
 
     private readonly Dictionary<PushTextClip, ID2D1Geometry?> _textOutlines = new(ReferenceEqualityComparer.Instance);
 

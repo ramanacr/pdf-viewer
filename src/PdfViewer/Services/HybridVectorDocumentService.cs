@@ -626,6 +626,29 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             new PixelRegion(x, y, width, height), nightMode, ct).ConfigureAwait(false);
     }
 
+    public async Task PreparePageRegionAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+    {
+        if (width <= 0 || height <= 0 || pixelsPerPoint <= 0 || _d2d == null || _mode == PdfEngineMode.Pdfium)
+            return;
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        var doc = _vectorDoc;
+        if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
+            return;
+        var list = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        bool strict = _mode == PdfEngineMode.Vector;
+        if (!strict && (list.ComputeFallbackAreaRatio() >= FullPageFallbackAreaThreshold || list.Commands.Count == 0 && list.HasFallback))
+            return; // PDFium draws this page
+        _securityPolicy.EnsureRenderDimensionsAllowed(width, height);
+        var request = new RenderRequest
+        {
+            PageNumber = pageNumber,
+            Dpi = pixelsPerPoint * 72.0,
+            Rotation = (PageRotation)((((rotationAngle % 360) + 360) % 360) / 90 * 90),
+        };
+        await _d2d.PrepareAsync(list, request, new PixelRegion(x, y, width, height), nightMode, ct).ConfigureAwait(false);
+    }
+
     private static (int Width, int Height) PixelSize(IPdfDisplayList list, int dpi, int rotationAngle)
     {
         int total = (((list.RotationDegrees + rotationAngle) % 360) + 360) % 360;
