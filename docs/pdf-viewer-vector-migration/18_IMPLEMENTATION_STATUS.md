@@ -131,6 +131,9 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - The output is a full rewrite: only reachable objects, no earlier revisions, and the original encryption kept.
 - `vectorpdf redact` over the 3,197-file corpus: 3,167 of 3,181 openable files clean, 0 with text left under the band, 2 malformed files refused. The viewer marks selected text, dragged areas or every search match, and applies them into a new copy.
 
+### Searchable scans
+- `Ocr/PdfTextLayerWriter` adds recognized words as invisible text (render mode 3) in a glyphless Type0 font whose ToUnicode map gives back any Unicode. Each word is placed on and stretched to its box, and follows `/Rotate`; it is written as an incremental update. The viewer recognizes only the pages without text (Windows OCR), shows progress and can be stopped, and makes the result searchable at once.
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).

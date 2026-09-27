@@ -270,6 +270,10 @@
                           Command="{Binding RecognizeTextOnPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard."><MenuItem.Icon><Path Data="{StaticResource IconOcr}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Make Scanned Pages _Searchable"
+                          Command="{Binding MakeSearchableCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Recognizes the text of every scanned page and adds it invisibly over the page, so the document can be searched, selected and copied. Run again to stop."><MenuItem.Icon><Path Data="{StaticResource IconOcr}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Read Aloud"
                           Command="{Binding ToggleReadAloudCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
