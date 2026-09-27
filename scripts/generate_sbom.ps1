@@ -33,6 +33,46 @@ $PdfiumVersion = "154.0.8021.0"
 $PdfiumTag = "chromium/8021"
 
 # ---------------------------------------------------------------------
+# 1b. Every NuGet package that ships, derived from the projects (not written by hand, so the
+#     SBOM cannot fall behind a new or updated reference). Licences come from each package's
+#     own .nuspec. A package whose licence cannot be read fails the build.
+# ---------------------------------------------------------------------
+function Get-ShippedPackages {
+    $projects = @("$RootDir\src\PdfViewer\PdfViewer.csproj", "$RootDir\src\Installer\PdfViewerInstaller.csproj")
+    $found = [ordered]@{}
+    foreach ($project in $projects) {
+        $json = (& dotnet list $project package --include-transitive --format json) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "dotnet list package failed for $project (restore first)." }
+        foreach ($p in (ConvertFrom-Json $json).projects) {
+            foreach ($f in @($p.frameworks)) {
+                foreach ($pkg in @($f.topLevelPackages) + @($f.transitivePackages)) {
+                    if ($null -eq $pkg) { continue }
+                    $key = "$($pkg.id)@$($pkg.resolvedVersion)"
+                    if (-not $found.Contains($key)) { $found[$key] = [pscustomobject]@{ Id = $pkg.id; Version = $pkg.resolvedVersion } }
+                }
+            }
+        }
+    }
+    $root = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE ".nuget\packages" }
+    foreach ($pkg in $found.Values) {
+        $nuspec = Join-Path $root ("{0}\{1}\{0}.nuspec" -f $pkg.Id.ToLowerInvariant(), $pkg.Version.ToLowerInvariant())
+        if (-not (Test-Path $nuspec)) { throw "No .nuspec for $($pkg.Id) $($pkg.Version) at $nuspec." }
+        $meta = ([xml](Get-Content -Raw $nuspec)).package.metadata
+        $license = if ($meta.license -and $meta.license.type -eq "expression") { $meta.license.'#text' } elseif ($meta.license) { "LicenseRef-" + ($meta.license.'#text' -replace '[^A-Za-z0-9.-]', '-') } else { $null }
+        if (-not $license -and $meta.licenseUrl) { $license = "LicenseRef-see-" + ($meta.licenseUrl -replace '[^A-Za-z0-9.-]', '-') }
+        if (-not $license) { throw "The licence of $($pkg.Id) $($pkg.Version) cannot be read from its .nuspec." }
+        $pkg | Add-Member License $license
+        $pkg | Add-Member Project ([string]$meta.projectUrl)
+        $pkg | Add-Member Copyright ([string]$meta.copyright)
+        $pkg | Add-Member Authors ([string]$meta.authors)
+    }
+    return @($found.Values)
+}
+
+$ShippedPackages = Get-ShippedPackages
+Write-Host "  -> $($ShippedPackages.Count) shipped NuGet package(s) found" -ForegroundColor Gray
+
+# ---------------------------------------------------------------------
 # 2. Generate CycloneDX v1.6 JSON
 # ---------------------------------------------------------------------
 $CycloneDx = [ordered]@{
@@ -126,30 +166,6 @@ $CycloneDx = [ordered]@{
                 }
             )
             purl        = "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@$Version"
-        },
-        # Managed Dependency: CommunityToolkit.Mvvm
-        [ordered]@{
-            type        = "library"
-            "bom-ref"   = "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
-            name        = "CommunityToolkit.Mvvm"
-            version     = "8.4.0"
-            description = "Official modern MVVM toolkit library for .NET with observable properties and commands"
-            scope       = "required"
-            licenses    = @(
-                [ordered]@{
-                    license = [ordered]@{
-                        id  = "MIT"
-                        url = "https://licenses.nuget.org/MIT"
-                    }
-                }
-            )
-            purl        = "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
-            externalReferences = @(
-                [ordered]@{
-                    type = "vcs"
-                    url  = "https://github.com/CommunityToolkit/dotnet"
-                }
-            )
         },
         # Native Engine: Google PDFium
         [ordered]@{
@@ -420,7 +436,6 @@ $CycloneDx = [ordered]@{
         [ordered]@{
             ref       = "PdfViewer@$Version"
             dependsOn = @(
-                "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
                 "pkg:generic/google/pdfium@$PdfiumVersion?arch=x86_64&os=windows"
             )
         },
@@ -441,6 +456,22 @@ $CycloneDx = [ordered]@{
             )
         }
     )
+}
+
+foreach ($pkg in $ShippedPackages) {
+    $purl = "pkg:nuget/$($pkg.Id)@$($pkg.Version)"
+    $component = [ordered]@{
+        type      = "library"
+        "bom-ref" = $purl
+        name      = $pkg.Id
+        version   = $pkg.Version
+        scope     = "required"
+        licenses  = @([ordered]@{ expression = $pkg.License })
+        purl      = $purl
+    }
+    if ($pkg.Project) { $component.externalReferences = @([ordered]@{ type = "website"; url = $pkg.Project }) }
+    $CycloneDx.components = @($CycloneDx.components) + $component
+    $CycloneDx.dependencies[0].dependsOn = @($CycloneDx.dependencies[0].dependsOn) + $purl
 }
 
 $CycloneDxPath = Join-Path $OutputDir "sbom.cyclonedx.json"
@@ -515,23 +546,6 @@ $Spdx = [ordered]@{
             licenseDeclared  = "MIT"
             copyrightText    = "Copyright (c) 2026 PDF Viewer Project"
             description      = "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure"
-        },
-        [ordered]@{
-            SPDXID           = "SPDXRef-Package-CommunityToolkit-Mvvm"
-            name             = "CommunityToolkit.Mvvm"
-            versionInfo      = "8.4.0"
-            downloadLocation = "https://www.nuget.org/packages/CommunityToolkit.Mvvm/8.4.0"
-            filesAnalyzed    = $false
-            licenseConcluded = "MIT"
-            licenseDeclared  = "MIT"
-            copyrightText    = "Copyright (c) .NET Foundation and Contributors"
-            externalRefs     = @(
-                [ordered]@{
-                    referenceCategory = "PACKAGE-MANAGER"
-                    referenceType     = "purl"
-                    referenceLocator  = "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
-                }
-            )
         },
         [ordered]@{
             SPDXID           = "SPDXRef-Package-Google-PDFium"
@@ -611,11 +625,6 @@ $Spdx = [ordered]@{
         [ordered]@{
             spdxElementId      = "SPDXRef-Package-PdfViewer"
             relationshipType   = "DEPENDS_ON"
-            relatedSpdxElement = "SPDXRef-Package-CommunityToolkit-Mvvm"
-        },
-        [ordered]@{
-            spdxElementId      = "SPDXRef-Package-PdfViewer"
-            relationshipType   = "DEPENDS_ON"
             relatedSpdxElement = "SPDXRef-Package-Google-PDFium"
         },
         [ordered]@{
@@ -644,6 +653,26 @@ $Spdx = [ordered]@{
             relatedSpdxElement = "SPDXRef-Package-LittleCMS"
         }
     )
+}
+
+foreach ($pkg in $ShippedPackages) {
+    $id = "SPDXRef-Package-NuGet-" + ($pkg.Id -replace '[^A-Za-z0-9.-]', '-')
+    $Spdx.packages = @($Spdx.packages) + [ordered]@{
+        SPDXID           = $id
+        name             = $pkg.Id
+        versionInfo      = $pkg.Version
+        downloadLocation = "https://www.nuget.org/packages/$($pkg.Id)/$($pkg.Version)"
+        filesAnalyzed    = $false
+        licenseConcluded = $pkg.License
+        licenseDeclared  = $pkg.License
+        copyrightText    = $(if ($pkg.Copyright) { $pkg.Copyright } else { "NOASSERTION" })
+        externalRefs     = @([ordered]@{ referenceCategory = "PACKAGE-MANAGER"; referenceType = "purl"; referenceLocator = "pkg:nuget/$($pkg.Id)@$($pkg.Version)" })
+    }
+    $Spdx.relationships = @($Spdx.relationships) + [ordered]@{
+        spdxElementId      = "SPDXRef-Package-PdfViewer"
+        relationshipType   = "DEPENDS_ON"
+        relatedSpdxElement = $id
+    }
 }
 
 $SpdxPath = Join-Path $OutputDir "sbom.spdx.json"

@@ -6,6 +6,11 @@
 #   - publish/SampleDocument.pdf  (Demo Test Document)
 # =====================================================================
 
+param(
+    # Publish and verify the payload, but build no installer (CI).
+    [switch]$DryRun
+)
+
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
@@ -123,6 +128,43 @@ the pin (and this script) to the new hash if the change is intended.
     Write-Host "   - $($component.File) -> release asset ($($component.Name), verified)" -ForegroundColor Gray
 }
 
+# ---------------------------------------------------------------------------
+# What ships. Debug symbols go to a separate release asset (crash analysis needs them; users
+# do not), and the payload must be exactly the files below: anything else is a packaging
+# mistake (a test file, a stray native library, a second copy of something) and fails the build.
+# ---------------------------------------------------------------------------
+$SymbolsZip = Join-Path $PublishDir "PdfViewer-symbols-$AppVersion.zip"
+$Symbols = Get-ChildItem -Path $AppStagingDir -Recurse -Filter *.pdb
+if ($Symbols.Count -gt 0) {
+    Compress-Archive -Path $Symbols.FullName -DestinationPath $SymbolsZip -Force
+    $Symbols | Remove-Item -Force
+    Write-Host "   - $($Symbols.Count) symbol file(s) -> $(Split-Path -Leaf $SymbolsZip)" -ForegroundColor Gray
+}
+
+$AllowedPayload = @(
+    "PdfViewer.exe",
+    "THIRD_PARTY_NOTICES.md",
+    "Fonts\CMaps\LICENSE-cmap-resources.md"
+)
+$Unexpected = Get-ChildItem -Path $AppStagingDir -Recurse -File |
+    ForEach-Object { $_.FullName.Substring($AppStagingDir.Length).TrimStart('\') } |
+    Where-Object { $_ -notlike "assets\*" -and $AllowedPayload -notcontains $_ }
+if ($Unexpected) {
+    Write-Error "The installer payload holds files that are not meant to ship:`n  $($Unexpected -join "`n  ")`nAdd them to `$AllowedPayload in scripts/build_publish.ps1 if they are intended."
+}
+foreach ($required in $AllowedPayload) {
+    if (-not (Test-Path (Join-Path $AppStagingDir $required))) {
+        Write-Error "The installer payload is missing '$required'."
+    }
+}
+Write-Host "   - payload verified: $($AllowedPayload.Count) files plus assets" -ForegroundColor Gray
+
+if ($DryRun) {
+    Write-Host "`nDry run: the payload is verified; no installer is built." -ForegroundColor Green
+    & "$ScriptDir\generate_sbom.ps1" -OutputDir "$PublishDir" -Version "$AppVersion"
+    return
+}
+
 # 4. Create Payload.zip for the installer
 Write-Host "`n[2/4] Creating installer payload archive..." -ForegroundColor Yellow
 Compress-Archive -Path "$AppStagingDir\*" -DestinationPath "$PayloadZip" -Force
@@ -185,4 +227,5 @@ Write-Host "   • Setup Installer:  $PublishDir\PdfViewerSetup.exe" -Foreground
 Write-Host "   • Standalone App:   $PublishDir\PdfViewer.exe" -ForegroundColor White
 Write-Host "   • CycloneDX SBOM:   $PublishDir\sbom.cyclonedx.json" -ForegroundColor White
 Write-Host "   • SPDX SBOM:        $PublishDir\sbom.spdx.json" -ForegroundColor White
+Write-Host "   • Debug symbols:    $SymbolsZip" -ForegroundColor White
 Write-Host "==================================================" -ForegroundColor Cyan
