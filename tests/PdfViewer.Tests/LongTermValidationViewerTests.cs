@@ -23,6 +23,7 @@ namespace PdfViewer.Tests;
 /// anyone. The revocation source is a fake built on an in-memory PKI; the HTTP source is tested
 /// against a message handler that answers from memory. Nothing here touches the network.
 /// </summary>
+[Collection(SigningSettingsCollection.Name)]
 public class LongTermValidationViewerTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "LtvViewer_" + Guid.NewGuid().ToString("N"));
