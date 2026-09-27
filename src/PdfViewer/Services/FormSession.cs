@@ -19,15 +19,17 @@ public sealed class FormSession : IDisposable
     private readonly IPdfDocumentService _service;
     private PdfVectorDocument _document;
     private byte[] _bytes;
+    private readonly string? _password;
 
     public PdfAcroForm Form { get; private set; }
     /// <summary>Why fields are shown but cannot be changed (null when they can).</summary>
     public string? ReadOnlyReason { get; }
     public int Revisions { get; private set; }
 
-    private FormSession(IPdfDocumentService service, PdfVectorDocument document, byte[] bytes, PdfAcroForm form, string? readOnlyReason)
+    private FormSession(IPdfDocumentService service, PdfVectorDocument document, byte[] bytes, PdfAcroForm form, string? readOnlyReason, string? password)
     {
         _service = service;
+        _password = password;
         _document = document;
         _bytes = bytes;
         Form = form;
@@ -54,11 +56,10 @@ public sealed class FormSession : IDisposable
             doc.Dispose();
             return null;
         }
-        string? reason = doc.IsEncrypted ? "Filling forms in encrypted documents is not supported yet."
-                       : doc.WasRepaired ? "This file's structure is damaged; its form cannot be filled until it is repaired."
+        string? reason = doc.WasRepaired ? "This file's structure is damaged; its form cannot be filled until it is repaired."
                        : service.IsDecryptedCopy ? "This document is encrypted for specific recipients; its form cannot be filled here."
                        : null;
-        return new FormSession(service, doc, bytes, form, reason);
+        return new FormSession(service, doc, bytes, form, reason, password);
     }
 
     /// <summary>Fields the page layer shows: everything fillable, and signature fields still waiting to be signed.</summary>
@@ -97,7 +98,7 @@ public sealed class FormSession : IDisposable
             return;
         byte[] next = PdfFormFiller.Apply(_document, _bytes, changes);
         await _service.ReloadFromBytesAsync(next, ct);
-        var doc = await PdfVectorDocument.OpenAsync(next, _service.CurrentFilePath, cancellationToken: ct);
+        var doc = await PdfVectorDocument.OpenAsync(next, _service.CurrentFilePath, cancellationToken: ct, password: _password);
         var form = PdfAcroForm.Read(doc) ?? throw new InvalidOperationException("The filled document lost its form.");
         _document.Dispose();
         _document = doc;

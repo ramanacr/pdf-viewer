@@ -10,7 +10,10 @@ public static class FormPdfFixture
     /// a comb field, a check box with Yes/Off appearances, a two-button radio group, a combo box
     /// and a list box.
     /// </summary>
-    public static byte[] Build()
+    public static byte[] Build() => Build(null);
+
+    /// <summary>The same form, encrypted.</summary>
+    internal static byte[] Build(PdfTestEncryption? encryption)
     {
         var b = new VectorPdfBuilder();
         int helv = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
@@ -34,7 +37,7 @@ public static class FormPdfFixture
         b.Add($"<< /Type /Annot /Subtype /Widget /FT /Ch /T (fruit) /Opt [(Apple) (Banana) (Cherry)] /Rect [20 110 180 170] /P {page} 0 R /DA (/Helv 11 Tf 0 g) >>");
         b.Add($"<< /Fields [{person} 0 R {notes} 0 R {zip} 0 R {agree} 0 R {colour} 0 R {city} 0 R {fruit} 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv {helv} 0 R /ZaDb {zadb} 0 R >> >> >>");
         b.WithCatalog($"/AcroForm {acro} 0 R");
-        var pdf = b.Build();
+        var pdf = b.Build(encryption);
         // The page's /Annots is patched once the widget numbers are known, and the cross-reference table rebuilt.
         string annots = $"{nameW} 0 R {notes} 0 R {zip} 0 R {agree} 0 R {red} 0 R {blue} 0 R {city} 0 R {fruit} 0 R";
         return Rebuild(pdf, annots);

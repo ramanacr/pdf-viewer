@@ -118,8 +118,6 @@ public partial class MainViewModel
         try
         {
             using var doc = await PdfVectorDocument.OpenAsync(current, _docService.CurrentFilePath, password: _openPassword);
-            if (doc.IsEncrypted)
-                throw new NotSupportedException("Signing encrypted documents is not supported yet.");
             var request = new PdfSignatureRequest
             {
                 FieldName = placement.FieldName,

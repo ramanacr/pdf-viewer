@@ -23,8 +23,7 @@ public static class PdfIncrementalWriter
     /// </summary>
     public static byte[] Append(byte[] original, PdfVectorDocument document, IReadOnlyDictionary<int, PdfObject> objects)
     {
-        if (document.IsEncrypted)
-            throw new NotSupportedException("Updating an encrypted document is not supported yet.");
+        var security = document.Security; // an encrypted document's update is encrypted with its key
         var trailer = document.XrefTable.Trailer ?? throw new InvalidOperationException("The document has no trailer.");
         long prev = FindStartXref(original);
         if (prev < 0 || document.WasRepaired)
@@ -45,13 +44,13 @@ public static class PdfIncrementalWriter
             int generation = document.XrefTable.Entries.TryGetValue(number, out var e) && !e.IsCompressed ? e.GenerationNumber : 0;
             offsets[number] = (ms.Position, generation);
             W($"{number} {generation} obj\n");
-            PdfObjectWriter.Write(ms, obj);
+            PdfObjectWriter.Write(ms, security != null ? security.EncryptObject(obj, number, generation) : obj);
             W("\nendobj\n");
             maxNumber = Math.Max(maxNumber, number);
         }
 
         var trailerEntries = new Dictionary<string, PdfObject>();
-        foreach (var key in new[] { "Root", "Info", "ID" })
+        foreach (var key in new[] { "Root", "Info", "ID", "Encrypt" })
             if (trailer[key] is { } v) trailerEntries[key] = v;
         trailerEntries["Prev"] = new PdfInteger(prev);
 
