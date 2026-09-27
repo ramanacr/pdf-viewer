@@ -113,6 +113,12 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 ### Vertical writing
 - Identity-V and `/WMode 1` CMaps (named or embedded): each glyph's position vector (`/W2`, `/DW2`) is placed on the current point, the point advances by W1y (TJ adjustments apply vertically), glyph Y offsets reach both backends, and selection boxes follow the column.
 
+### Interactive forms and digital signatures
+- **Forms** (`Forms/`): AcroForm fields read with inheritance; appearances regenerated for text, comb, multi-line, password, combo and list fields, and `/AS` for buttons. Each commit is an incremental revision (`Document/PdfIncrementalWriter`, classic or xref-stream sections) that both engines reload. PDFium draws widgets again through a form-fill environment and `FPDF_FFLDraw`. The viewer puts native, accessible editors over each widget.
+- **Signing** (`Signatures/PdfSigner`, `PdfCmsSigner`): PAdES (`ETSI.CAdES.detached`) as an incremental update; a new or existing field with a visible appearance; certification (DocMDP 1-3); an optional RFC 3161 timestamp through a client the caller supplies (the only network request, opt-in, sending only a hash).
+- **Validation** (`Signatures/PdfSignatureValidator`), with no network: integrity over the byte ranges; the chain at the signing (or timestamp) time; timestamps; later revisions classified (signatures, form fields, annotations, metadata or other) and weighed against the certification level. The viewer shows a verdict banner and a Signatures panel.
+- Saving annotations on a signed document is incremental, so its signatures stay valid.
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
@@ -196,7 +202,8 @@ Not started by design (M9/M10). PDFium still ships and is required.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
-7. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
+7. **Forms and signatures remainder:** filling and signing encrypted documents (the incremental writer must encrypt appended objects); calculate, format and validate scripts; long-term validation (PAdES-B-LT: DSS with certificates, OCSP and CRLs) and opt-in online revocation checks.
+7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Package/memory baselines** (A1), SBOM/package test asserting what ships (K7).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
 
