@@ -187,6 +187,16 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - Delete removes the selection, Add Text and Add Image place new content, and Ctrl+Z / Ctrl+Y undo and redo;
   - edits are in-memory revisions saved incrementally, and editing a signed document is confirmed first.
 
+### Headers, footers, watermarks, backgrounds and Bates numbers
+- `Editing/PdfPageMarks` adds, updates and removes them, as Acrobat's Edit PDF tools do:
+  - headers and footers in six positions, with page number, page count, date, file name and Bates tokens;
+  - watermarks of text, a picture or a page of another PDF, with opacity, rotation, alignment and scale, drawn on top of the page or behind it;
+  - backgrounds of a colour, a picture or a PDF page;
+  - page ranges (all, odd, even, from–to).
+- Marks read upright on rotated and cropped pages.
+- Each mark is a pagination artifact in its own marked content, and each design is stored once as a form XObject with Acrobat's PieceInfo. Update and Remove find our marks and Acrobat's own and leave everything else as it was. The document's own content streams are never rewritten unless they hold an Acrobat mark, and then only that sequence goes.
+- The viewer's Edit > Page Marks dialogs preview the current page, and the result is a new revision with undo.
+
 ### PDF/A
 - **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
   - file syntax, including the raw header, trailers, cross-reference sections, streams, strings and names;

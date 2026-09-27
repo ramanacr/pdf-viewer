@@ -1,0 +1,97 @@
+<Window x:Class="PdfViewer.Views.Dialogs.HeaderFooterDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="clr-namespace:PdfViewer.Views.Dialogs"
+        Title="{Binding Title}"
+        Width="1000" Height="680" MinWidth="820" MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource SurfaceBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        ShowInTaskbar="False">
+    <Grid Margin="18">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="20" />
+            <ColumnDefinition Width="360" />
+        </Grid.ColumnDefinitions>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Header &amp; Footer" FontSize="16" FontWeight="Bold" />
+                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,12"
+                           Text="Text for the top and bottom of each page. &lt;&lt;1&gt;&gt; is the page number, &lt;&lt;n&gt;&gt; the page count, &lt;&lt;Date&gt;&gt; today's date and &lt;&lt;File&gt;&gt; the file name." />
+
+                <TextBlock Text="Font" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox Width="200" ItemsSource="{Binding FontFamilies}" Text="{Binding FontFamily}" IsEditable="True" AutomationProperties.Name="Font" />
+                    <TextBlock Text="Size" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <TextBox Width="48" Text="{Binding FontSize, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Font size" />
+                    <TextBlock Text="Colour" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <TextBox Width="80" Text="{Binding TextColor, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Text colour"
+                             ToolTip="A colour as #RRGGBB, or a name such as Navy." />
+                </StackPanel>
+
+                <TextBlock Text="Margins (points)" FontWeight="SemiBold" Margin="0,12,0,4" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Top" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox Width="48" Text="{Binding TopMargin, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Top margin" />
+                    <TextBlock Text="Bottom" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <TextBox Width="48" Text="{Binding BottomMargin, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Bottom margin" />
+                    <TextBlock Text="Left" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <TextBox Width="48" Text="{Binding LeftMargin, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Left margin" />
+                    <TextBlock Text="Right" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <TextBox Width="48" Text="{Binding RightMargin, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Right margin" />
+                </StackPanel>
+
+                <Grid Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Left header" Margin="0,0,0,2" />
+                    <TextBlock Grid.Column="2" Text="Centre header" Margin="0,0,0,2" />
+                    <TextBlock Grid.Column="4" Text="Right header" Margin="0,0,0,2" />
+                    <TextBox Grid.Row="1" Height="56" AcceptsReturn="True" TextWrapping="Wrap" Tag="TopLeft" GotFocus="Box_GotFocus"
+                             Text="{Binding TopLeft, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Left header text" />
+                    <TextBox Grid.Row="1" Grid.Column="2" Height="56" AcceptsReturn="True" TextWrapping="Wrap" Tag="TopCenter" GotFocus="Box_GotFocus"
+                             Text="{Binding TopCenter, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Centre header text" />
+                    <TextBox Grid.Row="1" Grid.Column="4" Height="56" AcceptsReturn="True" TextWrapping="Wrap" Tag="TopRight" GotFocus="Box_GotFocus"
+                             Text="{Binding TopRight, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Right header text" />
+                    <TextBlock Grid.Row="2" Text="Left footer" Margin="0,10,0,2" />
+                    <TextBlock Grid.Row="2" Grid.Column="2" Text="Centre footer" Margin="0,10,0,2" />
+                    <TextBlock Grid.Row="2" Grid.Column="4" Text="Right footer" Margin="0,10,0,2" />
+                    <TextBox Grid.Row="3" Height="56" AcceptsReturn="True" TextWrapping="Wrap" Tag="BottomLeft" GotFocus="Box_GotFocus"
+                             Text="{Binding BottomLeft, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Left footer text" />
+                    <TextBox Grid.Row="3" Grid.Column="2" Height="56" AcceptsReturn="True" TextWrapping="Wrap" Tag="BottomCenter" GotFocus="Box_GotFocus"
+                             Text="{Binding BottomCenter, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Centre footer text" />
+                    <TextBox Grid.Row="3" Grid.Column="4" Height="56" AcceptsReturn="True" TextWrapping="Wrap" Tag="BottomRight" GotFocus="Box_GotFocus"
+                             Text="{Binding BottomRight, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Right footer text" />
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button Content="Insert _Page Number" Padding="10,3" Command="{Binding InsertPageNumberCommand}" Margin="0,0,8,0"
+                            ToolTip="Adds &quot;Page &lt;&lt;1&gt;&gt; of &lt;&lt;n&gt;&gt;&quot; to the box last clicked." />
+                    <Button Content="Insert _Date" Padding="10,3" Command="{Binding InsertDateCommand}" Margin="0,0,8,0" />
+                    <Button Content="Insert _File Name" Padding="10,3" Command="{Binding InsertFileNameCommand}" />
+                </StackPanel>
+
+                <TextBlock Text="Page numbers and dates" FontWeight="SemiBold" Margin="0,14,0,4" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="First page number" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox Width="48" Text="{Binding StartPageNumber, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="First page number" />
+                    <TextBlock Text="Date format" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <ComboBox Width="140" IsEditable="True" ItemsSource="{Binding DateFormats}" Text="{Binding DateFormat}" AutomationProperties.Name="Date format" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+        <d:PageMarkCommonPanel Grid.Column="2" />
+    </Grid>
+</Window>
