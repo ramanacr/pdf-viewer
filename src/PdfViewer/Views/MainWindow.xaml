@@ -205,6 +205,8 @@
                 <Separator />
                 <MenuItem Header="_Read Mode" Command="{Binding ShowReadModeCommand}" InputGestureText="Ctrl+4" IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="The text reflowed for reading, and for screen readers: headings, paragraphs, lists and figure descriptions." />
+                <MenuItem Header="_Highlight Form Fields" IsCheckable="True" IsChecked="{Binding HighlightFormFields}" IsEnabled="{Binding HasForm}"
+                          ToolTip="Tints the document's form fields and outlines the required ones in red." />
                 <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11"><MenuItem.Icon><Path Data="{StaticResource IconFullScreen}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Continuous Scrolling" Command="{Binding SetContinuousViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
@@ -1376,6 +1378,7 @@
                                                     </ContextMenu>
                                                 </Canvas.ContextMenu>
                                             </Canvas>
+                                            <views:FormFieldsLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 7. form fields: real editors over the page -->
                                             </Grid>
                                         </Grid>
                                     </Border>
@@ -1700,6 +1703,7 @@
                                         </ContextMenu>
                                     </Canvas.ContextMenu>
                                 </Canvas>
+                                <views:FormFieldsLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 </Grid>
                             </Grid>
                         </Border>

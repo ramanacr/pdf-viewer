@@ -41,6 +41,8 @@ public class PdfiumDocumentService : IPdfDocumentService
     }
 
     private SafeDocumentHandle? _document;
+    /// <summary>Draws form fields on PDFium renders (FPDF_ANNOT leaves widgets out); null without a form handle.</summary>
+    private PdfiumFormEnvironment? _formEnvironment;
     // The process-wide PDFium lock, not a private one. PDFium's font/codec/render-device
     // state is global, so serializing only this service still raced the PdfEngine.Pdfium
     // adapters running against the same native library.
@@ -109,6 +111,17 @@ public class PdfiumDocumentService : IPdfDocumentService
     /// Opens a document from memory under <paramref name="filePath"/> (shown and used for saving
     /// defaults). Used for the decrypted copy of a certificate-encrypted file.
     /// </summary>
+    public byte[]? CurrentBytes
+    {
+        get { lock (_docLock) return _fileBytes; }
+    }
+
+    public async Task ReloadFromBytesAsync(byte[] bytes, CancellationToken ct = default)
+    {
+        string path = CurrentFilePath;
+        await OpenDocumentFromBytesAsync(bytes, path, ct).ConfigureAwait(false);
+    }
+
     public async Task<DocumentMetadata> OpenDocumentFromBytesAsync(byte[] bytes, string filePath, CancellationToken ct = default)
     {
         return await Task.Run(() =>
@@ -151,12 +164,23 @@ public class PdfiumDocumentService : IPdfDocumentService
             }
 
             _document = doc;
+            _formEnvironment = PdfiumFormEnvironment.Create(doc);
             _nativeBuffer = nativeBuf;
             _fileBytes = bytes;
             _currentFilePath = filePath;
 
             return ExtractMetadata(filePath, doc);
         }
+    }
+
+    /// <summary>Form fields over a page PDFium just rendered (fpdf_formfill.h: FPDF_FFLDraw after the page).</summary>
+    private void DrawFormFields(IntPtr bitmap, SafePageHandle page, int x, int y, int w, int h, int rotation, int flags)
+    {
+        var env = _formEnvironment;
+        if (env == null) return;
+        env.PageLoaded(page);
+        try { env.DrawFields(bitmap, page, x, y, w, h, rotation, flags); }
+        finally { env.PageClosing(page); }
     }
 
     /// <summary>Permissions from PDFium: full when unencrypted or opened with the owner password.</summary>
@@ -184,6 +208,9 @@ public class PdfiumDocumentService : IPdfDocumentService
     {
         lock (_docLock)
         {
+            // The form environment must be torn down before its document.
+            _formEnvironment?.Dispose();
+            _formEnvironment = null;
             if (_document != null)
             {
                 if (!_document.IsClosed && !_document.IsInvalid)
@@ -395,6 +422,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                 // Render page content & annotations
                 int renderFlags = PdfiumNativeBridge.FPDF_ANNOT | PdfiumNativeBridge.FPDF_LCD_TEXT;
                 PdfiumNativeBridge.FPDF_RenderPageBitmap(bitmap, page, 0, 0, widthPx, heightPx, pdfRotation, renderFlags);
+                DrawFormFields(bitmap, page, 0, 0, widthPx, heightPx, pdfRotation, renderFlags);
 
                 IntPtr buffer = PdfiumNativeBridge.FPDFBitmap_GetBuffer(bitmap);
                 int stride = PdfiumNativeBridge.FPDFBitmap_GetStride(bitmap);
@@ -461,6 +489,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                 PdfiumNativeBridge.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFFFFFF);
                 int renderFlags = PdfiumNativeBridge.FPDF_ANNOT | PdfiumNativeBridge.FPDF_LCD_TEXT;
                 PdfiumNativeBridge.FPDF_RenderPageBitmap(bitmap, page, -x, -y, fullW, fullH, pdfRotation, renderFlags);
+                DrawFormFields(bitmap, page, -x, -y, fullW, fullH, pdfRotation, renderFlags);
                 IntPtr buffer = PdfiumNativeBridge.FPDFBitmap_GetBuffer(bitmap);
                 int stride = PdfiumNativeBridge.FPDFBitmap_GetStride(bitmap);
                 var result = BitmapSource.Create(width, height, dpi, dpi, PixelFormats.Bgra32, null, buffer, stride * height, stride);
