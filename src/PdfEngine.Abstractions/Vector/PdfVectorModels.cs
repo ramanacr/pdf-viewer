@@ -204,7 +204,8 @@ public sealed record PdfFontFace(
     bool IsSymbolic = false,
     double Ascent = 0.8,
     double Descent = -0.2,
-    PdfMatrix? GlyphMatrix = null);
+    PdfMatrix? GlyphMatrix = null,
+    bool IsScript = false);
 
 /// <summary>
 /// Glyph run preserving exact PDF positioning, font identity, and text matrix.

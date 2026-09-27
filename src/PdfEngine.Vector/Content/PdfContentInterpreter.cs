@@ -101,7 +101,8 @@ public sealed class PdfContentInterpreter
                 f.IsSymbolic,
                 NormalizeEm(f.Ascent, 0.8),
                 NormalizeEm(f.Descent, -0.2),
-                program?.GlyphMatrix);
+                program?.GlyphMatrix,
+                (f.Flags & (1 << 3)) != 0);
             return new PreparedFace(face, program);
         });
     }

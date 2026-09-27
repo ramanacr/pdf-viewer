@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Editing;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.DCommon;
@@ -1262,20 +1263,23 @@ internal sealed class Replayer : IDisposable
         }
 
         // Not embedded: a system substitute. Every glyph of the run must be found in one face, so
-        // the chain is tried in order — the metric-compatible family (Symbol by its symbol code
-        // first), then faces that cover the text's Unicode — and the first that has them all wins.
-        // Symbol text re-encoded through WinAnsi (±, •, °) and ZapfDingbats (no Windows font of that
-        // name) used to go to PDFium whole.
-        var (family, bold, italic, isSymbol) = SubstituteFamily(face, run.FontFamilyName ?? run.FontResourceName);
-        var chain = new List<(string Family, bool Bold, bool Italic, bool SymbolCodes)>();
-        if (family != null) chain.Add((family, bold, italic, isSymbol));
-        if (isSymbol) chain.Add((family!, bold, italic, false));
+        // the chain is tried in order — the installed font of that name or design in the style asked
+        // for (SystemFontCatalog.Match, shared with editing and PDF/A: Verdana is Verdana, Palatino
+        // is Palatino Linotype), the class family (Symbol by its symbol code first), then faces that
+        // cover the text's Unicode — and the first that has them all wins. Glyphs stay where /Widths
+        // put them. Symbol text re-encoded through WinAnsi (±, •, °) and ZapfDingbats (no Windows
+        // font of that name) used to go to PDFium whole.
+        var (installed, family, bold, italic, isSymbol) = SubstituteFamily(face, run.FontFamilyName ?? run.FontResourceName);
+        var chain = new List<(SystemFontFace? Installed, string Family, bool Bold, bool Italic, bool SymbolCodes)>();
+        if (installed != null) chain.Add((installed, installed.Family, bold, italic, false));
+        if (family != null) chain.Add((null, family, bold, italic, isSymbol));
+        if (isSymbol) chain.Add((null, family!, bold, italic, false));
         foreach (var extra in UnicodeFallbackFamilies)
-            if (!chain.Exists(c => c.Family == extra && !c.SymbolCodes)) chain.Add((extra, bold, italic, false));
+            if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
-        foreach (var (fam, b, it, symbolCodes) in chain)
+        foreach (var (inst, fam, b, it, symbolCodes) in chain)
         {
-            var candidate = _res.GetSystemFace(fam, b, it);
+            var candidate = inst != null ? _res.GetInstalledFace(inst, b, it) : _res.GetSystemFace(fam, b, it);
             if (candidate == null)
                 continue;
             var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign);
@@ -1314,7 +1318,12 @@ internal sealed class Replayer : IDisposable
         return (indices.ToArray(), offsets.ToArray());
     }
 
-    private static (string? Family, bool Bold, bool Italic, bool Symbol) SubstituteFamily(PdfFontFace? face, string? fontName)
+    /// <summary>
+    /// Substitutes for a non-embedded font: the installed face <see cref="SystemFontCatalog.Match"/>
+    /// chooses (null for Symbol and Dingbats, which go by their own codes), and the class family
+    /// tried after it.
+    /// </summary>
+    internal static (SystemFontFace? Installed, string? Family, bool Bold, bool Italic, bool Symbol) SubstituteFamily(PdfFontFace? face, string? fontName)
     {
         string name = face?.PostScriptName ?? fontName ?? string.Empty;
         int plus = name.IndexOf('+');
@@ -1322,14 +1331,15 @@ internal sealed class Replayer : IDisposable
         bool bold = face?.IsBold == true || name.Contains("Bold", StringComparison.OrdinalIgnoreCase) || name.Contains("Black", StringComparison.OrdinalIgnoreCase);
         bool italic = face?.IsItalic == true || name.Contains("Italic", StringComparison.OrdinalIgnoreCase) || name.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
         if (name.Contains("Dingbat", StringComparison.OrdinalIgnoreCase))
-            return ("Segoe UI Symbol", false, false, false); // the Dingbats block, by the encoding's Unicode
+            return (null, "Segoe UI Symbol", false, false, false); // the Dingbats block, by the encoding's Unicode
         if (name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase))
-            return ("Symbol", false, false, true);
+            return (null, "Symbol", false, false, true);
+        var installed = SystemFontCatalog.Installed.Match(name, bold, italic, face?.IsSerif == true, face?.IsFixedPitch == true, face?.IsScript == true);
         if (face?.IsFixedPitch == true || name.Contains("Courier", StringComparison.OrdinalIgnoreCase) || name.Contains("Mono", StringComparison.OrdinalIgnoreCase))
-            return ("Courier New", bold, italic, false);
+            return (installed, "Courier New", bold, italic, false);
         if (face?.IsSerif == true || name.Contains("Times", StringComparison.OrdinalIgnoreCase) || (name.Contains("Serif", StringComparison.OrdinalIgnoreCase) && !name.Contains("Sans", StringComparison.OrdinalIgnoreCase)))
-            return ("Times New Roman", bold, italic, false);
-        return ("Arial", bold, italic, false); // metric-compatible with Helvetica
+            return (installed, "Times New Roman", bold, italic, false);
+        return (installed, "Arial", bold, italic, false); // metric-compatible with Helvetica
     }
 
     private void DrawText(ID2D1DeviceContext ctx, DrawGlyphRun cmd, Matrix3x2 ctm, Matrix3x2 full)
