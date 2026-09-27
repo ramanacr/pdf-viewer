@@ -48,6 +48,12 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 ### Windows backend (`PdfEngine.Vector.Windows`)
 - `WpfDisplayListCompiler` → frozen, resolution-independent `DrawingGroup`; `WindowsVectorRenderer` rasterizes it and **composites fallback regions last** from an `IPdfFallbackProvider` (hybrid) or outlines them (strict).
 - **Glyph runs from the embedded TrueType/OpenType program by glyph ID** (ADR-006). Without a loadable program: a metric-compatible system substitute placed at the PDF-computed positions; if the substitute lacks a glyph, or the program is bare Type1/CFF, the run becomes a **backend fallback region** instead of `.notdef` boxes.
+- **Fonts that are not embedded** are drawn with the installed font chosen by `SystemFontCatalog.Match`, the one routine editing, PDF/A conversion, annotations and both renderers share:
+  1. the exact PostScript name, if its weight and slant fit;
+  2. the family name as written, then without MT/PSMT/PS, then without the style words written into it (weight from Thin to Black, Italic/Oblique, Narrow/Condensed);
+  3. aliases for PostScript and Adobe families (Helvetica to Arial, Palatino to Palatino Linotype, AvantGarde to Century Gothic, and so on), limited to the metric-compatible regular and bold weights;
+  4. the class of font: fixed pitch, script, serif, else sans. A name that plainly says sans overrides a wrong serif flag.
+  - Over the 284 GovDocs files, 21 render closer to PDFium and 2 differ more: one is image noise, and one is Optima, which PDFium draws as a serif. Substitute glyphs are not yet stretched to the document's widths.
 - Correct image orientation, `/Rotate` + viewer rotation, shading extend bands and radial clip, hairline and dash handling in page units, byte-bounded image cache, one long-lived STA render thread, `AnalyzeAsync` and `BuildPageDrawingAsync` for hosts.
 
 ### Composition root (`PdfViewer`)
