@@ -145,6 +145,17 @@ public interface IPdfDocumentService : IDisposable
         throw new NotSupportedException("This document service cannot reload from memory.");
 
     /// <summary>
+    /// The page's content as headings, paragraphs, list items and figures in reading order, for
+    /// screen readers and read mode: from the document's tags when it is tagged, else inferred
+    /// from the text layout.
+    /// </summary>
+    async Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default)
+    {
+        var layout = await ExtractPageTextLayoutAsync(pageNumber, ct).ConfigureAwait(false);
+        return PdfViewer.Text.PageAccessibleContent.FromLayout(pageNumber, layout);
+    }
+
+    /// <summary>
     /// The page's text character by character, in reading order, for word-processor selection.
     /// The default builds it from the word segments (a space between words, a break between lines).
     /// </summary>

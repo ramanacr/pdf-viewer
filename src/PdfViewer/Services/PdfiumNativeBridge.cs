@@ -475,6 +475,50 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFText_GetLooseCharBox(SafeTextPageHandle text_page, int index, out FS_RECTF rect);
 
+    // ---- tagged PDF structure (fpdf_structtree.h) and marked content
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDF_StructTree_GetForPage(SafePageHandle page);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void FPDF_StructTree_Close(IntPtr structTree);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_StructTree_CountChildren(IntPtr structTree);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDF_StructTree_GetChildAtIndex(IntPtr structTree, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_StructElement_CountChildren(IntPtr element);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDF_StructElement_GetChildAtIndex(IntPtr element, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDF_StructElement_GetType(IntPtr element, byte[]? buffer, uint buflen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDF_StructElement_GetAltText(IntPtr element, byte[]? buffer, uint buflen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDF_StructElement_GetActualText(IntPtr element, byte[]? buffer, uint buflen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint FPDF_StructElement_GetLang(IntPtr element, byte[]? buffer, uint buflen);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_StructElement_GetMarkedContentIdCount(IntPtr element);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_StructElement_GetMarkedContentIdAtIndex(IntPtr element, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr FPDFText_GetTextObject(SafeTextPageHandle textPage, int index);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFPageObj_GetMarkedContentID(IntPtr pageObject);
+
     /// <summary>1 when PDFium inserted the character (a space or line break the content lacks).</summary>
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFText_IsGenerated(SafeTextPageHandle text_page, int index);
