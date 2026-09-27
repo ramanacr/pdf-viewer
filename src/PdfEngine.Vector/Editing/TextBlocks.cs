@@ -203,6 +203,43 @@ internal static class TextBlocks
         while (text.Length > 0 && text[^1] == ' ') { text.Length--; line.CharGlyph.RemoveAt(line.CharGlyph.Count - 1); }
         while (text.Length > 0 && text[0] == ' ') { text.Remove(0, 1); line.CharGlyph.RemoveAt(0); }
         line.Text = text.ToString();
+        ToReadingOrder(line);
+    }
+
+    /// <summary>
+    /// A line with right-to-left text is read from the page in drawing order: puts its text in
+    /// reading order (the bidirectional reordering undone), glyph by glyph, so ligatures keep
+    /// their characters' order and mirrored brackets read as typed.
+    /// </summary>
+    private static void ToReadingOrder(TextLine line)
+    {
+        string visual = line.Text;
+        if (!visual.Any(c => c is >= '\u0590' and <= '\u08FF' or >= '\uFB1D' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF')) return;
+        // Mostly right-to-left letters: a right-to-left line.
+        int rtl = visual.Count(c => c is >= '\u0590' and <= '\u08FF' or >= '\uFB1D' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF');
+        int ltr = visual.Count(c => char.IsLetter(c) && c < '\u0590');
+        var levels = Bidi.Levels(visual, rtl >= ltr ? 1 : 0);
+        // Units: the characters of one glyph stay together, in their own order.
+        var units = new List<(int Start, int Length, int Level)>();
+        for (int i = 0; i < visual.Length;)
+        {
+            int e = i + 1;
+            while (e < visual.Length && line.CharGlyph[e] >= 0 && line.CharGlyph[e] == line.CharGlyph[i]) e++;
+            units.Add((i, e - i, levels[i]));
+            i = e;
+        }
+        var text = new StringBuilder(visual.Length);
+        var map = new List<int>(visual.Length);
+        foreach (var (start, length, level) in Bidi.Reorder(units, u => u.Level))
+            for (int k = start; k < start + length; k++)
+            {
+                char c = visual[k];
+                if ((level & 1) != 0 && Bidi.Mirror(c) is int m) c = (char)m;
+                text.Append(c);
+                map.Add(line.CharGlyph[k]);
+            }
+        line.Text = text.ToString();
+        line.CharGlyph = map;
     }
 
     private static List<TextBlock> Group(List<TextLine> lines)
@@ -344,14 +381,16 @@ internal static class TextBlocks
         block.Bounds = boxes.Aggregate(Union);
     }
 
-    /// <summary>The width of a line's first <paramref name="chars"/> characters.</summary>
+    /// <summary>The width of a line's first <paramref name="chars"/> characters (in reading order, so right to left too).</summary>
     private static double WidthOf(TextLine line, int chars)
     {
         if (chars <= 0 || line.CharGlyph.Count == 0) return 0;
-        int last = line.CharGlyph.Take(chars).Where(g => g >= 0).DefaultIfEmpty(0).Max();
+        var glyphs = line.CharGlyph.Take(chars).Where(g => g >= 0).Distinct().ToList();
+        if (glyphs.Count == 0) return 0;
         var o = line.Glyphs[0].Origin;
-        var g = line.Glyphs[last];
-        return Dot(Sub(g.Origin, o), line.U) + UserAdvance(g);
+        double start = glyphs.Min(i => Dot(Sub(line.Glyphs[i].Origin, o), line.U));
+        double end = glyphs.Max(i => Dot(Sub(line.Glyphs[i].Origin, o), line.U) + UserAdvance(line.Glyphs[i]));
+        return end - start;
     }
 
     internal static PdfRect Union(PdfRect a, PdfRect b)

@@ -254,6 +254,23 @@ public sealed class TrueTypeFontFile
 
     public double ToThousandths(int units) => units * 1000.0 / UnitsPerEm;
 
+    private OpenTypeSubstitution? _substitution;
+    private bool _substitutionRead;
+
+    /// <summary>The font's glyph substitutions (GSUB), or null when it has none.</summary>
+    internal OpenTypeSubstitution? Substitution
+    {
+        get
+        {
+            if (!_substitutionRead)
+            {
+                _substitution = OpenTypeSubstitution.Read(_tables);
+                _substitutionRead = true;
+            }
+            return _substitution;
+        }
+    }
+
     private OpenTypeKerning? _kerning;
     private bool _kerningRead;
 
