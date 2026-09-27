@@ -200,6 +200,32 @@ public class FontSubstitutionTests
         Assert.InRange(iis.Max(), 20 + 60 + 5, 20 + 60 + 15);
     }
 
+    /// <summary>
+    /// A Symbol font re-encoded with codes of its own (as govdocs1 001302.pdf has it) is drawn with
+    /// the installed Symbol font by what each glyph is, including Adobe's serif registered sign,
+    /// instead of going to PDFium.
+    /// </summary>
+    [Fact]
+    public async Task Direct2D_ReencodedSymbolFont_IsDrawnByGlyphName()
+    {
+        var b = new VectorPdfBuilder();
+        int font = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Symbol /Encoding << /Type /Encoding /Differences [1 /registerserif /degree /plusminus /copyrightserif /summation] >> >>");
+        b.AddPage("BT /F1 30 Tf 20 100 Td <0102030405> Tj ET", $"<< /Font << /F1 {font} 0 R >> >>");
+        byte[] pdf = b.Build();
+
+        using var renderer = new Direct2DVectorRenderer();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        Assert.Empty(await renderer.AnalyzeAsync(list)); // drawn by the vector path
+        using var page = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = 144 });
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(pdf);
+        using var pdfium = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = 1, Dpi = 144 });
+        var (mean, bad) = DifferentialRenderingTests.Compare(page, pdfium);
+        _output.WriteLine($"vs PDFium {mean:F2} ({bad:P2})");
+        Assert.True(mean < 2 && bad < 0.02, $"vs PDFium mean {mean:F2}, {bad:P2} off");
+    }
+
     private static bool Is(SystemFontFace face, string family) =>
         string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase) || string.Equals(face.LegacyFamily, family, StringComparison.OrdinalIgnoreCase);
 }

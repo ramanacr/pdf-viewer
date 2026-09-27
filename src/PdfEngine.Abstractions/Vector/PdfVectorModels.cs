@@ -297,7 +297,34 @@ public sealed record PdfDecodedImage(
     // (8-bit, interleaved in PDF order: gray / R G B / C M Y K, Adobe inversion already undone)
     // and passes (samples, components, width, height); the core returns BGRA through the colour
     // space. Null: the decoded pixels are the colours.
-    public long ByteSize => Data.Length + (Alpha?.Length ?? 0);
+    public long ByteSize => Data.Length + (Alpha?.Length ?? 0) + (JpegMask?.Data.Length ?? 0);
+
+    /// <summary>A soft mask the core cannot decode (a JPEG): the backend decodes it and applies it as alpha.</summary>
+    public PdfJpegMask? JpegMask { get; init; }
+}
+
+/// <summary>
+/// A JPEG-compressed soft mask (/SMask with /DCTDecode): its gray samples are alpha. Backends decode
+/// <see cref="Data"/> with their JPEG codec and pass the pixels to <see cref="ToAlpha"/>.
+/// </summary>
+/// <param name="Invert">/Decode [1 0]: sample 0 is opaque.</param>
+public sealed record PdfJpegMask(ReadOnlyMemory<byte> Data, int Width, int Height, bool Invert)
+{
+    /// <summary>The alpha plane (Width × Height) from the decoded mask, as BGRA or gray pixels.</summary>
+    public byte[] ToAlpha(ReadOnlySpan<byte> pixels, int bytesPerPixel, int stride)
+    {
+        var alpha = new byte[Width * Height];
+        for (int y = 0; y < Height; y++)
+            for (int x = 0; x < Width; x++)
+            {
+                int p = y * stride + x * bytesPerPixel;
+                if (p >= pixels.Length) continue;
+                // Gray, or the green of a BGRA pixel (a gray JPEG decodes to equal channels).
+                byte v = bytesPerPixel >= 3 ? pixels[p + 1] : pixels[p];
+                alpha[y * Width + x] = Invert ? (byte)(255 - v) : v;
+            }
+        return alpha;
+    }
 }
 
 /// <summary>Lazy, cacheable producer of image pixels. Implementations must be thread-safe.</summary>
