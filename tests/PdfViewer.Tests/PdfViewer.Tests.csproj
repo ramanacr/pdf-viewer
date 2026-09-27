@@ -31,6 +31,7 @@
     <Compile Include="..\..\scripts\CreateIcon.cs" Link="CreateIcon.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\VectorPdfBuilder.cs" Link="Fixtures\VectorPdfBuilder.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\FormPdfFixture.cs" Link="Fixtures\FormPdfFixture.cs" />
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\ScriptedFormFixture.cs" Link="Fixtures\ScriptedFormFixture.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\PdfTestEncryption.cs" Link="Fixtures\PdfTestEncryption.cs" />
     <None Update="xunit.runner.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
