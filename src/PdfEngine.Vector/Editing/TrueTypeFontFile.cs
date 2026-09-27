@@ -193,6 +193,20 @@ public sealed class TrueTypeFontFile
 
     public double ToThousandths(int units) => units * 1000.0 / UnitsPerEm;
 
+    private OpenTypeKerning? _kerning;
+    private bool _kerningRead;
+
+    /// <summary>How much <paramref name="left"/>'s advance changes (1/1000 em) when <paramref name="right"/> follows it: the font's pair kerning.</summary>
+    public double Kerning(int left, int right)
+    {
+        if (!_kerningRead)
+        {
+            _kerning = OpenTypeKerning.Read(_tables);
+            _kerningRead = true;
+        }
+        return _kerning != null && left > 0 && right > 0 ? ToThousandths(_kerning.Pair(left, right)) : 0;
+    }
+
     /// <summary>The glyph has an outline (subsets leave the glyphs they dropped empty).</summary>
     public bool HasOutline(int gid) => gid > 0 && gid < GlyphCount && _locaOffsets[gid + 1] > _locaOffsets[gid];
 
