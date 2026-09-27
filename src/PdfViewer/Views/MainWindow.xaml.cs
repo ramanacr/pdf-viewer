@@ -75,6 +75,11 @@ public partial class MainWindow : Window
         document.ConfirmFunc = ConfirmDialog;
         document.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
         document.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
+        document.ShowSignDialogFunc = placement =>
+        {
+            var dialog = new SignDocumentDialog(placement, document.Metadata?.FilePath ?? string.Empty) { Owner = this };
+            return dialog.ShowDialog() == true ? dialog.Result : null;
+        };
         document.ScrollToPageAction = ScrollToPage;
         document.ScrollToMatchAction = ScrollToMatch;
         document.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
@@ -435,6 +440,12 @@ public partial class MainWindow : Window
         {
             case Key.F11:
                 ToggleFullScreen();
+                e.Handled = true;
+                break;
+
+            case Key.Escape when _vm.IsPlacingSignature:
+                _vm.IsPlacingSignature = false;
+                _vm.StatusText = "Signing cancelled.";
                 e.Handled = true;
                 break;
 
@@ -860,6 +871,7 @@ public partial class MainWindow : Window
 
     private bool _isDrawingAnnotation;
     private System.Windows.Shapes.Shape? _previewShape;
+    private bool _isPlacingSignatureBox;
     private readonly System.Collections.Generic.List<Point> _currentInkPoints = new();
 
     private bool _isSelectingText;
@@ -874,6 +886,27 @@ public partial class MainWindow : Window
     {
         if (e.LeftButton != MouseButtonState.Pressed) return;
         if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
+
+        // Placing a signature: drag its box.
+        if (_vm.IsPlacingSignature)
+        {
+            _annotStartPoint = e.GetPosition(canvas);
+            _isPlacingSignatureBox = true;
+            _isDrawingAnnotation = true; // the drag preview below follows the pointer
+            canvas.CaptureMouse();
+            _previewShape = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = new SolidColorBrush(Color.FromRgb(0x1A, 0x73, 0xE8)),
+                StrokeDashArray = new DoubleCollection { 4, 3 },
+                StrokeThickness = 1.5,
+                Fill = new SolidColorBrush(Color.FromArgb(0x22, 0x1A, 0x73, 0xE8)),
+            };
+            Canvas.SetLeft(_previewShape, _annotStartPoint.X);
+            Canvas.SetTop(_previewShape, _annotStartPoint.Y);
+            canvas.Children.Add(_previewShape);
+            e.Handled = true;
+            return;
+        }
 
         // Mode 1: Active Annotation Tool is drawing
         if (_vm.ActiveAnnotationTool != null)
@@ -1161,8 +1194,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 3. Hovering over text: I-beam cursor
-        if (_vm.ActiveAnnotationTool == null && !_vm.IsPanningEnabled)
+        // 3. Placing a signature: crosshair. Hovering over text: I-beam cursor
+        if (_vm.IsPlacingSignature)
+        {
+            canvas.Cursor = Cursors.Cross;
+        }
+        else if (_vm.ActiveAnnotationTool == null && !_vm.IsPanningEnabled)
         {
             var hoverPt = e.GetPosition(canvas);
             var norm = new Point(hoverPt.X / page.UnrotatedDisplayWidth, hoverPt.Y / page.UnrotatedDisplayHeight);
@@ -1219,6 +1256,39 @@ public partial class MainWindow : Window
     private void PageCanvas_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
+
+        // Signature box placed: sign into it.
+        if (_isPlacingSignatureBox)
+        {
+            _isPlacingSignatureBox = false;
+            _isDrawingAnnotation = false;
+            canvas.ReleaseMouseCapture();
+            if (_previewShape != null)
+            {
+                canvas.Children.Remove(_previewShape);
+                _previewShape = null;
+            }
+            var end = e.GetPosition(canvas);
+            double left = Math.Max(0, Math.Min(_annotStartPoint.X, end.X));
+            double top = Math.Max(0, Math.Min(_annotStartPoint.Y, end.Y));
+            double width = Math.Abs(end.X - _annotStartPoint.X), height = Math.Abs(end.Y - _annotStartPoint.Y);
+            if (width < 8 || height < 8)
+            {
+                // A click, not a drag: a box of the usual signature size (180 x 50 pt) centred there.
+                width = 180 * page.DisplayScale;
+                height = 50 * page.DisplayScale;
+                left = Math.Max(0, Math.Min(page.UnrotatedDisplayWidth - width, end.X - width / 2));
+                top = Math.Max(0, Math.Min(page.UnrotatedDisplayHeight - height, end.Y - height / 2));
+            }
+            var bounds = new Rect(
+                left / page.UnrotatedDisplayWidth,
+                top / page.UnrotatedDisplayHeight,
+                Math.Min(1 - left / page.UnrotatedDisplayWidth, width / page.UnrotatedDisplayWidth),
+                Math.Min(1 - top / page.UnrotatedDisplayHeight, height / page.UnrotatedDisplayHeight));
+            e.Handled = true;
+            _ = _vm.PlaceSignatureAsync(new SignaturePlacement(page.PageNumber, bounds));
+            return;
+        }
 
         // 1. Finalizing annotation creation
         if (_isDrawingAnnotation)

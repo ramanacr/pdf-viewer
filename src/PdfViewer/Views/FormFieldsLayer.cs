@@ -128,6 +128,7 @@ internal sealed class FormFieldsLayer : Canvas
             double size = Math.Max(4, field.FontSizePoints * scale);
             switch (editor)
             {
+                case Button { Content: TextBlock t }: t.FontSize = Math.Clamp(field.HeightPoints * 0.35, 6, 14) * scale; break;
                 case Control c: c.FontSize = size; break;
             }
         }
@@ -142,8 +143,49 @@ internal sealed class FormFieldsLayer : Canvas
         PdfFormFieldKind.CheckBox or PdfFormFieldKind.RadioGroup => ButtonEditor(field),
         PdfFormFieldKind.ComboBox => ComboEditor(field),
         PdfFormFieldKind.ListBox => ListEditor(field),
+        PdfFormFieldKind.Signature => SignatureEditor(field),
         _ => new Border(),
     };
+
+    /// <summary>An empty signature field: a "Sign here" button that starts signing into it.</summary>
+    private FrameworkElement SignatureEditor(FormFieldViewModel field)
+    {
+        var label = new TextBlock
+        {
+            Text = "Sign here",
+            FontFamily = new FontFamily("Segoe UI"),
+            Foreground = FocusBorder,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var template = new ControlTemplate(typeof(Button));
+        var outline = new FrameworkElementFactory(typeof(System.Windows.Shapes.Rectangle));
+        outline.SetValue(System.Windows.Shapes.Shape.StrokeProperty, FocusBorder);
+        outline.SetValue(System.Windows.Shapes.Shape.StrokeDashArrayProperty, new DoubleCollection { 4, 3 });
+        outline.SetValue(System.Windows.Shapes.Shape.StrokeThicknessProperty, 1.0);
+        outline.SetValue(System.Windows.Shapes.Shape.FillProperty, Brushes.Transparent);
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        var grid = new FrameworkElementFactory(typeof(Grid));
+        grid.AppendChild(outline);
+        grid.AppendChild(content);
+        template.VisualTree = grid;
+        var button = new Button
+        {
+            Content = label,
+            Template = template,
+            Cursor = Cursors.Hand,
+            IsEnabled = !field.IsReadOnly,
+            ToolTip = "Click to sign this field",
+        };
+        AutomationProperties.SetItemStatus(button, "Not signed");
+        button.Click += (_, _) =>
+        {
+            if (_owner is { } owner)
+                _ = owner.PlaceSignatureAsync(new SignaturePlacement(field.PageNumber, null, field.FullName));
+        };
+        return button;
+    }
 
     private void Commit(FormFieldViewModel field, PdfFieldChange change)
     {

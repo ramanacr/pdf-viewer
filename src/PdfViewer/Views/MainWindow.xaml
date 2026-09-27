@@ -273,6 +273,11 @@
                           Command="{Binding SaveCleanCopyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified."><MenuItem.Icon><Path Data="{StaticResource IconCleanCopy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Sign _Document..."
+                          Command="{Binding BeginSignatureCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          IsCheckable="False"
+                          ToolTip="Adds your digital signature: drag a box on the page, or click an empty signature field."><MenuItem.Icon><Path Data="{StaticResource IconSignature}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Verify Digital _Signatures..."
                           Command="{Binding VerifySignaturesCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"

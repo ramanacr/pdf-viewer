@@ -55,6 +55,8 @@ public sealed class PdfFormField
     public bool IsMultiSelect => Kind == PdfFormFieldKind.ListBox && (Flags & (1 << 21)) != 0;
     /// <summary>Radio buttons with the same on-state turn on and off together (/Ff bit 26).</summary>
     public bool RadiosInUnison => Kind == PdfFormFieldKind.RadioGroup && (Flags & (1 << 25)) != 0;
+    /// <summary>A signature field whose /V holds a signature (an empty one is waiting to be signed).</summary>
+    public bool IsSigned { get; init; }
     public bool IsChecked => Kind is PdfFormFieldKind.CheckBox && Value.Length > 0 && Value != "Off";
 }
 
@@ -193,6 +195,7 @@ public sealed class PdfAcroForm
             Flags = (int)flags,
             Value = value,
             Values = values,
+            IsSigned = kind == PdfFormFieldKind.Signature && here.Value is PdfDictionary,
             DefaultValue = NameOrText(here.DefaultValue) ?? string.Empty,
             Options = options,
             MaxLength = (int)(here.MaxLen ?? 0),
