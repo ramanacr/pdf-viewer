@@ -43,6 +43,26 @@ public enum PdfLaterChanges
     Metadata = 8,
     /// <summary>Anything else: page content, pages, resources.</summary>
     Other = 16,
+    /// <summary>
+    /// Long-term validation data added to the Document Security Store (certificates, OCSP
+    /// responses, CRLs). Not a change to the document: every signature, and even a no-changes
+    /// certification, permits it (ISO 32000-2 12.8.2.2.2).
+    /// </summary>
+    ValidationData = 32,
+}
+
+/// <summary>How to validate. The defaults validate offline, with this machine's trusted roots.</summary>
+public sealed record PdfSignatureValidationOptions
+{
+    public string? Password { get; init; }
+    /// <summary>Extra trust anchors (tests, an organisation's own roots); the machine's roots are always used.</summary>
+    public X509Certificate2Collection? Roots { get; init; }
+    /// <summary>
+    /// Fetches revocation information the document does not carry. Null (the default) keeps
+    /// validation entirely offline: only what is embedded in the document is used. Set it only
+    /// when the user has asked for online checks.
+    /// </summary>
+    public IPdfRevocationSource? OnlineRevocation { get; init; }
 }
 
 /// <summary>The checked state of one signature.</summary>
@@ -76,29 +96,74 @@ public sealed class PdfSignatureCheck
     public IReadOnlyList<X509Certificate2> Chain { get; init; } = Array.Empty<X509Certificate2>();
     public int PageNumber { get; init; }
     public PdfEngine.Geometry.PdfRect Rect { get; init; }
+    /// <summary>
+    /// Whether any certificate the signature rests on (the signer's chain, and any timestamp
+    /// authority's) was revoked when it mattered, judged from the document's embedded
+    /// revocation information (and fetched information, when online checks were asked for).
+    /// </summary>
+    public PdfRevocationStatus Revocation { get; init; } = PdfRevocationStatus.NotChecked;
+    public string RevocationDetail { get; init; } = string.Empty;
+    /// <summary>Each certificate's revocation status, signer's chain first, trust anchors left out.</summary>
+    public IReadOnlyList<PdfCertificateRevocation> CertificateRevocations { get; init; } = Array.Empty<PdfCertificateRevocation>();
+    /// <summary>
+    /// Long-term validation enabled: the document itself holds every certificate of the chain
+    /// and verified, current revocation information for each (PAdES-B-LT), so the signature can
+    /// be validated offline long after its certificates expire.
+    /// </summary>
+    public bool IsLtvEnabled { get; init; }
+    /// <summary>Why the signature is not LTV enabled, when it is not.</summary>
+    public string LtvDetail { get; init; } = string.Empty;
 }
 
 /// <summary>
 /// Validates the signatures of a document without the network: integrity (the CMS signature
 /// and its message digest over the /ByteRange bytes), the signer's chain against this machine's
-/// trusted roots at the signing time, embedded and document timestamps, and what later
-/// revisions changed, weighed against the certification level (ISO 32000-2 12.8.2.2) when there is one.
+/// trusted roots at the signing time, embedded and document timestamps, revocation from the
+/// validation data the document carries (its DSS, and the signature's own revocation archive),
+/// and what later revisions changed, weighed against the certification level (ISO 32000-2
+/// 12.8.2.2) when there is one. Revocation information is fetched only when the caller passes
+/// an online source in <see cref="PdfSignatureValidationOptions"/>.
 /// </summary>
-public static class PdfSignatureValidator
+public static partial class PdfSignatureValidator
 {
     private const string TimestampTokenOid = "1.2.840.113549.1.9.16.2.14";
     private const string SigningTimeOid = "1.2.840.113549.1.9.5";
+    private const string RevocationArchivalOid = "1.2.840.113583.1.1.8";
 
     /// <param name="roots">Extra trust anchors (tests, an organisation's own roots); the machine's roots are always used.</param>
-    public static async Task<IReadOnlyList<PdfSignatureCheck>> ValidateAsync(byte[] file, string? password = null,
-        X509Certificate2Collection? roots = null, CancellationToken cancellationToken = default)
-    {
-        using var doc = await PdfVectorDocument.OpenAsync(file, password: password, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var form = PdfAcroForm.Read(doc);
-        if (form == null) return Array.Empty<PdfSignatureCheck>();
-        var r = doc.Resolver;
+    public static Task<IReadOnlyList<PdfSignatureCheck>> ValidateAsync(byte[] file, string? password = null,
+        X509Certificate2Collection? roots = null, CancellationToken cancellationToken = default) =>
+        ValidateAsync(file, new PdfSignatureValidationOptions { Password = password, Roots = roots }, cancellationToken);
 
+    public static async Task<IReadOnlyList<PdfSignatureCheck>> ValidateAsync(byte[] file, PdfSignatureValidationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        string? password = options.Password;
+        using var doc = await PdfVectorDocument.OpenAsync(file, password: password, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var signed = SignedFields(doc);
+        if (signed.Count == 0) return Array.Empty<PdfSignatureCheck>();
+        var revisionEnds = RevisionEnds(file);
+        int? certification = CertificationLevel(doc);
+        var material = ValidationMaterial.Read(doc);
+        var online = options.OnlineRevocation is { } source ? new PdfLtv.Fetcher(source, cancellationToken) : null;
+
+        var results = new List<PdfSignatureCheck>();
+        foreach (var (field, sig, range) in signed.OrderBy(s => s.Range.Length == 4 ? s.Range[2] + s.Range[3] : long.MaxValue))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await CheckAsync(file, password, field, sig, range, revisionEnds, certification, options.Roots, material, online, cancellationToken).ConfigureAwait(false));
+        }
+        return results;
+    }
+
+    /// <summary>The document's signed signature fields, with their signature dictionaries and byte ranges.</summary>
+    internal static List<(PdfFormField Field, PdfDictionary Sig, long[] Range)> SignedFields(PdfVectorDocument doc)
+    {
         var signed = new List<(PdfFormField Field, PdfDictionary Sig, long[] Range)>();
+        var form = PdfAcroForm.Read(doc);
+        if (form == null) return signed;
+        var r = doc.Resolver;
         foreach (var field in form.Fields.Where(f => f.Kind == PdfFormFieldKind.Signature && f.IsSigned))
         {
             var fieldDict = r.Resolve(field.ObjectNumber) as PdfDictionary;
@@ -106,20 +171,12 @@ public static class PdfSignatureValidator
             long[] range = (r.Resolve(sig["ByteRange"]) as PdfArray)?.Select(o => r.Resolve(o) is PdfObject v && v.TryGetInteger(out long n) ? n : -1).ToArray() ?? Array.Empty<long>();
             signed.Add((field, sig, range));
         }
-        var revisionEnds = RevisionEnds(file);
-        int? certification = CertificationLevel(doc);
-
-        var results = new List<PdfSignatureCheck>();
-        foreach (var (field, sig, range) in signed.OrderBy(s => s.Range.Length == 4 ? s.Range[2] + s.Range[3] : long.MaxValue))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await CheckAsync(file, password, field, sig, range, revisionEnds, certification, roots, cancellationToken).ConfigureAwait(false));
-        }
-        return results;
+        return signed;
     }
 
     private static async Task<PdfSignatureCheck> CheckAsync(byte[] file, string? password, PdfFormField field, PdfDictionary sig, long[] range,
-        IReadOnlyList<long> revisionEnds, int? certification, X509Certificate2Collection? roots, CancellationToken ct)
+        IReadOnlyList<long> revisionEnds, int? certification, X509Certificate2Collection? roots, ValidationMaterial material,
+        PdfLtv.Fetcher? online, CancellationToken ct)
     {
         string subFilter = sig.GetName("SubFilter") ?? string.Empty;
         var widget = field.Widgets.FirstOrDefault();
@@ -142,7 +199,7 @@ public static class PdfSignatureValidator
         byte[] signedBytes = new byte[range[1] + range[3]];
         Array.Copy(file, range[0], signedBytes, 0, range[1]);
         Array.Copy(file, range[2], signedBytes, range[1], range[3]);
-        byte[]? blob = ContentsFromGap(file, range[1], range[2]);
+        byte[]? blob = ContentsFromGap(file, range[1], range[2], trim: true);
         if (blob == null || blob.Length == 0)
             return Fail(PdfSignatureVerdict.Invalid, "The signature has no signature value.");
 
@@ -173,6 +230,7 @@ public static class PdfSignatureValidator
         // Integrity.
         DateTimeOffset? timestampTime = null;
         string? tsa = null;
+        var timestampAuthorities = new List<(X509Certificate2 Certificate, DateTimeOffset Time, X509Certificate2Collection Included)>();
         bool integrity;
         string integrityProblem = string.Empty;
         if (isDocTimestamp)
@@ -206,6 +264,7 @@ public static class PdfSignatureValidator
                     {
                         timestampTime = token.TokenInfo.Timestamp;
                         tsa = tsaCert?.GetNameInfo(X509NameType.SimpleName, false);
+                        if (tsaCert != null) timestampAuthorities.Add((tsaCert, token.TokenInfo.Timestamp, token.AsSignedCms().Certificates));
                     }
                 foreach (CryptographicAttributeObject attr in signerInfo.SignedAttributes)
                     if (attr.Oid.Value == SigningTimeOid && attr.Values.Count > 0 && claimed == null)
@@ -222,9 +281,65 @@ public static class PdfSignatureValidator
             later = await LaterChangesAsync(file, (int)end, password, ct).ConfigureAwait(false);
 
         // Trust, at the time the signature was made (a trusted timestamp's time wins over the claimed one).
+        // The chain may use the certificates the document's DSS holds, and, with online checks, issuers fetched for it.
+        DateTimeOffset signingTime = timestampTime ?? claimed ?? DateTimeOffset.Now;
+        var known = new X509Certificate2Collection(cms.Certificates);
+        known.AddRange(material.Certificates.ToArray());
+        foreach (var t in timestampAuthorities) known.AddRange(t.Included);
+        var problems = new List<string>();
+        if (online != null && certificate != null)
+            foreach (var c in await PdfLtv.BuildPathAsync(certificate, known.Cast<X509Certificate2>().ToList(), online, problems).ConfigureAwait(false))
+                if (!known.Cast<X509Certificate2>().Any(k => PdfX509.SameCertificate(k, c))) known.Add(c);
         var (trust, trustDetail, chain) = certificate != null
-            ? Trust(certificate, cms.Certificates, timestampTime ?? claimed ?? DateTimeOffset.Now, roots, isDocTimestamp)
+            ? Trust(certificate, known, signingTime, roots, isDocTimestamp)
             : (PdfSignatureTrust.Unknown, "The signer's certificate is not in the signature.", (IReadOnlyList<X509Certificate2>)Array.Empty<X509Certificate2>());
+
+        // Revocation, from what the document carries (and what online checks fetch, if asked for).
+        var revocations = new List<PdfCertificateRevocation>();
+        bool ltv = false;
+        string ltvDetail = "The signature could not be checked.";
+        if (integrity && certificate != null)
+        {
+            var embedded = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var c in cms.Certificates.Cast<X509Certificate2>().Concat(material.Certificates)
+                         .Concat(timestampAuthorities.SelectMany(t => t.Included.Cast<X509Certificate2>())))
+                embedded.Add(Convert.ToHexString(SHA256.HashData(c.RawData)));
+            var ocsps = new List<PdfOcspResponse>(material.Ocsps);
+            var crls = new List<PdfCrl>(material.Crls);
+            if (!isDocTimestamp) RevocationArchival(signerInfo, ocsps, crls);
+            var pool = known.Cast<X509Certificate2>().ToList();
+            var context = new RevocationContext(ocsps, crls, pool, embedded, online, problems);
+
+            IReadOnlyList<X509Certificate2> signerChain = chain.Count > 0 ? chain : new[] { certificate };
+            // The signer's own clock cannot vouch for the time; a TSA's can (for a document timestamp, the TSA is the signer).
+            var (entries, chainLtv, chainWhy) = await ChainRevocationAsync(signerChain, signingTime, trustedTime: timestampTime != null && !isDocTimestamp,
+                timestampAuthority: isDocTimestamp, context).ConfigureAwait(false);
+            revocations.AddRange(entries);
+            ltv = chainLtv;
+            ltvDetail = chainWhy;
+            foreach (var (tsaCert, time, included) in timestampAuthorities)
+            {
+                foreach (var c in included) if (!pool.Any(p => PdfX509.SameCertificate(p, c))) pool.Add(c);
+                var tsaChain = await PdfLtv.BuildPathAsync(tsaCert, pool, online, problems).ConfigureAwait(false);
+                var (tsaEntries, tsaLtv, tsaWhy) = await ChainRevocationAsync(tsaChain, time, trustedTime: false, timestampAuthority: true, context).ConfigureAwait(false);
+                revocations.AddRange(tsaEntries);
+                if (ltv && !tsaLtv) ltvDetail = tsaWhy;
+                ltv &= tsaLtv;
+            }
+        }
+        var (revocation, revocationDetail) = Summarize(revocations, isDocTimestamp);
+        if (revocation == PdfRevocationStatus.Revoked)
+        {
+            trust = PdfSignatureTrust.Untrusted;
+            trustDetail = revocationDetail;
+        }
+        else if (trust == PdfSignatureTrust.Trusted && !isDocTimestamp)
+            trustDetail = revocation switch
+            {
+                PdfRevocationStatus.Good => $"The signer's certificate was valid on {signingTime.LocalDateTime:g}, chains to a trusted root and was not revoked.",
+                PdfRevocationStatus.Unknown => $"The signer's certificate was valid on {signingTime.LocalDateTime:g} and chains to a trusted root, but its revocation status is unknown.",
+                _ => trustDetail,
+            };
 
         PdfSignatureVerdict verdict;
         string summary;
@@ -233,10 +348,11 @@ public static class PdfSignatureValidator
             verdict = PdfSignatureVerdict.Invalid;
             summary = integrityProblem.Length > 0 ? integrityProblem : "The signature does not match the document.";
         }
-        else if (whole || later == PdfLaterChanges.None)
+        else if (whole || (later & ~PdfLaterChanges.ValidationData) == PdfLaterChanges.None)
         {
             verdict = PdfSignatureVerdict.Valid;
             summary = isDocTimestamp ? "The document has not been modified since it was timestamped." : "The document has not been modified since it was signed.";
+            if (later.HasFlag(PdfLaterChanges.ValidationData)) summary += " Long-term validation data was added afterwards.";
         }
         else if (Permitted(later, level))
         {
@@ -258,11 +374,14 @@ public static class PdfSignatureValidator
             TimestampAuthority = tsa, IsDocumentTimestamp = isDocTimestamp, CertificationLevel = level, IntegrityValid = integrity,
             CoversWholeFile = whole, Revision = revision, LaterChanges = later, Trust = trust, TrustDetail = trustDetail,
             Certificate = certificate, Chain = chain, PageNumber = widget?.PageNumber ?? 0, Rect = widget?.Rect ?? default,
+            Revocation = revocation, RevocationDetail = revocationDetail, CertificateRevocations = revocations,
+            IsLtvEnabled = integrity && ltv, LtvDetail = integrity && ltv ? string.Empty : ltvDetail,
         };
     }
 
     private static bool Permitted(PdfLaterChanges later, int? level)
     {
+        later &= ~PdfLaterChanges.ValidationData; // always permitted
         if ((later & PdfLaterChanges.Other) != 0) return false;
         return level switch
         {
@@ -280,6 +399,7 @@ public static class PdfSignatureValidator
         if (later.HasFlag(PdfLaterChanges.Annotations)) parts.Add("commented on");
         if (later.HasFlag(PdfLaterChanges.Metadata)) parts.Add("given new metadata");
         if (later.HasFlag(PdfLaterChanges.Other)) parts.Add("changed in its content");
+        if (later.HasFlag(PdfLaterChanges.ValidationData)) parts.Add("given long-term validation data");
         return parts.Count switch
         {
             0 => "changed",
@@ -331,6 +451,7 @@ public static class PdfSignatureValidator
     {
         using var chain = new X509Chain();
         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck; // offline: nothing is fetched
+        chain.ChainPolicy.DisableCertificateDownloads = true;          // not even missing issuers (AIA)
         chain.ChainPolicy.VerificationTime = at.LocalDateTime;
         chain.ChainPolicy.ExtraStore.AddRange(included);
         if (roots is { Count: > 0 })
@@ -387,6 +508,8 @@ public static class PdfSignatureValidator
             var rb = before.Resolver;
             var ra = after.Resolver;
             var appearances = AppearanceObjects(after);
+            var dssBefore = DssObjects(before);
+            var dssAfter = DssObjects(after);
             int beforeRoot = (before.XrefTable.Trailer?["Root"] as PdfIndirectRef)?.ObjectNumber ?? -1;
             int afterRoot = (after.XrefTable.Trailer?["Root"] as PdfIndirectRef)?.ObjectNumber ?? -1;
             var changes = PdfLaterChanges.None;
@@ -403,7 +526,7 @@ public static class PdfSignatureValidator
                 var was = old.IsInUse ? rb.Resolve(number) : null;
                 if (now == null) continue;
                 if (was != null && Same(was, now, rb, ra, 0)) continue; // rewritten, but the same (writers reorder keys, recompress streams)
-                changes |= Classify(number, was, now, afterRoot, appearances, after);
+                changes |= Classify(number, was, now, afterRoot, appearances, after, dssBefore, dssAfter);
                 if (changes.HasFlag(PdfLaterChanges.Other)) return changes;
             }
             // Pages that disappeared, or were reordered, are content changes.
@@ -412,7 +535,8 @@ public static class PdfSignatureValidator
         }
     }
 
-    private static PdfLaterChanges Classify(int number, PdfObject? was, PdfObject now, int root, HashSet<int> appearances, PdfVectorDocument after)
+    private static PdfLaterChanges Classify(int number, PdfObject? was, PdfObject now, int root, HashSet<int> appearances, PdfVectorDocument after,
+        HashSet<int> dssBefore, HashSet<int> dssAfter)
     {
         var dict = now as PdfDictionary ?? (now as PdfStream)?.Dictionary;
         string? type = dict?.GetName("Type");
@@ -420,7 +544,9 @@ public static class PdfSignatureValidator
 
         if (type is "XRef" or "ObjStm") return PdfLaterChanges.None;
         if (type is "Sig" or "DocTimeStamp" || dict?["ByteRange"] != null) return PdfLaterChanges.Signatures;
-        if (type is "DSS" or "VRI") return PdfLaterChanges.Signatures; // validation data for signatures
+        // Validation data: objects of the DSS that are new, or were validation data already. An
+        // existing object of any other kind does not become harmless by being listed in the DSS.
+        if (dssAfter.Contains(number) && (was == null || dssBefore.Contains(number))) return PdfLaterChanges.ValidationData;
         if (type == "Metadata" || subtype == "XML") return PdfLaterChanges.Metadata;
         if (number == root && was is PdfDictionary oldRoot && dict != null)
             return SameExcept(oldRoot, dict, "AcroForm", "DSS", "Metadata", "Perms", "NeedsRendering") ? PdfLaterChanges.None : PdfLaterChanges.Other;
@@ -437,8 +563,6 @@ public static class PdfSignatureValidator
         if (appearances.Contains(number)) return PdfLaterChanges.FormFields; // a widget's or annotation's appearance
         if (now is PdfArray array && IsAnnotsArray(number, after)) return array.Count >= 0 ? PdfLaterChanges.Annotations : PdfLaterChanges.None;
         if (IsInfoDictionary(number, after)) return PdfLaterChanges.Metadata;
-        if (was == null && now is PdfStream && subtype == null && dict?["Filter"] != null && IsDssStream(number, after))
-            return PdfLaterChanges.Signatures;
         return PdfLaterChanges.Other;
     }
 
@@ -564,13 +688,35 @@ public static class PdfSignatureValidator
     private static bool IsInfoDictionary(int number, PdfVectorDocument doc) =>
         doc.XrefTable.Trailer?["Info"] is PdfIndirectRef info && info.ObjectNumber == number;
 
-    private static bool IsDssStream(int number, PdfVectorDocument doc)
+    /// <summary>
+    /// Object numbers of the Document Security Store: the DSS dictionary, its arrays, its VRI
+    /// dictionary and entries, and the certificate, OCSP, CRL and timestamp streams they list.
+    /// </summary>
+    private static HashSet<int> DssObjects(PdfVectorDocument doc)
     {
+        var set = new HashSet<int>();
         var r = doc.Resolver;
-        if (r.Resolve(doc.XrefTable.Trailer?["Root"]) is not PdfDictionary root || r.Resolve(root["DSS"]) is not PdfDictionary dss) return false;
-        foreach (var key in new[] { "Certs", "OCSPs", "CRLs" })
-            if (r.Resolve(dss[key]) is PdfArray list && list.Any(o => o is PdfIndirectRef ir && ir.ObjectNumber == number)) return true;
-        return false;
+        if (r.Resolve(doc.XrefTable.Trailer?["Root"]) is not PdfDictionary root) return set;
+        void Note(PdfObject? o) { if (o is PdfIndirectRef ir) set.Add(ir.ObjectNumber); }
+        void Lists(PdfDictionary d, params string[] keys)
+        {
+            foreach (var key in keys)
+            {
+                Note(d[key]);
+                if (r.Resolve(d[key]) is PdfArray list) foreach (var item in list) Note(item);
+            }
+        }
+        Note(root["DSS"]);
+        if (r.Resolve(root["DSS"]) is not PdfDictionary dss) return set;
+        Lists(dss, "Certs", "OCSPs", "CRLs");
+        Note(dss["VRI"]);
+        if (r.Resolve(dss["VRI"]) is PdfDictionary vri)
+            foreach (var entry in vri.Entries.Values)
+            {
+                Note(entry);
+                if (r.Resolve(entry) is PdfDictionary e) Lists(e, "Cert", "OCSP", "CRL", "TS");
+            }
+        return set;
     }
 
 
@@ -616,8 +762,12 @@ public static class PdfSignatureValidator
         return null;
     }
 
-    /// <summary>The signature value as written in the file: the hex string between the ranges.</summary>
-    private static byte[]? ContentsFromGap(byte[] file, long gapStart, long gapEnd)
+    /// <summary>
+    /// The signature value as written in the file: the hex string between the ranges. Trimmed,
+    /// the DER value alone; untrimmed, the whole /Contents string with its padding (what a VRI
+    /// key is the SHA-1 of).
+    /// </summary>
+    internal static byte[]? ContentsFromGap(byte[] file, long gapStart, long gapEnd, bool trim)
     {
         if (gapEnd - gapStart < 2 || file[gapStart] != '<' || file[gapEnd - 1] != '>') return null;
         var hex = new StringBuilder((int)(gapEnd - gapStart));
@@ -629,6 +779,7 @@ public static class PdfSignatureValidator
         }
         if (hex.Length % 2 == 1) hex.Append('0');
         byte[] bytes = Convert.FromHexString(hex.ToString());
+        if (!trim) return bytes;
         // The placeholder is zero-padded; the DER length says where the value ends.
         try
         {

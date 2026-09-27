@@ -80,7 +80,7 @@ public static class PdfCmsSigner
     /// rejects non-minimal encodings, which some CAs issue; the ESS reference must match the
     /// certificate byte for byte either way.
     /// </summary>
-    private static void WriteSerial(AsnWriter w, ReadOnlySpan<byte> serial)
+    internal static void WriteSerial(AsnWriter w, ReadOnlySpan<byte> serial)
     {
         try
         {

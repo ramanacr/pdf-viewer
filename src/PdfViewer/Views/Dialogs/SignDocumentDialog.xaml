@@ -122,6 +122,14 @@
         <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"
                    Text="A timestamp proves when you signed. Only a fingerprint of the signature is sent to the server, never the document." />
 
+        <!-- Long-term validation: off unless ticked, because it goes to the network -->
+        <CheckBox x:Name="LtvCheck" Margin="0,12,0,4" IsChecked="False"
+                  Content="Add long-term validation data (contacts the certificate authority)"
+                  AutomationProperties.Name="Add long-term validation data"
+                  Foreground="{DynamicResource TextPrimaryBrush}" />
+        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                   Text="Embeds your certificate's revocation status so the signature can be validated after the certificate expires. Only certificate identifiers are sent, never the document." />
+
         <!-- Where the signed file goes -->
         <TextBlock Text="Save the signed document to" Style="{StaticResource FieldLabel}" Margin="0,16,0,4" />
         <Grid>
