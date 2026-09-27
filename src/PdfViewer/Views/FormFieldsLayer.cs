@@ -215,6 +215,14 @@ internal sealed class FormFieldsLayer : Canvas
         };
         if (field.IsComb && field.MaxLength > 0)
             box.CharacterCasing = CharacterCasing.Normal;
+        // The field's keystroke rule: a number field takes digits and separators, a phone number digits.
+        box.PreviewTextInput += (_, e) =>
+        {
+            if (e.Text.Any(c => !PdfFormScripts.AllowsCharacter(field.Behaviour, c))) e.Handled = true;
+        };
+        field.RevertRequested = () => { box.Text = field.Value; };
+        if (field.Behaviour.Calculates)
+            AutomationProperties.SetItemStatus(box, "Calculated");
         box.GotKeyboardFocus += (_, _) =>
         {
             box.Text = field.Value;

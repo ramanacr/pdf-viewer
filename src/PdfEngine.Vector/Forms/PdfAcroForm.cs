@@ -55,6 +55,12 @@ public sealed class PdfFormField
     public bool IsMultiSelect => Kind == PdfFormFieldKind.ListBox && (Flags & (1 << 21)) != 0;
     /// <summary>Radio buttons with the same on-state turn on and off together (/Ff bit 26).</summary>
     public bool RadiosInUnison => Kind == PdfFormFieldKind.RadioGroup && (Flags & (1 << 25)) != 0;
+    /// <summary>
+    /// The field's JavaScript actions (/AA, 12.6.3 Table 199) by trigger: K keystroke, F format,
+    /// V validate, C calculate. Read, never run: <see cref="PdfFormScripts"/> recognises the
+    /// standard Acrobat functions they call.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Scripts { get; init; } = new Dictionary<string, string>();
     /// <summary>A signature field whose /V holds a signature (an empty one is waiting to be signed).</summary>
     public bool IsSigned { get; init; }
     public bool IsChecked => Kind is PdfFormFieldKind.CheckBox && Value.Length > 0 && Value != "Off";
@@ -68,6 +74,8 @@ public sealed class PdfAcroForm
     public string? DefaultAppearance { get; }
     public bool NeedAppearances { get; }
     public int ObjectNumber { get; }
+    /// <summary>Fields with calculate scripts, in the order they are recalculated (/CO), by full name.</summary>
+    public IReadOnlyList<string> CalculationOrder { get; private init; } = Array.Empty<string>();
 
     private PdfAcroForm(IReadOnlyList<PdfFormField> fields, PdfDictionary? dr, string? da, bool needAppearances, int objectNumber)
     {
@@ -104,11 +112,20 @@ public sealed class PdfAcroForm
         foreach (var f in fields)
             Walk(f, string.Empty, inherited, r, pageOf, result, visited, depth: 0);
 
-        return new PdfAcroForm(result,
-            r.Resolve(acro["DR"]) as PdfDictionary,
-            Text(r.Resolve(acro["DA"])),
-            r.Resolve(acro["NeedAppearances"]) is PdfBoolean { Value: true },
-            acroRef is PdfIndirectRef ai ? ai.ObjectNumber : -1);
+        // /CO lists the calculated fields in order; fields with a calculate script but not in it follow.
+        var byNumber = result.GroupBy(f => f.ObjectNumber).ToDictionary(g => g.Key, g => g.First().FullName);
+        var order = new List<string>();
+        if (r.Resolve(acro["CO"]) is PdfArray co)
+            foreach (var c in co)
+                if (c is PdfIndirectRef cr && byNumber.TryGetValue(cr.ObjectNumber, out var n) && !order.Contains(n)) order.Add(n);
+        foreach (var f in result)
+            if (f.Scripts.ContainsKey("C") && !order.Contains(f.FullName)) order.Add(f.FullName);
+
+        return new PdfAcroForm(result,
+            r.Resolve(acro["DR"]) as PdfDictionary,
+            Text(r.Resolve(acro["DA"])),
+            r.Resolve(acro["NeedAppearances"]) is PdfBoolean { Value: true },
+            acroRef is PdfIndirectRef ai ? ai.ObjectNumber : -1) { CalculationOrder = order };
     }
 
     private sealed record Inherited(string? FieldType, long? Flags, PdfObject? Value, PdfObject? DefaultValue, string? DA, long? Q, long? MaxLen, int Dummy);
@@ -202,8 +219,50 @@ public sealed class PdfAcroForm
             Quadding = (int)(here.Q ?? 0),
             DefaultAppearance = here.DA,
             Tooltip = Text(r.Resolve(dict["TU"])),
+            Scripts = ReadScripts(dict, kids, r),
             Widgets = widgets,
         });
+    }
+
+    /// <summary>The field's /AA JavaScript, from the field or (merged or single-widget fields) its widget.</summary>
+    private static Dictionary<string, string> ReadScripts(PdfDictionary field, PdfArray? kids, PdfObjectResolver r)
+    {
+        var scripts = new Dictionary<string, string>(StringComparer.Ordinal);
+        void From(PdfDictionary? d)
+        {
+            if (r.Resolve(d?["AA"]) is not PdfDictionary aa) return;
+            foreach (var trigger in new[] { "K", "F", "V", "C" })
+            {
+                if (scripts.ContainsKey(trigger) || r.Resolve(aa[trigger]) is not PdfDictionary action || action.GetName("S") != "JavaScript")
+                    continue;
+                string? js = r.Resolve(action["JS"]) switch
+                {
+                    PdfString s => s.AsDecodedString(),
+                    PdfStream st => DecodeScript(st, r),
+                    _ => null,
+                };
+                if (!string.IsNullOrWhiteSpace(js)) scripts[trigger] = js;
+            }
+        }
+        From(field);
+        if (kids is { Count: 1 }) From(r.Resolve(kids[0]) as PdfDictionary);
+        return scripts;
+    }
+
+    private static string? DecodeScript(PdfStream stream, PdfObjectResolver r)
+    {
+        try
+        {
+            byte[] data = new Streams.PdfStreamDecoder(null, r.Resolve).DecodeStream(stream);
+            // UTF-16BE with a BOM, else PDFDocEncoding/Latin-1 (7.9.2.2).
+            return data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF
+                ? System.Text.Encoding.BigEndianUnicode.GetString(data, 2, data.Length - 2)
+                : System.Text.Encoding.Latin1.GetString(data);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return null;
+        }
     }
 
     private static void AddWidget(int number, PdfDictionary w, PdfObjectResolver r, Dictionary<int, int> pageOf, List<PdfFormWidget> into)

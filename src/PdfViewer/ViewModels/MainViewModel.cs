@@ -1944,7 +1944,12 @@ public partial class MainViewModel : ObservableObject
                 Pages[field.PageNumber - 1].FormFields.Add(field);
         HasForm = Pages.Any(p => p.FormFields.Count > 0);
         if (HasForm)
+        {
             StatusText = $"This document has a form with {_form.Form.Fields.Count} field(s). Click a field to fill it; Tab moves to the next.";
+            int custom = Pages.SelectMany(p => p.FormFields).Where(f => f.Behaviour.Unsupported.Count > 0).Select(f => f.FullName).Distinct().Count();
+            if (custom > 0)
+                StatusText += $" {custom} field(s) have custom scripts, which are not run: they are filled as typed.";
+        }
     }
 
     /// <summary>
@@ -1961,9 +1966,18 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
         if (field.IsReadOnly) return false;
+        IReadOnlyList<string> changed;
         try
         {
-            await _form.ApplyAsync(new[] { change });
+            changed = await _form.ApplyAsync(new[] { change });
+        }
+        catch (PdfEngine.Vector.Forms.PdfFieldValidationException ex)
+        {
+            // The field's own rule refused the value (a number field given text, a value out of range).
+            StatusText = ex.Message;
+            ShowAlert(ex.Message, field.AccessibleName, MessageBoxButton.OK, MessageBoxImage.Warning);
+            field.RevertRequested?.Invoke();
+            return false;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or KeyNotFoundException)
         {
@@ -1971,21 +1985,21 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
-        // Values of every widget of the field (radio siblings, repeated fields) from the new revision.
-        if (_form.Form[field.FullName] is { } updated)
-        {
-            foreach (var page in Pages)
-                foreach (var w in page.FormFields.Where(f => f.FullName == field.FullName))
+        // Values of every widget of every changed field (the field itself, its radio siblings and
+        // repeated widgets, and the fields calculated from it) from the new revision.
+        var names = new HashSet<string>(changed) { field.FullName };
+        foreach (var page in Pages)
+            foreach (var w in page.FormFields.Where(f => names.Contains(f.FullName)))
+                if (_form.Form[w.FullName] is { } updated)
                 {
                     w.Value = updated.Value;
                     w.Selections = updated.Values;
                 }
-        }
         _formChangedSinceSave = true;
         HasUnsavedChanges = true;
 
-        // Re-render the pages carrying this field; the others are unchanged.
-        foreach (int pageNumber in Pages.SelectMany(p => p.FormFields).Where(f => f.FullName == field.FullName).Select(f => f.PageNumber).Distinct())
+        // Re-render the pages carrying these fields; the others are unchanged.
+        foreach (int pageNumber in Pages.SelectMany(p => p.FormFields).Where(f => names.Contains(f.FullName)).Select(f => f.PageNumber).Distinct())
         {
             var page = Pages[pageNumber - 1];
             page.UnloadImage();
