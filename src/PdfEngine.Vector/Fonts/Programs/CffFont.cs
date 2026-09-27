@@ -57,6 +57,7 @@ internal sealed class CffFont
             return null;
 
         var top = ParseDict(d, topDicts[0].Offset, topDicts[0].Length);
+        var topDict = topDicts[0];
         var stringTable = new string[strings.Count];
         for (int i = 0; i < strings.Count; i++)
             stringTable[i] = Encoding.Latin1.GetString(d, strings[i].Offset, strings[i].Length);
@@ -78,6 +79,8 @@ internal sealed class CffFont
             FontMatrix = top.TryGetValue(1207, out var fm) && fm.Length >= 6 ? fm[..6] : new[] { 0.001, 0, 0, 0.001, 0, 0 },
             FontBBox = top.TryGetValue(5, out var bb) && bb.Length >= 4 ? bb[..4] : new double[] { 0, -200, 1000, 800 },
             _strings = stringTable,
+            TopDictOffset = topDict.Offset,
+            TopDictLength = topDict.Length,
         };
 
         int charsetOffset = top.TryGetValue(15, out var co) && co.Length > 0 ? (int)co[0] : 0;
@@ -176,6 +179,103 @@ internal sealed class CffFont
     }
 
     /// <summary>DICT operator → operands. Escaped operators are keyed 1200 + second byte.</summary>
+    internal int TopDictOffset { get; private init; }
+    internal int TopDictLength { get; private init; }
+
+    /// <summary>
+    /// A copy of the font whose Top DICT FontMatrix is <c>[1/upm 0 0 1/upm 0 0]</c>, rewritten in
+    /// place: the new operands are padded (trailing zero digits in a real) to the old entry's exact
+    /// length, so no offset in the font moves. Null when the font has no FontMatrix entry or the
+    /// entry is too short to hold the standard one.
+    /// </summary>
+    internal byte[]? WithStandardFontMatrix(int unitsPerEm)
+    {
+        var (start, end) = FindOperator(Data, TopDictOffset, TopDictLength, 1207);
+        if (start < 0)
+            return null;
+        int available = end - start;
+        string scale = (1.0 / unitsPerEm).ToString("0.##################", System.Globalization.CultureInfo.InvariantCulture);
+        // Layout: real(scale) 0 0 real(scale) 0 0 12 7 — four one-byte zeros and a two-byte operator.
+        int minReal = RealLength(scale);
+        int spare = available - 2 * minReal - 4 - 2;
+        if (spare < 0)
+            return null;
+        // Pad the first real with trailing zero digits (one nibble each); the second takes the rest.
+        string first = PadReal(scale, minReal + spare / 2 + spare % 2);
+        string second = PadReal(scale, minReal + spare / 2);
+        if (first == null || second == null)
+            return null;
+        var entry = new List<byte>(available);
+        entry.AddRange(EncodeReal(first));
+        entry.Add(139); entry.Add(139);
+        entry.AddRange(EncodeReal(second));
+        entry.Add(139); entry.Add(139);
+        entry.Add(12); entry.Add(7);
+        if (entry.Count != available)
+            return null;
+        var copy = (byte[])Data.Clone();
+        entry.CopyTo(copy, start);
+        return copy;
+    }
+
+    private static int RealLength(string digits) => 1 + (Nibbles(digits) + 1 + 1) / 2;
+
+    private static int Nibbles(string digits) => digits.StartsWith("0.", StringComparison.Ordinal) ? digits.Length - 1 : digits.Length;
+
+    /// <summary>The real's text extended with zeros so it encodes in exactly <paramref name="bytes"/> bytes (or null).</summary>
+    private static string? PadReal(string digits, int bytes)
+    {
+        string s = digits.Contains('.') ? digits : digits + ".";
+        for (int guard = 0; guard < 64; guard++)
+        {
+            int len = RealLength(s);
+            if (len == bytes) return s;
+            if (len > bytes) return null;
+            s += "0";
+        }
+        return null;
+    }
+
+    /// <summary>CFF real number (Table 5): 0x1E, then nibbles 0-9, a = '.', f = end.</summary>
+    private static byte[] EncodeReal(string text)
+    {
+        var nibbles = new List<int>();
+        string t = text.StartsWith("0.", StringComparison.Ordinal) ? text[1..] : text; // ".00048828125"
+        foreach (char ch in t)
+            nibbles.Add(ch == '.' ? 0xA : ch - '0');
+        nibbles.Add(0xF);
+        if (nibbles.Count % 2 == 1) nibbles.Add(0xF);
+        var bytes = new List<byte> { 30 };
+        for (int i = 0; i < nibbles.Count; i += 2)
+            bytes.Add((byte)(nibbles[i] << 4 | nibbles[i + 1]));
+        return bytes.ToArray();
+    }
+
+    /// <summary>Byte range [start, end) of an operator's entry (operands and operator) in a DICT; (-1, -1) when absent.</summary>
+    internal static (int Start, int End) FindOperator(byte[] d, int offset, int length, int wanted)
+    {
+        int end = offset + length;
+        int p = offset, operandStart = offset;
+        while (p < end)
+        {
+            int b0 = d[p];
+            if (b0 <= 21)
+            {
+                int op = b0;
+                p++;
+                if (b0 == 12) op = 1200 + d[p++];
+                if (op == wanted) return (operandStart, p);
+                operandStart = p;
+            }
+            else if (b0 == 28) p += 3;
+            else if (b0 == 29) p += 5;
+            else if (b0 == 30) ReadReal(d, ref p);
+            else if (b0 >= 247 && b0 <= 254) p += 2;
+            else p++;
+        }
+        return (-1, -1);
+    }
+
     internal static Dictionary<int, double[]> ParseDict(byte[] d, int offset, int length)
     {
         var result = new Dictionary<int, double[]>();

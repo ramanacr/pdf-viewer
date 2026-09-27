@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using PdfEngine.Geometry;
 
 namespace PdfEngine.Vector.Fonts.Programs;
 
@@ -12,12 +13,19 @@ public sealed class PreparedFontProgram
 {
     private readonly Func<int, int, int> _glyphId;
 
-    internal PreparedFontProgram(byte[] sfnt, PdfFontProgramFormat format, Func<int, int, int> glyphId)
+    internal PreparedFontProgram(byte[] sfnt, PdfFontProgramFormat format, Func<int, int, int> glyphId, PdfMatrix? glyphMatrix = null)
     {
         Sfnt = sfnt;
         Format = format;
         _glyphId = glyphId;
+        GlyphMatrix = glyphMatrix;
     }
+
+    /// <summary>
+    /// What remains of the program's FontMatrix after the standard 1/unitsPerEm scale (a skew for
+    /// an oblique, a horizontal scale for a narrow face), in em space; null when it is identity.
+    /// </summary>
+    public PdfMatrix? GlyphMatrix { get; }
 
     public byte[] Sfnt { get; }
 
@@ -77,8 +85,8 @@ public static class FontProgramPreparer
             var cff = CffFont.TryParse(cffTable);
             if (cff == null)
                 return null;
-            var sfnt = WrapCff(font, cffTable, cff, tables);
-            return sfnt == null ? null : new PreparedFontProgram(sfnt, PdfFontProgramFormat.OpenTypeCff, CffGlyphMap(font, cff, builtIn: null));
+            var (sfnt, glyphMatrix) = WrapCff(font, cffTable, cff, tables);
+            return sfnt == null ? null : new PreparedFontProgram(sfnt, PdfFontProgramFormat.OpenTypeCff, CffGlyphMap(font, cff, builtIn: null), glyphMatrix);
         }
 
         if (!tables.TryGetValue("head", out var head) || head.Length < 54 ||
@@ -149,8 +157,8 @@ public static class FontProgramPreparer
         var cff = CffFont.TryParse(data);
         if (cff == null)
             return null;
-        var sfnt = WrapCff(font, data, cff, existing: null);
-        return sfnt == null ? null : new PreparedFontProgram(sfnt, PdfFontProgramFormat.OpenTypeCff, CffGlyphMap(font, cff, builtIn: null));
+        var (sfnt, glyphMatrix) = WrapCff(font, data, cff, existing: null);
+        return sfnt == null ? null : new PreparedFontProgram(sfnt, PdfFontProgramFormat.OpenTypeCff, CffGlyphMap(font, cff, builtIn: null), glyphMatrix);
     }
 
     private static PreparedFontProgram? PrepareType1(PdfFont font, byte[] data)
@@ -161,8 +169,8 @@ public static class FontProgramPreparer
         var cff = CffFont.TryParse(converted.Cff);
         if (cff == null)
             return null;
-        var sfnt = WrapCff(font, converted.Cff, cff, existing: null);
-        return sfnt == null ? null : new PreparedFontProgram(sfnt, PdfFontProgramFormat.OpenTypeCff, CffGlyphMap(font, cff, converted.BuiltInEncoding));
+        var (sfnt, glyphMatrix) = WrapCff(font, converted.Cff, cff, existing: null);
+        return sfnt == null ? null : new PreparedFontProgram(sfnt, PdfFontProgramFormat.OpenTypeCff, CffGlyphMap(font, cff, converted.BuiltInEncoding), glyphMatrix);
     }
 
     /// <summary>
@@ -193,15 +201,37 @@ public static class FontProgramPreparer
         };
     }
 
-    private static byte[]? WrapCff(PdfFont font, byte[] cffData, CffFont cff, Dictionary<string, byte[]>? existing)
+    private static (byte[]? Sfnt, PdfMatrix? GlyphMatrix) WrapCff(PdfFont font, byte[] cffData, CffFont cff, Dictionary<string, byte[]>? existing)
     {
-        // OpenType requires the CFF FontMatrix to be a uniform 1/unitsPerEm scale.
+        // OpenType requires the CFF FontMatrix to be a uniform 1/unitsPerEm scale. Producers write
+        // 1/2048 rounded (0.00048829999), narrow faces scale x (0.00082 0 0 0.001) and obliques
+        // skew (0.001 0 0.000212 0.001): the matrix is rewritten to the standard scale and the rest
+        // becomes the face's glyph matrix, applied by the renderer.
         var fm = cff.FontMatrix;
-        if (fm.Length < 6 || fm[0] <= 0 || Math.Abs(fm[0] - fm[3]) > 1e-9 || fm[1] != 0 || fm[2] != 0 || fm[4] != 0 || fm[5] != 0)
-            return null;
-        int unitsPerEm = (int)Math.Round(1.0 / fm[0]);
-        if (unitsPerEm is < 16 or > 16384 || Math.Abs(1.0 / unitsPerEm - fm[0]) > 1e-9)
-            return null;
+        if (fm.Length < 6 || fm[3] <= 0)
+            return (null, null);
+        int unitsPerEm = (int)Math.Round(1.0 / fm[3]);
+        if (unitsPerEm is < 16 or > 16384)
+            return (null, null);
+        bool standard = fm[0] == 1.0 / unitsPerEm && fm[3] == 1.0 / unitsPerEm && fm[1] == 0 && fm[2] == 0 && fm[4] == 0 && fm[5] == 0;
+        PdfMatrix? glyphMatrix = null;
+        if (!standard)
+        {
+            // The exact 1/unitsPerEm may not fit where the producer's shorter number was
+            // (0.000488281 for 1/2048): then declare 1000 units per em, whose 0.001 always fits,
+            // and let the glyph matrix carry the rest of the scale.
+            byte[]? rewritten = cff.WithStandardFontMatrix(unitsPerEm);
+            if (rewritten == null && unitsPerEm != 1000 && (rewritten = cff.WithStandardFontMatrix(1000)) != null)
+                unitsPerEm = 1000;
+            if (rewritten == null)
+                return (null, null);
+            cffData = rewritten;
+            var residual = new PdfMatrix(fm[0] * unitsPerEm, fm[1] * unitsPerEm, fm[2] * unitsPerEm, fm[3] * unitsPerEm, fm[4], fm[5]);
+            const double eps = 1e-4;
+            bool identity = Math.Abs(residual.A - 1) < eps && Math.Abs(residual.B) < eps && Math.Abs(residual.C) < eps &&
+                            Math.Abs(residual.D - 1) < eps && Math.Abs(residual.E) < eps && Math.Abs(residual.F) < eps;
+            glyphMatrix = identity ? null : residual;
+        }
 
         var bb = cff.FontBBox;
         short xMin = Clamp16(bb[0]), yMin = Clamp16(bb[1]), xMax = Clamp16(bb[2]), yMax = Clamp16(bb[3]);
@@ -227,7 +257,7 @@ public static class FontProgramPreparer
             }
         }
         AddBookkeeping(font, tables, unitsPerEm, yMax, yMin, n);
-        return Sfnt.Write(Sfnt.OpenTypeCffVersion, tables);
+        return (Sfnt.Write(Sfnt.OpenTypeCffVersion, tables), glyphMatrix);
     }
 
     private static short Clamp16(double v) => (short)Math.Clamp(Math.Round(v), short.MinValue, short.MaxValue);

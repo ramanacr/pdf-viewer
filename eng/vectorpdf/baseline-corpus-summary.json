@@ -6,39 +6,37 @@
   "untypedErrors": 0,
   "pagesSampled": 8561,
   "pagesClassifiedRatio": 1,
-  "pagesFullyVectorRatio": 0.9803,
-  "vectorAreaRatio": 0.9987,
+  "pagesFullyVectorRatio": 0.9964,
+  "vectorAreaRatio": 0.999,
   "fallbackReasons": {
-    "UnsupportedFontType": 1397,
-    "UnsupportedImageFilter": 40,
     "UnsupportedCMap": 12,
+    "UnsupportedFontType": 5,
     "UnknownOperator": 5,
+    "UnsupportedImageFilter": 4,
+    "ImageDecode": 4,
     "ResourceLimit": 2,
     "UnsupportedColorSpace": 2,
     "Pattern": 2,
-    "MalformedContentRecovery": 1,
-    "ImageDecode": 1
+    "MalformedContentRecovery": 1
   },
   "fallbackDetails": {
-    "UnsupportedFontType: Embedded font program format is not loadable": 810,
-    "UnsupportedFontType: Substitute font lacks a glyph used by this text": 457,
-    "UnsupportedFontType: No system substitute for font": 130,
-    "UnsupportedImageFilter: Image could not be decoded by the Direct2D backend": 38,
     "UnsupportedCMap: Text uses an unsupported font or paint [Type0]": 12,
     "UnknownOperator: Unsupported PDF operator \u0027UnknownOperator\u0027": 4,
+    "ImageDecode: Image could not be decoded by the Direct2D backend": 4,
+    "UnsupportedFontType: Embedded font program format is not loadable": 3,
+    "UnsupportedFontType: Substitute font lacks a glyph used by this text": 2,
+    "UnsupportedImageFilter: Image could not be decoded by the Direct2D backend": 2,
     "UnsupportedColorSpace: Fill uses an unsupported paint": 2,
     "Pattern: Tiling pattern could not be reproduced": 2,
     "MalformedContentRecovery: Content interpretation failed (PdfSyntaxException)": 1,
     "UnknownOperator: Unsupported PDF operator \u0027UnknownOP\u0027": 1,
     "ResourceLimit: Image could not be decoded by the Direct2D backend": 1,
     "ResourceLimit: Form XObject nesting too deep": 1,
-    "ImageDecode: Image could not be decoded by the Direct2D backend": 1,
     "UnsupportedImageFilter: Unsupported stream filter /Flatedecode.": 1,
     "UnsupportedImageFilter: Image filter Lzw": 1
   },
   "vectorOpenErrors": {},
   "worstPixelDiffs": [
-    "50.3 govdocs1-001\\001106.pdf p21",
     "37.0 govdocs1-001\\001390.pdf p29",
     "29.7 govdocs1-001\\001390.pdf p28",
     "27.9 govdocs1-001\\001390.pdf p30",
@@ -52,6 +50,7 @@
     "23.4 govdocs1-001\\001494.pdf p2",
     "23.4 govdocs1-001\\001307.pdf p1",
     "22.5 govdocs1-001\\001040.pdf p2",
-    "21.9 govdocs1-001\\001313.pdf p17"
+    "21.9 govdocs1-001\\001313.pdf p17",
+    "21.4 govdocs1-001\\001669.pdf p2"
   ]
 }
