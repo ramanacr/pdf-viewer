@@ -786,6 +786,9 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default) =>
         _pdfiumService.ExtractPageTextLayoutAsync(pageNumber, ct);
 
+    public Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default) =>
+        _pdfiumService.ExtractAccessibleContentAsync(pageNumber, ct);
+
     public async Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default)
     {
         if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium && IsPageVectorRendered(pageNumber))
