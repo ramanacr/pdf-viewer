@@ -69,6 +69,9 @@ public partial class PageViewModel : ObservableObject
     public ObservableCollection<SearchMatch> MatchesOnPage { get; } = new();
     public ObservableCollection<AnnotationModel> AnnotationsOnPage { get; } = new();
     public List<PageTextSegment> TextSegments { get; } = new();
+
+    /// <summary>The page's form field widgets, for the page's form layer.</summary>
+    public ObservableCollection<FormFieldViewModel> FormFields { get; } = new();
     public ObservableCollection<PageTextSegment> SelectedSegments { get; } = new();
 
     [ObservableProperty]

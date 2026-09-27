@@ -125,6 +125,16 @@ public interface IPdfDocumentService : IDisposable
     /// </summary>
     Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default);
 
+    /// <summary>The bytes of the open document as the service holds them (the latest in-memory revision).</summary>
+    byte[]? CurrentBytes => null;
+
+    /// <summary>
+    /// Replaces the open document with a new revision of it (a form fill appended as an
+    /// incremental update), keeping its file path: every engine re-reads it.
+    /// </summary>
+    Task ReloadFromBytesAsync(byte[] bytes, CancellationToken ct = default) =>
+        throw new NotSupportedException("This document service cannot reload from memory.");
+
     /// <summary>
     /// The page's text character by character, in reading order, for word-processor selection.
     /// The default builds it from the word segments (a space between words, a break between lines).

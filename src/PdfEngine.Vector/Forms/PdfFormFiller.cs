@@ -142,9 +142,9 @@ public static class PdfFormFiller
     // ------------------------------------------------------------------ text layout
 
     /// <summary>The /DA string parsed: font resource name, size (0 = auto) and the colour operators.</summary>
-    internal sealed record Appearance(string FontName, double Size, string ColourOps);
+    public sealed record Appearance(string FontName, double Size, string ColourOps);
 
-    internal static Appearance ParseDA(string? da)
+    public static Appearance ParseDA(string? da)
     {
         string font = "Helv";
         double size = 0;

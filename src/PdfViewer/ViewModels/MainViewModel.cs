@@ -556,6 +556,11 @@ public partial class MainViewModel : ObservableObject
             UpdateCurrentPageEngineStatus();
             _ = RenderThumbnailsAsync();
 
+            _openPassword = password;
+            _formChangedSinceSave = false;
+            _savedAnnotationsFingerprint = AnnotationsFingerprint();
+            await LoadFormAsync();
+
             // Inspect what the document carries. Done after the first render so opening
             // stays responsive, and reported rather than acted upon.
             await InspectDocumentSafetyAsync(filePath);
@@ -575,6 +580,10 @@ public partial class MainViewModel : ObservableObject
     public void CloseDocument()
     {
         _renderCts?.Cancel();
+        _form?.Dispose();
+        _form = null;
+        HasForm = false;
+        FormReadOnlyReason = null;
         DocumentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
         _searchCts?.Cancel();
         _docService.CloseDocument();
@@ -1832,12 +1841,23 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            await _docService.SaveAnnotatedDocumentAsync(
-                temporaryPath, AnnotationSaveMode.Embedded, AllAnnotations, originalPath);
+            if (OnlyFormChanges && _docService.CurrentBytes is { } revision)
+            {
+                // Only the form changed: the revision is the original plus an incremental update,
+                // written as it is, so signatures on the earlier revision stay valid.
+                await File.WriteAllBytesAsync(temporaryPath, revision);
+            }
+            else
+            {
+                await _docService.SaveAnnotatedDocumentAsync(
+                    temporaryPath, AnnotationSaveMode.Embedded, AllAnnotations, originalPath);
+            }
 
             ReplaceOriginal(temporaryPath, originalPath, backupPath);
 
             HasUnsavedChanges = false;
+            _formChangedSinceSave = false;
+            _savedAnnotationsFingerprint = AnnotationsFingerprint();
             StatusText = $"Saved {Path.GetFileName(originalPath)}.";
         }
         catch (Exception ex)
@@ -1851,6 +1871,109 @@ public partial class MainViewModel : ObservableObject
             TryDeleteQuietly(temporaryPath);
             TryDeleteQuietly(backupPath);
         }
+    }
+
+    // ------------------------------------------------------------------ interactive forms
+
+    private FormSession? _form;
+    private string? _openPassword;
+    /// <summary>Form fields changed since the last save.</summary>
+    private bool _formChangedSinceSave;
+    /// <summary>The annotations as last loaded or saved: unchanged means a save can keep the form's incremental revision.</summary>
+    private string _savedAnnotationsFingerprint = string.Empty;
+
+    private string AnnotationsFingerprint() => string.Join("|", AllAnnotations.Select(a =>
+        $"{a.Id}:{a.Type}:{a.PageNumber}:{a.X:F5},{a.Y:F5},{a.Width:F5},{a.Height:F5}:{a.ColorHex}:{a.Opacity:F3}:{a.Contents}:{a.Author}:{a.StrokeThickness}:{a.InkStrokes.Count}:{a.Quads.Count}"));
+
+    /// <summary>Only the form changed since the last save: the in-memory revision is written as it is.</summary>
+    private bool OnlyFormChanges => _formChangedSinceSave && AnnotationsFingerprint() == _savedAnnotationsFingerprint;
+
+    /// <summary>The document has fillable form fields.</summary>
+    [ObservableProperty]
+    private bool _hasForm;
+
+    /// <summary>Tint fields so they are easy to find (Acrobat's "Highlight Existing Fields").</summary>
+    [ObservableProperty]
+    private bool _highlightFormFields = true;
+
+    /// <summary>Why the form cannot be filled (encrypted, damaged, decrypted copy), or null.</summary>
+    [ObservableProperty]
+    private string? _formReadOnlyReason;
+
+    public IReadOnlyList<FormFieldViewModel> AllFormFields => Pages.SelectMany(p => p.FormFields).OrderBy(f => f.TabIndex).ToList();
+
+    private async Task LoadFormAsync()
+    {
+        _form?.Dispose();
+        _form = null;
+        foreach (var page in Pages) page.FormFields.Clear();
+        HasForm = false;
+        FormReadOnlyReason = null;
+        try
+        {
+            _form = await FormSession.OpenAsync(_docService, _openPassword);
+        }
+        catch (Exception) { _form = null; }
+        if (_form == null)
+            return;
+        FormReadOnlyReason = _form.ReadOnlyReason;
+        foreach (var field in _form.CreateFieldViewModels())
+            if (field.PageNumber >= 1 && field.PageNumber <= Pages.Count)
+                Pages[field.PageNumber - 1].FormFields.Add(field);
+        HasForm = Pages.Any(p => p.FormFields.Count > 0);
+        if (HasForm)
+            StatusText = $"This document has a form with {_form.Form.Fields.Count} field(s). Click a field to fill it; Tab moves to the next.";
+    }
+
+    /// <summary>
+    /// Commits one field's new value: a new revision of the document (incremental update), the
+    /// affected pages re-rendered with the field's regenerated appearance.
+    /// </summary>
+    public async Task<bool> CommitFormFieldAsync(FormFieldViewModel field, PdfEngine.Vector.Forms.PdfFieldChange change)
+    {
+        if (_form == null) return false;
+        if (!Permit(DocumentPermissions.CanFillForms, "filling in forms")) return false;
+        if (FormReadOnlyReason != null)
+        {
+            StatusText = FormReadOnlyReason;
+            return false;
+        }
+        if (field.IsReadOnly) return false;
+        try
+        {
+            await _form.ApplyAsync(new[] { change });
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or KeyNotFoundException)
+        {
+            StatusText = $"The field could not be filled: {ex.Message}";
+            return false;
+        }
+
+        // Values of every widget of the field (radio siblings, repeated fields) from the new revision.
+        if (_form.Form[field.FullName] is { } updated)
+        {
+            foreach (var page in Pages)
+                foreach (var w in page.FormFields.Where(f => f.FullName == field.FullName))
+                {
+                    w.Value = updated.Value;
+                    w.Selections = updated.Values;
+                }
+        }
+        _formChangedSinceSave = true;
+        HasUnsavedChanges = true;
+
+        // Re-render the pages carrying this field; the others are unchanged.
+        foreach (int pageNumber in Pages.SelectMany(p => p.FormFields).Where(f => f.FullName == field.FullName).Select(f => f.PageNumber).Distinct())
+        {
+            var page = Pages[pageNumber - 1];
+            page.UnloadImage();
+            if (pageNumber - 1 < Thumbnails.Count) Thumbnails[pageNumber - 1].UnloadThumbnail();
+        }
+        _cache.Clear();
+        _ = RenderVisiblePagesAsync();
+        _ = RenderThumbnailsAsync();
+        StatusText = $"Filled \"{field.AccessibleName}\".";
+        return true;
     }
 
     public bool CanSave() => IsDocumentLoaded && HasUnsavedChanges && Metadata != null

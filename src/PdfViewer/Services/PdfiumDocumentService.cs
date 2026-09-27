@@ -111,6 +111,17 @@ public class PdfiumDocumentService : IPdfDocumentService
     /// Opens a document from memory under <paramref name="filePath"/> (shown and used for saving
     /// defaults). Used for the decrypted copy of a certificate-encrypted file.
     /// </summary>
+    public byte[]? CurrentBytes
+    {
+        get { lock (_docLock) return _fileBytes; }
+    }
+
+    public async Task ReloadFromBytesAsync(byte[] bytes, CancellationToken ct = default)
+    {
+        string path = CurrentFilePath;
+        await OpenDocumentFromBytesAsync(bytes, path, ct).ConfigureAwait(false);
+    }
+
     public async Task<DocumentMetadata> OpenDocumentFromBytesAsync(byte[] bytes, string filePath, CancellationToken ct = default)
     {
         return await Task.Run(() =>

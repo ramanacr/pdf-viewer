@@ -359,7 +359,7 @@ public partial class MainWindow : Window
     private bool? ConfirmSaveBeforeClosing(string fileName)
     {
         var answer = MessageBox.Show(this,
-            $"\"{fileName}\" has annotation changes that are not saved.\n\nSave them?",
+            $"\"{fileName}\" has changes that are not saved.\n\nSave them?",
             "Unsaved Changes",
             MessageBoxButton.YesNoCancel,
             MessageBoxImage.Warning);

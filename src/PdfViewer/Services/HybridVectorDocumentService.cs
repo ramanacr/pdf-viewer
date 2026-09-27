@@ -311,6 +311,34 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public bool IsDecryptedCopy { get; private set; }
 
+    public byte[]? CurrentBytes => _pdfiumService.CurrentBytes;
+
+    /// <summary>A new revision of the open document (a form fill): both engines re-read it; caches are dropped.</summary>
+    public async Task ReloadFromBytesAsync(byte[] bytes, CancellationToken ct = default)
+    {
+        await _pdfiumService.ReloadFromBytesAsync(bytes, ct).ConfigureAwait(false);
+        _metrics = new PdfEngineMetrics();
+        _fallbackProvider.Reset();
+        ClearSurfaces();
+        _pageEngineReports.Clear();
+        var old = _vectorDoc;
+        _vectorDoc = null;
+        _vectorOpenAttempted = false;
+        old?.Dispose();
+        if (_mode != PdfEngineMode.Pdfium)
+        {
+            try
+            {
+                _vectorDoc = await PdfVectorDocument.OpenAsync(bytes, CurrentFilePath, cancellationToken: ct, password: _password).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _vectorDoc = null; // PDFium renders it
+            }
+            _vectorOpenAttempted = true;
+        }
+    }
+
     /// <summary>The vector core's security handler when it opened the file, else PDFium's view.</summary>
     public PdfEngine.Documents.PdfDocumentPermissions Permissions =>
         _vectorDoc?.Security is { } security
