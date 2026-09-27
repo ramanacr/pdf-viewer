@@ -76,6 +76,20 @@ public partial class MainWindow : Window
         document.ConfirmFunc = ConfirmDialog;
         document.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
         document.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
+        document.ShowCompareAction = async (oldPath, newPath, password) =>
+        {
+            var compare = new CompareViewModel();
+            var window = new CompareWindow(compare) { Owner = this };
+            window.Show();
+            try
+            {
+                await compare.LoadAsync(oldPath, newPath, password);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException)
+            {
+                compare.Summary = $"The documents could not be compared: {ex.Message}";
+            }
+        };
         document.ShowApplyRedactionsFunc = (marks, suggested) =>
         {
             var dialog = new ApplyRedactionsDialog(marks, suggested) { Owner = this };
