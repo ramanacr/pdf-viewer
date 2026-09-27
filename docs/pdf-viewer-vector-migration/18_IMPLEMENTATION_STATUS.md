@@ -53,7 +53,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   2. the family name as written, then without MT/PSMT/PS, then without the style words written into it (weight from Thin to Black, Italic/Oblique, Narrow/Condensed);
   3. aliases for PostScript and Adobe families (Helvetica to Arial, Palatino to Palatino Linotype, AvantGarde to Century Gothic, and so on), limited to the metric-compatible regular and bold weights;
   4. the class of font: fixed pitch, script, serif, else sans. A name that plainly says sans overrides a wrong serif flag.
-  - Over the 284 GovDocs files, 21 render closer to PDFium and 2 differ more: one is image noise, and one is Optima, which PDFium draws as a serif. Substitute glyphs are not yet stretched to the document's widths.
+  - Over the 284 GovDocs files, 21 render closer to PDFium and 2 differ more: one is image noise, and one is Optima, which PDFium draws as a serif. Substitute glyphs are fitted to the document's /Widths in the Direct2D renderer, as Acrobat's substitutes are: a glyph wider than its width is narrowed so it does not run into the next, and a narrower one is widened by up to a tenth and centred in the rest. (PDFium leaves them as they are, so wide substitutes overlap there.)
 - Correct image orientation, `/Rotate` + viewer rotation, shading extend bands and radial clip, hairline and dash handling in page units, byte-bounded image cache, one long-lived STA render thread, `AnalyzeAsync` and `BuildPageDrawingAsync` for hosts.
 
 ### Composition root (`PdfViewer`)

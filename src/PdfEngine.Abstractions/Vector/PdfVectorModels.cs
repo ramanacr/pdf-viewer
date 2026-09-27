@@ -166,6 +166,7 @@ public sealed class PdfPath
 /// <param name="OffsetX">Glyph origin relative to the run origin, in text space.</param>
 /// <param name="Unicode">Semantic text for selection/search/copy. Never used to lay out glyphs (ADR-006).</param>
 /// <param name="CharCode">Original PDF character code (or CID for composite fonts); -1 when unknown.</param>
+/// <param name="Width">The glyph's width from the font's metrics (/Widths), in em; -1 when not known.</param>
 public sealed record PdfGlyph(
     ushort GlyphId,
     double AdvanceX,
@@ -173,7 +174,8 @@ public sealed record PdfGlyph(
     double OffsetX = 0.0,
     double OffsetY = 0.0,
     string? Unicode = null,
-    int CharCode = -1);
+    int CharCode = -1,
+    double Width = -1);
 
 /// <summary>Font program container format a backend may load directly.</summary>
 public enum PdfFontProgramFormat
