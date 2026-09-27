@@ -197,6 +197,21 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Each mark is a pagination artifact in its own marked content, and each design is stored once as a form XObject with Acrobat's PieceInfo. Update and Remove find our marks and Acrobat's own and leave everything else as it was. The document's own content streams are never rewritten unless they hold an Acrobat mark, and then only that sequence goes.
 - The viewer's Edit > Page Marks dialogs preview the current page, and the result is a new revision with undo.
 
+### Reduce File Size
+- `Optimize/PdfOptimizer` saves a smaller copy that looks the same:
+  - a complete rewrite of what the catalog reaches, so unused objects go;
+  - identical fonts, images and other shared resources are stored once. Pages, annotations, fields, outline items, structure elements and layers keep their identity;
+  - general-purpose filters are replaced by the strongest Flate where that is smaller, and image codecs are kept;
+  - objects are packed into object streams with a cross-reference stream. PDF/A-1 documents keep a classic table, a 1.4 header and readable metadata;
+  - page thumbnails and applications' private data are dropped;
+  - optionally, images shown above a resolution are downsampled to it by averaging, soft masks with them. JPEG images go through the host's codec, and CMYK, indexed and colour-keyed images are left alone.
+- Encrypted documents are refused; signed ones are saved only after confirmation, because their signatures break.
+- `vectorpdf optimize` over the 3,197-file corpus, lossless settings:
+  - 3,176 files are rewritten, and 21 are skipped (encrypted or repaired);
+  - 311 MB become 266 MB (86 %), and the GovDocs files lose about a third of their size;
+  - PDFium reads the same text on the first pages of every file, and they render as before (checked after the JPEG 2000 fix).
+- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy.
+
 ### PDF/A
 - **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
   - file syntax, including the raw header, trailers, cross-reference sections, streams, strings and names;

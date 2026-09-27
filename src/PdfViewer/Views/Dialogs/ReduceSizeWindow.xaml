@@ -1,0 +1,25 @@
+<Window x:Class="PdfViewer.Views.Dialogs.ReduceSizeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Reduce File Size"
+        Width="560" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{DynamicResource SurfaceBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        ShowInTaskbar="False">
+    <StackPanel Margin="18">
+        <TextBlock Text="{Binding FileName}" FontSize="16" FontWeight="Bold" />
+        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,12"
+                   Text="Saves a smaller copy: unused objects removed, identical fonts and images stored once, streams recompressed and objects packed. Text, forms, annotations, bookmarks, tags and metadata are kept. The original is not changed." />
+        <TextBlock Text="Images" Margin="0,0,0,4" />
+        <ComboBox ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset}" AutomationProperties.Name="Images"
+                  ToolTip="Images shown well above the chosen resolution are downsampled to it; JPEG images are saved again at a matching quality." />
+        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,14,0,14" AutomationProperties.LiveSetting="Polite" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="OpenButton" Content="_Open Copy" Padding="14,3" Margin="0,0,8,0" Click="Open_Click" Visibility="Collapsed" />
+            <Button Content="_Save Smaller Copy..." Padding="14,3" Margin="0,0,8,0" Click="Reduce_Click" IsEnabled="{Binding CanReduce}" IsDefault="True" />
+            <Button Content="Close" Padding="14,3" IsCancel="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>
