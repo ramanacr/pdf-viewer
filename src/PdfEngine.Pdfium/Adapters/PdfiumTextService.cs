@@ -36,6 +36,9 @@ public sealed class PdfiumTextService : IPdfTextService
 
             float pageW = PdfiumNativeBridge.FPDF_GetPageWidthF(pageHandle);
             float pageH = PdfiumNativeBridge.FPDF_GetPageHeightF(pageHandle);
+            // Char boxes are absolute user space; normalized coordinates start at the crop box.
+            var (originX, originY) = PdfiumNativeBridge.FPDF_GetPageBoundingBox(pageHandle, out var pageBox) != 0
+                ? (Math.Min(pageBox.left, pageBox.right), Math.Min(pageBox.top, pageBox.bottom)) : (0f, 0f);
 
             int charCount = PdfiumNativeBridge.FPDFText_CountChars(textPage);
             if (charCount <= 0) return ValueTask.FromResult<IReadOnlyList<TextSegment>>(segments);
@@ -54,8 +57,8 @@ public sealed class PdfiumTextService : IPdfTextService
                     double padH = 2.5;
                     double padX = 0.5;
 
-                    double normX = Math.Max(0.0, Math.Min(1.0, (wordMinL - padX) / pageW));
-                    double normY = Math.Max(0.0, Math.Min(1.0, 1.0 - ((wordMaxT + padY) / pageH)));
+                    double normX = Math.Max(0.0, Math.Min(1.0, (wordMinL - originX - padX) / pageW));
+                    double normY = Math.Max(0.0, Math.Min(1.0, 1.0 - ((wordMaxT - originY + padY) / pageH)));
                     double normW = Math.Max(0.001, Math.Min(1.0 - normX, (wordMaxR - wordMinL + (padX * 2)) / pageW));
                     double normH = Math.Max(0.001, Math.Min(1.0 - normY, (wordMaxT - wordMinB + padH) / pageH));
 
@@ -192,6 +195,9 @@ public sealed class PdfiumTextService : IPdfTextService
 
                 float pageW = PdfiumNativeBridge.FPDF_GetPageWidthF(pageHandle);
                 float pageH = PdfiumNativeBridge.FPDF_GetPageHeightF(pageHandle);
+            // Char boxes are absolute user space; normalized coordinates start at the crop box.
+            var (originX, originY) = PdfiumNativeBridge.FPDF_GetPageBoundingBox(pageHandle, out var pageBox) != 0
+                ? (Math.Min(pageBox.left, pageBox.right), Math.Min(pageBox.top, pageBox.bottom)) : (0f, 0f);
 
                 int totalChars = PdfiumNativeBridge.FPDFText_CountChars(textPage);
                 string pageFullText = string.Empty;
@@ -238,8 +244,8 @@ public sealed class PdfiumTextService : IPdfTextService
                             double padH = 2.5;
                             double padX = 1.0;
 
-                            double normX = Math.Max(0.0, Math.Min(1.0, (minL - padX) / pageW));
-                            double normY = Math.Max(0.0, Math.Min(1.0, 1.0 - ((maxT + padY) / pageH)));
+                            double normX = Math.Max(0.0, Math.Min(1.0, (minL - originX - padX) / pageW));
+                            double normY = Math.Max(0.0, Math.Min(1.0, 1.0 - ((maxT - originY + padY) / pageH)));
                             double normW = Math.Max(0.001, Math.Min(1.0 - normX, (maxR - minL + (padX * 2)) / pageW));
                             double normH = Math.Max(0.001, Math.Min(1.0 - normY, (maxT - minB + padH) / pageH));
 
