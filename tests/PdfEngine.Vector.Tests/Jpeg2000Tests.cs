@@ -198,6 +198,41 @@ public class Jpeg2000Tests
     
     }
 
+    /// <summary>
+    /// A grayscale JPEG under a /Separation space (a spot "Black" ink, tint 1 = full ink): the
+    /// samples are tints and go through the tint transform, as PDFium does. Shown as gray it was
+    /// a negative (GovDocs1 001106.pdf). Also a DeviceGray JPEG with /Decode [1 0].
+    /// </summary>
+    [Theory]
+    [InlineData("separation", "/ColorSpace [/Separation /Black /DeviceGray << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>]")]
+    [InlineData("gray-decode-inverted", "/ColorSpace /DeviceGray /Decode [1 0]")]
+    public async Task Jpeg_ThroughItsColourSpace_MatchesPdfium(string name, string colour)
+    {
+        var pixels = new byte[64 * 48];
+        for (int y = 0; y < 48; y++) for (int x = 0; x < 64; x++) pixels[y * 64 + x] = (byte)(x * 3 + y * 1);
+        var src = System.Windows.Media.Imaging.BitmapSource.Create(64, 48, 96, 96, System.Windows.Media.PixelFormats.Gray8, null, pixels, 64);
+        var enc = new System.Windows.Media.Imaging.JpegBitmapEncoder { QualityLevel = 95 };
+        enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(src));
+        using var ms = new System.IO.MemoryStream();
+        enc.Save(ms);
+        var b = new VectorPdfBuilder();
+        int image = b.AddStream($"/Type /XObject /Subtype /Image /Width 64 /Height 48 /BitsPerComponent 8 /Filter /DCTDecode {colour}", ms.ToArray());
+        b.AddPage("q 180 0 0 135 10 30 cm /Im1 Do Q", $"<< /XObject << /Im1 {image} 0 R >> >>");
+        var pdf = b.Build();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        using var renderer = new Direct2DVectorRenderer();
+        var result = await renderer.RenderAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 }, null, null, false, CancellationToken.None);
+        Assert.Empty(result.Fallbacks);
+        using var v = result.Page;
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(pdf);
+        using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = 1, Dpi = 72 });
+        var (mean, bad) = DifferentialRenderingTests.Compare(v, p);
+        _output.WriteLine($"{name}: mean={mean:F2} bad={bad:P2}");
+        Assert.True(mean <= 3.0 && bad <= 0.02, $"{name}: mean {mean:F2} bad {bad:P2}");
+    }
+
     [Fact]
     public async Task Jpeg_WithBytesBeforeTheSoiMarker_StillDecodes()
     {

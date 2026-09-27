@@ -110,7 +110,19 @@ internal sealed class WpfImageCache
             var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
             BitmapSource frame = decoder.Frames[0];
 
-            if (frame.Format == PixelFormats.Cmyk32)
+            if (image.MapJpegComponents is { } map)
+            {
+                // Raw components for the core to map through the image's colour space.
+                int n = frame.Format == PixelFormats.Cmyk32 ? 4 : frame.Format == PixelFormats.Gray8 ? 1 : 3;
+                BitmapSource source = n == 3 ? new FormatConvertedBitmap(frame, PixelFormats.Rgb24, null, 0) : frame;
+                int w = source.PixelWidth, h = source.PixelHeight;
+                var samples = new byte[w * h * n];
+                source.CopyPixels(samples, w * n, 0);
+                if (n == 4 && image.InvertCmykJpeg)
+                    for (int i = 0; i < samples.Length; i++) samples[i] = (byte)(255 - samples[i]);
+                bitmap = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, map(samples, n, w, h), w * 4);
+            }
+            else if (frame.Format == PixelFormats.Cmyk32)
             {
                 bitmap = CmykToBgra(frame, image.InvertCmykJpeg);
             }
