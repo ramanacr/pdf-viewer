@@ -14,10 +14,13 @@ namespace PdfEngine.Vector.Editing;
 /// </summary>
 internal static class TextShaper
 {
-    /// <summary>A shaped glyph, in drawing order, with the embedding level of the text it shows (odd: right to left).</summary>
-    public readonly record struct Shaped(int Gid, string Text, int Level);
+    /// <summary>
+    /// A shaped glyph, in drawing order, with the embedding level of the text it shows (odd: right to
+    /// left); where it is drawn from the pen (1/1000 em) and how far it moves the pen (null: its own advance).
+    /// </summary>
+    public readonly record struct Shaped(int Gid, string Text, int Level, double Dx = 0, double Dy = 0, double? Advance = null);
 
-    private static readonly string[] CursiveFeatures = { "ccmp", "isol", "fina", "medi", "init", "rlig", "liga" };
+    private static readonly string[] CursiveFeatures = { "ccmp", "isol", "fina", "medi", "init", "rlig", "calt", "liga" };
     private static readonly string[] DefaultFeatures = { "ccmp", "liga", "rlig" };
 
     /// <summary>
@@ -68,9 +71,22 @@ internal static class TextShaper
                 at += s.Length;
             }
             bool cursive = forms.Any(x => x != null);
-            f.Substitution?.Apply(buffer, cursive ? "arab" : ScriptOf(text), cursive ? CursiveFeatures : DefaultFeatures);
-            foreach (var g in buffer)
-                if (g.Gid > 0 || g.Text.Length > 0) glyphs.Add((new Shaped(g.Gid, g.Text, level), font));
+            string script = cursive ? "arab" : ScriptOf(text);
+            f.Substitution?.Apply(buffer, script, cursive ? CursiveFeatures : DefaultFeatures);
+            buffer.RemoveAll(g => g.Gid <= 0 && g.Text.Length == 0);
+            // Marks placed on the glyphs they belong to (in reading order, before any reversal).
+            var gids = buffer.Select(g => g.Gid).ToArray();
+            var advances = gids.Select(gid => (double)f.AdvanceUnits(gid)).ToArray();
+            var dx = new double[gids.Length];
+            var dy = new double[gids.Length];
+            var own = (double[])advances.Clone();
+            f.Positioning?.Apply(gids, script, advances, dx, dy);
+            for (int k = 0; k < buffer.Count; k++)
+            {
+                bool moved = dx[k] != 0 || dy[k] != 0 || advances[k] != own[k];
+                glyphs.Add((moved ? new Shaped(buffer[k].Gid, buffer[k].Text, level, f.ToThousandths((int)Math.Round(dx[k])), f.ToThousandths((int)Math.Round(dy[k])), f.ToThousandths((int)Math.Round(advances[k])))
+                    : new Shaped(buffer[k].Gid, buffer[k].Text, level), font));
+            }
         }
         // A base and the marks after it move as one when right-to-left text is reversed, so each
         // mark still follows its base (zero-width marks are drawn over the glyph before them).

@@ -254,6 +254,26 @@ public sealed class TrueTypeFontFile
 
     public double ToThousandths(int units) => units * 1000.0 / UnitsPerEm;
 
+    /// <summary>Advance width in font units.</summary>
+    internal int AdvanceUnits(int gid) => gid >= 0 && gid < GlyphCount ? _advances[gid] : 0;
+
+    private OpenTypePositioning? _positioning;
+    private bool _positioningRead;
+
+    /// <summary>The font's mark positioning (GPOS), or null when it has none.</summary>
+    internal OpenTypePositioning? Positioning
+    {
+        get
+        {
+            if (!_positioningRead)
+            {
+                _positioning = OpenTypePositioning.Read(_tables);
+                _positioningRead = true;
+            }
+            return _positioning;
+        }
+    }
+
     private OpenTypeSubstitution? _substitution;
     private bool _substitutionRead;
 

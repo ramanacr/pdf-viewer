@@ -520,8 +520,10 @@ internal sealed class PageSession
                 // Pair kerning in left-to-right text (right-to-left pairs are kerned in reading order, which is not read here).
                 if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0)
                     s += builder.Font.Kerning(p.Glyph.Gid, g.Gid) / 1000.0 * size;
-                var origin = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
-                double advance = builder.Font.Advance(g.Gid) / 1000.0 * size;
+                // A mark on its anchor: moved from the pen, and not moving it.
+                double gx = s + g.Dx / 1000.0 * size, gy = t + g.Dy / 1000.0 * size;
+                var origin = new PdfPoint(add.Baseline.X + gx * cos - gy * sin, add.Baseline.Y + gx * sin + gy * cos);
+                double advance = (g.Advance ?? builder.Font.Advance(g.Gid)) / 1000.0 * size;
                 var style = new GlyphStyle(builder.ResourceName, null, size, 0, 0, 100, 0, 0, color, rgb);
                 result.Add(new OutGlyph
                 {
