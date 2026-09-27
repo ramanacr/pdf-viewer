@@ -180,7 +180,15 @@ public partial class PageViewModel : ObservableObject
     /// coarser than the screen (zoomed in). Positioned by <see cref="DetailRect"/> in page DIPs.
     /// </summary>
     [ObservableProperty]
-    private BitmapSource? _detailImage;
+    private ImageSource? _detailImage;
+
+    /// <summary>
+    /// Shows a GPU texture directly (set by the window when the display allows it); null keeps
+    /// every tile a bitmap. Given the texture and what to do if the display device is lost.
+    /// </summary>
+    internal static Func<PdfEngine.Vector.Direct2D.SharedTexture, Action, (ImageSource Image, IDisposable Lifetime)?>? GpuPresenter { get; set; }
+
+    private IDisposable? _detailLifetime;
 
     [ObservableProperty]
     private Rect _detailRect;
@@ -192,9 +200,12 @@ public partial class PageViewModel : ObservableObject
     /// <summary>Largest detail tile side in device pixels (memory bound: 64 MB at 4096²).</summary>
     public const double MaxDetailPixels = 4096;
 
-    private void SetDetail(BitmapSource tile, (double, int, bool) key, Rect pixels, double devicePixelsPerDip)
+    private void SetDetail(ImageSource tile, IDisposable? lifetime, (double, int, bool) key, Rect pixels, double devicePixelsPerDip)
     {
+        var previous = _detailLifetime;
         DetailImage = tile;
+        _detailLifetime = lifetime;
+        previous?.Dispose(); // after the new tile is in place: no gap on screen
         DetailRect = new Rect(pixels.X / devicePixelsPerDip, pixels.Y / devicePixelsPerDip, pixels.Width / devicePixelsPerDip, pixels.Height / devicePixelsPerDip);
         _detailKey = key;
         _detailPixels = pixels;
@@ -205,6 +216,8 @@ public partial class PageViewModel : ObservableObject
         _detailCts?.Cancel();
         _detailCts = null;
         DetailImage = null;
+        _detailLifetime?.Dispose();
+        _detailLifetime = null;
         _detailPixels = Rect.Empty;
     }
 
@@ -259,17 +272,23 @@ public partial class PageViewModel : ObservableObject
             int vh = (int)Math.Min(MaxDetailPixels, Math.Min(fullH, Math.Ceiling(visiblePx.Bottom)) - vy0);
             if (vw > 0 && vh > 0 && (double)w * h > 1.5 * vw * vh && !(DetailImage != null && _detailKey == key))
             {
-                var visibleTile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)vx0, (int)vy0, vw, vh, nightMode, cts.Token);
+                var visibleTile = await RenderRegionAsync(service, rotation, pxPerPt, (int)vx0, (int)vy0, vw, vh, nightMode, cts.Token);
                 if (cts.IsCancellationRequested)
+                {
+                    visibleTile?.Lifetime?.Dispose();
                     return;
-                if (visibleTile != null)
-                    SetDetail(visibleTile, key, new Rect(vx0, vy0, vw, vh), devicePixelsPerDip);
+                }
+                if (visibleTile is { } v)
+                    SetDetail(v.Image, v.Lifetime, key, new Rect(vx0, vy0, vw, vh), devicePixelsPerDip);
             }
 
-            var tile = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, (int)x0, (int)y0, w, h, nightMode, cts.Token);
+            var tile = await RenderRegionAsync(service, rotation, pxPerPt, (int)x0, (int)y0, w, h, nightMode, cts.Token);
             if (cts.IsCancellationRequested || tile == null)
+            {
+                tile?.Lifetime?.Dispose();
                 return;
-            SetDetail(tile, key, new Rect(x0, y0, w, h), devicePixelsPerDip);
+            }
+            SetDetail(tile.Value.Image, tile.Value.Lifetime, key, new Rect(x0, y0, w, h), devicePixelsPerDip);
         }
         catch (OperationCanceledException) { }
         catch (PdfEngine.Exceptions.PdfSecurityPolicyException) { }
@@ -277,6 +296,29 @@ public partial class PageViewModel : ObservableObject
         {
             // A failed tile leaves the (coarser) page bitmap visible; never an empty page.
         }
+    }
+
+    /// <summary>A region as a GPU surface when a presenter is set and the page is drawn by Direct2D, else as a bitmap.</summary>
+    private async Task<(ImageSource Image, IDisposable? Lifetime)?> RenderRegionAsync(IPdfDocumentService service, int rotation, double pxPerPt,
+        int x, int y, int w, int h, bool nightMode, CancellationToken ct)
+    {
+        if (GpuPresenter is { } present)
+        {
+            var texture = await service.RenderPageRegionToGpuAsync(PageNumber, rotation, pxPerPt, x, y, w, h, nightMode, ct);
+            if (texture != null)
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    texture.Dispose();
+                    return null;
+                }
+                if (present(texture, ClearDetail) is { } shown)
+                    return (shown.Image, shown.Lifetime);
+                texture.Dispose();
+            }
+        }
+        var bitmap = await service.RenderPageRegionAsync(PageNumber, rotation, pxPerPt, x, y, w, h, nightMode, ct);
+        return bitmap == null ? null : (bitmap, null);
     }
 
     private void RaiseGeometryChanged()

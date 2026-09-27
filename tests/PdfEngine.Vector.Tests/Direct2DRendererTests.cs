@@ -188,4 +188,66 @@ public class Direct2DRendererTests
         Assert.True(mean <= 0.25, $"mean {mean:F3}");
         Assert.True(bad <= 0.001, $"bad {bad:P3}");
     }
+    /// <summary>
+    /// The zero-copy path: a region rendered into a shared GPU texture holds exactly the pixels of
+    /// the readback path (read here through a second Direct3D 11 device), and Direct3D 9Ex — what
+    /// WPF's D3DImage composes — can open it.
+    /// </summary>
+    [Fact]
+    public async Task Direct2D_SharedTexture_HoldsTheSamePixelsAsReadback_AndOpensInDirect3D9Ex()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("1 0 0 rg 20 20 100 60 re f 0 0 1 RG 3 w 10 10 m 190 190 l S 0 g BT /F1 18 Tf 20 150 Td (Shared) Tj ET",
+            "<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        using var renderer = new Direct2DVectorRenderer();
+        if (renderer.IsSoftware) return; // WARP cannot share with another device
+        var request = new RenderRequest { PageNumber = 1, Dpi = 216 };
+        var region = new PixelRegion(40, 60, 400, 300);
+
+        using var shared = await renderer.RenderToSharedTextureAsync(list, request, null, region, invertColors: false, System.Threading.CancellationToken.None);
+        Assert.NotNull(shared);
+        Assert.Equal(400, shared!.Width);
+        Assert.NotEqual(IntPtr.Zero, shared.SharedHandle);
+
+        var reference = await renderer.RenderAsync(list, request, null, region, invertColors: false, System.Threading.CancellationToken.None);
+        using var expected = reference.Page;
+
+        // Read the shared texture back through an independent device.
+        Vortice.Direct3D11.D3D11.D3D11CreateDevice(null, Vortice.Direct3D.DriverType.Hardware, Vortice.Direct3D11.DeviceCreationFlags.BgraSupport,
+            null!, out Vortice.Direct3D11.ID3D11Device? device).CheckError();
+        using (device)
+        {
+            using var opened = device!.OpenSharedResource<Vortice.Direct3D11.ID3D11Texture2D>(shared.SharedHandle);
+            var desc = opened.Description;
+            desc.Usage = Vortice.Direct3D11.ResourceUsage.Staging;
+            desc.BindFlags = Vortice.Direct3D11.BindFlags.None;
+            desc.CPUAccessFlags = Vortice.Direct3D11.CpuAccessFlags.Read;
+            desc.MiscFlags = Vortice.Direct3D11.ResourceOptionFlags.None;
+            using var staging = device.CreateTexture2D(desc);
+            var ctx = device.ImmediateContext;
+            ctx.CopyResource(staging, opened);
+            var map = ctx.Map(staging, 0, Vortice.Direct3D11.MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+            var actual = new byte[expected.Stride * expected.HeightPixels];
+            for (int row = 0; row < expected.HeightPixels; row++)
+                System.Runtime.InteropServices.Marshal.Copy(map.DataPointer + (int)(row * map.RowPitch), actual, row * expected.Stride, expected.Stride);
+            ctx.Unmap(staging, 0);
+            var span = expected.Pixels.Span;
+            int differing = 0;
+            for (int i = 0; i < actual.Length; i++)
+                if (Math.Abs(actual[i] - span[i]) > 1) differing++;
+            Assert.True(differing == 0, $"{differing} bytes differ between the shared texture and the readback");
+        }
+
+        // Direct3D 9Ex opens it (what D3DImage.SetBackBuffer is given).
+        using var d3d9 = D3D9ExInterop.TryCreate(GetDesktopWindow());
+        Assert.NotNull(d3d9);
+        using var surface = d3d9!.OpenShared(shared.SharedHandle, shared.Width, shared.Height);
+        Assert.NotNull(surface);
+        Assert.NotEqual(IntPtr.Zero, surface!.Surface);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetDesktopWindow();
 }

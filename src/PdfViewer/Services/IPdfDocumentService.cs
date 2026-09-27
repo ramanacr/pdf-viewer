@@ -106,6 +106,15 @@ public interface IPdfDocumentService : IDisposable
         => Task.FromResult<BitmapSource?>(null);
 
     /// <summary>
+    /// The same region rendered into a GPU texture another device can open (no readback), for a
+    /// presenter that shows it directly. Null when the page is not drawn by Direct2D or the
+    /// device cannot share; the caller then uses <see cref="RenderPageRegionAsync"/>.
+    /// </summary>
+    Task<PdfEngine.Vector.Direct2D.SharedTexture?> RenderPageRegionToGpuAsync(int pageNumber, int rotationAngle, double pixelsPerPoint,
+        int x, int y, int width, int height, bool nightMode, CancellationToken ct = default)
+        => Task.FromResult<PdfEngine.Vector.Direct2D.SharedTexture?>(null);
+
+    /// <summary>
     /// Extracts the hierarchical bookmarks / outline tree.
     /// </summary>
     ObservableCollection<BookmarkItem> ExtractBookmarks();
