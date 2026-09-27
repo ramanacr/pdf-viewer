@@ -434,6 +434,7 @@ internal sealed class Replayer : IDisposable
             gctx.BeginDraw();
             gctx.AntialiasMode = AntialiasMode.PerPrimitive;
             gctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            if (_res.DocumentTextParams != null) gctx.TextRenderingParams = _res.DocumentTextParams;
             gctx.Clear(new Color4(0, 0, 0, 0));
             if (fromBackdrop)
                 gctx.DrawImage(initialBackdrop!, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
@@ -626,6 +627,7 @@ internal sealed class Replayer : IDisposable
             ectx.BeginDraw();
             ectx.AntialiasMode = AntialiasMode.PerPrimitive;
             ectx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            if (_res.DocumentTextParams != null) ectx.TextRenderingParams = _res.DocumentTextParams;
             ectx.Clear(new Color4(0, 0, 0, 0));
             using var ectx1 = surface.Ctx1 != null ? ectx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
             var sub = new Surface { Ctx = ectx, Ctx1 = ectx1, Target = bmp, Width = surface.Width, Height = surface.Height };
@@ -754,6 +756,7 @@ internal sealed class Replayer : IDisposable
         mctx.BeginDraw();
         mctx.AntialiasMode = AntialiasMode.PerPrimitive;
         mctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        if (_res.DocumentTextParams != null) mctx.TextRenderingParams = _res.DocumentTextParams;
         try
         {
             var bc = mask.Backdrop;
@@ -837,6 +840,7 @@ internal sealed class Replayer : IDisposable
         cctx.BeginDraw();
         cctx.AntialiasMode = AntialiasMode.PerPrimitive;
         cctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        if (_res.DocumentTextParams != null) cctx.TextRenderingParams = _res.DocumentTextParams;
         try
         {
             cctx.Clear(new Color4(0, 0, 0, 0));
@@ -1065,6 +1069,28 @@ internal sealed class Replayer : IDisposable
     /// Union of the runs' glyph outlines in user space (nonzero). A run whose font cannot be
     /// outlined contributes its box instead (the region is classified by <see cref="Analyze"/>).
     /// </summary>
+    /// <summary>
+    /// The face's glyph matrix (the part of a CFF FontMatrix beyond the 1/unitsPerEm scale: an
+    /// oblique's skew, a narrow face's x scale) in DirectWrite glyph space (y down, em = size),
+    /// and the glyph offsets pre-compensated so each glyph still lands at its PDF position.
+    /// </summary>
+    private static (Matrix3x2 Glyph, GlyphOffset[] Offsets) GlyphFrame(PdfFontFace? face, float emSize, Vector2[] offsets)
+    {
+        if (face?.GlyphMatrix is not { } g)
+            return (Matrix3x2.Identity, offsets.Select(o => new GlyphOffset { AdvanceOffset = o.X, AscenderOffset = o.Y }).ToArray());
+        var glyph = new Matrix3x2((float)g.A, (float)-g.B, (float)-g.C, (float)g.D, (float)(g.E * emSize), (float)(-g.F * emSize));
+        var linear = glyph with { M31 = 0, M32 = 0 };
+        if (!Matrix3x2.Invert(linear, out var inverse))
+            return (Matrix3x2.Identity, offsets.Select(o => new GlyphOffset { AdvanceOffset = o.X, AscenderOffset = o.Y }).ToArray());
+        // Offsets are (advance, ascender-up); in y-down glyph space a position is (x, -up).
+        var compensated = offsets.Select(o =>
+        {
+            var q = Vector2.Transform(new Vector2(o.X, -o.Y), inverse);
+            return new GlyphOffset { AdvanceOffset = q.X, AscenderOffset = -q.Y };
+        }).ToArray();
+        return (glyph, compensated);
+    }
+
     private ID2D1Geometry? TextOutline(PushTextClip cmd, Matrix3x2 ctm)
     {
         if (_textOutlines.TryGetValue(cmd, out var cached))
@@ -1083,13 +1109,14 @@ internal sealed class Replayer : IDisposable
             }
             double th = run.HorizontalScaling / 100.0;
             float sign = run.FontSize < 0 ? -1 : 1;
-            var glyphToUser = new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise) * M(run.TextMatrix);
+            var (glyphMatrix, glyphOffsets) = GlyphFrame(run.Face, (float)Math.Abs(run.FontSize), r.Offsets);
+            var glyphToUser = glyphMatrix * new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise) * M(run.TextMatrix);
             using var outline = _res.Factory.CreatePathGeometry();
             using (var sink = outline.Open())
             {
                 sink.SetFillMode(FillMode.Winding);
                 r.Face.GetGlyphRunOutline((float)Math.Abs(run.FontSize), r.Indices, new float[r.Indices.Length],
-                    r.Offsets.Select(o => new GlyphOffset { AdvanceOffset = o.X, AscenderOffset = o.Y }).ToArray(), false, false, sink);
+                    glyphOffsets, false, false, sink);
                 sink.Close();
             }
             parts.Add(_res.Factory.CreateTransformedGeometry(outline, glyphToUser));
@@ -1214,55 +1241,74 @@ internal sealed class Replayer : IDisposable
             return null;
         }
 
-        bool symbol = false;
-        if (dw == null)
-        {
-            var (family, bold, italic, isSymbol) = SubstituteFamily(face, run.FontFamilyName ?? run.FontResourceName);
-            if (family == null)
-            {
-                _lastTextProblem = "No system substitute for font";
-                return null;
-            }
-            dw = _res.GetSystemFace(family, bold, italic);
-            if (dw == null)
-            {
-                _lastTextProblem = "Substitute font is not installed";
-                return null;
-            }
-            symbol = isSymbol;
-        }
-
         double th = run.HorizontalScaling / 100.0;
         double sign = run.FontSize < 0 ? -1 : 1;
+
+        if (dw != null)
+        {
+            // Embedded program: glyphs by index.
+            var ids = new List<ushort>(run.Glyphs.Count);
+            var offs = new List<Vector2>(run.Glyphs.Count);
+            int glyphCount = dw.GlyphCount;
+            foreach (var g in run.Glyphs)
+            {
+                ids.Add(g.GlyphId < glyphCount ? g.GlyphId : (ushort)0);
+                offs.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
+            }
+            return (dw, ids.ToArray(), offs.ToArray());
+        }
+
+        // Not embedded: a system substitute. Every glyph of the run must be found in one face, so
+        // the chain is tried in order — the metric-compatible family (Symbol by its symbol code
+        // first), then faces that cover the text's Unicode — and the first that has them all wins.
+        // Symbol text re-encoded through WinAnsi (±, •, °) and ZapfDingbats (no Windows font of that
+        // name) used to go to PDFium whole.
+        var (family, bold, italic, isSymbol) = SubstituteFamily(face, run.FontFamilyName ?? run.FontResourceName);
+        var chain = new List<(string Family, bool Bold, bool Italic, bool SymbolCodes)>();
+        if (family != null) chain.Add((family, bold, italic, isSymbol));
+        if (isSymbol) chain.Add((family!, bold, italic, false));
+        foreach (var extra in UnicodeFallbackFamilies)
+            if (!chain.Exists(c => c.Family == extra && !c.SymbolCodes)) chain.Add((extra, bold, italic, false));
+
+        foreach (var (fam, b, it, symbolCodes) in chain)
+        {
+            var candidate = _res.GetSystemFace(fam, b, it);
+            if (candidate == null)
+                continue;
+            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign);
+            if (mapped != null)
+                return (candidate, mapped.Value.Indices, mapped.Value.Offsets);
+        }
+        _lastTextProblem = family == null ? "No system substitute for font" : "Substitute font lacks a glyph used by this text";
+        return null;
+    }
+
+    /// <summary>Faces tried after the metric-compatible substitute, for glyphs it lacks (symbols, dingbats, other scripts).</summary>
+    private static readonly string[] UnicodeFallbackFamilies =
+        { "Segoe UI Symbol", "Arial", "Segoe UI", "Cambria Math", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic", "Nirmala UI", "Ebrima" };
+
+    /// <summary>Glyph indices for every drawable glyph of a run in <paramref name="face"/>, or null if one is missing.</summary>
+    private static (ushort[] Indices, Vector2[] Offsets)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign)
+    {
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
-        int glyphCount = dw.GlyphCount;
         foreach (var g in run.Glyphs)
         {
-            ushort index;
-            if (byGlyphId)
+            string? text = g.Unicode;
+            if (string.IsNullOrEmpty(text) || text == " " || text == " ")
+                continue;
+            uint cp = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)char.ConvertToUtf32(text, 0);
+            ushort index = face.GetGlyphIndices(new[] { cp })[0];
+            if (index == 0)
             {
-                index = g.GlyphId < glyphCount ? g.GlyphId : (ushort)0;
-            }
-            else
-            {
-                string? text = g.Unicode;
-                if (string.IsNullOrEmpty(text) || text == " " || text == " ")
+                if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0))
                     continue;
-                uint cp = symbol && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)char.ConvertToUtf32(text, 0);
-                index = dw.GetGlyphIndices(new[] { cp })[0];
-                if (index == 0)
-                {
-                    if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0))
-                        continue;
-                    _lastTextProblem = "Substitute font lacks a glyph used by this text";
-                    return null;
-                }
+                return null;
             }
             indices.Add(index);
             offsets.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
         }
-        return (dw, indices.ToArray(), offsets.ToArray());
+        return (indices.ToArray(), offsets.ToArray());
     }
 
     private static (string? Family, bool Bold, bool Italic, bool Symbol) SubstituteFamily(PdfFontFace? face, string? fontName)
@@ -1273,7 +1319,7 @@ internal sealed class Replayer : IDisposable
         bool bold = face?.IsBold == true || name.Contains("Bold", StringComparison.OrdinalIgnoreCase) || name.Contains("Black", StringComparison.OrdinalIgnoreCase);
         bool italic = face?.IsItalic == true || name.Contains("Italic", StringComparison.OrdinalIgnoreCase) || name.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
         if (name.Contains("Dingbat", StringComparison.OrdinalIgnoreCase))
-            return (null, false, false, false);
+            return ("Segoe UI Symbol", false, false, false); // the Dingbats block, by the encoding's Unicode
         if (name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase))
             return ("Symbol", false, false, true);
         if (face?.IsFixedPitch == true || name.Contains("Courier", StringComparison.OrdinalIgnoreCase) || name.Contains("Mono", StringComparison.OrdinalIgnoreCase))
@@ -1293,7 +1339,8 @@ internal sealed class Replayer : IDisposable
         float sign = run.FontSize < 0 ? -1 : 1;
 
         // Glyph space (y-down baseline at the origin, em = |Tfs|) → text space → user → device.
-        var glyphToText = new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise);
+        var (glyphMatrix, glyphOffsets) = GlyphFrame(run.Face, (float)Math.Abs(run.FontSize), r.Offsets);
+        var glyphToText = glyphMatrix * new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise);
         var transform = glyphToText * M(run.TextMatrix) * full;
 
         var glyphRun = new GlyphRun
@@ -1302,7 +1349,7 @@ internal sealed class Replayer : IDisposable
             FontEmSize = (float)Math.Abs(run.FontSize),
             Indices = r.Indices,
             Advances = new float[r.Indices.Length],
-            Offsets = r.Offsets.Select(o => new GlyphOffset { AdvanceOffset = o.X, AscenderOffset = o.Y }).ToArray(),
+            Offsets = glyphOffsets,
         };
 
         int mode = run.RenderingMode;
@@ -1389,6 +1436,26 @@ internal sealed class Replayer : IDisposable
         using var frame = decoder.GetFrame(0);
         width = frame.Size.Width;
         height = frame.Size.Height;
+        if (decoded.MapJpegComponents is { } map)
+        {
+            // Raw components for the core to map through the image's colour space.
+            int n = frame.PixelFormat == Vortice.WIC.PixelFormat.Format32bppCMYK ? 4
+                  : frame.PixelFormat == Vortice.WIC.PixelFormat.Format8bppGray ? 1 : 3;
+            var samples = new byte[width * height * n];
+            if (n == 3)
+            {
+                using var rgb = _res.Wic.CreateFormatConverter();
+                rgb.Initialize(frame, Vortice.WIC.PixelFormat.Format24bppRGB, BitmapDitherType.None, null, 0, BitmapPaletteType.Custom);
+                rgb.CopyPixels((uint)(width * 3), samples);
+            }
+            else
+            {
+                frame.CopyPixels((uint)(width * n), samples);
+                if (n == 4 && decoded.InvertCmykJpeg)
+                    for (int i = 0; i < samples.Length; i++) samples[i] = (byte)(255 - samples[i]);
+            }
+            return map(samples, n, width, height);
+        }
         var result = new byte[width * height * 4];
         if (frame.PixelFormat == Vortice.WIC.PixelFormat.Format32bppCMYK)
         {

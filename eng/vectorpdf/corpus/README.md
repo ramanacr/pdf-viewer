@@ -36,6 +36,22 @@ One JSON line per file: `sha256`, `pdfiumPages`/`pdfiumError`, `vectorPages`/`ve
 is the gate summary for the fetched corpus (`--summary`). Investigate a page with
 `vectorpdf diffpage <file> <page> <out.png> [--dump] [--content]`.
 
+## Nightly gate
+
+CI's `corpus` job (nightly, and on demand through *Run workflow*) fetches and hash-verifies the
+suites (cached between runs), runs `corpus --diff --software` (runners have no GPU, so Direct2D
+renders on WARP) and compares the summary with `eng/vectorpdf/baseline-corpus-summary.warp.json`:
+
+```powershell
+pwsh eng/vectorpdf/corpus/compare-summary.ps1 -Baseline eng/vectorpdf/baseline-corpus-summary.warp.json -Current corpus-summary.json
+```
+
+It fails when fewer files open, untyped errors appear, the fully-vector page share drops by more
+than 0.2 % (area share 0.1 %), or the worst pixel difference grows by more than 1/255. New fallback
+reasons and improvements are listed in the job summary. The summary and the per-file report are
+kept as a run artifact for 90 days, which is the trend record. When a change improves the corpus,
+regenerate the baseline with the same command locally (`--software`) and commit it.
+
 ## Manifest
 
 `manifest.schema.json` describes entries in `manifest.json`. Tags follow the taxonomy in 07.

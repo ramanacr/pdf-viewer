@@ -118,6 +118,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
         // logic over known geometry, so replace it rather than selecting over whatever the
         // fixture happens to contain.
         page.TextSegments.Clear();
+        page.IsTextExtracted = true; // stand in for extraction: it must not replace these segments
 
         var seg1 = new PageTextSegment { Text = "Hello", X = 0.1, Y = 0.1, Width = 0.2, Height = 0.05, SegmentIndex = 0 };
         var seg2 = new PageTextSegment { Text = "World", X = 0.35, Y = 0.1, Width = 0.2, Height = 0.05, SegmentIndex = 1 };
@@ -148,6 +149,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
 
         var page = vm.Pages[0];
         page.TextSegments.Clear();
+        page.IsTextExtracted = true; // stand in for extraction: it must not replace these segments
         page.TextSegments.Add(new PageTextSegment { Text = "Important", X = 0.2, Y = 0.3, Width = 0.3, Height = 0.05, SegmentIndex = 0 });
 
         page.SelectRange(new Point(0.19, 0.31), new Point(0.51, 0.31)); // across the whole word

@@ -493,6 +493,25 @@ internal sealed class WpfDisplayListCompiler
         var combined = new Matrix(sign * th, 0, 0, -sign, 0, run.TextRise);
         combined = Matrix.Multiply(combined, ToWpf(tm));
 
+        // The face's glyph matrix (an oblique's skew, a narrow face's scale) applies to each glyph's
+        // outline, not to where it sits: offsets are compensated so positions stay as authored.
+        if (face?.GlyphMatrix is { } gm)
+        {
+            double em = Math.Abs(run.FontSize);
+            var glyphMatrix = new Matrix(gm.A, -gm.B, -gm.C, gm.D, gm.E * em, -gm.F * em);
+            var linear = new Matrix(gm.A, -gm.B, -gm.C, gm.D, 0, 0);
+            if (linear.HasInverse)
+            {
+                linear.Invert();
+                for (int i = 0; i < offsets.Count; i++)
+                {
+                    var q = linear.Transform(new Point(offsets[i].X, -offsets[i].Y));
+                    offsets[i] = new Point(q.X, -q.Y);
+                }
+                combined = Matrix.Multiply(glyphMatrix, combined);
+            }
+        }
+
         GlyphRun glyphRun;
         try
         {
