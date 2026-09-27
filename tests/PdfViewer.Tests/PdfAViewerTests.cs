@@ -51,9 +51,42 @@ public class PdfAViewerTests : IDisposable
         Assert.Contains(pdfa.Issues, i => i.Rule == "6.2.11.4.1-1");
 
         pdfa.SelectedFlavour = "PDF/A-1b";
+        Assert.True(pdfa.CanConvert);
+        pdfa.SelectedFlavour = "PDF/A-2u";
         Assert.False(pdfa.CanConvert);
+        pdfa.SelectedFlavour = "PDF/A-1b";
         await pdfa.CheckAsync();
         Assert.Contains(pdfa.Issues, i => i.Rule.StartsWith("6.7.2-", StringComparison.Ordinal)); // PDF/A-1's metadata clause
+    }
+
+    [Fact]
+    public async Task ConvertingToPdfA1b_SavesACopyThatPassesTheCheck()
+    {
+        var vm = await Open(Document());
+        var pdfa = vm.CreatePdfAViewModel()!;
+        pdfa.SelectedFlavour = "PDF/A-1b";
+        string output = Path.Combine(_dir, "minutes_PDFA1.pdf");
+        Assert.True(await pdfa.ConvertAsync(output));
+        Assert.Contains("passes the PDF/A-1b check", pdfa.Summary);
+        Assert.Empty(pdfa.Issues);
+        Assert.StartsWith("%PDF-1.4", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(output), 0, 8));
+    }
+
+    [Fact]
+    public async Task ConvertingToPdfA1b_ADocumentWithTransparency_IsRefusedWithTheReason()
+    {
+        var b = new VectorPdfBuilder();
+        int gs = b.Add("<< /Type /ExtGState /ca 0.5 >>");
+        b.AddPage("/G1 gs 0 0 1 rg 50 50 200 200 re f", $"<< /ExtGState << /G1 {gs} 0 R >> >>", mediaBox: "[0 0 612 792]");
+        string path = Path.Combine(_dir, "translucent.pdf");
+        File.WriteAllBytes(path, b.Build());
+        var vm = await Open(path);
+        var pdfa = vm.CreatePdfAViewModel()!;
+        pdfa.SelectedFlavour = "PDF/A-1b";
+        string output = Path.Combine(_dir, "translucent_PDFA.pdf");
+        Assert.False(await pdfa.ConvertAsync(output));
+        Assert.Contains("does not allow transparency", pdfa.Summary);
+        Assert.False(File.Exists(output));
     }
 
     [Fact]

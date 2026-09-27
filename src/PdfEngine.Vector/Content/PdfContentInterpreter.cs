@@ -1422,7 +1422,7 @@ public sealed class PdfContentInterpreter
                     }
 
                     double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
-                    glyphs.Add(new PdfGlyph(glyphId, advance, 0, x, 0, unicode, code));
+                    glyphs.Add(new PdfGlyph(glyphId, advance, 0, x, 0, unicode, code, w0));
                     text.Append(unicode);
 
                     minX = Math.Min(minX, Math.Min(x, x + advance));
