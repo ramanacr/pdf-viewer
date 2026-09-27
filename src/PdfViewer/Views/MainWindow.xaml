@@ -979,10 +979,13 @@
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
                                        Visibility="{Binding HasSignatures, Converter={StaticResource InverseBoolToVis}}" />
+                            <Button Content="Add long-term validation data..." VerticalAlignment="Bottom" Margin="8" Height="28"
+                                    Command="{Binding AddLongTermValidationCommand}" Visibility="{Binding HasSignatures, Converter={StaticResource BoolToVis}}"
+                                    ToolTip="Embeds the signers' certificate status from their certificate authorities (asks before contacting them)." />
                             <ListBox ItemsSource="{Binding Signatures}"
                                      Background="Transparent"
                                      BorderThickness="0"
-                                     Padding="4"
+                                     Padding="4" Margin="0,0,0,44"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      AutomationProperties.Name="Signatures"
                                      MouseDoubleClick="SignatureItem_MouseDoubleClick">
@@ -1001,6 +1004,7 @@
                                                     <TextBlock Text="{Binding Summary}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     <TextBlock Text="{Binding Identity}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     <TextBlock Text="{Binding When}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{Binding Ltv}" ToolTip="{Binding LtvDetail}" FontSize="11" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     <Expander Header="Details" FontSize="11" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
                                                         <TextBlock Text="{Binding Details}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     </Expander>
