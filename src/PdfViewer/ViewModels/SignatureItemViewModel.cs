@@ -17,10 +17,28 @@ public sealed class SignatureItemViewModel
     public string Details { get; init; } = string.Empty;
     /// <summary>"LTV enabled" or "Not LTV enabled": whether the document alone can prove the signature valid years from now.</summary>
     public string Ltv => Check.IsLtvEnabled ? "LTV enabled" : "Not LTV enabled";
+
+    /// <summary>The PAdES level reached ("PAdES B-LTA"), or for a document timestamp whether a later one renews it; empty when neither applies.</summary>
+    public string PadesLevel => LevelSuffix(Check);
     /// <summary>What LTV means here, and why it is missing when it is.</summary>
-    public string LtvDetail => Check.IsLtvEnabled
+    public string LtvDetail => (Check.IsLtvEnabled
         ? "The document holds the certificates and revocation information needed to validate this signature without contacting anyone."
-        : Check.LtvDetail.Length > 0 ? Check.LtvDetail : "The document does not hold the revocation information needed to validate this signature in the long term.";
+        : Check.LtvDetail.Length > 0 ? Check.LtvDetail : "The document does not hold the revocation information needed to validate this signature in the long term.")
+        + (Check.LevelDetail.Length > 0 ? " " + Check.LevelDetail : string.Empty);
+
+    /// <summary>"PAdES B-B" .. "PAdES B-LTA", as ETSI EN 319 142-1 names the levels.</summary>
+    public static string LevelName(PdfSignatureLevel level) => level switch
+    {
+        PdfSignatureLevel.BaselineB => "PAdES B-B",
+        PdfSignatureLevel.BaselineT => "PAdES B-T",
+        PdfSignatureLevel.BaselineLT => "PAdES B-LT",
+        _ => "PAdES B-LTA",
+    };
+
+    private static string LevelSuffix(PdfSignatureCheck c) =>
+        c.Level is { } level ? LevelName(level)
+        : c.IsDocumentTimestamp && c.IsArchiveTimestamped ? "Renewed by a later document timestamp"
+        : string.Empty;
     public int PageNumber => Check.PageNumber;
     public bool HasPage => Check.PageNumber > 0 && Check.Rect.Width > 0;
 
@@ -43,7 +61,9 @@ public sealed class SignatureItemViewModel
         string level = c.Verdict == PdfSignatureVerdict.Unsupported ? "warn"
             : !intact || c.Revocation == PdfRevocationStatus.Revoked ? "bad" : trusted ? "ok" : "warn";
 
-        string when = c.TimestampTime is { } ts
+        string when = c.IsDocumentTimestamp && c.TimestampTime is { } dts
+            ? $"Timestamped {dts.LocalDateTime:f} by {c.TimestampAuthority ?? "a time-stamping authority"}"
+            : c.TimestampTime is { } ts
             ? $"Signed {ts.LocalDateTime:f}, timestamped by {c.TimestampAuthority ?? "a time-stamping authority"}"
             : c.ClaimedTime is { } claimed ? $"Signed {claimed.LocalDateTime:f} (time from the signer's computer)" : "Signing time not given";
 
@@ -65,6 +85,11 @@ public sealed class SignatureItemViewModel
         foreach (var r in c.CertificateRevocations)
             details.AppendLine($"  {r.Certificate.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false)}: {r.Detail}");
         if (!c.IsLtvEnabled && c.LtvDetail.Length > 0) details.AppendLine($"Not LTV enabled: {c.LtvDetail}");
+        if (c.Level is { } lvl) details.AppendLine($"{LevelName(lvl)}: {c.LevelDetail}");
+        if (c.ArchiveTimestampTime is { } archive)
+            details.AppendLine(c.ArchiveTimestampExpires is { } until
+                ? $"Protected by a document timestamp of {archive.LocalDateTime:g}; timestamp the document again before {until.LocalDateTime:d} to keep it protected."
+                : $"Protected by a document timestamp of {archive.LocalDateTime:g}.");
 
         return new SignatureItemViewModel
         {

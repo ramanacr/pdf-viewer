@@ -49,6 +49,28 @@ public enum PdfLaterChanges
     /// certification, permits it (ISO 32000-2 12.8.2.2.2).
     /// </summary>
     ValidationData = 32,
+    /// <summary>
+    /// A document timestamp (ISO 32000-2 12.8.5) added over the document. Like validation data,
+    /// it is not a change to the document: no signature, and no certification level, forbids it
+    /// (ISO 32000-2 12.8.2.2.2).
+    /// </summary>
+    DocumentTimestamp = 64,
+}
+
+/// <summary>
+/// The PAdES baseline level a signature reaches (ETSI EN 319 142-1 6): what it carries to be
+/// validated now and later.
+/// </summary>
+public enum PdfSignatureLevel
+{
+    /// <summary>B-B: a signature, with only the signer's own claim of when it was made.</summary>
+    BaselineB,
+    /// <summary>B-T: a trusted time (a signature timestamp, or a later document timestamp) shows it existed then.</summary>
+    BaselineT,
+    /// <summary>B-LT: also the certificates and revocation information to validate it offline (the DSS).</summary>
+    BaselineLT,
+    /// <summary>B-LTA: also a document timestamp over that validation data, so it can be validated after the certificates and algorithms age.</summary>
+    BaselineLTA,
 }
 
 /// <summary>How to validate. The defaults validate offline, with this machine's trusted roots.</summary>
@@ -113,6 +135,26 @@ public sealed class PdfSignatureCheck
     public bool IsLtvEnabled { get; init; }
     /// <summary>Why the signature is not LTV enabled, when it is not.</summary>
     public string LtvDetail { get; init; } = string.Empty;
+    /// <summary>The PAdES baseline level reached; null for a document timestamp itself, or a signature that is not intact.</summary>
+    public PdfSignatureLevel? Level { get; internal set; }
+    /// <summary>What the level means for this signature, and what would raise it.</summary>
+    public string LevelDetail { get; internal set; } = string.Empty;
+    /// <summary>
+    /// The time of the latest valid document timestamp that protects this signature (or earlier
+    /// document timestamp) together with its validation data: B-LTA, or a renewed archive.
+    /// </summary>
+    public DateTimeOffset? ArchiveTimestampTime { get; internal set; }
+    /// <summary>
+    /// When that protection runs out: the latest document timestamp's authority certificate
+    /// expires then, so the document should be timestamped again before it.
+    /// </summary>
+    public DateTimeOffset? ArchiveTimestampExpires { get; internal set; }
+    public bool IsArchiveTimestamped => ArchiveTimestampTime != null;
+
+    /// <summary>What the LTV finding needs from the DSS: groups of item hashes (SHA-256), one of each group.</summary>
+    internal IReadOnlyList<HashSet<string>> LtvEvidence { get; init; } = Array.Empty<HashSet<string>>();
+    /// <summary>Where the signed revision ends in the file.</summary>
+    internal long SignedEnd { get; init; }
 }
 
 /// <summary>
@@ -154,7 +196,70 @@ public static partial class PdfSignatureValidator
             cancellationToken.ThrowIfCancellationRequested();
             results.Add(await CheckAsync(file, password, field, sig, range, revisionEnds, certification, options.Roots, material, online, cancellationToken).ConfigureAwait(false));
         }
+        await ArchiveLevelsAsync(file, password, results, cancellationToken).ConfigureAwait(false);
         return results;
+    }
+
+    /// <summary>
+    /// The PAdES level of each signature, and which document timestamps protect which signatures
+    /// and earlier timestamps. A document timestamp protects a signature's long-term validation
+    /// only if everything that validation rests on (the DSS certificates, OCSP responses and CRLs
+    /// it used) was already in the revision the timestamp covers.
+    /// </summary>
+    private static async Task ArchiveLevelsAsync(byte[] file, string? password, List<PdfSignatureCheck> results, CancellationToken ct)
+    {
+        var stamps = new List<(PdfSignatureCheck Check, HashSet<string> Dss)>();
+        foreach (var t in results.Where(c => c.IsDocumentTimestamp && c.IntegrityValid && c.Trust == PdfSignatureTrust.Trusted
+                                             && c.Revocation != PdfRevocationStatus.Revoked && c.TimestampTime != null))
+            stamps.Add((t, await DssHashesAtAsync(file, t.SignedEnd, password, ct).ConfigureAwait(false)));
+        var newest = stamps.OrderBy(s => s.Check.SignedEnd).Select(s => s.Check).LastOrDefault();
+
+        foreach (var c in results)
+        {
+            if (!c.IntegrityValid || c.Verdict is PdfSignatureVerdict.Invalid or PdfSignatureVerdict.Unsupported) continue;
+            var covering = stamps.Where(s => s.Check.SignedEnd > c.SignedEnd && !ReferenceEquals(s.Check, c)).ToList();
+            var protecting = c.IsLtvEnabled ? covering.Where(s => c.LtvEvidence.All(g => g.Overlaps(s.Dss))).ToList() : new();
+            if (protecting.Count > 0)
+            {
+                c.ArchiveTimestampTime = protecting.Max(s => s.Check.TimestampTime);
+                c.ArchiveTimestampExpires = newest?.Certificate is { } tsa ? new DateTimeOffset(tsa.NotAfter.ToUniversalTime(), TimeSpan.Zero) : null;
+            }
+            if (c.IsDocumentTimestamp) continue;
+
+            bool timed = c.TimestampTime != null || covering.Count > 0;
+            string renew = c.ArchiveTimestampExpires is { } until
+                ? $" Timestamp the document again before {until.LocalDateTime:d}, when the latest time-stamping authority's certificate expires."
+                : string.Empty;
+            (c.Level, c.LevelDetail) = protecting.Count > 0
+                ? (PdfSignatureLevel.BaselineLTA, $"The signature and its validation data are protected by a document timestamp of {c.ArchiveTimestampTime!.Value.LocalDateTime:g}, so it can be validated long after its certificates expire." + renew)
+                : c.IsLtvEnabled && timed
+                    ? (PdfSignatureLevel.BaselineLT, covering.Count > 0
+                        ? "The document holds the validation data for this signature, but no document timestamp covers that data yet. Add a document timestamp to protect it (B-LTA)."
+                        : "The document holds the validation data for this signature. Add a document timestamp to protect it (B-LTA).")
+                    : timed
+                        ? (PdfSignatureLevel.BaselineT, "A trusted time shows when the signature existed. Add long-term validation data (B-LT) and then a document timestamp (B-LTA) to keep it verifiable.")
+                        : (PdfSignatureLevel.BaselineB, "Only the signer's computer vouches for the signing time. A timestamp (B-T), long-term validation data (B-LT) and a document timestamp (B-LTA) would each make the signature last longer.");
+        }
+    }
+
+    /// <summary>SHA-256 of every item in the DSS of the revision ending at <paramref name="end"/>.</summary>
+    private static async Task<HashSet<string>> DssHashesAtAsync(byte[] file, long end, string? password, CancellationToken ct)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (end <= 0 || end > file.Length) return set;
+        try
+        {
+            using var doc = await PdfVectorDocument.OpenAsync(file.AsSpan(0, (int)end).ToArray(), password: password, cancellationToken: ct).ConfigureAwait(false);
+            var dss = PdfDss.Read(doc);
+            foreach (var item in dss.Certs.Concat(dss.Ocsps).Concat(dss.Crls)
+                         .Concat(dss.VriEntries.Values.SelectMany(v => v.Certs.Concat(v.Ocsps).Concat(v.Crls))))
+                set.Add(Convert.ToHexString(SHA256.HashData(item.Data)));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+        {
+            // The covered revision cannot be read on its own: it protects nothing.
+        }
+        return set;
     }
 
     /// <summary>The document's signed signature fields, with their signature dictionaries and byte ranges.</summary>
@@ -298,17 +403,23 @@ public static partial class PdfSignatureValidator
         var revocations = new List<PdfCertificateRevocation>();
         bool ltv = false;
         string ltvDetail = "The signature could not be checked.";
+        var evidence = new List<HashSet<string>>();
         if (integrity && certificate != null)
         {
             var embedded = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var c in cms.Certificates.Cast<X509Certificate2>().Concat(material.Certificates)
-                         .Concat(timestampAuthorities.SelectMany(t => t.Included.Cast<X509Certificate2>())))
-                embedded.Add(Convert.ToHexString(SHA256.HashData(c.RawData)));
+            var ownCertificates = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var c in cms.Certificates.Cast<X509Certificate2>().Concat(timestampAuthorities.SelectMany(t => t.Included.Cast<X509Certificate2>())))
+                ownCertificates.Add(Convert.ToHexString(SHA256.HashData(c.RawData)));
+            embedded.UnionWith(ownCertificates);
+            foreach (var c in material.Certificates) embedded.Add(Convert.ToHexString(SHA256.HashData(c.RawData)));
             var ocsps = new List<PdfOcspResponse>(material.Ocsps);
             var crls = new List<PdfCrl>(material.Crls);
             if (!isDocTimestamp) RevocationArchival(signerInfo, ocsps, crls);
             var pool = known.Cast<X509Certificate2>().ToList();
-            var context = new RevocationContext(ocsps, crls, pool, embedded, online, problems);
+            var context = new RevocationContext(ocsps, crls, pool, embedded, online, problems)
+            {
+                MaterialHashes = material.Hashes, OwnCertificates = ownCertificates, Evidence = evidence,
+            };
 
             IReadOnlyList<X509Certificate2> signerChain = chain.Count > 0 ? chain : new[] { certificate };
             // The signer's own clock cannot vouch for the time; a TSA's can (for a document timestamp, the TSA is the signer).
@@ -348,11 +459,17 @@ public static partial class PdfSignatureValidator
             verdict = PdfSignatureVerdict.Invalid;
             summary = integrityProblem.Length > 0 ? integrityProblem : "The signature does not match the document.";
         }
-        else if (whole || (later & ~PdfLaterChanges.ValidationData) == PdfLaterChanges.None)
+        else if (whole || (later & ~(PdfLaterChanges.ValidationData | PdfLaterChanges.DocumentTimestamp)) == PdfLaterChanges.None)
         {
             verdict = PdfSignatureVerdict.Valid;
             summary = isDocTimestamp ? "The document has not been modified since it was timestamped." : "The document has not been modified since it was signed.";
-            if (later.HasFlag(PdfLaterChanges.ValidationData)) summary += " Long-term validation data was added afterwards.";
+            summary += (later.HasFlag(PdfLaterChanges.ValidationData), later.HasFlag(PdfLaterChanges.DocumentTimestamp)) switch
+            {
+                (true, true) => " Long-term validation data and a document timestamp were added afterwards.",
+                (true, false) => " Long-term validation data was added afterwards.",
+                (false, true) => " A document timestamp was added afterwards.",
+                _ => string.Empty,
+            };
         }
         else if (Permitted(later, level))
         {
@@ -376,12 +493,13 @@ public static partial class PdfSignatureValidator
             Certificate = certificate, Chain = chain, PageNumber = widget?.PageNumber ?? 0, Rect = widget?.Rect ?? default,
             Revocation = revocation, RevocationDetail = revocationDetail, CertificateRevocations = revocations,
             IsLtvEnabled = integrity && ltv, LtvDetail = integrity && ltv ? string.Empty : ltvDetail,
+            LtvEvidence = evidence, SignedEnd = end,
         };
     }
 
     private static bool Permitted(PdfLaterChanges later, int? level)
     {
-        later &= ~PdfLaterChanges.ValidationData; // always permitted
+        later &= ~(PdfLaterChanges.ValidationData | PdfLaterChanges.DocumentTimestamp); // always permitted
         if ((later & PdfLaterChanges.Other) != 0) return false;
         return level switch
         {
@@ -400,6 +518,7 @@ public static partial class PdfSignatureValidator
         if (later.HasFlag(PdfLaterChanges.Metadata)) parts.Add("given new metadata");
         if (later.HasFlag(PdfLaterChanges.Other)) parts.Add("changed in its content");
         if (later.HasFlag(PdfLaterChanges.ValidationData)) parts.Add("given long-term validation data");
+        if (later.HasFlag(PdfLaterChanges.DocumentTimestamp)) parts.Add("timestamped");
         return parts.Count switch
         {
             0 => "changed",
@@ -543,7 +662,8 @@ public static partial class PdfSignatureValidator
         string? subtype = dict?.GetName("Subtype");
 
         if (type is "XRef" or "ObjStm") return PdfLaterChanges.None;
-        if (type is "Sig" or "DocTimeStamp" || dict?["ByteRange"] != null) return PdfLaterChanges.Signatures;
+        if (type is "Sig" or "DocTimeStamp" || dict?["ByteRange"] != null)
+            return was == null && IsDocTimestamp(dict) ? PdfLaterChanges.DocumentTimestamp : PdfLaterChanges.Signatures;
         // Validation data: objects of the DSS that are new, or were validation data already. An
         // existing object of any other kind does not become harmless by being listed in the DSS.
         if (dssAfter.Contains(number) && (was == null || dssBefore.Contains(number))) return PdfLaterChanges.ValidationData;
@@ -555,13 +675,17 @@ public static partial class PdfSignatureValidator
             if (!SameExcept(oldPage, dict, "Annots")) return PdfLaterChanges.Other;
             return AnnotsChange(oldPage["Annots"], dict["Annots"], after);
         }
+        if (dict?["Fields"] != null && was is PdfDictionary oldForm && FormGainedOnlyTimestamps(oldForm, dict, after))
+            return PdfLaterChanges.DocumentTimestamp;
         if (subtype == "Widget" || dict?["FT"] != null || dict?["Fields"] != null || IsFieldNode(dict))
-            return dict?.GetName("FT") == "Sig" && was == null ? PdfLaterChanges.Signatures : PdfLaterChanges.FormFields;
+            return dict?.GetName("FT") == "Sig" && was == null
+                ? IsInvisibleTimestampField(dict, after.Resolver) ? PdfLaterChanges.DocumentTimestamp : PdfLaterChanges.Signatures
+                : PdfLaterChanges.FormFields;
         if (type == "Annot" || subtype is "Text" or "FreeText" or "Line" or "Square" or "Circle" or "Polygon" or "PolyLine" or "Highlight"
                 or "Underline" or "Squiggly" or "StrikeOut" or "Stamp" or "Caret" or "Ink" or "Popup" or "FileAttachment")
             return PdfLaterChanges.Annotations;
         if (appearances.Contains(number)) return PdfLaterChanges.FormFields; // a widget's or annotation's appearance
-        if (now is PdfArray array && IsAnnotsArray(number, after)) return array.Count >= 0 ? PdfLaterChanges.Annotations : PdfLaterChanges.None;
+        if (now is PdfArray && IsAnnotsArray(number, after)) return AnnotsChange(was, now, after);
         if (IsInfoDictionary(number, after)) return PdfLaterChanges.Metadata;
         return PdfLaterChanges.Other;
     }
@@ -581,12 +705,49 @@ public static partial class PdfSignatureValidator
             if (oldItems.Any(o => Same(o, item, null, null, 0))) continue;
             var annot = r.Resolve(item) as PdfDictionary;
             changes |= annot?.GetName("Subtype") == "Widget"
-                ? annot.GetName("FT") == "Sig" ? PdfLaterChanges.Signatures : PdfLaterChanges.FormFields
+                ? annot.GetName("FT") == "Sig"
+                    ? IsInvisibleTimestampField(annot, r) ? PdfLaterChanges.DocumentTimestamp : PdfLaterChanges.Signatures
+                    : PdfLaterChanges.FormFields
                 : PdfLaterChanges.Annotations;
         }
         if (oldItems.Count > 0 && oldItems.Any(o => !now.Any(n => Same(o, n, null, null, 0))))
             changes |= PdfLaterChanges.Annotations; // something was removed
         return changes;
+    }
+
+    private static bool IsDocTimestamp(PdfDictionary? sig) =>
+        sig != null && (sig.GetName("Type") == "DocTimeStamp" || sig.GetName("SubFilter") == "ETSI.RFC3161");
+
+    /// <summary>
+    /// A signature field whose value is a document timestamp and that shows nothing (no
+    /// appearance, or no area). A timestamp field that draws something is not let through as a
+    /// timestamp: under a no-changes certification, it would be a way to put new content on a page.
+    /// </summary>
+    private static bool IsInvisibleTimestampField(PdfDictionary? field, Parsing.PdfObjectResolver r)
+    {
+        if (field == null || !IsDocTimestamp(r.Resolve(field["V"]) as PdfDictionary)) return false;
+        if (field["AP"] == null) return true;
+        if (r.Resolve(field["Rect"]) is not PdfArray rect || rect.Count < 4) return true;
+        double Num(int i) => r.Resolve(rect[i]) is PdfObject o && o.TryGetNumber(out double v) ? v : 0;
+        return Math.Abs(Num(2) - Num(0)) < 1e-6 || Math.Abs(Num(3) - Num(1)) < 1e-6;
+    }
+
+    /// <summary>The form dictionary changed only by gaining invisible document timestamp fields (and signature flags).</summary>
+    private static bool FormGainedOnlyTimestamps(PdfDictionary before, PdfDictionary after, PdfVectorDocument doc)
+    {
+        if (!SameExcept(before, after, "Fields", "SigFlags")) return false;
+        var r = doc.Resolver;
+        var oldFields = (before["Fields"] as PdfArray)?.Items ?? (IReadOnlyList<PdfObject>)Array.Empty<PdfObject>();
+        if (r.Resolve(after["Fields"]) is not PdfArray newFields) return false;
+        if (oldFields.Any(o => !newFields.Any(n => Same(o, n, null, null, 0)))) return false; // a field was removed
+        bool added = false;
+        foreach (var item in newFields)
+        {
+            if (oldFields.Any(o => Same(o, item, null, null, 0))) continue;
+            if (!IsInvisibleTimestampField(r.Resolve(item) as PdfDictionary, r)) return false;
+            added = true;
+        }
+        return added;
     }
 
     private static bool IsFieldNode(PdfDictionary? d) => d != null && d["T"] != null && (d["Kids"] != null || d["Parent"] != null) && d["Type"] == null;
