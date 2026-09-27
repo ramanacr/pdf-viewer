@@ -298,6 +298,10 @@
                           Command="{Binding ShowDocumentSafetyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Shows what this document carries: script, launch actions, embedded files and external links."><MenuItem.Icon><Path Data="{StaticResource IconShield}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="PDF/_A: Check and Convert..."
+                          Command="{Binding ShowPdfACommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Checks the document against PDF/A (ISO 19005) and saves an archival PDF/A copy." />
                 <MenuItem Header="Save _Clean Copy..."
                           Command="{Binding SaveCleanCopyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
@@ -1858,6 +1862,12 @@
                 Secured-document indicator: the document restricts printing, copying, commenting,
                 form filling, editing or page assembly for this reader (ISO 32000-2 Table 22).
             -->
+            <!-- The PDF/A conformance the document claims, as Acrobat's PDF/A banner shows it. -->
+            <StatusBarItem Visibility="{Binding HasPdfAClaim, Converter={StaticResource BoolToVis}}"
+                           ToolTip="The document claims PDF/A (archival) conformance. Tools > PDF/A checks it.">
+                <TextBlock Text="{Binding PdfAClaim}" />
+            </StatusBarItem>
+
             <StatusBarItem Visibility="{Binding IsSecured, Converter={StaticResource BoolToVis}}"
                            ToolTip="Opened without the owner password: the author restricted these actions.">
                 <StackPanel Orientation="Horizontal">

@@ -151,7 +151,7 @@ public sealed class TrueTypeFontFile
     }
 
     /// <summary>Reads only the naming strings of font <paramref name="index"/> (fast, for font catalogues).</summary>
-    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic)? ReadNames(byte[] data, int index)
+    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? ReadNames(byte[] data, int index)
     {
         try
         {
@@ -167,7 +167,7 @@ public sealed class TrueTypeFontFile
                 weight = BigEndian.U16(os2, 4);
                 italic |= (BigEndian.U16(os2, 62) & 1) != 0;
             }
-            return (family, sub, ps, weight, italic);
+            return (family, sub, ps, weight, italic, NameString(tables, 1) ?? family);
         }
         catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException)
         {
@@ -242,6 +242,36 @@ public sealed class TrueTypeFontFile
         foreach (var tag in new[] { "cvt ", "fpgm", "prep", "OS/2", "post", "name", "cmap" })
             if (_tables.TryGetValue(tag, out var t)) tables[tag] = t;
         return Sfnt.Write(Sfnt.TrueTypeVersion, tables);
+    }
+
+    /// <summary>
+    /// The font with some glyphs' advance widths replaced (font units): every glyph gets its own
+    /// metrics entry. PDF readers space text by the widths the document gives, so this changes
+    /// nothing drawn; it makes the program agree with those widths.
+    /// </summary>
+    public static byte[]? WithAdvances(byte[] font, IReadOnlyDictionary<int, int> advances)
+    {
+        var tables = ReadTables(font, 0);
+        if (tables == null || !tables.TryGetValue("hmtx", out var hmtx) || !tables.TryGetValue("hhea", out var hhea) || !tables.TryGetValue("maxp", out var maxp)) return null;
+        int count = BigEndian.U16(maxp, 4), metrics = Math.Max(1, BigEndian.U16(hhea, 34));
+        var table = new byte[count * 4];
+        int lastAdvance = 0, maxAdvance = 0;
+        for (int g = 0; g < count; g++)
+        {
+            int advance, lsb;
+            if (g < metrics) { advance = BigEndian.U16(hmtx, g * 4); lsb = BigEndian.S16(hmtx, g * 4 + 2); lastAdvance = advance; }
+            else { advance = lastAdvance; lsb = BigEndian.S16(hmtx, metrics * 4 + (g - metrics) * 2); }
+            if (advances.TryGetValue(g, out int replaced)) advance = Math.Clamp(replaced, 0, 65535);
+            maxAdvance = Math.Max(maxAdvance, advance);
+            BigEndian.Put16(table, g * 4, advance);
+            BigEndian.Put16(table, g * 4 + 2, lsb);
+        }
+        var newHhea = (byte[])hhea.Clone();
+        BigEndian.Put16(newHhea, 34, count);
+        BigEndian.Put16(newHhea, 10, maxAdvance);
+        var copy = new Dictionary<string, byte[]>(tables, StringComparer.Ordinal) { ["hmtx"] = table, ["hhea"] = newHhea };
+        if (copy.TryGetValue("head", out var head)) copy["head"] = (byte[])head.Clone();
+        return Sfnt.Write(Sfnt.TrueTypeVersion, copy);
     }
 
     private IEnumerable<int> Components(byte[] glyf, int gid)
