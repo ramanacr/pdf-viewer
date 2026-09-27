@@ -220,6 +220,9 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        var probe = App.Probe;
+        probe?.Mark("windowLoaded");
+
         // Zoomed detail tiles go straight from Direct2D to the screen where the display allows it.
         // Loaded can fire again (the window re-enters the tree): create the presenter once.
         if (_gpuPresenter == null && GpuTilePresenter.TryCreate(this) is { } presenter)
@@ -231,6 +234,23 @@ public partial class MainWindow : Window
                 PageViewModel.GpuPresenter = null;
                 presenter.Dispose();
             };
+        }
+
+        if (probe != null)
+        {
+            // A startup measurement: open the document, report when page 1 is on screen, exit.
+            // No first-run privacy question and no update check - it must not wait on a
+            // person or touch the network.
+            if (!File.Exists(probe.DocumentPath))
+            {
+                probe.Finish($"document not found: {probe.DocumentPath}");
+                return;
+            }
+
+            probe.Watch(this, _shell);
+            probe.Mark("documentOpenStart");
+            await _shell.OpenDocumentAsync(probe.DocumentPath);
+            return;
         }
 
         if (!string.IsNullOrEmpty(App.StartupPdfPath) && File.Exists(App.StartupPdfPath))

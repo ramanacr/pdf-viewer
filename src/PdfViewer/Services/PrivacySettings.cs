@@ -28,7 +28,7 @@ public static class PrivacySettings
     private static readonly object FileLock = new();
 
     /// <summary>
-    /// Redirects the settings file to a test-owned directory. Test seam only.
+    /// Redirects the settings file to a directory the caller owns: a test, or a --startup-probe run (StartupProbe).
     /// </summary>
     internal static void SetSettingsDirectoryForTests(string directory)
     {

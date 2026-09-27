@@ -23,7 +23,7 @@ public sealed class SigningSettings
 
     private static string FilePath => Path.Combine(_directory, "signing.json");
 
-    /// <summary>Test seam: where the settings file lives.</summary>
+    /// <summary>Test and startup-probe seam: where the settings file lives.</summary>
     internal static void SetDirectoryForTests(string directory) => _directory = directory;
 
     public static SigningSettings Load()

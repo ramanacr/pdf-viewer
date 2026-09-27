@@ -29,6 +29,8 @@
     <ProjectReference Include="..\..\src\PdfViewer.Core\PdfViewer.Core.csproj" />
     <ProjectReference Include="..\..\src\PdfViewer\PdfViewer.csproj" />
     <Compile Include="..\..\scripts\CreateIcon.cs" Link="CreateIcon.cs" />
+    <!-- The release gates' measurement and comparison logic (eng/releasegate), tested here. Program.cs stays out: it is an entry point. -->
+    <Compile Include="..\..\eng\releasegate\ReleaseGate.Tool\*.cs" Exclude="..\..\eng\releasegate\ReleaseGate.Tool\Program.cs" LinkBase="ReleaseGate" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\VectorPdfBuilder.cs" Link="Fixtures\VectorPdfBuilder.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\FormPdfFixture.cs" Link="Fixtures\FormPdfFixture.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\ScriptedFormFixture.cs" Link="Fixtures\ScriptedFormFixture.cs" />
