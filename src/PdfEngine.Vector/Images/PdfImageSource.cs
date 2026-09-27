@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading;
 using PdfEngine.Vector.Color;
 using PdfEngine.Vector.Diagnostics;
@@ -181,19 +182,18 @@ public sealed class PdfImageSource : IPdfImageSource
         if (_colorSpace?.Name == "Indexed" && TryGetJp2Codestream(data) is { } codestream)
             data = codestream;
 
-        CoreJ2K.Util.InterleavedImage image;
+        JpxPlanes image;
         try
         {
-            image = CoreJ2K.J2kImage.FromBytes(data);
+            image = ReadJpx(data);
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
         {
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, $"JPEG 2000 codestream could not be decoded ({ex.GetType().Name}).");
         }
-        using (image)
         {
             ct.ThrowIfCancellationRequested();
-            int width = image.Width, height = image.Height, count = image.NumberOfComponents;
+            int width = image.Width, height = image.Height, count = image.Planes.Length;
             if (width <= 0 || height <= 0 || (long)width * height > _limits.MaxImagePixels || count <= 0)
                 throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG 2000 dimensions are invalid or exceed the pixel limit.");
 
@@ -210,8 +210,8 @@ public sealed class PdfImageSource : IPdfImageSource
             var scale = new double[count];
             for (int c = 0; c < count; c++)
             {
-                planes[c] = image.GetComponent(c);
-                int depth = Math.Clamp(image.GetBitDepth(c), 1, 31);
+                planes[c] = image.Planes[c];
+                int depth = Math.Clamp(image.Depths[c], 1, 31);
                 scale[c] = 1.0 / ((1L << depth) - 1);
                 if (planes[c].Length < width * height)
                     throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 components are subsampled.");
@@ -246,6 +246,65 @@ public sealed class PdfImageSource : IPdfImageSource
         }
     }
 
+    /// <summary>A decoded JPEG 2000 image: each component's samples and bit depth.</summary>
+    internal sealed record JpxPlanes(int Width, int Height, int[][] Planes, int[] Depths);
+
+    // CoreJ2K does not decode lossy colour images reliably: with the irreversible 9/7 wavelet and
+    // the irreversible colour transform, the second and later components of one codestream came
+    // out different from decode to decode (garbled JPEG 2000 images that changed from run to run,
+    // in every such image of the corpus), on any thread and with its pool buffers cleared. Those
+    // images go to the fallback renderer (PDFium's OpenJPEG, see IsUnreliableJpx); lossless and gray
+    // ones decode the same every time and are drawn here. Decodes run one at a time on one thread
+    // of the decoder's own.
+    private static readonly System.Collections.Concurrent.BlockingCollection<Action> JpxWork = StartJpxThread();
+
+    private static System.Collections.Concurrent.BlockingCollection<Action> StartJpxThread()
+    {
+        CoreJ2K.j2k.wavelet.synthesis.InvWTFull.ClearArrayPoolBuffersOnReturn = true;
+        var work = new System.Collections.Concurrent.BlockingCollection<Action>();
+        var thread = new Thread(() => { foreach (var job in work.GetConsumingEnumerable()) job(); })
+        {
+            IsBackground = true,
+            Name = "JPEG 2000 decoder",
+        };
+        thread.Start();
+        return work;
+    }
+
+    /// <summary>Decodes a JPEG 2000 codestream or JP2 file on the decoder's own thread (see <see cref="JpxWork"/>).</summary>
+    internal static JpxPlanes ReadJpx(byte[] data)
+    {
+        var done = new TaskCompletionSource<JpxPlanes>(TaskCreationOptions.RunContinuationsAsynchronously);
+        JpxWork.Add(() =>
+        {
+            try
+            {
+                if (IsUnreliableJpx(data))
+                    throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "Lossy colour JPEG 2000 images are drawn by the fallback renderer.");
+                done.SetResult(DecodeJpxPlanes(data));
+            }
+            catch (Exception ex) { done.SetException(ex); }
+        });
+        try { return done.Task.GetAwaiter().GetResult(); }
+        catch (AggregateException ex) when (ex.InnerException != null) { throw ex.InnerException; }
+    }
+
+    private static JpxPlanes DecodeJpxPlanes(byte[] data)
+    {
+        {
+            using var image = CoreJ2K.J2kImage.FromBytes(data);
+            int count = image.NumberOfComponents;
+            var planes = new int[count][];
+            var depths = new int[count];
+            for (int c = 0; c < count; c++)
+            {
+                planes[c] = (int[])image.GetComponent(c).Clone(); // a copy: the decoder may reuse the array it returned
+                depths[c] = image.GetBitDepth(c);
+            }
+            return new JpxPlanes(image.Width, image.Height, planes, depths);
+        }
+    }
+
     /// <summary>The contiguous codestream (jp2c box) of a JP2 file (ISO/IEC 15444-1 I.5), or null for a bare codestream.</summary>
     internal static byte[]? TryGetJp2Codestream(byte[] data)
     {
@@ -277,6 +336,34 @@ public sealed class PdfImageSource : IPdfImageSource
     }
 
     /// <summary>Image size and component count from the codestream's SIZ marker (ISO/IEC 15444-1 A.5.1).</summary>
+    /// <summary>
+    /// A codestream CoreJ2K does not decode reliably: more than one component, the irreversible 9/7
+    /// wavelet and the multiple component transform, as the main header's COD marker says.
+    /// </summary>
+    internal static bool IsUnreliableJpx(ReadOnlySpan<byte> data)
+    {
+        if (!TryReadJpxSize(data, out _, out _, out int components) || components < 2) return false;
+        int soc = -1;
+        for (int i = 0; i + 3 < data.Length && soc < 0; i++)
+            if (data[i] == 0xFF && data[i + 1] == 0x4F && data[i + 2] == 0xFF && data[i + 3] == 0x51) soc = i;
+        // The main header's marker segments, one after another: SIZ, then COD, QCD... until SOT.
+        for (int at = soc + 2; at >= 0 && at + 4 <= data.Length;)
+        {
+            if (data[at] != 0xFF || data[at + 1] == 0x90) return false; // SOT: no COD in the main header
+            int length = data[at + 2] << 8 | data[at + 3];
+            if (data[at + 1] == 0x52 && at + 14 <= data.Length)
+            {
+                // COD: Lcod(2) Scod(1) progression(1) layers(2) MCT(1) levels(1) code-block width, height, style(3) transform(1).
+                bool mct = data[at + 8] != 0;
+                bool irreversible = data[at + 13] == 0;
+                return mct && irreversible;
+            }
+            if (length < 2) return false;
+            at += 2 + length;
+        }
+        return false;
+    }
+
     internal static bool TryReadJpxSize(ReadOnlySpan<byte> data, out long width, out long height, out int components)
     {
         width = height = 0;
@@ -593,19 +680,18 @@ public sealed class PdfImageSource : IPdfImageSource
     {
         if (!TryReadJpxSize(data, out long w, out long h, out _) || w * h > _limits.MaxImagePixels)
             throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG 2000 mask size exceeds the image limits.");
-        CoreJ2K.Util.InterleavedImage image;
-        try { image = CoreJ2K.J2kImage.FromBytes(data); }
+        JpxPlanes image;
+        try { image = ReadJpx(data); }
         catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
         {
             throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, $"JPEG 2000 mask could not be decoded ({ex.GetType().Name}).");
         }
-        using (image)
         {
             ct.ThrowIfCancellationRequested();
-            if (image.Width != mw || image.Height != mh)
+            if (image.Width != mw || image.Height != mh || image.Planes.Length == 0)
                 throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 mask size differs from its dictionary.");
-            var plane = image.GetComponent(0);
-            double scale = 255.0 / ((1L << Math.Clamp(image.GetBitDepth(0), 1, 31)) - 1);
+            var plane = image.Planes[0];
+            double scale = 255.0 / ((1L << Math.Clamp(image.Depths[0], 1, 31)) - 1);
             var result = new byte[mw * mh];
             for (int i = 0; i < result.Length; i++)
             {

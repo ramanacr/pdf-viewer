@@ -408,12 +408,11 @@ public static class PdfAConverter
             bool indexed = _r.Resolve(cs) is PdfArray ia && ia.Count > 0 && _r.Resolve(ia[0]) is PdfName { Value: "Indexed" or "I" };
             // With an /Indexed space the samples are palette indices: the JP2 file's own palette is not applied.
             if (indexed && Images.PdfImageSource.TryGetJp2Codestream(data) is { } codestream) data = codestream;
-            CoreJ2K.Util.InterleavedImage image;
-            try { image = CoreJ2K.J2kImage.FromBytes(data); }
+            Images.PdfImageSource.JpxPlanes image;
+            try { image = Images.PdfImageSource.ReadJpx(data); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { return null; }
-            using (image)
             {
-                int width = image.Width, height = image.Height, count = image.NumberOfComponents;
+                int width = image.Width, height = image.Height, count = image.Planes.Length;
                 if (width <= 0 || height <= 0 || (long)width * height > PdfSecurityLimits.Default.MaxImagePixels || count <= 0) return null;
                 int n = cs != null ? Components(cs) : count >= 4 ? 4 : count >= 3 ? 3 : 1;
                 if (n <= 0 || count < n) return null;
@@ -421,8 +420,8 @@ public static class PdfAConverter
                 var max = new int[n];
                 for (int c = 0; c < n; c++)
                 {
-                    planes[c] = image.GetComponent(c);
-                    int depth = Math.Clamp(image.GetBitDepth(c), 1, 16);
+                    planes[c] = image.Planes[c];
+                    int depth = Math.Clamp(image.Depths[c], 1, 16);
                     max[c] = (1 << depth) - 1;
                     if (planes[c].Length < width * height || (indexed && depth > 8)) return null;
                 }
