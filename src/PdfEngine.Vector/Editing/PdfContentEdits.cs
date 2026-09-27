@@ -12,7 +12,7 @@ namespace PdfEngine.Vector.Editing;
 /// <param name="AngleDegrees">Direction of the baseline in user space, counter-clockwise from +x.</param>
 public sealed record PdfEditableText(
     int Id, string Text, PdfRect Bounds, IReadOnlyList<PdfRect> LineBounds, string FontName, string? FontFamily, double FontSize,
-    bool Bold, bool Italic, IReadOnlyList<double> Color, PdfTextAlignment Alignment, double AngleDegrees, double LineSpacing);
+    bool Bold, bool Italic, IReadOnlyList<double> Color, PdfTextAlignment Alignment, double AngleDegrees, double LineSpacing, bool Vertical = false);
 
 /// <summary>An image the page draws, that can be moved, resized, replaced or deleted.</summary>
 /// <param name="Placement">The image's unit square to user space.</param>

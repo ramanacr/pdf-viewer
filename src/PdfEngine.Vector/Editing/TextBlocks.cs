@@ -23,6 +23,8 @@ internal sealed class TextLine
     /// <summary>For every character of <see cref="Text"/>: its glyph (index into Glyphs), or -1 for a space between words.</summary>
     public List<int> CharGlyph = new();
     public bool HardBreakAfter;
+    /// <summary>Written top to bottom (U runs down the column, V across it).</summary>
+    public bool Vertical => Glyphs.Count > 0 && Glyphs[0].Style.Vertical;
 }
 
 /// <summary>A paragraph (or a single line) of text the page shows, as one editable unit.</summary>
@@ -45,6 +47,7 @@ internal sealed class TextBlock
     public bool IsShadow;
     public PdfRect Bounds;
     public List<PdfRect> LineBounds = new();
+    public bool Vertical => Lines.Count > 0 && Lines[0].Vertical;
 }
 
 /// <summary>Finds lines and paragraphs among a page's glyphs.</summary>
@@ -84,13 +87,37 @@ internal static class TextBlocks
         return (u, v);
     }
 
-    /// <summary>A glyph's advance, and its em height, in user units.</summary>
-    internal static double UserAdvance(ContentGlyph g) => g.Advance * Math.Sqrt(g.Matrix.A * g.Matrix.A + g.Matrix.B * g.Matrix.B);
-    internal static double EmHeight(ContentGlyph g) => Math.Abs(g.Style.FontSize) * Math.Sqrt(g.Matrix.C * g.Matrix.C + g.Matrix.D * g.Matrix.D);
+    /// <summary>
+    /// Direction of writing and the direction lines advance against, for vertical writing: down the
+    /// column, and to the right (columns follow each other leftwards, as lines follow each other downwards).
+    /// </summary>
+    internal static (PdfPoint U, PdfPoint V) VerticalFrame(PdfMatrix m)
+    {
+        double len = Math.Sqrt(m.C * m.C + m.D * m.D), across = Math.Sqrt(m.A * m.A + m.B * m.B);
+        var u = len > 1e-12 ? new PdfPoint(-m.C / len, -m.D / len) : new PdfPoint(0, -1);
+        var v = across > 1e-12 ? new PdfPoint(m.A / across, m.B / across) : new PdfPoint(1, 0);
+        return (u, v);
+    }
+
+    internal static (PdfPoint U, PdfPoint V) FrameOf(ContentGlyph g) => g.Style.Vertical ? VerticalFrame(g.Matrix) : Frame(g.Matrix);
+
+    /// <summary>A glyph's advance along its line, and its size across it, in user units.</summary>
+    internal static double UserAdvance(ContentGlyph g) => g.Style.Vertical
+        ? -g.Advance * Math.Sqrt(g.Matrix.C * g.Matrix.C + g.Matrix.D * g.Matrix.D) // vertical advances run down: negative in text space
+        : g.Advance * Math.Sqrt(g.Matrix.A * g.Matrix.A + g.Matrix.B * g.Matrix.B);
+    internal static double EmHeight(ContentGlyph g) => Math.Abs(g.Style.FontSize) * (g.Style.Vertical
+        ? Math.Sqrt(g.Matrix.A * g.Matrix.A + g.Matrix.B * g.Matrix.B)
+        : Math.Sqrt(g.Matrix.C * g.Matrix.C + g.Matrix.D * g.Matrix.D));
 
     internal static PdfRect GlyphBox(ContentGlyph g)
     {
         var font = g.Style.Font;
+        if (g.Style.Vertical)
+        {
+            // The origin is the top middle of the glyph's em box; it runs down by the advance.
+            double em = Math.Abs(g.Style.FontSize), half = Math.Max(g.Width0 / 1000.0 * em, 0.01) / 2;
+            return g.Matrix.Transform(new PdfRect(-half, Math.Min(g.Advance, -0.01), 2 * half, Math.Max(-g.Advance, 0.01)));
+        }
         double fs = g.Style.FontSize, ascent = font != null ? Math.Max(font.Ascent, 0.7) : 0.9, descent = font != null ? Math.Min(font.Descent, -0.15) : -0.25;
         double w = Math.Max(g.Width0 / 1000.0 * fs * g.Style.Scaling / 100.0, 0.01);
         return g.Matrix.Transform(new PdfRect(0, g.Style.Rise + descent * fs, w, (ascent - descent) * fs));
@@ -104,17 +131,17 @@ internal static class TextBlocks
         foreach (var g in glyphs)
         {
             // Invisible text (a scan's recognized layer) and vertical writing are not edited here.
-            if (g.Style.RenderMode == 3 || g.Style.Vertical || g.Style.FontResource.Length == 0) continue;
+            if (g.Style.RenderMode == 3 || g.Style.FontResource.Length == 0) continue;
             double size = EmHeight(g);
             if (size < 0.5) continue;
-            var (u, v) = Frame(g.Matrix);
+            var (u, v) = FrameOf(g);
             if (current != null)
             {
                 var d = Sub(g.Origin, origin);
                 double s = Dot(d, current.U), t = Dot(d, current.V);
                 bool sameDirection = Dot(u, current.U) > 0.999;
                 double tol = Math.Max(size, current.Size);
-                if (sameDirection && g.Context == current.Glyphs[0].Context && Math.Abs(t - current.Baseline) < 0.25 * tol && s >= current.End - 0.5 * tol && s <= current.End + 1.5 * tol)
+                if (sameDirection && g.Context == current.Glyphs[0].Context && g.Style.Vertical == current.Glyphs[0].Style.Vertical && Math.Abs(t - current.Baseline) < 0.25 * tol && s >= current.End - 0.5 * tol && s <= current.End + 1.5 * tol)
                 {
                     current.Glyphs.Add(g);
                     current.End = Math.Max(current.End, s + UserAdvance(g));
@@ -146,7 +173,7 @@ internal static class TextBlocks
                     if (Angle(a) != Angle(b)) break;
                     double tol = Math.Max(a.Size, b.Size);
                     if (Dot(b.Glyphs[0].Origin, a.V) - Dot(a.Glyphs[0].Origin, a.V) > 0.25 * tol) break;
-                    if (Dot(a.U, b.U) < 0.999 || Math.Min(a.Size, b.Size) < 0.7 * tol || a.Glyphs[0].Context != b.Glyphs[0].Context) continue;
+                    if (Dot(a.U, b.U) < 0.999 || Math.Min(a.Size, b.Size) < 0.7 * tol || a.Glyphs[0].Context != b.Glyphs[0].Context || a.Vertical != b.Vertical) continue;
                     double bStart = Dot(Sub(b.Glyphs[0].Origin, a.Glyphs[0].Origin), a.U), bEnd = bStart + (b.End - b.Start);
                     double gapAfter = bStart - a.End, gapBefore = -bEnd;
                     bool adjacent = (gapAfter >= -0.3 * tol && gapAfter <= 1.0 * tol) || (gapBefore >= -0.3 * tol && gapBefore <= 1.0 * tol);
@@ -259,7 +286,7 @@ internal static class TextBlocks
             foreach (var candidate in open)
             {
                 var (block, last) = candidate;
-                if (Dot(block.U, line.U) < 0.999 || block.Lines[0].Glyphs[0].Context != line.Glyphs[0].Context) continue;
+                if (Dot(block.U, line.U) < 0.999 || block.Lines[0].Glyphs[0].Context != line.Glyphs[0].Context || block.Vertical != line.Vertical) continue;
                 double ratio = line.Size / last.Size;
                 if (ratio < 0.8 || ratio > 1.25) continue;
                 var lo = line.Glyphs[0].Origin;

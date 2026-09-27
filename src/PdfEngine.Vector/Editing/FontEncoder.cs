@@ -18,7 +18,7 @@ internal sealed class FontEncoder
     public FontEncoder(PdfFont font)
     {
         _font = font;
-        if (font.IsType3 || font.IsVertical) return;
+        if (font.IsType3) return;
 
         PreparedFontProgram? program = null;
         TrueTypeFontFile? outlines = null;
@@ -60,7 +60,10 @@ internal sealed class FontEncoder
         {
             foreach (var (code, text) in font.ToUnicodeMap)
             {
-                if (text.Length == 0 || _codes.ContainsKey(text)) continue;
+                // A vertical font maps a bracket's upright and its turned form to one character: the
+                // turned form, the later of the two in CID order, is the one a column draws.
+                bool turned = font.IsVertical && text.Length == 1 && char.IsPunctuation(text[0]);
+                if (text.Length == 0 || (_codes.ContainsKey(text) && !turned)) continue;
                 if (CodeBytes(code) is not { } bytes) continue;
                 font.ReadCode(bytes, 0, out _, out int cid);
                 if (!Has(code, cid, text)) continue;
@@ -75,9 +78,10 @@ internal sealed class FontEncoder
         for (int n = 1; n <= 4; n++)
         {
             if (n < 4 && code >> (8 * n) != 0) continue;
-            var bytes = new byte[n];
-            for (int i = 0; i < n; i++) bytes[i] = (byte)(code >> (8 * (n - 1 - i)));
-            if (_font.ReadCode(bytes, 0, out int read, out _) == n && read == code) return bytes;
+            // A byte after it, so a code the CMap reads longer is not taken for a short one that ran out.
+            var probe = new byte[n + 1];
+            for (int i = 0; i < n; i++) probe[i] = (byte)(code >> (8 * (n - 1 - i)));
+            if (_font.ReadCode(probe, 0, out int read, out _) == n && read == code) return probe[..n];
         }
         return null;
     }
