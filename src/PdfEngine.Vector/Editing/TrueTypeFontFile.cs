@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using PdfEngine.Vector.Fonts;
@@ -155,24 +156,84 @@ public sealed class TrueTypeFontFile
     {
         try
         {
-            var tables = ReadTables(data, index);
-            if (tables == null || !tables.ContainsKey("glyf")) return null;
-            string family = NameString(tables, 16) ?? NameString(tables, 1) ?? string.Empty;
-            string sub = NameString(tables, 17) ?? NameString(tables, 2) ?? "Regular";
-            string ps = NameString(tables, 6) ?? string.Empty;
-            int weight = 400;
-            bool italic = sub.Contains("Italic", StringComparison.OrdinalIgnoreCase) || sub.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
-            if (tables.TryGetValue("OS/2", out var os2) && os2.Length >= 64)
-            {
-                weight = BigEndian.U16(os2, 4);
-                italic |= (BigEndian.U16(os2, 62) & 1) != 0;
-            }
-            return (family, sub, ps, weight, italic, NameString(tables, 1) ?? family);
+            return NamesFromTables(ReadTables(data, index));
         }
         catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException)
         {
             return null;
         }
+    }
+
+    /// <summary>Number of fonts in a font file, read from its header only.</summary>
+    internal static int FontCount(Stream stream)
+    {
+        var header = ReadAt(stream, 0, 12);
+        return header != null && BigEndian.U32(header, 0) == 0x74746366 ? (int)Math.Min(BigEndian.U32(header, 8), 256) : 1;
+    }
+
+    /// <summary>
+    /// <see cref="ReadNames(byte[], int)"/> reading only the table directory and the name and OS/2
+    /// tables, so a catalogue of every installed font does not read hundreds of megabytes of outlines.
+    /// </summary>
+    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? ReadNames(Stream stream, int index)
+    {
+        try
+        {
+            long dir = 0;
+            var header = ReadAt(stream, 0, 12);
+            if (header == null) return null;
+            if (BigEndian.U32(header, 0) == 0x74746366)
+            {
+                int count = (int)Math.Min(BigEndian.U32(header, 8), 256);
+                if (index < 0 || index >= count || ReadAt(stream, 12 + index * 4, 4) is not { } entry) return null;
+                dir = BigEndian.U32(entry, 0);
+            }
+            else if (index != 0) return null;
+            if (ReadAt(stream, dir, 12) is not { } offsetTable) return null;
+            uint version = BigEndian.U32(offsetTable, 0);
+            if (version != 0x00010000 && version != 0x74727565) return null; // TrueType outlines only
+            int numTables = BigEndian.U16(offsetTable, 4);
+            if (numTables == 0 || numTables > 256 || ReadAt(stream, dir + 12, numTables * 16) is not { } records) return null;
+            var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            for (int i = 0; i < numTables; i++)
+            {
+                string tag = Encoding.ASCII.GetString(records, i * 16, 4);
+                long offset = BigEndian.U32(records, i * 16 + 8), length = BigEndian.U32(records, i * 16 + 12);
+                if (offset + length > stream.Length) return null;
+                if (tag == "glyf") tables[tag] = Array.Empty<byte>();
+                else if (tag is "name" or "OS/2" && length <= 1024 * 1024 && ReadAt(stream, offset, (int)length) is { } table) tables[tag] = table;
+            }
+            return NamesFromTables(tables);
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException or IOException)
+        {
+            return null;
+        }
+    }
+
+    private static byte[]? ReadAt(Stream stream, long offset, int length)
+    {
+        if (offset < 0 || length < 0 || offset + length > stream.Length) return null;
+        stream.Position = offset;
+        var buffer = new byte[length];
+        stream.ReadExactly(buffer);
+        return buffer;
+    }
+
+    private static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? NamesFromTables(Dictionary<string, byte[]>? tables)
+    {
+        if (tables == null || !tables.ContainsKey("glyf")) return null;
+        string family = NameString(tables, 16) ?? NameString(tables, 1) ?? string.Empty;
+        string sub = NameString(tables, 17) ?? NameString(tables, 2) ?? "Regular";
+        string ps = NameString(tables, 6) ?? string.Empty;
+        int weight = 400;
+        bool italic = sub.Contains("Italic", StringComparison.OrdinalIgnoreCase) || sub.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
+        if (tables.TryGetValue("OS/2", out var os2) && os2.Length >= 64)
+        {
+            weight = BigEndian.U16(os2, 4);
+            italic |= (BigEndian.U16(os2, 62) & 1) != 0;
+        }
+        return (family, sub, ps, weight, italic, NameString(tables, 1) ?? family);
     }
 
     /// <summary>The glyph for a Unicode scalar value, 0 when the font has none.</summary>
@@ -192,6 +253,37 @@ public sealed class TrueTypeFontFile
     public double Advance(int gid) => gid >= 0 && gid < GlyphCount ? _advances[gid] * 1000.0 / UnitsPerEm : 0;
 
     public double ToThousandths(int units) => units * 1000.0 / UnitsPerEm;
+
+    private OpenTypeSubstitution? _substitution;
+    private bool _substitutionRead;
+
+    /// <summary>The font's glyph substitutions (GSUB), or null when it has none.</summary>
+    internal OpenTypeSubstitution? Substitution
+    {
+        get
+        {
+            if (!_substitutionRead)
+            {
+                _substitution = OpenTypeSubstitution.Read(_tables);
+                _substitutionRead = true;
+            }
+            return _substitution;
+        }
+    }
+
+    private OpenTypeKerning? _kerning;
+    private bool _kerningRead;
+
+    /// <summary>How much <paramref name="left"/>'s advance changes (1/1000 em) when <paramref name="right"/> follows it: the font's pair kerning.</summary>
+    public double Kerning(int left, int right)
+    {
+        if (!_kerningRead)
+        {
+            _kerning = OpenTypeKerning.Read(_tables);
+            _kerningRead = true;
+        }
+        return _kerning != null && left > 0 && right > 0 ? ToThousandths(_kerning.Pair(left, right)) : 0;
+    }
 
     /// <summary>The glyph has an outline (subsets leave the glyphs they dropped empty).</summary>
     public bool HasOutline(int gid) => gid > 0 && gid < GlyphCount && _locaOffsets[gid + 1] > _locaOffsets[gid];

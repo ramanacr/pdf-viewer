@@ -66,11 +66,12 @@
     </ItemGroup>
   </Target>
 
+  <!--
+    One copy of pdfium.dll, beside the application (the resolvers in Services/PdfiumNativeBridge.cs
+    and PdfEngine.Pdfium try that path first; in the single-file publish it is extracted with the
+    other native libraries). Publishing it to runtimes\win-x64\native\ as well bundled it twice.
+  -->
   <ItemGroup>
-    <None Include="runtimes\win-x64\native\pdfium.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>runtimes\win-x64\native\pdfium.dll</TargetPath>
-    </None>
     <None Include="runtimes\win-x64\native\pdfium.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>pdfium.dll</TargetPath>

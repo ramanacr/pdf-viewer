@@ -354,4 +354,69 @@ public class ContentEditingTests
         Assert.Contains("Final version", await PdfiumText(result.Bytes));
         Assert.DoesNotContain("Final version", System.Text.Encoding.Latin1.GetString(result.Bytes));
     }
+
+    /// <summary>A form XObject (its own font and a blue image) drawn twice: once 200 pt up, once where it is.</summary>
+    private static byte[] FormPage()
+    {
+        var b = new VectorPdfBuilder();
+        int font = b.Add(Helv);
+        var blue = new byte[4 * 4 * 3];
+        for (int i = 0; i < 16; i++) blue[i * 3 + 2] = 255;
+        int image = b.AddStream("/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceRGB /BitsPerComponent 8", blue, flate: true);
+        int form = b.AddStream($"/Type /XObject /Subtype /Form /BBox [0 0 400 200] /Matrix [1 0 0 1 20 0] /Resources << /Font << /F7 {font} 0 R >> /XObject << /Im7 {image} 0 R >> >>",
+            "BT /F7 12 Tf 10 150 Td (Inside the form) Tj ET q 50 0 0 40 10 50 cm /Im7 Do Q", flate: true);
+        return AddPage(b, "q 1 0 0 1 0 200 cm /Fm1 Do Q /Fm1 Do BT /F1 12 Tf 40 20 Td (On the page) Tj ET", $"/Font << /F1 {font} 0 R >> /XObject << /Fm1 {form} 0 R >>");
+    }
+
+    [Fact]
+    public async Task TextAndImagesInFormXObjects_AreFound_WhereEachDrawingPutsThem()
+    {
+        var page = await Read(FormPage());
+        var inside = page.Texts.Where(t => t.Text == "Inside the form").OrderByDescending(t => t.Bounds.Y).ToList();
+        Assert.Equal(2, inside.Count);
+        Assert.Equal(30, inside[0].Bounds.X, 0);
+        Assert.InRange(inside[0].Bounds.Y, 340, 352);
+        Assert.InRange(inside[1].Bounds.Y, 140, 152);
+        Assert.Single(page.Texts, t => t.Text == "On the page");
+        var images = page.Images.OrderByDescending(i => i.Bounds.Y).ToList();
+        Assert.Equal(new PdfRect(30, 250, 50, 40), images[0].Bounds);
+        Assert.Equal(new PdfRect(30, 50, 50, 40), images[1].Bounds);
+    }
+
+    [Fact]
+    public async Task EditingInsideAFormXObject_ChangesOnlyThatDrawing()
+    {
+        byte[] pdf = FormPage();
+        var page = await Read(pdf);
+        var upper = page.Texts.Where(t => t.Text == "Inside the form").OrderByDescending(t => t.Bounds.Y).First();
+        var images = page.Images.OrderByDescending(i => i.Bounds.Y).ToList();
+        var result = await Edit(pdf,
+            new PdfReplaceText(1, upper.Id, "Edited in the form Ω"), // Helvetica has no omega: an installed font draws it
+            new PdfDeleteContent(1, PdfEditTarget.Image, images[1].Id),
+            new PdfTransformContent(1, PdfEditTarget.Image, images[0].Id, PdfMatrix.CreateTranslation(100, 0)));
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("no ", StringComparison.OrdinalIgnoreCase));
+
+        string text = Squash(await PdfiumText(result.Bytes));
+        Assert.Contains("Edited in the form Ω", text);
+        Assert.Contains("Inside the form", text); // the other drawing is as it was
+        Assert.Contains("On the page", text);
+        var after = await Read(result.Bytes);
+        Assert.Single(after.Texts, t => t.Text == "Inside the form");
+        Assert.Single(after.Texts, t => t.Text.StartsWith("Edited in the form", StringComparison.Ordinal));
+        var image = Assert.Single(after.Images);
+        Assert.Equal(new PdfRect(130, 250, 50, 40), new PdfRect(Math.Round(image.Bounds.X, 3), Math.Round(image.Bounds.Y, 3), Math.Round(image.Bounds.Width, 3), Math.Round(image.Bounds.Height, 3)));
+
+        using var rendered = await Render(result.Bytes);
+        Assert.Equal((255, 255, 255), Px(rendered, 55, 70));  // the deleted image
+        Assert.Equal((255, 255, 255), Px(rendered, 55, 270)); // where the moved one was
+        Assert.True(Px(rendered, 155, 270).B > 200 && Px(rendered, 155, 270).R < 60, "the moved image is drawn where it went");
+
+        // Editing it again reads the copy.
+        var edited = after.Texts.Single(t => t.Text.StartsWith("Edited in the form", StringComparison.Ordinal));
+        var again = await Edit(result.Bytes, new PdfReplaceText(1, edited.Id, "Second edit"));
+        string twice = Squash(await PdfiumText(again.Bytes));
+        Assert.Contains("Second edit", twice);
+        Assert.DoesNotContain("Edited", twice);
+        Assert.Contains("Inside the form", twice);
+    }
 }

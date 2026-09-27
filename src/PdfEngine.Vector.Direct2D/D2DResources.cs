@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using PdfEngine.Vector.Editing;
 using SharpGen.Runtime;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
@@ -151,6 +152,34 @@ internal sealed class D2DResources : IDisposable
         }
         catch (SharpGenException)
         {
+            result = null;
+        }
+        _systemFaces[key] = result;
+        return result;
+    }
+
+    /// <summary>
+    /// The installed face a font catalogue chose, loaded from its file, with bold or oblique
+    /// simulated when the document asks for a style the family does not have; null when unloadable.
+    /// </summary>
+    public IDWriteFontFace? GetInstalledFace(SystemFontFace installed, bool bold, bool italic)
+    {
+        var simulations = (bold && !installed.Bold ? FontSimulations.Bold : FontSimulations.None)
+                          | (italic && !installed.Italic ? FontSimulations.Oblique : FontSimulations.None);
+        string key = $"file:{installed.Path}|{installed.Index}|{simulations}";
+        if (_systemFaces.TryGetValue(key, out var cached))
+            return cached;
+        IDWriteFontFace? result = null;
+        try
+        {
+            using var file = DWrite.CreateFontFileReference(installed.Path);
+            var type = installed.Path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase) ? FontFaceType.TruetypeCollection : FontFaceType.Truetype;
+            result = DWrite.CreateFontFace(type, new[] { file }, (uint)installed.Index, simulations);
+            _ = result!.GlyphCount; // force validation now
+        }
+        catch (SharpGenException)
+        {
+            result?.Dispose();
             result = null;
         }
         _systemFaces[key] = result;
