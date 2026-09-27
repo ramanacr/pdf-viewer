@@ -32,8 +32,10 @@ internal sealed class BlockLayout
         public OutGlyph? Glyph;
         public ContentGlyph Template = null!;
         public double Width; // user units along the baseline
+        public double UserScale = 1; // text space to user space along the baseline
         public bool Space, BreakAfter;
         public int End; // index in the new text after this item
+        public int OldLine = -1, OldIndex = -1; // an old glyph drawn again: where it was
     }
 
     public (HashSet<ContentGlyph> Gone, List<OutGlyph> Output) Layout(string newText)
@@ -225,10 +227,12 @@ internal sealed class BlockLayout
             // An old glyph, all of whose characters are still there in order: drawn as it was.
             if (!installedWord && n2o[j] >= 0 && Reusable(n2o[j], j, to, n2o) is { } reuse)
             {
+                var m = reuse.Glyph.Matrix;
                 items.Add(new Item
                 {
-                    Glyph = OutGlyph.From(reuse.Glyph), Template = reuse.Glyph, Width = UserAdvance(reuse.Glyph),
+                    Glyph = OutGlyph.From(reuse.Glyph), Template = reuse.Glyph, Width = UserAdvance(reuse.Glyph), UserScale = Math.Sqrt(m.A * m.A + m.B * m.B),
                     Space = reuse.Glyph.Text.Trim().Length == 0, BreakAfter = reuse.Glyph.Text.EndsWith('-'), End = j + reuse.Length,
+                    OldLine = _b.Chars[n2o[j]].Line, OldIndex = _b.Chars[n2o[j]].Glyph,
                 });
                 j += reuse.Length;
                 continue;
@@ -240,19 +244,19 @@ internal sealed class BlockLayout
             string element = text.Substring(j, length);
             bool space = element == " ";
             bool bold = style.Font?.IsBold ?? false, italic = style.Font?.IsItalic ?? false;
-            var item = new Item { Template = tmpl, Space = space, BreakAfter = element is "-" or "‐" or "–", End = j + length };
+            var item = new Item { Template = tmpl, Space = space, BreakAfter = element is "-" or "‐" or "–", End = j + length, UserScale = userScale };
             var wordInstalled = installedWord && !space ? _session.EncodeWithInstalled(element, style, bold, italic) : null;
             if (wordInstalled is { } inWord)
             {
                 double advance = (inWord.Width0 / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
-                item.Glyph = new OutGlyph { Code = inWord.Code, Style = inWord.Style, Advance = advance };
+                item.Glyph = new OutGlyph { Code = inWord.Code, Style = inWord.Style, Advance = advance, Text = element };
                 item.Width = advance * userScale;
             }
             else if (_session.Encoder(style.Font) is { } encoder && encoder.TryEncode(element, out var code, out double w0))
             {
                 bool wordSpace = code.Length == 1 && code[0] == 32;
                 double advance = (w0 / 1000.0 * style.FontSize + style.CharSpacing + (wordSpace ? style.WordSpacing : 0)) * style.Scaling / 100.0;
-                item.Glyph = new OutGlyph { Code = code, Style = style, Advance = advance };
+                item.Glyph = new OutGlyph { Code = code, Style = style, Advance = advance, Text = element };
                 item.Width = advance * userScale;
             }
             else if (space)
@@ -262,7 +266,7 @@ internal sealed class BlockLayout
             else if (_session.EncodeWithInstalled(element, style, bold, italic) is { } installed)
             {
                 double advance = (installed.Width0 / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
-                item.Glyph = new OutGlyph { Code = installed.Code, Style = installed.Style, Advance = advance };
+                item.Glyph = new OutGlyph { Code = installed.Code, Style = installed.Style, Advance = advance, Text = element };
                 item.Width = advance * userScale;
             }
             else
@@ -274,7 +278,30 @@ internal sealed class BlockLayout
             items.Add(item);
             j += length;
         }
+        Kern(items);
         return items;
+    }
+
+    // Glyphs that were side by side stay as far apart as they were (the document's own kerning and
+    // tracking); a new glyph next to another is kerned the way its font kerns that pair.
+    private void Kern(List<Item> items)
+    {
+        for (int i = 1; i < items.Count; i++)
+        {
+            var a = items[i - 1];
+            var b = items[i];
+            if (a.Glyph == null || b.Glyph == null || a.Space || b.Space) continue;
+            if (a.OldLine >= 0 && b.OldLine == a.OldLine && b.OldIndex == a.OldIndex + 1)
+            {
+                var line = _b.Lines[a.OldLine].Glyphs;
+                double d = Dot(Sub(line[b.OldIndex].Origin, line[a.OldIndex].Origin), _b.U);
+                if (d > 0 && Math.Abs(d - a.Width) < 0.3 * EmHeight(line[a.OldIndex])) a.Width = d;
+                continue;
+            }
+            var st = a.Glyph.Style;
+            double k = _session.Kerning(st, a.Glyph.Code, a.Glyph.Text, b.Glyph.Style, b.Glyph.Code, b.Glyph.Text);
+            if (k != 0) a.Width += k / 1000.0 * st.FontSize * st.Scaling / 100.0 * a.UserScale;
+        }
     }
 
     /// <summary>The old glyph that old character <paramref name="k"/> starts, when all its characters map, in order, from new position <paramref name="j"/>.</summary>

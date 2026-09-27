@@ -105,6 +105,7 @@ public static class PdfContentEditor
         var node = document.PageTree.Pages[pageNumber - 1];
         var (walker, blocks) = Load(document, pageNumber);
         var session = new PageSession(node.Resources, r, catalog, allocate, objects, warnings);
+        session.Reserve(walker.FormResourceNames);
         var removed = new HashSet<(int, int)>();
         var output = new List<OutGlyph>();
         var inPlace = new Dictionary<int, List<OutGlyph>>();
@@ -227,7 +228,10 @@ public static class PdfContentEditor
             GlyphEmitter.Emit(content, e.Value, inPlace: true);
             return content.ToString();
         });
-        byte[] rewritten = walker.Rewrite(removed, imageChanges, insertions);
+        // Fonts are written before the rewrite, so copies of edited form XObjects can name them too.
+        var forms = new FormCopies { Allocate = allocate, Objects = objects, Fonts = session.WriteFonts(embedded), XObjects = session.NewXObjects };
+        byte[] rewritten = walker.Rewrite(removed, imageChanges, insertions, forms);
+        session.AddXObjects(forms.PageXObjects);
         if (walker.AlternateTextsRemoved > 0)
             warnings.Add("Replacement text (/ActualText) of edited words was removed, so it no longer contradicts what the page shows.");
         var sb = new StringBuilder("q\n").Append(Encoding.Latin1.GetString(rewritten)).Append("Q\n");
@@ -260,8 +264,10 @@ internal sealed class OutGlyph
     public int Line;
     /// <summary>The text-showing operator it is drawn right after (-1: after the paragraph's last).</summary>
     public int After = -1;
+    /// <summary>The text it shows (for kerning it against its neighbours).</summary>
+    public string Text = string.Empty;
 
-    public static OutGlyph From(ContentGlyph g) => new() { Matrix = g.Matrix, Code = g.Code, Style = g.Style, Advance = g.Advance, Line = -1 - g.Op, After = g.Op };
+    public static OutGlyph From(ContentGlyph g) => new() { Matrix = g.Matrix, Code = g.Code, Style = g.Style, Advance = g.Advance, Line = -1 - g.Op, After = g.Op, Text = g.Text };
 }
 
 /// <summary>Draws glyphs at exact positions: runs of one style in one TJ each, placed by adjustments.</summary>
@@ -348,6 +354,7 @@ internal sealed class PageSession
     private readonly Dictionary<(string, int), EmbeddedFontBuilder?> _builders = new();
     private readonly Dictionary<string, PdfObject> _newXObjects = new();
     private readonly HashSet<string> _fontNames, _xobjectNames;
+    private Dictionary<string, PdfObject>? _writtenFonts;
 
     public PageSession(PdfDictionary resources, Parsing.PdfObjectResolver r, SystemFontCatalog catalog, Func<int> allocate, Dictionary<int, PdfObject> objects, List<string> warnings)
     {
@@ -362,6 +369,16 @@ internal sealed class PageSession
     }
 
     public List<string> Warnings => _warnings;
+
+    /// <summary>Names new fonts and images must not take (those the page's form XObjects use).</summary>
+    public void Reserve(IEnumerable<string> names)
+    {
+        foreach (string name in names)
+        {
+            _fontNames.Add(name);
+            _xobjectNames.Add(name);
+        }
+    }
 
     public FontEncoder? Encoder(PdfFont? font)
     {
@@ -378,6 +395,7 @@ internal sealed class PageSession
         {
             string name = Unique("FEd", _fontNames);
             builder = new EmbeddedFontBuilder(file, name);
+            _byResource[name] = builder;
         }
         _builders[(face.Path, face.Index)] = builder;
         return builder;
@@ -392,6 +410,52 @@ internal sealed class PageSession
         if (_catalog.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false) is { } match && Builder(match) is { } b) yield return b;
         foreach (var face in _catalog.Fallbacks(bold, italic))
             if (Builder(face) is { } fb) yield return fb;
+    }
+
+    private readonly Dictionary<string, EmbeddedFontBuilder> _byResource = new(StringComparer.Ordinal);
+    private readonly Dictionary<PdfFont, TrueTypeFontFile?> _designs = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Pair kerning (1/1000 em) between two glyphs shown one after the other in one font and size.
+    /// A font the edits embedded kerns by its own glyphs. A document font kerns the way its installed
+    /// original does (by character), when that original is installed under the same name; otherwise 0.
+    /// </summary>
+    public double Kerning(GlyphStyle left, byte[] leftCode, string leftText, GlyphStyle right, byte[] rightCode, string rightText)
+    {
+        if (left.FontResource != right.FontResource || left.FontSize != right.FontSize || left.Vertical) return 0;
+        if (_byResource.TryGetValue(left.FontResource, out var builder))
+            return leftCode.Length == 2 && rightCode.Length == 2
+                ? builder.Font.Kerning(leftCode[0] << 8 | leftCode[1], rightCode[0] << 8 | rightCode[1]) : 0;
+        if (left.Font == null || !ReferenceEquals(left.Font, right.Font) || leftText.Length == 0 || rightText.Length == 0) return 0;
+        if (!_designs.TryGetValue(left.Font, out var design))
+            _designs[left.Font] = design = InstalledOriginal(left.Font);
+        if (design == null) return 0;
+        int a = design.GlyphFor(char.ConvertToUtf32(leftText, 0)), b = design.GlyphFor(char.ConvertToUtf32(rightText, 0));
+        return design.Kerning(a, b);
+    }
+
+    // The installed font a document font was made from: the same PostScript name, or the same
+    // family and style (TimesNewRoman,Bold is Times New Roman Bold). A stand-in is not used: its
+    // kerning belongs to other letter shapes.
+    private TrueTypeFontFile? InstalledOriginal(PdfFont font)
+    {
+        string name = SystemFontCatalog.StripSubset(font.PostScriptName ?? font.BaseFont);
+        if (name.Length == 0) return null;
+        string key = DesignKey(name);
+        foreach (var face in _catalog.Faces)
+            if (DesignKey(face.PostScriptName) == key || DesignKey(face.Family + face.Subfamily) == key)
+                return _catalog.Load(face);
+        return null;
+    }
+
+    private static string DesignKey(string name)
+    {
+        var sb = new StringBuilder(name.Length);
+        foreach (char c in name) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+        string key = sb.ToString();
+        foreach (string suffix in new[] { "psmt", "mt", "ps", "regular" })
+            if (key.EndsWith(suffix, StringComparison.Ordinal) && key.Length > suffix.Length + 2) { key = key[..^suffix.Length]; break; }
+        return key;
     }
 
     /// <summary>A character in the first installed font that has it, in the style given (with that font instead).</summary>
@@ -422,6 +486,7 @@ internal sealed class PageSession
         {
             string line = lines[li].Normalize(NormalizationForm.FormC).Replace('\t', ' ');
             double s = 0, t = -li * 1.2 * size;
+            OutGlyph? previous = null;
             var e = StringInfo.GetTextElementEnumerator(line);
             while (e.MoveNext())
             {
@@ -435,11 +500,13 @@ internal sealed class PageSession
                 {
                     if (element.Trim().Length == 0) s += 0.25 * size;
                     else _warnings.Add($"No installed font has the character \"{element}\"; it was left out.");
+                    previous = null;
                     continue;
                 }
+                if (previous != null) s += Kerning(previous.Style, previous.Code, previous.Text, enc.Style, enc.Code, element) / 1000.0 * size;
                 var origin = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
                 double advance = enc.Width0 / 1000.0 * size;
-                result.Add(new OutGlyph { Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = enc.Code, Style = enc.Style, Advance = advance, Line = int.MinValue + li });
+                result.Add(previous = new OutGlyph { Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = enc.Code, Style = enc.Style, Advance = advance, Line = int.MinValue + li, Text = element });
                 s += advance;
             }
         }
@@ -492,17 +559,39 @@ internal sealed class PageSession
         return name;
     }
 
+    /// <summary>The images the edits added, by resource name.</summary>
+    public IReadOnlyDictionary<string, PdfObject> NewXObjects => _newXObjects;
+
+    /// <summary>Adds XObjects (copies of edited forms) to the page's resources.</summary>
+    public void AddXObjects(IReadOnlyDictionary<string, PdfObject> xobjects)
+    {
+        foreach (var (k, v) in xobjects)
+        {
+            _xobjectNames.Add(k);
+            _newXObjects[k] = v;
+        }
+    }
+
+    /// <summary>Writes the fonts that were used (once; nothing may be encoded with them afterwards) and returns them by resource name.</summary>
+    public IReadOnlyDictionary<string, PdfObject> WriteFonts(List<string> embedded)
+    {
+        if (_writtenFonts != null) return _writtenFonts;
+        _writtenFonts = new Dictionary<string, PdfObject>();
+        foreach (var builder in _builders.Values)
+        {
+            if (builder is not { IsUsed: true }) continue;
+            _writtenFonts[builder.ResourceName] = new PdfIndirectRef(builder.Write(_allocate, _objects));
+            embedded.Add(builder.Font.FamilyName + (builder.Font.SubfamilyName is "Regular" ? string.Empty : " " + builder.Font.SubfamilyName));
+        }
+        return _writtenFonts;
+    }
+
     /// <summary>Writes the fonts that were used, and returns the page's resources with everything new in them.</summary>
     public PdfDictionary Finish(List<string> embedded)
     {
         var res = new Dictionary<string, PdfObject>(_resources.Entries);
         var fonts = new Dictionary<string, PdfObject>((_r.Resolve(_resources["Font"]) as PdfDictionary)?.Entries ?? new Dictionary<string, PdfObject>());
-        foreach (var builder in _builders.Values)
-        {
-            if (builder is not { IsUsed: true }) continue;
-            fonts[builder.ResourceName] = new PdfIndirectRef(builder.Write(_allocate, _objects));
-            embedded.Add(builder.Font.FamilyName + (builder.Font.SubfamilyName is "Regular" ? string.Empty : " " + builder.Font.SubfamilyName));
-        }
+        foreach (var (k, v) in WriteFonts(embedded)) fonts[k] = v;
         if (fonts.Count > 0) res["Font"] = new PdfDictionary(fonts);
         if (_newXObjects.Count > 0)
         {

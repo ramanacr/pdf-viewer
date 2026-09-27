@@ -142,11 +142,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - every character keeps the font, size, colour and spacing of the character it replaces (new characters take those of the one before them);
   - lines before the first change are untouched, unchanged glyphs keep their own codes, and once the text matches the old text again the rest keeps its exact glyphs, only moved if the paragraph grew or shrank.
 - Characters the document's font lacks (subsets embed only the glyphs they used) are written in the installed version of the same font, else a font of the same kind, embedded as a TrueType subset (Type0, Identity-H, with widths and ToUnicode). Whole words switch font, never single letters.
+- Kerning: glyphs that were side by side keep the spacing they had (the document's own kerning and tracking), even when their line is laid out again. New glyphs are kerned by their font's pair kerning (GPOS 'kern' pair adjustments, formats 1 and 2, also through extension lookups; else the legacy kern table): an embedded installed font by its glyphs, and a document font the way its installed original kerns (same PostScript name, or same family and style; a stand-in's kerning is never used).
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
+- Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
 - `vectorpdf edit` over the 3,197-file corpus:
   - page 1's longest paragraph is redrawn unchanged, then one of its words is replaced;
-  - 575 files edited cleanly: PDFium reads the new word back, and nothing changes outside the paragraph;
+  - 578 files edited cleanly: PDFium reads the new word back, and nothing changes outside the paragraph (575 before text inside form XObjects could be edited);
   - redrawing unchanged differs on 2 files, both from JPEG 2000 logos that decode differently from run to run;
   - 2 files with corrupt content streams are refused;
   - the other files have no paragraph on page 1 (conformance test files, and scans whose text is an invisible OCR layer).
@@ -286,7 +288,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** text and images inside form XObjects; vertical writing; shaping for complex scripts in new text (ligatures, Arabic, Indic); kerning for new text.
+10. **Editing remainder:** vertical writing; shaping for complex scripts in new text (ligatures, Arabic, Indic).
 
 ---
 

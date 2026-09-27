@@ -1,21 +1,21 @@
 {
   "schema": 1,
-  "recordedUtc": "2026-09-27T13:58:40.3195132Z",
+  "recordedUtc": "2026-09-27T18:17:57.6970566Z",
   "note": "Payload staged by scripts/build_publish.ps1 (publish/app) and embedded in PdfViewerSetup.exe as Payload.zip. Refresh: see eng/releasegate/README.md.",
   "fileCount": 9,
-  "totalBytes": 45731568,
-  "compressedBytes": 16863751,
-  "installerBytes": 17133253,
+  "totalBytes": 38907572,
+  "compressedBytes": 13308998,
+  "installerBytes": 13577925,
   "files": {
-    "Fonts/CMaps/LICENSE-cmap-resources.md": 1481,
-    "PdfViewer.exe": 45664257,
-    "THIRD_PARTY_NOTICES.md": 7867,
+    "assets/app_icon_raw.png": 10124,
     "assets/app_icon.ico": 12768,
     "assets/app_icon.png": 10405,
-    "assets/app_icon_raw.png": 10124,
+    "assets/pdf_file_raw.png": 7576,
     "assets/pdf_file.ico": 9302,
     "assets/pdf_file.png": 7788,
-    "assets/pdf_file_raw.png": 7576
+    "Fonts/CMaps/LICENSE-cmap-resources.md": 1481,
+    "PdfViewer.exe": 38840261,
+    "THIRD_PARTY_NOTICES.md": 7867
   },
   "bundles": {
     "PdfViewer.exe": {
@@ -25,22 +25,21 @@
       "PdfEngine.Abstractions.dll": 166400,
       "PdfEngine.Pdfium.dll": 109568,
       "PdfEngine.Vector.Direct2D.dll": 101888,
+      "PdfEngine.Vector.dll": 1930240,
       "PdfEngine.Vector.Windows.dll": 57856,
-      "PdfEngine.Vector.dll": 1538048,
+      "pdfium.dll": 7262720,
       "PdfViewer.Core.dll": 72704,
       "PdfViewer.deps.json": 10156,
-      "PdfViewer.dll": 817664,
+      "PdfViewer.dll": 859648,
       "PdfViewer.runtimeconfig.json": 583,
       "SharpGen.Runtime.COM.dll": 168960,
       "SharpGen.Runtime.dll": 79872,
-      "Vortice.DXGI.dll": 91648,
       "Vortice.Direct2D1.dll": 535040,
       "Vortice.Direct3D11.dll": 352768,
       "Vortice.DirectX.dll": 365056,
+      "Vortice.DXGI.dll": 91648,
       "Vortice.Mathematics.dll": 125952,
-      "WinRT.Runtime.dll": 528944,
-      "pdfium.dll": 7262720,
-      "runtimes/win-x64/native/pdfium.dll": 7262720
+      "WinRT.Runtime.dll": 528944
     }
   },
   "tolerance": {
