@@ -92,6 +92,7 @@ public partial class MainWindow : Window
         };
         document.ShowPageMarkDialogFunc = vm => PageMarkDialogs.Show(vm, this);
         document.ShowPdfAAction = vm => new PdfAWindow(vm, path => document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path)) { Owner = this }.Show();
+        document.ShowReduceSizeAction = vm => new ReduceSizeWindow(vm, path => document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path)) { Owner = this }.ShowDialog();
         document.PickImageFileFunc = () =>
         {
             var dialog = new Microsoft.Win32.OpenFileDialog

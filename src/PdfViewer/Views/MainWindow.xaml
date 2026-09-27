@@ -308,6 +308,10 @@
                           Command="{Binding ShowPdfACommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Checks the document against PDF/A (ISO 19005) and saves an archival PDF/A copy." />
+                <MenuItem Header="Reduce File _Size..."
+                          Command="{Binding ShowReduceSizeCommand}"
+                          IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Saves a smaller copy: duplicates merged, streams recompressed, objects packed, and images optionally downsampled." />
                 <MenuItem Header="Save _Clean Copy..."
                           Command="{Binding SaveCleanCopyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"

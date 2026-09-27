@@ -39,6 +39,7 @@ public static class Program
             "diffpage" when args.Length >= 4 => await DiffPage.RunAsync(args),
             "redact" => await RedactSmoke.RunAsync(args),
             "edit" => await EditSmoke.RunAsync(args),
+            "optimize" => await OptimizeSmoke.RunAsync(args),
             "pdfa" => await PdfASmoke.RunAsync(args),
             "pdfa-convert" => await PdfASmoke.ConvertAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),

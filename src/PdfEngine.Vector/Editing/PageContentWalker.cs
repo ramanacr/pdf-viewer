@@ -47,6 +47,8 @@ internal sealed class ContentImage
 {
     public int Index;
     public string? ResourceName;
+    /// <summary>The image XObject's object number (-1 for an inline image or a direct object).</summary>
+    public int ObjectNumber = -1;
     public bool Inline;
     /// <summary>The unit square of the image to user space.</summary>
     public PdfMatrix Placement;
@@ -378,7 +380,7 @@ internal sealed class PageContentWalker
                     changedHere |= imageChanges?.ContainsKey(index) ?? false;
                     Images.Add(new ContentImage
                     {
-                        Index = index, ResourceName = xname.Value, Placement = gs.Ctm,
+                        Index = index, ResourceName = xname.Value, Placement = gs.Ctm, ObjectNumber = (entry as PdfIndirectRef)?.ObjectNumber ?? -1,
                         PixelWidth = (int)(xobject.Dictionary.GetInteger("Width") ?? 0), PixelHeight = (int)(xobject.Dictionary.GetInteger("Height") ?? 0),
                     });
                     Emit(ChangedImage(imageChanges, index, verbatim, "/" + PdfObjectWriter.EscapeName(xname.Value) + " Do"));
