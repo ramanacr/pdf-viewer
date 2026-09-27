@@ -38,6 +38,7 @@ public static class Program
             "gen" when args.Length >= 2 => Gen(args),
             "diffpage" when args.Length >= 4 => await DiffPage.RunAsync(args),
             "redact" => await RedactSmoke.RunAsync(args),
+            "edit" => await EditSmoke.RunAsync(args),
             _ => 2,
         };
     }

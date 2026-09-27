@@ -90,6 +90,15 @@ public partial class MainWindow : Window
                 compare.Summary = $"The documents could not be compared: {ex.Message}";
             }
         };
+        document.PickImageFileFunc = () =>
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Choose a picture",
+                Filter = "Pictures|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.gif|All files|*.*",
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+        };
         document.ShowApplyRedactionsFunc = (marks, suggested) =>
         {
             var dialog = new ApplyRedactionsDialog(marks, suggested) { Owner = this };
@@ -474,6 +483,28 @@ public partial class MainWindow : Window
             case Key.Escape when _vm.IsMarkingRedaction:
                 _vm.IsMarkingRedaction = false;
                 _vm.StatusText = "Marking stopped.";
+                e.Handled = true;
+                break;
+
+            case Key.Escape when _vm.IsEditingContent:
+                if (_vm.IsAddingText) _vm.IsAddingText = false;
+                else if (_vm.SelectedEditItem != null) _vm.SelectedEditItem = null;
+                else _vm.IsEditingContent = false;
+                e.Handled = true;
+                break;
+
+            case Key.Delete when _vm.IsEditingContent && _vm.SelectedEditItem != null:
+                _ = _vm.DeleteSelectedContentAsync();
+                e.Handled = true;
+                break;
+
+            case Key.Z when _vm.IsEditingContent && Keyboard.Modifiers == ModifierKeys.Control:
+                _ = _vm.UndoContentEditAsync();
+                e.Handled = true;
+                break;
+
+            case Key.Y when _vm.IsEditingContent && Keyboard.Modifiers == ModifierKeys.Control:
+                _ = _vm.RedoContentEditAsync();
                 e.Handled = true;
                 break;
 

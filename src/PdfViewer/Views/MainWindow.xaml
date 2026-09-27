@@ -207,6 +207,16 @@
                     <MenuItem Header="_Redact Selected Text Now..." Command="{Binding RedactSelectionCommand}" IsEnabled="{Binding HasTextSelection}"
                               ToolTip="Marks the selected text and applies it straight away." />
                 </MenuItem>
+                <Separator />
+                <MenuItem Header="Edit _Text &amp; Images" Command="{Binding ToggleContentEditingCommand}" IsCheckable="True" IsChecked="{Binding IsEditingContent, Mode=OneWay}"
+                          IsEnabled="{Binding IsDocumentLoaded}" InputGestureText="Ctrl+E"
+                          ToolTip="Select a paragraph or image on the page: double-click text to change it, drag to move, drag an image's corner to resize, Delete to remove." />
+                <MenuItem Header="Add Te_xt" Command="{Binding BeginAddTextCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Click on the page where the new text should start." />
+                <MenuItem Header="Add _Image..." Command="{Binding AddImageCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Places a picture in the middle of the current page; drag it where it belongs." />
+                <MenuItem Header="_Undo Edit" Command="{Binding UndoContentEditCommand}" IsEnabled="{Binding CanUndoContentEdit}" InputGestureText="Ctrl+Z" />
+                <MenuItem Header="Red_o Edit" Command="{Binding RedoContentEditCommand}" IsEnabled="{Binding CanRedoContentEdit}" InputGestureText="Ctrl+Y" />
             </MenuItem>
 
             <MenuItem Header="_View">
@@ -1497,6 +1507,7 @@
                                             </Canvas>
                                             <views:FormFieldsLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 7. form fields: real editors over the page -->
                                             <views:RedactionMarksLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 8. areas marked for redaction -->
+                                            <views:ContentEditLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 9. paragraphs and images being edited -->
                                             </Grid>
                                         </Grid>
                                     </Border>
@@ -1823,6 +1834,7 @@
                                 </Canvas>
                                 <views:FormFieldsLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 <views:RedactionMarksLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
+                                <views:ContentEditLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 </Grid>
                             </Grid>
                         </Border>

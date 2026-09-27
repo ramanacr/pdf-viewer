@@ -1297,6 +1297,7 @@ public partial class MainViewModel : ObservableObject
             {
                 await SingleCurrentPage.LoadImageAsync(_renderer, dpi, RotationAngle, IsNightMode, CancellationToken.None);
                 _ = SingleCurrentPage.LoadTextSegmentsAsync(_docService, CancellationToken.None);
+                if (IsEditingContent) _ = EnsureEditItemsAsync(SingleCurrentPage);
                 UpdateCurrentPageEngineStatus();
             }
             return;
@@ -1323,6 +1324,7 @@ public partial class MainViewModel : ObservableObject
             {
                 _ = Pages[idx].LoadTextSegmentsAsync(_docService, CancellationToken.None);
             }
+            if (IsEditingContent) _ = EnsureEditItemsAsync(Pages[idx]);
         }
 
         // Start gentle background prefetch for remaining pages
