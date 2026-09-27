@@ -18,6 +18,8 @@ public static partial class PdfSignatureValidator
         public List<X509Certificate2> Certificates { get; } = new();
         public List<PdfOcspResponse> Ocsps { get; } = new();
         public List<PdfCrl> Crls { get; } = new();
+        /// <summary>SHA-256 of the DSS item each certificate, response and list was read from.</summary>
+        public Dictionary<object, string> Hashes { get; } = new(ReferenceEqualityComparer.Instance);
 
         public static ValidationMaterial Read(PdfVectorDocument doc)
         {
@@ -29,15 +31,21 @@ public static partial class PdfSignatureValidator
             var certs = dss.Certs.Concat(dss.VriEntries.Values.SelectMany(v => v.Certs)).Distinct();
             var ocsps = dss.Ocsps.Concat(dss.VriEntries.Values.SelectMany(v => v.Ocsps)).Distinct();
             var crls = dss.Crls.Concat(dss.VriEntries.Values.SelectMany(v => v.Crls)).Distinct();
+            static string Hash(PdfDss.Item item) => Convert.ToHexString(SHA256.HashData(item.Data));
             foreach (var item in certs)
             {
-                try { material.Certificates.Add(X509CertificateLoader.LoadCertificate(item.Data)); }
+                try
+                {
+                    var cert = X509CertificateLoader.LoadCertificate(item.Data);
+                    material.Certificates.Add(cert);
+                    material.Hashes[cert] = Hash(item);
+                }
                 catch (CryptographicException) { }
             }
             foreach (var item in ocsps)
-                if (PdfOcspResponse.TryParse(item.Data) is { } response) material.Ocsps.Add(response);
+                if (PdfOcspResponse.TryParse(item.Data) is { } response) { material.Ocsps.Add(response); material.Hashes[response] = Hash(item); }
             foreach (var item in crls)
-                if (PdfCrl.TryParse(item.Data) is { } crl) material.Crls.Add(crl);
+                if (PdfCrl.TryParse(item.Data) is { } crl) { material.Crls.Add(crl); material.Hashes[crl] = Hash(item); }
             return material;
         }
     }
@@ -45,7 +53,33 @@ public static partial class PdfSignatureValidator
     /// <summary>What revocation checking of one signature draws on.</summary>
     private sealed record RevocationContext(
         List<PdfOcspResponse> Ocsps, List<PdfCrl> Crls, List<X509Certificate2> Pool,
-        HashSet<string> EmbeddedCertificates, PdfLtv.Fetcher? Online, List<string> Problems);
+        HashSet<string> EmbeddedCertificates, PdfLtv.Fetcher? Online, List<string> Problems)
+    {
+        /// <summary>The DSS item hash of each piece of validation material that came from the DSS.</summary>
+        public IReadOnlyDictionary<object, string> MaterialHashes { get; init; } = new Dictionary<object, string>();
+        /// <summary>Certificates the signature (and its timestamps) carry themselves.</summary>
+        public HashSet<string> OwnCertificates { get; init; } = new(StringComparer.Ordinal);
+        /// <summary>
+        /// What the LTV finding needs from the DSS, collected as it is made: for each certificate,
+        /// the DSS items (by hash) any one of which would answer for it.
+        /// </summary>
+        public List<HashSet<string>> Evidence { get; init; } = new();
+
+        /// <summary>
+        /// Notes that one of <paramref name="sources"/> is needed. If one came from the signature
+        /// itself (its revocation archive), nothing is needed from the DSS.
+        /// </summary>
+        public void Needs(IEnumerable<object> sources)
+        {
+            var group = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var source in sources)
+            {
+                if (!MaterialHashes.TryGetValue(source, out var hash)) return; // carried by the signature itself
+                group.Add(hash);
+            }
+            if (group.Count > 0) Evidence.Add(group);
+        }
+    }
 
     /// <summary>
     /// Adobe's revocation archive (adbe-revocationInfoArchival, a signed attribute): CRLs and
@@ -105,8 +139,11 @@ public static partial class PdfSignatureValidator
         {
             var cert = chain[i];
             string name = PdfX509.Name(cert);
-            if (!context.EmbeddedCertificates.Contains(Convert.ToHexString(SHA256.HashData(cert.RawData))) && i < chain.Count - 1)
+            string certHash = Convert.ToHexString(SHA256.HashData(cert.RawData));
+            if (!context.EmbeddedCertificates.Contains(certHash) && i < chain.Count - 1)
                 NotLtv($"The certificate \"{name}\" is not included in the document.");
+            else if (i < chain.Count - 1 && !context.OwnCertificates.Contains(certHash))
+                context.Evidence.Add(new HashSet<string>(StringComparer.Ordinal) { certHash }); // from the DSS (its item is the certificate itself)
             if (i == chain.Count - 1)
             {
                 if (!PdfX509.IsSelfSigned(cert))
@@ -122,11 +159,15 @@ public static partial class PdfSignatureValidator
             }
             var issuer = chain[i + 1];
 
-            var findings = context.Ocsps.Select(o => PdfRevocationChecker.FromOcsp(o, cert, issuer, pool, at, online: false))
-                .Concat(context.Crls.Select(c => PdfRevocationChecker.FromCrl(c, cert, issuer, at, online: false)))
+            var sourced = context.Ocsps.Select(o => (Finding: PdfRevocationChecker.FromOcsp(o, cert, issuer, pool, at, online: false), Source: (object)o))
+                .Concat(context.Crls.Select(c => (Finding: PdfRevocationChecker.FromCrl(c, cert, issuer, at, online: false), Source: (object)c)))
                 .ToList();
-            var best = PdfRevocationChecker.Best(findings, at, trustedTime);
+            var best = PdfRevocationChecker.Best(sourced.Select(s => s.Finding).ToList(), at, trustedTime);
             bool embedded = best is { Status: not PdfRevocationStatus.Unknown };
+            if (embedded)
+                context.Needs(sourced.Where(s => PdfRevocationChecker.Best(new List<PdfRevocationFinding?> { s.Finding }, at, trustedTime) is { } one
+                                                 && Entry(cert, one, at, trustedTime, timestampAuthority).Status == PdfRevocationStatus.Good)
+                    .Select(s => s.Source));
             if (!embedded && context.Online is { } online)
             {
                 var fetched = new List<PdfRevocationFinding?>();
@@ -157,9 +198,12 @@ public static partial class PdfSignatureValidator
     {
         // Any verified answer from within the responder's own validity shows it was not revoked when it answered.
         var at = new DateTimeOffset(responder.NotBefore.ToUniversalTime(), TimeSpan.Zero);
-        var findings = context.Crls.Select(c => PdfRevocationChecker.FromCrl(c, responder, issuer, at, online: false))
-            .Concat(context.Ocsps.Select(o => PdfRevocationChecker.FromOcsp(o, responder, issuer, pool, at, online: false)));
-        return findings.Any(f => f is { Status: PdfRevocationStatus.Good });
+        var good = context.Crls.Where(c => PdfRevocationChecker.FromCrl(c, responder, issuer, at, online: false) is { Status: PdfRevocationStatus.Good }).Cast<object>()
+            .Concat(context.Ocsps.Where(o => PdfRevocationChecker.FromOcsp(o, responder, issuer, pool, at, online: false) is { Status: PdfRevocationStatus.Good }))
+            .ToList();
+        if (good.Count == 0) return false;
+        context.Needs(good);
+        return true;
     }
 
     private static PdfCertificateRevocation Entry(X509Certificate2 cert, PdfRevocationFinding? best, DateTimeOffset at, bool trustedTime, bool timestampAuthority)

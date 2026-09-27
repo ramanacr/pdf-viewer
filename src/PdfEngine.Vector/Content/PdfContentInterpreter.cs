@@ -101,7 +101,8 @@ public sealed class PdfContentInterpreter
                 f.IsSymbolic,
                 NormalizeEm(f.Ascent, 0.8),
                 NormalizeEm(f.Descent, -0.2),
-                program?.GlyphMatrix);
+                program?.GlyphMatrix,
+                (f.Flags & (1 << 3)) != 0);
             return new PreparedFace(face, program);
         });
     }
@@ -1421,7 +1422,7 @@ public sealed class PdfContentInterpreter
                     }
 
                     double advance = (w0 * fs + gs.CharacterSpacing + tw) * th;
-                    glyphs.Add(new PdfGlyph(glyphId, advance, 0, x, 0, unicode, code));
+                    glyphs.Add(new PdfGlyph(glyphId, advance, 0, x, 0, unicode, code, w0));
                     text.Append(unicode);
 
                     minX = Math.Min(minX, Math.Min(x, x + advance));

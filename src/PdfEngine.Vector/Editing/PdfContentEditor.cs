@@ -93,7 +93,7 @@ public static class PdfContentEditor
         bool italic = (font?.IsItalic ?? false) || name.Contains("Italic", StringComparison.OrdinalIgnoreCase) || name.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
         string? family = fonts?.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false)?.Family;
         return new PdfEditableText(b.Id, b.Text, b.Bounds, b.LineBounds, name, family, b.Lines[0].Size, bold, italic, first.Style.FillRgb,
-            b.Alignment, Math.Atan2(b.U.Y, b.U.X) * 180 / Math.PI, b.Pitch);
+            b.Alignment, b.Vertical ? Math.Atan2(b.V.Y, b.V.X) * 180 / Math.PI : Math.Atan2(b.U.Y, b.U.X) * 180 / Math.PI, b.Pitch, b.Vertical);
     }
 
     // ------------------------------------------------------------------ editing a page
@@ -264,8 +264,10 @@ internal sealed class OutGlyph
     public int Line;
     /// <summary>The text-showing operator it is drawn right after (-1: after the paragraph's last).</summary>
     public int After = -1;
+    /// <summary>The text it shows (for kerning it against its neighbours).</summary>
+    public string Text = string.Empty;
 
-    public static OutGlyph From(ContentGlyph g) => new() { Matrix = g.Matrix, Code = g.Code, Style = g.Style, Advance = g.Advance, Line = -1 - g.Op, After = g.Op };
+    public static OutGlyph From(ContentGlyph g) => new() { Matrix = g.Matrix, Code = g.Code, Style = g.Style, Advance = g.Advance, Line = -1 - g.Op, After = g.Op, Text = g.Text };
 }
 
 /// <summary>Draws glyphs at exact positions: runs of one style in one TJ each, placed by adjustments.</summary>
@@ -294,11 +296,12 @@ internal static class GlyphEmitter
         var m = first.Matrix;
         var n = g.Matrix;
         if (Math.Abs(m.A - n.A) > 1e-6 || Math.Abs(m.B - n.B) > 1e-6 || Math.Abs(m.C - n.C) > 1e-6 || Math.Abs(m.D - n.D) > 1e-6) return false;
-        // On the run's baseline, and not behind the glyph before it.
-        double lenSq = m.A * m.A + m.B * m.B;
+        // On the run's baseline (a column's centre line, in vertical writing).
+        var (ax, ay) = a.Vertical ? (m.C, m.D) : (m.A, m.B);
+        double lenSq = ax * ax + ay * ay;
         if (lenSq < 1e-18) return false;
         double dx = n.E - m.E, dy = n.F - m.F;
-        double across = (dx * -m.B + dy * m.A) / Math.Sqrt(lenSq);
+        double across = (dx * -ay + dy * ax) / Math.Sqrt(lenSq);
         return Math.Abs(across) < 1e-3;
     }
 
@@ -307,8 +310,10 @@ internal static class GlyphEmitter
         var first = glyphs[from];
         var st = first.Style;
         var m = first.Matrix;
-        double lenSq = m.A * m.A + m.B * m.B;
-        double scale = st.FontSize * st.Scaling / 100.0;
+        // Positions along the writing direction: text space x, or y down a column (where TJ moves the pen by fs / 1000 per unit, without Tz).
+        var (ax, ay) = st.Vertical ? (m.C, m.D) : (m.A, m.B);
+        double lenSq = ax * ax + ay * ay;
+        double scale = st.Vertical ? st.FontSize : st.FontSize * st.Scaling / 100.0;
         string state = !inPlace ? st.StateOps : st.ColorOps.Length > 0 ? st.ColorOps : "0 g 0 G ";
         sb.Append("q ").Append(state).Append("BT /").Append(PdfObjectWriter.EscapeName(st.FontResource)).Append(' ').Append(PageContentWalker.F(st.FontSize)).Append(" Tf ")
           .Append(PageContentWalker.F(st.CharSpacing)).Append(" Tc ").Append(PageContentWalker.F(st.WordSpacing)).Append(" Tw ")
@@ -320,7 +325,7 @@ internal static class GlyphEmitter
         for (int i = from; i < to; i++)
         {
             var g = glyphs[i];
-            double x = ((g.Matrix.E - m.E) * m.A + (g.Matrix.F - m.F) * m.B) / lenSq;
+            double x = ((g.Matrix.E - m.E) * ax + (g.Matrix.F - m.F) * ay) / lenSq;
             if (i > from && Math.Abs(scale) > 1e-12)
             {
                 double adjust = -(x - expected) * 1000 / scale;
@@ -393,6 +398,7 @@ internal sealed class PageSession
         {
             string name = Unique("FEd", _fontNames);
             builder = new EmbeddedFontBuilder(file, name);
+            _byResource[name] = builder;
         }
         _builders[(face.Path, face.Index)] = builder;
         return builder;
@@ -409,14 +415,68 @@ internal sealed class PageSession
             if (Builder(face) is { } fb) yield return fb;
     }
 
+    private static readonly string[] VerticalFeatures = { "vert", "vrt2" };
+    private readonly Dictionary<string, EmbeddedFontBuilder> _byResource = new(StringComparer.Ordinal);
+    private readonly Dictionary<PdfFont, TrueTypeFontFile?> _designs = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Pair kerning (1/1000 em) between two glyphs shown one after the other in one font and size.
+    /// A font the edits embedded kerns by its own glyphs. A document font kerns the way its installed
+    /// original does (by character), when that original is installed under the same name; otherwise 0.
+    /// </summary>
+    public double Kerning(GlyphStyle left, byte[] leftCode, string leftText, GlyphStyle right, byte[] rightCode, string rightText)
+    {
+        if (left.FontResource != right.FontResource || left.FontSize != right.FontSize || left.Vertical) return 0;
+        if (_byResource.TryGetValue(left.FontResource, out var builder))
+            return leftCode.Length == 2 && rightCode.Length == 2
+                ? builder.Font.Kerning(leftCode[0] << 8 | leftCode[1], rightCode[0] << 8 | rightCode[1]) : 0;
+        if (left.Font == null || !ReferenceEquals(left.Font, right.Font) || leftText.Length == 0 || rightText.Length == 0) return 0;
+        if (!_designs.TryGetValue(left.Font, out var design))
+            _designs[left.Font] = design = InstalledOriginal(left.Font);
+        if (design == null) return 0;
+        int a = design.GlyphFor(char.ConvertToUtf32(leftText, 0)), b = design.GlyphFor(char.ConvertToUtf32(rightText, 0));
+        return design.Kerning(a, b);
+    }
+
+    // The installed font a document font was made from: the same PostScript name, or the same
+    // family and style (TimesNewRoman,Bold is Times New Roman Bold). A stand-in is not used: its
+    // kerning belongs to other letter shapes.
+    private TrueTypeFontFile? InstalledOriginal(PdfFont font)
+    {
+        string name = SystemFontCatalog.StripSubset(font.PostScriptName ?? font.BaseFont);
+        if (name.Length == 0) return null;
+        string key = DesignKey(name);
+        foreach (var face in _catalog.Faces)
+            if (DesignKey(face.PostScriptName) == key || DesignKey(face.Family + face.Subfamily) == key)
+                return _catalog.Load(face);
+        return null;
+    }
+
+    private static string DesignKey(string name)
+    {
+        var sb = new StringBuilder(name.Length);
+        foreach (char c in name) if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+        string key = sb.ToString();
+        foreach (string suffix in new[] { "psmt", "mt", "ps", "regular" })
+            if (key.EndsWith(suffix, StringComparison.Ordinal) && key.Length > suffix.Length + 2) { key = key[..^suffix.Length]; break; }
+        return key;
+    }
+
     /// <summary>A character in the first installed font that has it, in the style given (with that font instead).</summary>
-    public (byte[] Code, double Width0, GlyphStyle Style)? EncodeWithInstalled(string element, GlyphStyle style, bool bold, bool italic)
+    /// <param name="vertical">For a column: the font's vertical forms (brackets and punctuation turned for vertical writing).</param>
+    public (byte[] Code, double Width0, GlyphStyle Style)? EncodeWithInstalled(string element, GlyphStyle style, bool bold, bool italic, bool vertical = false)
     {
         int cp = char.ConvertToUtf32(element, 0);
         foreach (var builder in Chain(style.Font, bold, italic))
         {
             int gid = builder.Font.GlyphFor(cp);
             if (gid <= 0) continue;
+            if (vertical && builder.Font.Substitution is { } gsub)
+            {
+                var run = new List<ShapingGlyph> { new() { Gid = gid, Text = element } };
+                gsub.Apply(run, "hani", VerticalFeatures);
+                if (run.Count == 1 && run[0].Gid > 0) gid = run[0].Gid;
+            }
             return (builder.Encode(gid, element), builder.Font.Advance(gid), style with { FontResource = builder.ResourceName, Font = null, WordSpacing = 0 });
         }
         return null;
@@ -437,71 +497,70 @@ internal sealed class PageSession
         {
             string line = lines[li].Normalize(NormalizationForm.FormC).Replace('\t', ' ');
             double s = 0, t = -li * 1.2 * size;
-            var e = StringInfo.GetTextElementEnumerator(line);
-            while (e.MoveNext())
+            (TextShaper.Shaped Glyph, EmbeddedFontBuilder Font)? previous = null;
+            // Shaped in the order it is read (joining, ligatures), then drawn left to right.
+            foreach (var (g, builder) in TextShaper.ShapeLine(line, word => FontFor(word, primary, f.Bold, f.Italic), b => b.Font))
             {
-                string element = (string)e.Current;
-                (byte[] Code, double Width0, GlyphStyle Style)? encoded = null;
-                var style = new GlyphStyle(primary?.ResourceName ?? string.Empty, null, size, 0, 0, 100, 0, 0, color, rgb);
-                if (primary != null && primary.Font.GlyphFor(char.ConvertToUtf32(element, 0)) is > 0 and var gid)
-                    encoded = (primary.Encode(gid, element), primary.Font.Advance(gid), style);
-                else encoded = EncodeWithInstalled(element, style, f.Bold, f.Italic);
-                if (encoded is not { } enc)
+                if (g.Gid <= 0)
                 {
-                    if (element.Trim().Length == 0) s += 0.25 * size;
-                    else _warnings.Add($"No installed font has the character \"{element}\"; it was left out.");
+                    previous = null;
+                    if (g.Text.Trim().Length == 0) { if (!IsFormat(g.Text)) s += 0.25 * size; continue; }
+                    // No font has the whole word: this character from the first that has it.
+                    var plain = new GlyphStyle(builder.ResourceName, null, size, 0, 0, 100, 0, 0, color, rgb);
+                    if (EncodeWithInstalled(g.Text, plain, f.Bold, f.Italic) is not { } alone)
+                    {
+                        _warnings.Add($"No installed font has the character \"{g.Text}\"; it was left out.");
+                        continue;
+                    }
+                    var at = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
+                    result.Add(new OutGlyph { Matrix = new PdfMatrix(cos, sin, -sin, cos, at.X, at.Y), Code = alone.Code, Style = alone.Style, Advance = alone.Width0 / 1000.0 * size, Line = int.MinValue + li, Text = g.Text });
+                    s += alone.Width0 / 1000.0 * size;
                     continue;
                 }
+                // Pair kerning in left-to-right text (right-to-left pairs are kerned in reading order, which is not read here).
+                if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0)
+                    s += builder.Font.Kerning(p.Glyph.Gid, g.Gid) / 1000.0 * size;
                 var origin = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
-                double advance = enc.Width0 / 1000.0 * size;
-                result.Add(new OutGlyph { Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = enc.Code, Style = enc.Style, Advance = advance, Line = int.MinValue + li });
+                double advance = builder.Font.Advance(g.Gid) / 1000.0 * size;
+                var style = new GlyphStyle(builder.ResourceName, null, size, 0, 0, 100, 0, 0, color, rgb);
+                result.Add(new OutGlyph
+                {
+                    Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = builder.Encode(g.Gid, g.Text), Style = style,
+                    Advance = advance, Line = int.MinValue + li, Text = g.Text,
+                });
+                previous = (g, builder);
                 s += advance;
             }
         }
         return result;
     }
 
+    // The font a word of new text is written in: the chosen one when it has every character, else
+    // the first installed font that does (one design per word), else the chosen one for what it has.
+    private EmbeddedFontBuilder? FontFor(string word, EmbeddedFontBuilder? primary, bool bold, bool italic)
+    {
+        bool Has(EmbeddedFontBuilder b)
+        {
+            for (int i = 0; i < word.Length;)
+            {
+                int cp = char.ConvertToUtf32(word, i);
+                string c = char.ConvertFromUtf32(cp);
+                if (c != " " && !IsFormat(c) && b.Font.GlyphFor(cp) <= 0) return false;
+                i += c.Length;
+            }
+            return true;
+        }
+        if (primary != null && Has(primary)) return primary;
+        foreach (var b in Chain(null, bold, italic))
+            if (Has(b)) return b;
+        return primary ?? Chain(null, bold, italic).FirstOrDefault();
+    }
+
+    private static bool IsFormat(string c) => c.Length > 0 && CharUnicodeInfo.GetUnicodeCategory(c, 0) == UnicodeCategory.Format;
+
     public string AddImage(PdfImageContent image)
     {
-        if (image.Width <= 0 || image.Height <= 0) throw new ArgumentException("The image has no pixels.");
-        var dict = new Dictionary<string, PdfObject>
-        {
-            ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Image"),
-            ["Width"] = new PdfInteger(image.Width), ["Height"] = new PdfInteger(image.Height), ["BitsPerComponent"] = new PdfInteger(8),
-        };
-        byte[] data;
-        switch (image.Encoding)
-        {
-            case PdfImageEncoding.Jpeg:
-                dict["ColorSpace"] = new PdfName(image.Components == 1 ? "DeviceGray" : "DeviceRGB");
-                dict["Filter"] = new PdfName("DCTDecode");
-                data = image.Data;
-                break;
-            case PdfImageEncoding.Gray:
-                if (image.Data.Length < (long)image.Width * image.Height) throw new ArgumentException("The image data is too short.");
-                dict["ColorSpace"] = new PdfName("DeviceGray");
-                dict["Filter"] = new PdfName("FlateDecode");
-                data = ContentRedactor.Deflate(image.Data);
-                break;
-            default:
-                if (image.Data.Length < (long)image.Width * image.Height * 3) throw new ArgumentException("The image data is too short.");
-                dict["ColorSpace"] = new PdfName("DeviceRGB");
-                dict["Filter"] = new PdfName("FlateDecode");
-                data = ContentRedactor.Deflate(image.Data);
-                break;
-        }
-        if (image.Alpha is { } alpha && alpha.Any(a => a != 255))
-        {
-            int mask = _allocate();
-            _objects[mask] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
-            {
-                ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Image"), ["Width"] = new PdfInteger(image.Width), ["Height"] = new PdfInteger(image.Height),
-                ["BitsPerComponent"] = new PdfInteger(8), ["ColorSpace"] = new PdfName("DeviceGray"), ["Filter"] = new PdfName("FlateDecode"),
-            }, ContentRedactor.Deflate(alpha));
-            dict["SMask"] = new PdfIndirectRef(mask);
-        }
-        int number = _allocate();
-        _objects[number] = PdfObjectWriter.NewStream(dict, data);
+        int number = PdfImageXObject.Write(image, _allocate, _objects);
         string name = Unique("ImEd", _xobjectNames);
         _newXObjects[name] = new PdfIndirectRef(number);
         return name;

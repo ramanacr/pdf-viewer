@@ -4,6 +4,7 @@
         Title="Sign Document"
         Width="520"
         SizeToContent="Height"
+        MaxHeight="{x:Static SystemParameters.MaximizedPrimaryScreenHeight}"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         Background="{DynamicResource SurfaceBgBrush}"
@@ -32,6 +33,7 @@
         </Style>
     </Window.Resources>
 
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Margin="20">
         <TextBlock x:Name="HeaderText" Text="Sign Document" FontSize="16" FontWeight="Bold" Margin="0,0,0,4" />
         <TextBlock x:Name="PlacementText" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14" />
@@ -114,6 +116,52 @@
                      AutomationProperties.Name="Contact information" />
         </Grid>
 
+        <!-- How the visible signature looks -->
+        <StackPanel x:Name="AppearancePanel" Margin="0,14,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Appearance" Style="{StaticResource FieldLabel}" />
+                <ComboBox Grid.Column="1" x:Name="LayoutCombo" Height="28" SelectedIndex="0" AutomationProperties.Name="Signature appearance"
+                          SelectionChanged="LayoutCombo_SelectionChanged">
+                    <ComboBoxItem Content="Details as text" Tag="TextOnly" />
+                    <ComboBoxItem Content="Name and details" Tag="NameAndText" />
+                    <ComboBoxItem Content="Signature image and details" Tag="ImageAndText" />
+                    <ComboBoxItem Content="Signature image only" Tag="ImageOnly" />
+                </ComboBox>
+            </Grid>
+            <StackPanel x:Name="ImagePanel" Visibility="Collapsed" Margin="110,8,0,0">
+                <Border Height="96" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" Background="White">
+                    <Grid>
+                        <Image x:Name="ImagePreview" Stretch="Uniform" Margin="6" AutomationProperties.Name="Signature image" />
+                        <TextBlock x:Name="ImageHint" Text="Choose a picture of your signature, or draw it here."
+                                   Foreground="#666666" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="8" />
+                        <InkCanvas x:Name="DrawCanvas" Visibility="Collapsed" Background="Transparent"
+                                   AutomationProperties.Name="Draw your signature with the mouse, a pen or a finger" />
+                    </Grid>
+                </Border>
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <Button Content="Choose image..." Style="{StaticResource SecondaryButton}" Click="ChooseImage_Click"
+                            ToolTip="A PNG (transparent background works best) or JPEG picture of your signature" />
+                    <Button x:Name="DrawButton" Content="Draw" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="Draw_Click"
+                            ToolTip="Draw your signature with the mouse, a pen or a finger" />
+                    <Button Content="Clear" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="ClearImage_Click" />
+                </StackPanel>
+                <CheckBox x:Name="RememberImageCheck" Margin="0,6,0,0" Foreground="{DynamicResource TextPrimaryBrush}"
+                          Content="Remember this signature image on this computer"
+                          ToolTip="Kept in your own profile on this computer, never in a document. Untick to delete it." />
+            </StackPanel>
+            <WrapPanel Margin="110,8,0,0">
+                <CheckBox x:Name="ShowDateCheck" Content="Date" IsChecked="True" Margin="0,0,12,0" Foreground="{DynamicResource TextPrimaryBrush}" />
+                <CheckBox x:Name="ShowReasonCheck" Content="Reason" IsChecked="True" Margin="0,0,12,0" Foreground="{DynamicResource TextPrimaryBrush}" />
+                <CheckBox x:Name="ShowLocationCheck" Content="Location" IsChecked="True" Margin="0,0,12,0" Foreground="{DynamicResource TextPrimaryBrush}" />
+                <CheckBox x:Name="ShowLabelsCheck" Content="Labels" IsChecked="True" Foreground="{DynamicResource TextPrimaryBrush}"
+                          ToolTip="&quot;Digitally signed by&quot;, &quot;Date:&quot; and the like before the details" />
+            </WrapPanel>
+        </StackPanel>
+
         <!-- Timestamp -->
         <CheckBox x:Name="TimestampCheck" Margin="0,16,0,4" Content="Add a timestamp from a time-stamping authority"
                   Foreground="{DynamicResource TextPrimaryBrush}" Checked="TimestampCheck_Changed" Unchecked="TimestampCheck_Changed" />
@@ -121,6 +169,11 @@
                  ToolTip="The server's address, for example one your organisation provides" />
         <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"
                    Text="A timestamp proves when you signed. Only a fingerprint of the signature is sent to the server, never the document." />
+        <CheckBox x:Name="DocTimestampCheck" Margin="0,8,0,0" IsChecked="False" IsEnabled="False"
+                  Content="Also add a document timestamp (PAdES-B-LTA)"
+                  AutomationProperties.Name="Also add a document timestamp"
+                  ToolTip="Timestamps the whole signed document, with its validation data when that is added, so the signature stays verifiable after its certificates expire."
+                  Foreground="{DynamicResource TextPrimaryBrush}" />
 
         <!-- Long-term validation: off unless ticked, because it goes to the network -->
         <CheckBox x:Name="LtvCheck" Margin="0,12,0,4" IsChecked="False"
@@ -150,4 +203,5 @@
             <Button Content="Cancel" Width="80" Height="32" IsCancel="True" Style="{StaticResource SecondaryButton}" />
         </StackPanel>
     </StackPanel>
+    </ScrollViewer>
 </Window>

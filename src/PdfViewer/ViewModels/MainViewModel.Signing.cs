@@ -28,7 +28,9 @@ public sealed record SignatureOptions(
     Uri? TimestampServer,
     string OutputPath,
     int? CertificationLevel = null,
-    bool AddLongTermValidation = false);
+    bool AddLongTermValidation = false,
+    PdfSignatureAppearance? Appearance = null,
+    bool AddDocumentTimestamp = false);
 
 public partial class MainViewModel
 {
@@ -41,6 +43,12 @@ public partial class MainViewModel
     /// command after confirming), never by opening or validating a document.
     /// </summary>
     public Func<IPdfRevocationSource> RevocationSourceFactory { get; set; } = () => new HttpRevocationSource();
+
+    /// <summary>
+    /// The time-stamping authority at an address the user gave, over HTTP. It is called only when
+    /// the user asked for a timestamp (the signing options, or the panel's command after confirming).
+    /// </summary>
+    public Func<Uri, IPdfTimestampClient> TimestampClientFactory { get; set; } = server => new HttpTimestampClient(server);
 
     /// <summary>Only an unsigned document can be certified.</summary>
     public bool CanCertify => !HasSignatures;
@@ -138,8 +146,9 @@ public partial class MainViewModel
                 SigningTime = DateTimeOffset.Now,
                 ContentsSize = options.TimestampServer != null ? 32768 : 16384,
                 CertificationLevel = options.CertificationLevel,
+                Appearance = options.Appearance is { } look ? look with { Fonts = look.Fonts ?? PdfEngine.Vector.Editing.SystemFontCatalog.Installed } : null,
             };
-            var timestamp = options.TimestampServer is { } server ? TimestampClient.For(server) : null;
+            var timestamp = options.TimestampServer is { } server ? TimestampClientFactory(server).AsDelegate() : null;
             signed = await SignWithRoomAsync(doc, current, request, options.Certificate, timestamp);
         }
         catch (Exception ex) when (ex is CryptographicException or NotSupportedException or InvalidOperationException
@@ -155,7 +164,28 @@ public partial class MainViewModel
         // the data appended after it; if the data cannot be had, the signed document is saved without it.
         PdfLtvResult? ltv = null;
         string? ltvFailure = null;
-        if (options.AddLongTermValidation)
+        string? archiveFailure = null;
+        bool archived = false;
+        if (options.AddDocumentTimestamp && options.TimestampServer is { } tsaServer)
+        {
+            // PAdES-B-LTA: the validation data (when asked for), then a document timestamp over it.
+            StatusText = "Adding a document timestamp...";
+            try
+            {
+                var stamp = await AddDocumentTimestampAsync(signed, tsaServer, options.AddLongTermValidation);
+                signed = stamp.Bytes;
+                ltv = stamp.ValidationDataBefore;
+                archived = true;
+                if (!stamp.IsValidationDataComplete)
+                    ltv = new PdfLtvResult { Bytes = signed, Changed = true, Signatures = (stamp.ValidationDataBefore?.Signatures ?? Array.Empty<PdfLtvSignatureReport>())
+                        .Concat(stamp.ValidationDataAfter?.Signatures ?? Array.Empty<PdfLtvSignatureReport>()).ToList() };
+            }
+            catch (Exception ex) when (IsValidationDataFailure(ex))
+            {
+                archiveFailure = ex.Message;
+            }
+        }
+        if (options.AddLongTermValidation && !archived)
         {
             StatusText = "Adding long-term validation data (contacting the certificate authority)...";
             try
@@ -185,7 +215,101 @@ public partial class MainViewModel
                 "Sign Document", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         else if (ltv != null) StatusText += " Long-term validation data was added.";
+        if (archived) StatusText += " A document timestamp was added.";
+        if (archiveFailure != null)
+        {
+            StatusText += " The document timestamp could not be added.";
+            ShowAlert("The document was signed and saved, but the document timestamp could not be added:\n\n" + archiveFailure,
+                "Sign Document", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         return true;
+    }
+
+    /// <summary>
+    /// A document timestamp from the authority at <paramref name="server"/>, with the validation
+    /// data of every signature and earlier timestamp added before it (and its own after it) when
+    /// <paramref name="withValidationData"/> is set.
+    /// </summary>
+    private async Task<PdfDocumentTimestampResult> AddDocumentTimestampAsync(byte[] bytes, Uri server, bool withValidationData)
+    {
+        var client = TimestampClientFactory(server);
+        var source = withValidationData ? RevocationSourceFactory() : null;
+        try
+        {
+            var options = new PdfDocumentTimestampOptions { Password = _openPassword, ValidationData = source };
+            return await Task.Run(() => PdfDocumentTimestamp.AddAsync(bytes, client, options));
+        }
+        finally
+        {
+            (source as IDisposable)?.Dispose();
+            (client as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Adds a document timestamp to the open document and saves it in place (PAdES-B-LTA, or the
+    /// renewal of one): first the validation data of every signature and earlier timestamp, then
+    /// the timestamp over it all. Only after the user confirms are the time-stamping authority
+    /// (the one set in the signing options) and the certificate authorities contacted.
+    /// </summary>
+    [RelayCommand]
+    private async Task AddDocumentTimestampAsync()
+    {
+        const string caption = "Add Document Timestamp";
+        if (WhyCannotAddValidationData() is { } reason)
+        {
+            ShowAlert(reason, caption, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var settings = SigningSettings.Load();
+        if (!Uri.TryCreate(settings.TimestampServer?.Trim(), UriKind.Absolute, out var server) || server.Scheme is not ("http" or "https"))
+        {
+            ShowAlert("No timestamp server is set. Sign a document with \"Add a timestamp\" ticked and a server's address entered, then try again.",
+                caption, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        string path = _docService.CurrentFilePath!;
+        if (!Confirm(
+                "A document timestamp protects the signatures and their validation data, so they can be validated long after the " +
+                "certificates expire (PAdES-B-LTA). Timestamping again later renews that protection.\n\n" +
+                $"The viewer first contacts the certificate authorities named in the certificates, then the timestamp server {server.Host}. " +
+                "Only certificate identifiers and a fingerprint of the document are sent, never the document.\n\n" +
+                $"The timestamp is added to {Path.GetFileName(path)} as an update; the signatures stay valid.\n\nContinue?",
+                caption))
+        {
+            StatusText = "No document timestamp was added.";
+            return;
+        }
+
+        byte[] current = _docService.CurrentBytes!;
+        int pageToShow = CurrentPageNumber;
+        StatusText = "Adding validation data and a document timestamp...";
+        PdfDocumentTimestampResult result;
+        try
+        {
+            result = await AddDocumentTimestampAsync(current, server, withValidationData: true);
+        }
+        catch (Exception ex) when (IsValidationDataFailure(ex))
+        {
+            StatusText = "No document timestamp was added.";
+            ShowAlert($"The document timestamp could not be added:\n\n{ex.Message}", caption, MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        if (!await WriteSignedFileAsync(path, result.Bytes, caption)) return;
+
+        HasUnsavedChanges = false;
+        _formChangedSinceSave = false;
+        await LoadDocumentAsync(path, _openPassword);
+        if (pageToShow >= 1 && pageToShow <= PageCount) CurrentPageNumber = pageToShow;
+        StatusText = $"A document timestamp of {result.Time.LocalDateTime:g} from {result.Authority ?? server.Host} was added to {Path.GetFileName(path)}.";
+        if (!result.IsValidationDataComplete)
+        {
+            var problems = (result.ValidationDataBefore?.Signatures ?? Array.Empty<PdfLtvSignatureReport>())
+                .Concat(result.ValidationDataAfter?.Signatures ?? Array.Empty<PdfLtvSignatureReport>())
+                .SelectMany(s => s.Problems).Distinct().ToList();
+            ShowAlert("The document timestamp was added, but some validation data could not be obtained:\n\n" + string.Join("\n", problems.Take(6)),
+                caption, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     /// <summary>Writes a signed file beside its destination and swaps it in, so a failure never leaves it half-written.</summary>
