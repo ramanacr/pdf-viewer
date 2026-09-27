@@ -266,6 +266,8 @@ internal sealed class OutGlyph
     public int After = -1;
     /// <summary>The text it shows (for kerning it against its neighbours).</summary>
     public string Text = string.Empty;
+    /// <summary>What it and the glyphs next to it with the same span read as, when drawn out of reading order.</summary>
+    public ActualTextSpan? Actual;
 
     public static OutGlyph From(ContentGlyph g) => new() { Matrix = g.Matrix, Code = g.Code, Style = g.Style, Advance = g.Advance, Line = -1 - g.Op, After = g.Op, Text = g.Text };
 }
@@ -281,8 +283,14 @@ internal static class GlyphEmitter
         {
             var first = glyphs[i];
             int j = i + 1;
-            while (j < glyphs.Count && SameRun(first, glyphs[j], glyphs[j - 1])) j++;
+            while (j < glyphs.Count && ReferenceEquals(glyphs[j].Actual, first.Actual) && SameRun(first, glyphs[j], glyphs[j - 1])) j++;
+            // Glyphs drawn out of reading order (an Indic syllable with a reph or a pre-base matra)
+            // are marked with the text they read as, so extraction reads that instead.
+            var actual = first.Actual;
+            if (actual != null && (i == 0 || !ReferenceEquals(glyphs[i - 1].Actual, actual)))
+                sb.Append("/Span << /ActualText <FEFF").Append(Convert.ToHexString(Encoding.BigEndianUnicode.GetBytes(actual.Text))).Append("> >> BDC\n");
             EmitRun(sb, glyphs, i, j, inPlace);
+            if (actual != null && (j == glyphs.Count || !ReferenceEquals(glyphs[j].Actual, actual))) sb.Append("EMC\n");
             i = j;
         }
     }
@@ -518,7 +526,7 @@ internal sealed class PageSession
                     continue;
                 }
                 // Pair kerning in left-to-right text (right-to-left pairs are kerned in reading order, which is not read here).
-                if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0)
+                if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0 && !p.Glyph.Kerned && !g.Kerned)
                     s += builder.Font.Kerning(p.Glyph.Gid, g.Gid) / 1000.0 * size;
                 // A mark on its anchor: moved from the pen, and not moving it.
                 double gx = s + g.Dx / 1000.0 * size, gy = t + g.Dy / 1000.0 * size;
@@ -528,7 +536,7 @@ internal sealed class PageSession
                 result.Add(new OutGlyph
                 {
                     Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = builder.Encode(g.Gid, g.Text), Style = style,
-                    Advance = advance, Line = int.MinValue + li, Text = g.Text,
+                    Advance = advance, Line = int.MinValue + li, Text = g.Text, Actual = g.Actual,
                 });
                 previous = (g, builder);
                 s += advance;

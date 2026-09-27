@@ -292,10 +292,17 @@ internal sealed class FakeTimestampAuthority : IPdfTimestampClient
                 w.WriteInteger(2); // rejection
             return w.Encode();
         }
+        // A positive DER integer with no redundant leading byte (random bytes are neither, now and then).
+        static byte[] Serial()
+        {
+            byte[] serial = RandomNumberGenerator.GetBytes(8);
+            serial[0] = (byte)((serial[0] & 0x7F) | 0x01);
+            return serial;
+        }
         byte[] imprint = request.GetMessageHash().ToArray();
         if (WrongImprint) imprint[0] ^= 0xFF;
         var info = new System.Security.Cryptography.Pkcs.Rfc3161TimestampTokenInfo(new Oid("1.2.3.4.5"), request.HashAlgorithmId, imprint,
-            serialNumber: RandomNumberGenerator.GetBytes(8), timestamp: Time ?? DateTimeOffset.UtcNow, nonce: request.GetNonce());
+            serialNumber: Serial(), timestamp: Time ?? DateTimeOffset.UtcNow, nonce: request.GetNonce());
         var cms = new System.Security.Cryptography.Pkcs.SignedCms(new System.Security.Cryptography.Pkcs.ContentInfo(new Oid("1.2.840.113549.1.9.16.1.4"), info.Encode()));
         var signer = new System.Security.Cryptography.Pkcs.CmsSigner(Certificate)
         {
