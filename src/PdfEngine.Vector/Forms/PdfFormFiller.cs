@@ -10,7 +10,10 @@ using PdfEngine.Vector.Objects;
 namespace PdfEngine.Vector.Forms;
 
 /// <summary>A new value for a field: text (text fields, combo boxes), on/off, a radio choice, or list selections.</summary>
-public sealed record PdfFieldChange(string FullName, string? Text = null, bool? Checked = null, string? Choice = null, IReadOnlyList<string>? Selections = null);
+/// <param name="Display">What the field shows when that differs from the value (a format script's result).</param>
+/// <param name="DisplayRed">Show the value in red (a number format's negative style).</param>
+public sealed record PdfFieldChange(string FullName, string? Text = null, bool? Checked = null, string? Choice = null, IReadOnlyList<string>? Selections = null,
+    string? Display = null, bool DisplayRed = false);
 
 /// <summary>
 /// Fills form fields and writes the result as an incremental update: each changed field gets its
@@ -57,9 +60,10 @@ public static class PdfFormFiller
                     Set(field.ObjectNumber, "V", PdfObjectWriter.TextString(text));
                     string shown = field.Kind == PdfFormFieldKind.ComboBox
                         ? field.Options.FirstOrDefault(o => o.Export == text).Display ?? text
-                        : field.IsPassword ? new string('*', text.Length) : text;
+                        : field.IsPassword ? new string('*', text.Length) : change.Display ?? text;
+                    string? colour = change.DisplayRed ? "1 0 0 rg" : null;
                     foreach (var w in field.Widgets)
-                        next = SetAppearance(w, field, form, r, objects, Current, Set, next, stream => TextAppearance(stream, field, form, r, w, shown));
+                        next = SetAppearance(w, field, form, r, objects, Current, Set, next, stream => TextAppearance(stream, field, form, r, w, shown, colour));
                     break;
                 }
                 case PdfFormFieldKind.ListBox:
@@ -263,7 +267,8 @@ public static class PdfFormFiller
         }
     }
 
-    private static PdfDictionary? TextAppearance(StringBuilder s, PdfFormField field, PdfAcroForm form, Parsing.PdfObjectResolver r, PdfFormWidget w, string text)
+    private static PdfDictionary? TextAppearance(StringBuilder s, PdfFormField field, PdfAcroForm form, Parsing.PdfObjectResolver r, PdfFormWidget w, string text,
+        string? colourOps = null)
     {
         var (resources, fontDict, da) = Font(field, form, r);
         var metrics = Metrics(fontDict, r);
@@ -288,7 +293,7 @@ public static class PdfFormFiller
                 while (size > 4 && lines.Count * size * 1.15 > innerH) { size -= 0.5; lines = Wrap(text, metrics, size, innerW); }
             }
             double leading = size * 1.15;
-            s.Append($"/{da.FontName} {F(size)} Tf {da.ColourOps}\n");
+            s.Append($"/{da.FontName} {F(size)} Tf {colourOps ?? da.ColourOps}\n");
             double y = height - pad - metrics.Ascent / 1000.0 * size;
             foreach (var line in lines)
             {
@@ -307,7 +312,7 @@ public static class PdfFormFiller
                 if (tw > innerW && tw > 0) size = Math.Max(4, size * innerW / tw);
             }
             double baseline = pad + (innerH - em * size) / 2 - metrics.Descent / 1000.0 * size;
-            s.Append($"/{da.FontName} {F(size)} Tf {da.ColourOps}\n");
+            s.Append($"/{da.FontName} {F(size)} Tf {colourOps ?? da.ColourOps}\n");
             if (field.IsComb)
             {
                 double cell = width / field.MaxLength;

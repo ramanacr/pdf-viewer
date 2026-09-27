@@ -89,14 +89,20 @@ public sealed class FormSession : IDisposable
         return (crop.X, crop.Y, crop.Width, crop.Height);
     }
 
-    /// <summary>Applies changes as a new revision and reloads the document services with it.</summary>
-    public async Task ApplyAsync(IReadOnlyList<PdfFieldChange> changes, CancellationToken ct = default)
+    /// <summary>
+    /// Applies changes as a new revision and reloads the document services with it. The field
+    /// scripts' rules apply: a refused value throws <see cref="PdfFieldValidationException"/>,
+    /// values are stored and shown as their formats say, and calculated fields are recalculated
+    /// in the same revision. Returns the names of every field that changed.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ApplyAsync(IReadOnlyList<PdfFieldChange> changes, CancellationToken ct = default)
     {
         if (ReadOnlyReason != null)
             throw new InvalidOperationException(ReadOnlyReason);
         if (changes.Count == 0)
-            return;
-        byte[] next = PdfFormFiller.Apply(_document, _bytes, changes);
+            return Array.Empty<string>();
+        var prepared = PdfFormScripts.Prepare(Form, changes);
+        byte[] next = PdfFormFiller.Apply(_document, _bytes, prepared);
         await _service.ReloadFromBytesAsync(next, ct);
         var doc = await PdfVectorDocument.OpenAsync(next, _service.CurrentFilePath, cancellationToken: ct, password: _password);
         var form = PdfAcroForm.Read(doc) ?? throw new InvalidOperationException("The filled document lost its form.");
@@ -105,6 +111,7 @@ public sealed class FormSession : IDisposable
         _bytes = next;
         Form = form;
         Revisions++;
+        return prepared.Select(c => c.FullName).Distinct().ToList();
     }
 
     public void Dispose() => _document.Dispose();

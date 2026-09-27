@@ -38,6 +38,10 @@ public partial class FormFieldViewModel : ObservableObject
     public IReadOnlyList<(string Export, string Display)> Options { get; init; } = Array.Empty<(string, string)>();
     /// <summary>Position in the document's tab order.</summary>
     public int TabIndex { get; init; }
+    /// <summary>What the field's scripts ask for: format, keystroke rule, range, calculation.</summary>
+    public PdfFieldBehaviour Behaviour { get; init; } = new();
+    /// <summary>Set by the editor: puts back the committed value when a new one is refused.</summary>
+    public Action? RevertRequested { get; set; }
 
     /// <summary>Text, the chosen export value, or the button state name.</summary>
     [ObservableProperty]
@@ -89,6 +93,7 @@ public partial class FormFieldViewModel : ObservableObject
                 TabIndex = tab++,
                 Value = field.Value,
                 Selections = field.Values,
+                Behaviour = PdfFormScripts.Read(field),
             };
         }
     }
