@@ -90,6 +90,7 @@ public partial class MainWindow : Window
                 compare.Summary = $"The documents could not be compared: {ex.Message}";
             }
         };
+        document.ShowPageMarkDialogFunc = vm => PageMarkDialogs.Show(vm, this);
         document.ShowPdfAAction = vm => new PdfAWindow(vm, path => document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path)) { Owner = this }.Show();
         document.PickImageFileFunc = () =>
         {

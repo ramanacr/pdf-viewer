@@ -68,6 +68,14 @@ internal sealed class VectorPdfBuilder
         return page;
     }
 
+    /// <summary>Adds a page from its dictionary text ({0} stands for the parent's object number).</summary>
+    public int AddPageObject(string dictionary)
+    {
+        int page = Add(string.Format(CultureInfo.InvariantCulture, dictionary, PagesObject));
+        _pageObjects.Add(page);
+        return page;
+    }
+
     public VectorPdfBuilder WithTrailer(string entries)
     {
         _extraTrailer = entries;

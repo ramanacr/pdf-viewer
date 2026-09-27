@@ -215,6 +215,12 @@
                           ToolTip="Click on the page where the new text should start." />
                 <MenuItem Header="Add _Image..." Command="{Binding AddImageCommand}" IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Places a picture in the middle of the current page; drag it where it belongs." />
+                <MenuItem Header="Page _Marks" IsEnabled="{Binding IsDocumentLoaded}">
+                    <MenuItem Header="_Header &amp; Footer..." Command="{Binding ShowHeaderFooterCommand}" ToolTip="Adds, updates or removes page numbers, dates and text at the top and bottom of the pages." />
+                    <MenuItem Header="_Watermark..." Command="{Binding ShowWatermarkCommand}" ToolTip="Adds, updates or removes text, a picture or a PDF page across the pages." />
+                    <MenuItem Header="_Background..." Command="{Binding ShowBackgroundCommand}" ToolTip="Adds, updates or removes a colour, picture or PDF page behind the pages." />
+                    <MenuItem Header="Bates _Numbering..." Command="{Binding ShowBatesNumberingCommand}" ToolTip="Adds, updates or removes sequence numbers for legal documents." />
+                </MenuItem>
                 <MenuItem Header="_Undo Edit" Command="{Binding UndoContentEditCommand}" IsEnabled="{Binding CanUndoContentEdit}" InputGestureText="Ctrl+Z" />
                 <MenuItem Header="Red_o Edit" Command="{Binding RedoContentEditCommand}" IsEnabled="{Binding CanRedoContentEdit}" InputGestureText="Ctrl+Y" />
             </MenuItem>

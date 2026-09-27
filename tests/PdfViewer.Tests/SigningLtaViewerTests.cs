@@ -28,6 +28,7 @@ namespace PdfViewer.Tests;
 /// in-memory handler, and the signature picture (from a file or drawn), remembered only when the
 /// user opts in, in their profile and never in the document. Nothing touches the network.
 /// </summary>
+[Collection(SigningSettingsCollection.Name)]
 public class SigningLtaViewerTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "LtaViewer_" + Guid.NewGuid().ToString("N"));
@@ -58,11 +59,14 @@ public class SigningLtaViewerTests : IDisposable
 
     private sealed class Counter { public int Count; public List<Uri> Servers { get; } = new(); }
 
+    // The last message the view model showed, so a failure says why.
+    private string? _lastAlert;
+
     /// <summary>A view model whose authorities are fakes, counting how often each was created.</summary>
     private async Task<(MainViewModel Vm, Counter Tsas, Counter Sources, FakeTimestampAuthority Tsa)> Open(string path)
     {
         var vm = new MainViewModel();
-        vm.ShowMessageBoxAction = (_, _, _, _) => { };
+        vm.ShowMessageBoxAction = (message, _, _, _) => _lastAlert = message;
         var tsa = new FakeTimestampAuthority(_tsaCert);
         tsa.Chain.Add(TestPki.Public(_pki.Intermediate));
         var tsas = new Counter();
@@ -84,7 +88,7 @@ public class SigningLtaViewerTests : IDisposable
         var (vm, tsas, sources, tsa) = await Open(path);
 
         Assert.True(await vm.SignAsync(Box, new SignatureOptions(_pki.Signer, "Approved", null, null, Tsa, path,
-            AddLongTermValidation: true, AddDocumentTimestamp: true)), vm.StatusText);
+            AddLongTermValidation: true, AddDocumentTimestamp: true)), $"{vm.StatusText} {_lastAlert}");
         Assert.Contains("A document timestamp was added", vm.StatusText);
         Assert.All(tsas.Servers, s => Assert.Equal(Tsa, s)); // only the authority the user named
         Assert.Equal(2, tsa.Calls);                             // the signature's timestamp, then the document's

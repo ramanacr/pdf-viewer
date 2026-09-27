@@ -42,6 +42,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Typed errors** (`Diagnostics/PdfVectorExceptions.cs`): syntax, object resolution, unsupported feature, resource limit, encryption; every document-open data error surfaces as `PdfSyntaxException`.
 - **Document:** encryption gate (`PdfEncryptedDocumentException`), xref reconstruction by scanning (damaged/missing `startxref`, xref-stream-only files, catalog in object streams), hybrid `/XRefStm`, object-header validation with one rebuild, object-count limit, cached object-stream index, serialized resolver, indirect `/Length`, off-thread single-flight display-list builds, **bounded LRU display-list cache** (`MaxCachedDisplayListCommands`), crop box clipped to media box, `/Rotate` snapped to 90°.
 - **Images** (`Images/PdfImageSource.cs`): lazy decode (display lists don't pin pixels), any colour space, 1/2/4/8/16 bpc, `/Decode`, stencil masks with fill colour, `/SMask`, stencil and colour-key `/Mask`, JPEG passthrough with Adobe-CMYK handling.
+- **JPEG 2000 reliability:** CoreJ2K does not decode lossy colour codestreams (the 9/7 wavelet with the irreversible colour transform) the same way twice. In every such image in the corpus, the second and later components differed from one decode to the next, so images came out garbled and changed from run to run. Those images now go to the fallback renderer (PDFium's OpenJPEG). Lossless and gray codestreams decode the same every time and stay on the vector path, decoded one at a time on the decoder's own thread. The corpus "JPEG 2000 noise" in the edit and redraw smokes was this.
 - **JPEG soft masks** (/SMask with /DCTDecode): the core has no JPEG codec, so it hands the mask to the backend (`PdfDecodedImage.JpegMask`), which decodes it with WIC or WPF and applies it as alpha. With the Symbol fix, no GovDocs file falls back to PDFium for fonts or images any more.
 - **Streams, functions, colour** (merged from a parallel workstream): bounded streaming Flate, LZW with `/EarlyChange`, typed unknown-filter errors, image-filter stop (`DecodeImageStream`); PDF functions types 0/2/3/4 with bounds; CalGray/CalRGB/Lab/ICCBased (via `/N` or `/Alternate`), Indexed over any base, Separation/DeviceN tint transforms, Pattern spaces, flagged unknowns.
 - **Fonts** (merged from a parallel workstream): identity-keyed font cache, Standard/WinAnsi/MacRoman/Differences + AGL, token-based ToUnicode (arrays, surrogates, caps), real Standard-14 widths, code→CID CMaps (Identity, embedded, variable-length), CIDToGIDMap, sfnt `cmap` 0/4/6/12 lookup for embedded TrueType, Type3 model, descriptor metrics.
@@ -164,7 +165,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - marks are placed on their letters' anchors and do not advance (GPOS mark-to-base, mark-to-ligature and mark-to-mark), so vowel marks sit over and under the letters they belong to;
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
   - a cursive word that changed is shaped again as a whole in an installed font, because the document's glyphs for its letters are in the forms their old neighbours needed;
-  - not yet: Indic reordering, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
+  - Indic scripts in new text (`Editing/IndicShaper`: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), as the OpenType Indic specification and HarfBuzz shape them:
+    - syllables, base consonants, reph and pre-base matra reordering, and the basic features with their per-glyph masks;
+    - final reordering, then the presentation features and GPOS (abvm, blwm, dist, kern);
+    - v2 script tags fall back to v1 tags.
+    - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
+    - Reordered syllables carry /ActualText, so they extract as typed.
+  - not yet: Indic shaping when typing into an existing paragraph, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -179,6 +186,16 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - drag moves, a drag on an image's corners resizes it (proportionally, unless Shift is held), and the context menu replaces or turns images;
   - Delete removes the selection, Add Text and Add Image place new content, and Ctrl+Z / Ctrl+Y undo and redo;
   - edits are in-memory revisions saved incrementally, and editing a signed document is confirmed first.
+
+### Headers, footers, watermarks, backgrounds and Bates numbers
+- `Editing/PdfPageMarks` adds, updates and removes them, as Acrobat's Edit PDF tools do:
+  - headers and footers in six positions, with page number, page count, date, file name and Bates tokens;
+  - watermarks of text, a picture or a page of another PDF, with opacity, rotation, alignment and scale, drawn on top of the page or behind it;
+  - backgrounds of a colour, a picture or a PDF page;
+  - page ranges (all, odd, even, from–to).
+- Marks read upright on rotated and cropped pages.
+- Each mark is a pagination artifact in its own marked content, and each design is stored once as a form XObject with Acrobat's PieceInfo. Update and Remove find our marks and Acrobat's own and leave everything else as it was. The document's own content streams are never rewritten unless they hold an Acrobat mark, and then only that sequence goes.
+- The viewer's Edit > Page Marks dialogs preview the current page, and the result is a new revision with undo.
 
 ### PDF/A
 - **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
@@ -317,7 +334,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** Indic reordering and GPOS cursive attachment in new text; sideways Latin text in vertical columns.
+10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
 
 ---
 
