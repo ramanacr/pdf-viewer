@@ -124,6 +124,12 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Signing** (`Signatures/PdfSigner`, `PdfCmsSigner`): PAdES (`ETSI.CAdES.detached`) as an incremental update; a new or existing field with a visible appearance; certification (DocMDP 1-3); an optional RFC 3161 timestamp through a client the caller supplies (the only network request, opt-in, sending only a hash).
 - **Validation** (`Signatures/PdfSignatureValidator`), with no network: integrity over the byte ranges; the chain at the signing (or timestamp) time; timestamps; later revisions classified (signatures, form fields, annotations, metadata or other) and weighed against the certification level. The viewer shows a verdict banner and a Signatures panel.
 - Saving annotations on a signed document is incremental, so its signatures stay valid.
+- **Long-term validation**:
+  - PAdES-B-LT adds a DSS with the certificates, OCSP responses and CRLs each signature needs.
+  - PAdES-B-LTA adds RFC 3161 document timestamps (`Signatures/PdfDocumentTimestamp`), each covering the validation data before it. A timestamp is accepted only when it was granted, its imprint and nonce match the request, and its signature verifies. Renewal is another timestamp over the last.
+  - Validation reports each signature's level (B-B, B-T, B-LT, B-LTA) and when its archive timestamp needs renewing.
+  - A document timestamp is a permitted change at every certification level. A "timestamp" with a visible appearance is not treated as one.
+- **Signature appearances** (`Signatures/PdfSignatureAppearance`): text only, name and details, picture and details, or picture only, with a choice of details. A picture is chosen from a file or drawn in the signing dialog, kept with transparency, and remembered on the computer only if asked. Names Helvetica cannot show are set in an embedded installed font.
 
 ### Redaction
 - `Redaction/PdfRedactor` removes content rather than covering it:
@@ -295,7 +301,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
-7. **Forms and signatures remainder:** filling and signing encrypted documents (the incremental writer must encrypt appended objects); calculate, format and validate scripts; long-term validation (PAdES-B-LT: DSS with certificates, OCSP and CRLs) and opt-in online revocation checks.
+7. **Forms and signatures remainder:** opt-in online revocation checks when validating; the ESIC extension entry; timestamp requests with hashes other than SHA-256.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
