@@ -2,21 +2,21 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "PdfViewer-2.0.1",
-  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/2.0.1/25471b0c-3ec8-4327-a712-c812e2d5bde0",
+  "name": "PdfViewer-3.4.0",
+  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/3.4.0/19007fd1-d980-4eaa-add0-98b05236ff6f",
   "creationInfo": {
     "creators": [
       "Tool: PDF-Viewer-SBOM-Generator-2.0.0",
       "Organization: PDF Viewer Project"
     ],
-    "created": "2026-08-27T12:56:09Z"
+    "created": "2026-09-27T06:32:10Z"
   },
   "packages": [
     {
       "SPDXID": "SPDXRef-Package-PdfViewer",
       "name": "PdfViewer",
-      "versionInfo": "2.0.1",
-      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/releases/tag/v2.0.1",
+      "versionInfo": "3.4.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/releases/tag/v3.4.0",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -26,26 +26,42 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:github/ramanacr/pdf-viewer@2.0.1"
+          "referenceLocator": "pkg:github/ramanacr/pdf-viewer@3.4.0"
         }
       ]
     },
     {
-      "SPDXID": "SPDXRef-Package-CommunityToolkit-Mvvm",
-      "name": "CommunityToolkit.Mvvm",
-      "versionInfo": "8.4.0",
-      "downloadLocation": "https://www.nuget.org/packages/CommunityToolkit.Mvvm/8.4.0",
+      "SPDXID": "SPDXRef-Package-PdfEngine-Abstractions",
+      "name": "PdfEngine.Abstractions",
+      "versionInfo": "3.4.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Abstractions",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
-      "copyrightText": "Copyright (c) .NET Foundation and Contributors",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
-        }
-      ]
+      "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
+      "description": "UI-neutral domain contracts, geometry, exception hierarchy, and abstractions for PDF processing"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-PdfEngine-Pdfium",
+      "name": "PdfEngine.Pdfium",
+      "versionInfo": "3.4.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Pdfium",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
+      "description": "Native Google PDFium safe interop engine and C ABI adapters"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-PdfViewer-Core",
+      "name": "PdfViewer.Core",
+      "versionInfo": "3.4.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfViewer.Core",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
+      "description": "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure"
     },
     {
       "SPDXID": "SPDXRef-Package-Google-PDFium",
@@ -114,6 +130,210 @@
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
       "copyrightText": "Copyright (c) 1998-2024 Marti Maria Saguer"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-CommunityToolkit.Mvvm",
+      "name": "CommunityToolkit.Mvvm",
+      "versionInfo": "8.4.0",
+      "downloadLocation": "https://www.nuget.org/packages/CommunityToolkit.Mvvm/8.4.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "(c) .NET Foundation and Contributors. All rights reserved.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-System.Speech",
+      "name": "System.Speech",
+      "versionInfo": "9.0.0",
+      "downloadLocation": "https://www.nuget.org/packages/System.Speech/9.0.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "© Microsoft Corporation. All rights reserved.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/System.Speech@9.0.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-CoreJ2K",
+      "name": "CoreJ2K",
+      "versionInfo": "2.3.3.91",
+      "downloadLocation": "https://www.nuget.org/packages/CoreJ2K/2.3.3.91",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "Copyright © 1999-2000 JJ2000 Partners.Copyright © 2007-2012 Jason S. Clary. Copyright © 2013-2018 Anders Gustafsson, Cureos AB. Copyright © Sjofn LLC 2024-2026. All rights reserved.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/CoreJ2K@2.3.3.91"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-SharpGen.Runtime",
+      "name": "SharpGen.Runtime",
+      "versionInfo": "2.4.2-beta",
+      "downloadLocation": "https://www.nuget.org/packages/SharpGen.Runtime/2.4.2-beta",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "(c) 2010-2017 Alexandre Mutel, 2017-2023 Jeremy Koritzinsky, 2023-2024 Amer Koleci",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/SharpGen.Runtime@2.4.2-beta"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-SharpGen.Runtime.COM",
+      "name": "SharpGen.Runtime.COM",
+      "versionInfo": "2.4.2-beta",
+      "downloadLocation": "https://www.nuget.org/packages/SharpGen.Runtime.COM/2.4.2-beta",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "(c) 2010-2017 Alexandre Mutel, 2017-2023 Jeremy Koritzinsky, 2023-2024 Amer Koleci",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-System.Security.Cryptography.Pkcs",
+      "name": "System.Security.Cryptography.Pkcs",
+      "versionInfo": "9.0.0",
+      "downloadLocation": "https://www.nuget.org/packages/System.Security.Cryptography.Pkcs/9.0.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "© Microsoft Corporation. All rights reserved.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-System.Text.Json",
+      "name": "System.Text.Json",
+      "versionInfo": "9.0.1",
+      "downloadLocation": "https://www.nuget.org/packages/System.Text.Json/9.0.1",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "© Microsoft Corporation. All rights reserved.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/System.Text.Json@9.0.1"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-Vortice.Direct2D1",
+      "name": "Vortice.Direct2D1",
+      "versionInfo": "3.8.3",
+      "downloadLocation": "https://www.nuget.org/packages/Vortice.Direct2D1/3.8.3",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) Amer Koleci and Contributors",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Vortice.Direct2D1@3.8.3"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-Vortice.Direct3D11",
+      "name": "Vortice.Direct3D11",
+      "versionInfo": "3.8.3",
+      "downloadLocation": "https://www.nuget.org/packages/Vortice.Direct3D11/3.8.3",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) Amer Koleci and Contributors",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Vortice.Direct3D11@3.8.3"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-Vortice.DirectX",
+      "name": "Vortice.DirectX",
+      "versionInfo": "3.8.3",
+      "downloadLocation": "https://www.nuget.org/packages/Vortice.DirectX/3.8.3",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) Amer Koleci and Contributors",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Vortice.DirectX@3.8.3"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-Vortice.DXGI",
+      "name": "Vortice.DXGI",
+      "versionInfo": "3.8.3",
+      "downloadLocation": "https://www.nuget.org/packages/Vortice.DXGI/3.8.3",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) Amer Koleci and Contributors",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Vortice.DXGI@3.8.3"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-Vortice.Mathematics",
+      "name": "Vortice.Mathematics",
+      "versionInfo": "2.1.0",
+      "downloadLocation": "https://www.nuget.org/packages/Vortice.Mathematics/2.1.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) Amer Koleci and Contributors",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Vortice.Mathematics@2.1.0"
+        }
+      ]
     }
   ],
   "relationships": [
@@ -121,11 +341,6 @@
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
       "relatedSpdxElement": "SPDXRef-Package-PdfViewer"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-PdfViewer",
-      "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-CommunityToolkit-Mvvm"
     },
     {
       "spdxElementId": "SPDXRef-Package-PdfViewer",
@@ -156,6 +371,66 @@
       "spdxElementId": "SPDXRef-Package-Google-PDFium",
       "relationshipType": "CONTAINS",
       "relatedSpdxElement": "SPDXRef-Package-LittleCMS"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-CommunityToolkit.Mvvm"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-System.Speech"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-CoreJ2K"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-SharpGen.Runtime"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-SharpGen.Runtime.COM"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-System.Security.Cryptography.Pkcs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-System.Text.Json"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-Vortice.Direct2D1"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-Vortice.Direct3D11"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-Vortice.DirectX"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-Vortice.DXGI"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-Vortice.Mathematics"
     }
   ]
 }

@@ -1,10 +1,10 @@
 ﻿{
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:25471b0c-3ec8-4327-a712-c812e2d5bde0",
+  "serialNumber": "urn:uuid:19007fd1-d980-4eaa-add0-98b05236ff6f",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-27T12:56:09Z",
+    "timestamp": "2026-09-27T06:32:10Z",
     "tools": {
       "components": [
         {
@@ -22,7 +22,7 @@
     "component": {
       "type": "application",
       "name": "PdfViewer",
-      "version": "2.0.1",
+      "version": "3.4.0",
       "description": "High-performance native Windows PDF Viewer powered by Google PDFium",
       "licenses": [
         {
@@ -32,32 +32,60 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer@2.0.1"
+      "purl": "pkg:github/ramanacr/pdf-viewer@3.4.0"
     }
   },
   "components": [
     {
       "type": "library",
-      "bom-ref": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
-      "name": "CommunityToolkit.Mvvm",
-      "version": "8.4.0",
-      "description": "Official modern MVVM toolkit library for .NET with observable properties and commands",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@3.4.0",
+      "name": "PdfEngine.Abstractions",
+      "version": "3.4.0",
+      "description": "UI-neutral domain contracts, geometry, exception hierarchy, and abstractions for PDF processing",
       "scope": "required",
       "licenses": [
         {
           "license": {
             "id": "MIT",
-            "url": "https://licenses.nuget.org/MIT"
+            "url": "https://opensource.org/licenses/MIT"
           }
         }
       ],
-      "purl": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
-      "externalReferences": [
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@3.4.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Pdfium@3.4.0",
+      "name": "PdfEngine.Pdfium",
+      "version": "3.4.0",
+      "description": "Native Google PDFium safe interop engine and C ABI adapters",
+      "scope": "required",
+      "licenses": [
         {
-          "type": "vcs",
-          "url": "https://github.com/CommunityToolkit/dotnet"
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
         }
-      ]
+      ],
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Pdfium@3.4.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0",
+      "name": "PdfViewer.Core",
+      "version": "3.4.0",
+      "description": "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0"
     },
     {
       "type": "file",
@@ -310,14 +338,229 @@
           "url": "https://github.com/simdutf/simdutf"
         }
       ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
+      "name": "CommunityToolkit.Mvvm",
+      "version": "8.4.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/CommunityToolkit/dotnet"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Speech@9.0.0",
+      "name": "System.Speech",
+      "version": "9.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/System.Speech@9.0.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://dot.net/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/CoreJ2K@2.3.3.91",
+      "name": "CoreJ2K",
+      "version": "2.3.3.91",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:nuget/CoreJ2K@2.3.3.91",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/cinderblocks/CoreJ2K"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/SharpGen.Runtime@2.4.2-beta",
+      "name": "SharpGen.Runtime",
+      "version": "2.4.2-beta",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/SharpGen.Runtime@2.4.2-beta",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/SharpGenTools/SharpGenTools"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta",
+      "name": "SharpGen.Runtime.COM",
+      "version": "2.4.2-beta",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/SharpGenTools/SharpGenTools"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+      "name": "System.Security.Cryptography.Pkcs",
+      "version": "9.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://dot.net/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Text.Json@9.0.1",
+      "name": "System.Text.Json",
+      "version": "9.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/System.Text.Json@9.0.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://dot.net/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Vortice.Direct2D1@3.8.3",
+      "name": "Vortice.Direct2D1",
+      "version": "3.8.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/Vortice.Direct2D1@3.8.3"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Vortice.Direct3D11@3.8.3",
+      "name": "Vortice.Direct3D11",
+      "version": "3.8.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/Vortice.Direct3D11@3.8.3"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Vortice.DirectX@3.8.3",
+      "name": "Vortice.DirectX",
+      "version": "3.8.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/Vortice.DirectX@3.8.3"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Vortice.DXGI@3.8.3",
+      "name": "Vortice.DXGI",
+      "version": "3.8.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/Vortice.DXGI@3.8.3"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/Vortice.Mathematics@2.1.0",
+      "name": "Vortice.Mathematics",
+      "version": "2.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/Vortice.Mathematics@2.1.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/amerkoleci/Vortice.Mathematics"
+        }
+      ]
     }
   ],
   "dependencies": [
     {
-      "ref": "PdfViewer@2.0.1",
+      "ref": "PdfViewer@3.4.0",
       "dependsOn": [
+        "pkg:generic/google/pdfium@=x86_64&os=windows",
         "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
-        "pkg:generic/google/pdfium@=x86_64&os=windows"
+        "pkg:nuget/System.Speech@9.0.0",
+        "pkg:nuget/CoreJ2K@2.3.3.91",
+        "pkg:nuget/SharpGen.Runtime@2.4.2-beta",
+        "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta",
+        "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+        "pkg:nuget/System.Text.Json@9.0.1",
+        "pkg:nuget/Vortice.Direct2D1@3.8.3",
+        "pkg:nuget/Vortice.Direct3D11@3.8.3",
+        "pkg:nuget/Vortice.DirectX@3.8.3",
+        "pkg:nuget/Vortice.DXGI@3.8.3",
+        "pkg:nuget/Vortice.Mathematics@2.1.0"
       ]
     },
     {

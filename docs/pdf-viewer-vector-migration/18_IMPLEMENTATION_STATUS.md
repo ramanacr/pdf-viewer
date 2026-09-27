@@ -172,7 +172,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 ### M0 gate (12)
 - [x] Existing solution builds. · [x] Existing tests pass. · [x] New projects compile. · [x] Engine selection is centralized.
-- [~] Baseline captured: vector-vs-PDFium timing baseline committed; package-size and memory baselines **not** captured yet.
+- [x] Baselines captured (2026-09-27, win-x64, hardware GPU):
+  - **Package:** PdfViewer.exe is 45.4 MB (framework-dependent single file, PDFium and CMaps included). Debug symbols (0.37 MB zip) and System.Speech (0.69 MB, optional Read Aloud) ship as separate release assets.
+  - **Open and first render:** a 150-page document opens in 20 ms, and its first page renders at 150 dpi in 60 ms.
+  - **Memory** (`MemoryBaselineTests`): three render passes over 150 pages hold 185 / 187 / 185 MB private, and 60 open/render/close cycles add 0 MB.
+  - These tests found a leak in the Direct2D replayer: every render kept its page-sized target bitmap, reaching 4 GB after three passes. It is fixed, and the tests now gate against it.
+  - `ReleaseManifestTests` assert that every shipped NuGet package is credited in the notices and listed in the committed SBOM.
+  - The publish script splits symbols out of the payload and fails on any file outside its allowlist.
 - [ ] **"No user-visible behaviour change" is not met:** the first pass made `Auto` (vector-first) the default. With this pass `Auto` is region-safe, but the plan puts vector-by-default at M8. **Decision needed** (§6).
 
 ### Vector foundation gate (12)
@@ -204,7 +210,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
 7. **Forms and signatures remainder:** filling and signing encrypted documents (the incremental writer must encrypt appended objects); calculate, format and validate scripts; long-term validation (PAdES-B-LT: DSS with certificates, OCSP and CRLs) and opt-in online revocation checks.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
-8. **Package/memory baselines** (A1), SBOM/package test asserting what ships (K7).
+8. **Release remainder:** code signing of the installer and executable; startup-time baseline on a cold machine; an installer-size gate.
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
 
 ---

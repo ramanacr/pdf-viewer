@@ -225,7 +225,10 @@ internal sealed class Replayer : IDisposable
             _realizationScale = renderScale;
         }
 
-        using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
+        // ctx.Target hands back a new reference to the target (GetTarget AddRefs it): released
+        // here, or every render leaked its page-sized target bitmap (about 8 MB a page at 150 dpi).
+        using var targetImage = ctx.Target;
+        using var target = targetImage.QueryInterface<ID2D1Bitmap1>();
         var size = target.PixelSize;
         var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height, Opaque = true };
         try
@@ -1629,7 +1632,8 @@ internal sealed class Replayer : IDisposable
     /// </summary>
     private void PaintGeneralRadial(ID2D1DeviceContext ctx, PdfRadialShading sh, PdfRect area, Matrix3x2 userToDevice, Matrix3x2 pageToDevice)
     {
-        using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
+        using var targetImage = ctx.Target; // a new reference: released with it
+        using var target = targetImage.QueryInterface<ID2D1Bitmap1>();
         var size = target.PixelSize;
         var corners = new[]
         {
@@ -1733,7 +1737,8 @@ internal sealed class Replayer : IDisposable
     /// <summary>Device rectangle of a page-space area, clamped to the current target.</summary>
     private static bool DeviceRect(ID2D1DeviceContext ctx, PdfRect area, Matrix3x2 pageToDevice, out int x0, out int y0, out int w, out int h)
     {
-        using var target = ctx.Target.QueryInterface<ID2D1Bitmap1>();
+        using var targetImage = ctx.Target; // a new reference: released with it
+        using var target = targetImage.QueryInterface<ID2D1Bitmap1>();
         var size = target.PixelSize;
         var c = new[]
         {

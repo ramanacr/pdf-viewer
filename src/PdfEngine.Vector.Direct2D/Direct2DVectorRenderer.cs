@@ -111,7 +111,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
     public void SimulateDeviceLoss()
     {
         _gate.Wait();
-        try { ClearReplayers(); _res.CreateDevice(); }
+        try { ClearReplayers(); DisposeTileSurfaces(); _res.CreateDevice(); }
         finally { _gate.Release(); }
     }
 
@@ -314,7 +314,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             }
 
             // Another device reads it next: the drawing must have finished on the GPU.
-            var immediate = d3d.ImmediateContext;
+            var immediate = d3d.ImmediateContext; // cached by the device wrapper: not ours to release
             using var query = d3d.CreateQuery(new Vortice.Direct3D11.QueryDescription(Vortice.Direct3D11.QueryType.Event));
             immediate.End(query);
             immediate.Flush();
@@ -359,6 +359,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
             catch (SharpGenException ex) when (attempt == 0 && IsDeviceLost((uint)ex.HResult))
             {
                 // Device loss: rebuild device-dependent resources and replay; the display list is intact.
+                DisposeTileSurfaces();
                 _res.CreateDevice();
                 foreach (var (_, cached) in _replayers)
                     if (!ReferenceEquals(cached, replay)) cached.ResetDeviceResources();
@@ -367,17 +368,47 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         }
     }
 
+    private ID2D1Bitmap1? _tileTarget, _tileStaging;
+    private SizeI _tileSize;
+    private ID2D1DeviceContext? _tileContext;
+
+    /// <summary>
+    /// The target and CPU-readable staging bitmaps for a tile of this size, created once and
+    /// reused while the size stays the same. Creating a pair per render leaked: GPU drivers keep
+    /// released CPU-readable staging textures, so every 150 dpi page render held on to about
+    /// 8 MB of native memory for good (4 GB after three passes over 150 pages).
+    /// </summary>
+    private (ID2D1Bitmap1 Target, ID2D1Bitmap1 Staging) TileSurfaces(int w, int h)
+    {
+        var ctx = _res.Context!;
+        if (_tileTarget == null || _tileStaging == null || !ReferenceEquals(_tileContext, ctx) || _tileSize.Width != w || _tileSize.Height != h)
+        {
+            DisposeTileSurfaces();
+            var size = new SizeI(w, h);
+            var targetProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target);
+            var stagingProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw);
+            _tileTarget = ctx.CreateBitmap(size, IntPtr.Zero, 0, targetProps);
+            _tileStaging = ctx.CreateBitmap(size, IntPtr.Zero, 0, stagingProps);
+            _tileSize = size;
+            _tileContext = ctx;
+        }
+        return (_tileTarget, _tileStaging);
+    }
+
+    private void DisposeTileSurfaces()
+    {
+        _tileTarget?.Dispose();
+        _tileStaging?.Dispose();
+        _tileTarget = _tileStaging = null;
+        _tileContext = null;
+    }
+
     private static bool IsDeviceLost(uint hr) => hr is D2DERR_RECREATE_TARGET or DXGI_ERROR_DEVICE_REMOVED or DXGI_ERROR_DEVICE_RESET;
 
     private int RenderTile(Replayer replay, IPdfDisplayList list, PageGeometry g, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays,
         int tx, int ty, int w, int h, byte[] dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
     {
-        var ctx = _res.Context!;
-        var targetProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target);
-        var stagingProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw);
-        var size = new SizeI(w, h);
-        using var target = ctx.CreateBitmap(size, IntPtr.Zero, 0, targetProps);
-        using var staging = ctx.CreateBitmap(size, IntPtr.Zero, 0, stagingProps);
+        var (target, staging) = TileSurfaces(w, h);
 
         int composited = DrawTile(replay, list, g, overlays, tx, ty, w, h, target, invert);
 
@@ -496,7 +527,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         if (_disposed) return;
         _disposed = true;
         _gate.Wait();
-        try { ClearReplayers(); _res.Dispose(); }
+        try { ClearReplayers(); DisposeTileSurfaces(); _res.Dispose(); }
         finally { _gate.Release(); }
     }
 
