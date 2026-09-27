@@ -466,7 +466,8 @@ public partial class PageViewModel : ObservableObject
         {
             var layout = await docService.ExtractPageTextLayoutAsync(PageNumber, ct);
             // A result that arrives after the page was already populated must not replace it.
-            if (!ct.IsCancellationRequested && !IsTextExtracted)
+            // ...nor segments supplied while it ran (a caller with its own geometry).
+            if (!ct.IsCancellationRequested && !IsTextExtracted && TextSegments.Count == 0)
             {
                 _textLayout = layout;
                 TextSegments.Clear();
