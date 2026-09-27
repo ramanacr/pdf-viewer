@@ -140,6 +140,12 @@ public sealed class PdfImageSource : IPdfImageSource
         if (sizW <= 0 || sizH <= 0 || sizW * sizH > _limits.MaxImagePixels || sizComponents is <= 0 or > 16)
             throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG 2000 size exceeds the image limits.");
 
+        // With an /Indexed space the samples are indices into the PDF's palette (8.9.5.3), so a JP2
+        // file's own palette (pclr box) must not be applied: decode its bare codestream instead.
+        // Applying it (seen in real producer output) turned a white map black.
+        if (_colorSpace?.Name == "Indexed" && TryGetJp2Codestream(data) is { } codestream)
+            data = codestream;
+
         CoreJ2K.Util.InterleavedImage image;
         try
         {
@@ -203,6 +209,36 @@ public sealed class PdfImageSource : IPdfImageSource
             }
             return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra);
         }
+    }
+
+    /// <summary>The contiguous codestream (jp2c box) of a JP2 file (ISO/IEC 15444-1 I.5), or null for a bare codestream.</summary>
+    internal static byte[]? TryGetJp2Codestream(byte[] data)
+    {
+        // JP2 signature box: length 12, type 'jP  ', content 0D 0A 87 0A.
+        if (data.Length < 12 || data[4] != (byte)'j' || data[5] != (byte)'P' || data[6] != (byte)' ' || data[7] != (byte)' ')
+            return null;
+        long pos = 0;
+        while (pos + 8 <= data.Length)
+        {
+            long len = (uint)(data[pos] << 24 | data[pos + 1] << 16 | data[pos + 2] << 8 | data[pos + 3]);
+            int header = 8;
+            if (len == 1)
+            {
+                if (pos + 16 > data.Length) return null;
+                len = 0;
+                for (int i = 0; i < 8; i++) len = (len << 8) | data[pos + 8 + i];
+                header = 16;
+            }
+            else if (len == 0)
+            {
+                len = data.Length - pos; // last box runs to the end of the file
+            }
+            if (len < header || pos + len > data.Length) return null;
+            if (data[pos + 4] == 'j' && data[pos + 5] == 'p' && data[pos + 6] == '2' && data[pos + 7] == 'c')
+                return data.AsSpan((int)(pos + header), (int)(len - header)).ToArray();
+            pos += len;
+        }
+        return null;
     }
 
     /// <summary>Image size and component count from the codestream's SIZ marker (ISO/IEC 15444-1 A.5.1).</summary>

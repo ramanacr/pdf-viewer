@@ -70,6 +70,65 @@ public class Jpeg2000Tests
     [Fact]
     public Task Rgb_WithExplicitColourSpace() => AssertMatches("rgb", "/ColorSpace /DeviceRGB /BitsPerComponent 8", Encode(64, 48, 3));
 
+    /// <summary>
+    /// A JP2 file with its own palette (pclr) under a PDF /Indexed space (seen in real producer
+    /// output, GovDocs1 001659.pdf): the samples index the PDF palette, so the JP2 palette must
+    /// not be applied (8.9.5.3) - as PDFium does. Applying it turned a white map black. (CoreJ2K
+    /// does not apply this hand-built palette, so the extraction is also tested directly.)
+    /// </summary>
+    [Fact]
+    public void Jp2Codestream_IsExtractedFromTheContainer_AndABareCodestreamIsLeftAlone()
+    {
+        byte[] codestream = Encode(16, 8, 1);
+        Assert.Null(PdfEngine.Vector.Images.PdfImageSource.TryGetJp2Codestream(codestream));
+        Assert.Equal(codestream, PdfEngine.Vector.Images.PdfImageSource.TryGetJp2Codestream(Jp2WithPalette(codestream)));
+        byte[] truncated = Jp2WithPalette(codestream)[..40];
+        Assert.Null(PdfEngine.Vector.Images.PdfImageSource.TryGetJp2Codestream(truncated));
+    }
+
+    [Fact]
+    public Task Indexed_Jp2WithOwnPalette_IndexesThePdfPalette() =>
+        AssertMatches("indexed-jp2-pclr", "/ColorSpace [/Indexed /DeviceRGB 3 <FFFFFF2040E0E02020000000>] /BitsPerComponent 8",
+            Jp2WithPalette(Encode(64, 48, 1)));
+
+    /// <summary>
+    /// Wraps a 1-component codestream in a JP2 file whose palette box maps every index to a
+    /// dark grey - a reader that applies it paints the image dark, one that honours the PDF
+    /// palette does not.
+    /// </summary>
+    private static byte[] Jp2WithPalette(byte[] codestream)
+    {
+        var ms = new System.IO.MemoryStream();
+        void Box(string type, byte[] content)
+        {
+            int len = content.Length + 8;
+            ms.Write(new[] { (byte)(len >> 24), (byte)(len >> 16), (byte)(len >> 8), (byte)len });
+            ms.Write(System.Text.Encoding.ASCII.GetBytes(type));
+            ms.Write(content);
+        }
+        byte[] Be32(int v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        Box("jP  ", new byte[] { 0x0D, 0x0A, 0x87, 0x0A });
+        Box("ftyp", System.Text.Encoding.ASCII.GetBytes("jp2 ").Concat(new byte[4]).Concat(System.Text.Encoding.ASCII.GetBytes("jp2 ")).ToArray());
+        var header = new System.IO.MemoryStream();
+        void Sub(string type, byte[] content)
+        {
+            header.Write(Be32(content.Length + 8));
+            header.Write(System.Text.Encoding.ASCII.GetBytes(type));
+            header.Write(content);
+        }
+        // ihdr: height, width, 1 codestream component, bpc 7 (8-bit), compression 7, flags.
+        Sub("ihdr", Be32(48).Concat(Be32(64)).Concat(new byte[] { 0, 1, 7, 7, 0, 0 }).ToArray());
+        Sub("colr", new byte[] { 1, 0, 0, 0, 0, 0, 16 }); // enumerated sRGB
+        // pclr: 256 entries, 3 columns of 8 bits, every entry (40, 40, 40).
+        var pclr = new System.Collections.Generic.List<byte> { 1, 0, 3, 7, 7, 7 };
+        for (int i = 0; i < 256; i++) pclr.AddRange(new byte[] { 40, 40, 40 });
+        Sub("pclr", pclr.ToArray());
+        Sub("cmap", new byte[] { 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 2 }); // component 0 through palette columns 0..2
+        Box("jp2h", header.ToArray());
+        Box("jp2c", codestream);
+        return ms.ToArray();
+    }
+
     [Fact]
     public Task Gray_WithCodestreamColour() => AssertMatches("gray", "", Encode(64, 48, 1));
 
