@@ -576,6 +576,7 @@ public partial class MainViewModel : ObservableObject
             _ = RenderThumbnailsAsync();
 
             _openPassword = password;
+            await RefreshSecurityDetailsAsync();
             _formChangedSinceSave = false;
             _savedAnnotationsFingerprint = AnnotationsFingerprint();
             await LoadFormAsync();
@@ -607,6 +608,8 @@ public partial class MainViewModel : ObservableObject
         HasForm = false;
         FormReadOnlyReason = null;
         DocumentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+        SecurityMethod = "No security";
+        IsOwnerPasswordKnown = true;
         _searchCts?.Cancel();
         _docService.CloseDocument();
         _cache.Clear();
@@ -1256,6 +1259,10 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Viewport detail tile for a visible page (see <see cref="PageViewModel.UpdateDetailAsync"/>).</summary>
     public Task RequestPageDetailAsync(PageViewModel page, System.Windows.Rect visibleDips, double devicePixelsPerDip) =>
         page.UpdateDetailAsync(_docService, visibleDips, devicePixelsPerDip, RotationAngle, IsNightMode);
+
+    /// <summary>Starts the background work for a visible page's detail tile at a new zoom (see <see cref="PageViewModel.PrepareDetail"/>).</summary>
+    public void PreparePageDetail(PageViewModel page, System.Windows.Rect visibleDips, double devicePixelsPerDip) =>
+        page.PrepareDetail(_docService, visibleDips, devicePixelsPerDip, RotationAngle, IsNightMode);
 
     public void RenderPagesInViewport(double viewportTop, double viewportHeight)
     {
@@ -2133,6 +2140,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (Metadata != null)
         {
+            Metadata.SecurityMethod = SecurityMethod;
+            Metadata.SecurityPermissions = PermissionsDescription;
             ShowPropertiesAction?.Invoke(Metadata);
         }
     }

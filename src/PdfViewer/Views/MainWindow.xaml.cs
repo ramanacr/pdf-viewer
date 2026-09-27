@@ -107,6 +107,17 @@ public partial class MainWindow : Window
             var dialog = new ApplyRedactionsDialog(marks, suggested) { Owner = this };
             return dialog.ShowDialog() == true ? dialog.Result : null;
         };
+        document.ShowProtectDialogFunc = name =>
+        {
+            var dialog = new ProtectDocumentDialog(name) { Owner = this };
+            return dialog.ShowDialog() == true ? dialog.Result : null;
+        };
+        document.RequestOwnerPasswordFunc = name =>
+        {
+            var dialog = new PasswordDialog(name, "Permissions Password",
+                $"Changing the security of '{name}' needs its permissions password:", "Continue") { Owner = this };
+            return dialog.ShowDialog() == true ? dialog.Password : null;
+        };
         document.ShowSignDialogFunc = (placement, canCertify) =>
         {
             var dialog = new SignDocumentDialog(placement, document.Metadata?.FilePath ?? string.Empty, canCertify) { Owner = this };
@@ -679,9 +690,23 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// A zoom step changed the layout: start the visible pages' tile work now, while the zoom
+    /// settles, instead of after the debounce.
+    /// </summary>
+    private void PrepareDetailTiles()
+    {
+        double deviceScale = System.Windows.Media.VisualTreeHelper.GetDpi(DocumentScrollViewer).DpiScaleX;
+        var viewport = new Size(DocumentScrollViewer.ViewportWidth, DocumentScrollViewer.ViewportHeight);
+        foreach (var (page, visible) in PageDetailHost.VisiblePages(DocumentScrollViewer, viewport))
+            _vm.PreparePageDetail(page, visible, deviceScale);
+    }
+
     private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+        if (e.ExtentWidthChange != 0 || e.ExtentHeightChange != 0)
+            PrepareDetailTiles();
         ScheduleDetailTiles();
 
         if (_vm.IsMultiPageLayout)

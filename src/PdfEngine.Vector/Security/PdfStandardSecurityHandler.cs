@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Text;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Objects;
 
@@ -23,7 +22,7 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
     };
 
     private readonly int _r, _keyLength, _p;
-    private readonly byte[] _o, _u, _oe, _ue, _id0;
+    private readonly byte[] _o, _u, _oe, _ue, _perms, _id0;
     private readonly bool _encryptMetadata;
 
     private PdfStandardSecurityHandler(PdfDictionary encrypt, byte[] id0, Func<PdfObject?, PdfObject?> resolve)
@@ -37,6 +36,7 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
         _u = Bytes(resolve(encrypt["U"]));
         _oe = Bytes(resolve(encrypt["OE"]));
         _ue = Bytes(resolve(encrypt["UE"]));
+        _perms = Bytes(resolve(encrypt["Perms"]));
         _id0 = id0;
         _encryptMetadata = EncryptMetadata;
         _keyLength = KeyLength;
@@ -62,15 +62,47 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
         password ??= string.Empty;
         if (_r >= 5)
         {
-            byte[] pw = Utf8Password(password);
-            if (TryUserR6(pw) is { } userKey) { SetFileKey(userKey); IsOwner = false; return true; }
-            if (TryOwnerR6(pw) is { } ownerKey) { SetFileKey(ownerKey); IsOwner = true; return true; }
+            foreach (byte[] pw in Utf8Candidates(password))
+            {
+                if (TryUserR6(pw) is { } userKey) { SetFileKey(userKey); IsOwner = false; return true; }
+                if (TryOwnerR6(pw) is { } ownerKey) { SetFileKey(ownerKey); IsOwner = true; return true; }
+            }
             return false;
         }
         byte[] latin = Latin1Password(password);
         if (TryUser(latin) is { } key) { SetFileKey(key); IsOwner = false; return true; }
         if (TryOwner(latin) is { } okey) { SetFileKey(okey); IsOwner = true; return true; }
         return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="password"/> is the owner (permissions) password. Unlike
+    /// <see cref="Authenticate"/> it never accepts the user password, so it proves the right to
+    /// change or remove the document's security.
+    /// </summary>
+    public bool AuthenticateOwner(string? password)
+    {
+        password ??= string.Empty;
+        if (_r >= 5)
+        {
+            foreach (byte[] pw in Utf8Candidates(password))
+                if (TryOwnerR6(pw) is { } ownerKey) { SetFileKey(ownerKey); IsOwner = true; return true; }
+            return false;
+        }
+        if (TryOwner(Latin1Password(password)) is { } key) { SetFileKey(key); IsOwner = true; return true; }
+        return false;
+    }
+
+    /// <summary>
+    /// SASLprep'd bytes first (ISO 32000-2 7.6.4.3.3), then plain NFKC when that differs: some
+    /// writers skip the mapping step, and their files must still open.
+    /// </summary>
+    private static IEnumerable<byte[]> Utf8Candidates(string password)
+    {
+        byte[]? prepared = PdfPasswordPreparation.TryPrepareForAuthentication(password);
+        if (prepared != null) yield return prepared;
+        byte[] nfkc = PdfPasswordPreparation.NfkcOnly(password);
+        if (prepared == null || !nfkc.AsSpan().SequenceEqual(prepared)) yield return nfkc;
     }
 
     private static byte[] Latin1Password(string password)
@@ -84,12 +116,10 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
         return bytes.ToArray();
     }
 
-    private static byte[] Utf8Password(string password)
-    {
-        // SASLprep (RFC 4013) normalisation: NFKC covers the mapping that matters in practice.
-        byte[] utf8 = Encoding.UTF8.GetBytes(password.Normalize(NormalizationForm.FormKC));
-        return utf8.Length > 127 ? utf8[..127] : utf8;
-    }
+    /// <summary>Revisions 2 to 4 take PDFDocEncoding passwords; this writer accepts printable Latin-1.</summary>
+    internal static bool IsLatin1Password(string password) => password.All(c => c is >= ' ' and <= '~' or >= ' ' and <= 'ÿ');
+
+    internal static byte[] Latin1PasswordBytes(string password) => Latin1Password(password);
 
     private static byte[] Pad(byte[] password)
     {
@@ -101,18 +131,20 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
     }
 
     /// <summary>Algorithm 2: the file key from a (user) password.</summary>
-    private byte[] ComputeKey(byte[] password)
+    private byte[] ComputeKey(byte[] password) => ComputeKey(password, _o, _p, _id0, _r, _keyLength, _encryptMetadata);
+
+    private static byte[] ComputeKey(byte[] password, byte[] o, int p, byte[] id0, int r, int keyLength, bool encryptMetadata)
     {
         using var md5 = MD5.Create();
         var input = new List<byte>(128);
         input.AddRange(Pad(password));
-        input.AddRange(_o.AsSpan(0, 32).ToArray());
-        input.AddRange(BitConverter.GetBytes(_p)); // little-endian low-order byte first
-        input.AddRange(_id0);
-        if (_r >= 4 && !_encryptMetadata) input.AddRange(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        input.AddRange(o.AsSpan(0, 32).ToArray());
+        input.AddRange(BitConverter.GetBytes(p)); // little-endian low-order byte first
+        input.AddRange(id0);
+        if (r >= 4 && !encryptMetadata) input.AddRange(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
         byte[] hash = md5.ComputeHash(input.ToArray());
-        int n = _r == 2 ? 5 : _keyLength;
-        if (_r >= 3)
+        int n = r == 2 ? 5 : keyLength;
+        if (r >= 3)
             for (int i = 0; i < 50; i++)
                 hash = md5.ComputeHash(hash, 0, n);
         return hash[..n];
@@ -181,10 +213,12 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
     }
 
     /// <summary>R5: SHA-256; R6: Algorithm 2.B (iterated SHA-256/384/512 with AES-128-CBC).</summary>
-    private byte[] Hash(byte[] pw, byte[] salt, byte[] udata)
+    private byte[] Hash(byte[] pw, byte[] salt, byte[] udata) => Hash(pw, salt, udata, _r);
+
+    private static byte[] Hash(byte[] pw, byte[] salt, byte[] udata, int r)
     {
         byte[] k = SHA256.HashData(pw.Concat(salt).Concat(udata).ToArray());
-        if (_r == 5)
+        if (r == 5)
             return k;
         int round = 0;
         while (true)
@@ -206,5 +240,74 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
                 break;
         }
         return k[..32];
+    }
+
+    /// <summary>
+    /// Algorithm 13: decrypts /Perms with the file key and checks it against /P and
+    /// /EncryptMetadata. False when /Perms is missing, garbled or disagrees.
+    /// </summary>
+    internal bool PermsMatch()
+    {
+        if (_r < 6 || FileKey == null || _perms.Length < 16)
+            return false;
+        byte[] plain = AesCbcNoPadding(FileKey, new byte[16], _perms[..16], decrypt: true);
+        return plain[9] == (byte)'a' && plain[10] == (byte)'d' && plain[11] == (byte)'b'
+               && BitConverter.ToInt32(plain, 0) == _p
+               && plain[8] == (byte)(_encryptMetadata ? 'T' : 'F');
+    }
+
+    // ------------------------------------------------------------------ writing (Algorithms 3, 5, 8, 9, 10)
+
+    /// <summary>
+    /// /O and /U for revision 4 (Algorithms 3 and 5). An empty owner password means the user
+    /// password is used for both, as Algorithm 3 step a specifies.
+    /// </summary>
+    internal static (byte[] O, byte[] U) CreateR4Entries(byte[] owner, byte[] user, int p, byte[] id0, bool encryptMetadata)
+    {
+        const int keyLength = 16;
+        using var md5 = MD5.Create();
+        byte[] hash = md5.ComputeHash(Pad(owner.Length > 0 ? owner : user));
+        for (int i = 0; i < 50; i++) hash = md5.ComputeHash(hash);
+        byte[] ownerKey = hash[..keyLength];
+        byte[] o = Rc4(ownerKey, Pad(user));
+        for (int i = 1; i <= 19; i++) o = Rc4(XorKey(ownerKey, i), o);
+
+        byte[] fileKey = ComputeKey(user, o, p, id0, 4, keyLength, encryptMetadata);
+        byte[] x = Rc4(fileKey, md5.ComputeHash(Padding.Concat(id0).ToArray()));
+        for (int i = 1; i <= 19; i++) x = Rc4(XorKey(fileKey, i), x);
+        var u = new byte[32];
+        Array.Copy(x, u, 16);
+        RandomNumberGenerator.Fill(u.AsSpan(16)); // arbitrary padding (Algorithm 5 step f)
+        return (o, u);
+    }
+
+    /// <summary>
+    /// A random 256-bit file key and /U, /UE, /O, /OE and /Perms for revision 6 (Algorithms 8, 9
+    /// and 10). The passwords are SASLprep'd UTF-8.
+    /// </summary>
+    internal static (byte[] O, byte[] U, byte[] OE, byte[] UE, byte[] Perms) CreateR6Entries(
+        byte[] owner, byte[] user, int p, bool encryptMetadata)
+    {
+        byte[] fileKey = RandomNumberGenerator.GetBytes(32);
+        byte[] zeroIv = new byte[16];
+
+        byte[] userSalts = RandomNumberGenerator.GetBytes(16); // validation salt, then key salt
+        byte[] u = Hash(user, userSalts[..8], Array.Empty<byte>(), 6).Concat(userSalts).ToArray();
+        byte[] ue = AesCbcNoPadding(Hash(user, userSalts[8..], Array.Empty<byte>(), 6), zeroIv, fileKey, decrypt: false);
+
+        byte[] ownerSalts = RandomNumberGenerator.GetBytes(16);
+        byte[] o = Hash(owner, ownerSalts[..8], u, 6).Concat(ownerSalts).ToArray();
+        byte[] oe = AesCbcNoPadding(Hash(owner, ownerSalts[8..], u, 6), zeroIv, fileKey, decrypt: false);
+
+        var perms = new byte[16];
+        BitConverter.GetBytes(p).CopyTo(perms, 0);
+        perms[4] = perms[5] = perms[6] = perms[7] = 0xFF;
+        perms[8] = (byte)(encryptMetadata ? 'T' : 'F');
+        perms[9] = (byte)'a'; perms[10] = (byte)'d'; perms[11] = (byte)'b';
+        RandomNumberGenerator.Fill(perms.AsSpan(12));
+        // AES-256 in ECB mode on a single block is CBC with a zero IV.
+        byte[] encryptedPerms = AesCbcNoPadding(fileKey, zeroIv, perms, decrypt: false);
+        CryptographicOperations.ZeroMemory(fileKey); // the handler recovers it from /UE or /OE
+        return (o, u, oe, ue, encryptedPerms);
     }
 }

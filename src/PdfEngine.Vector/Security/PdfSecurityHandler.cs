@@ -48,6 +48,18 @@ public abstract class PdfSecurityHandler
     /// <summary>Security handler revision (/R), or the public-key sub-filter's equivalent.</summary>
     public int Revision { get; protected set; }
 
+    /// <summary>The cipher protecting streams (strings when streams are left in clear), for display: "AES-256", "RC4 128-bit".</summary>
+    public string Algorithm => (_streamMethod != PdfCryptMethod.None ? _streamMethod : _stringMethod) switch
+    {
+        PdfCryptMethod.AesV3 => "AES-256",
+        PdfCryptMethod.AesV2 => "AES-128",
+        PdfCryptMethod.Rc4 => $"RC4 {KeyLength * 8}-bit",
+        _ => "None",
+    };
+
+    /// <summary>False when the document's XMP metadata stream is left unencrypted (/EncryptMetadata false).</summary>
+    public bool IsMetadataEncrypted => EncryptMetadata;
+
     protected PdfSecurityHandler(PdfDictionary encrypt, Func<PdfObject?, PdfObject?> resolve)
     {
         V = (int)(encrypt.GetInteger("V") ?? 0);

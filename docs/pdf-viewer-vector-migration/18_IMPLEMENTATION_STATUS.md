@@ -134,6 +134,16 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - A document timestamp is a permitted change at every certification level. A "timestamp" with a visible appearance is not treated as one.
 - **Signature appearances** (`Signatures/PdfSignatureAppearance`): text only, name and details, picture and details, or picture only, with a choice of details. A picture is chosen from a file or drawn in the signing dialog, kept with transparency, and remembered on the computer only if asked. Names Helvetica cannot show are set in an embedded installed font.
 
+### Password protection
+- `Security/PdfEncryptor` encrypts a document with the Standard security handler:
+  - AES-256 (V5, R6, with /Perms) by default, or AES-128 (V4, R4); never RC4;
+  - an open password and a permissions password, SASLprep'd (RFC 4013) and truncated to 127 bytes of UTF-8;
+  - the permissions Acrobat offers: printing (none, low or high resolution), changing, copying, copying for accessibility, commenting, filling forms and page assembly;
+  - metadata optionally left in the clear.
+  - The result is a full rewrite with a fresh /ID, which PDFium opens with the password and renders the same as the original.
+- Remove Security writes an unencrypted copy, but only when the owner password is known or proven. Signed documents are changed only after confirmation, because their signatures break.
+- Viewer: Tools > Protect with Password... and Remove Security..., each saving a copy. Document Properties shows the security method and permissions.
+
 ### Redaction
 - `Redaction/PdfRedactor` removes content rather than covering it:
   - text: glyphs under a mark go, and the rest keep their exact positions through `TJ` adjustments; invisible text goes too;
@@ -340,13 +350,13 @@ Not started by design (M9/M10). PDFium still ships and is required.
 
 ## 5. Remaining work, in priority order
 
-1. **Live host tuning, remainder:** the first tile at a new deep zoom still tessellates the whole page (≈ 0.8 s on the 400-curve fixture); building the realizations in the background while the zoom settles would hide it. Tried and rejected: sharing tessellations across zoom steps (scale buckets of √2, tessellated at the bucket top) — `vectorpdf tiles` zoom-step p50 unchanged and p95 worse in two of three A/B runs, because the finer tessellation costs what the reuse saves. Page bitmaps (not detail tiles) still take the readback path; they are cached and reused, so this matters less.
+1. **Live host tuning, remainder:** done for deep zoom. A page-spanning path is tessellated only in a window around the requested tile: curves crossing the window are split, strokes cut, and fills closed along the window's edge, so every pixel inside is unchanged. A zoom step starts preparing the visible tiles' tessellations at once, while the previous tile stays on screen stretched. On the 400-curve fixture, the first tile at 1600 % went from 0.4–0.67 s to about 0.25 s (p50), and zoom request to crisp tile from about 0.33 s to 0.16 s. Page bitmaps still take the readback path; they are cached and reused. 001767.pdf p2 (9,381 commands) takes 11–98 s in both builds and needs its own look.
 3. **Real-world corpus:** GovDocs1 batch 001 (284 US-government PDFs) is in the corpus (3 197 files; pages fully vector 99.64 %, area 99.90 %). The font and image gaps it exposed are closed (CFF FontMatrix normalization and glyph matrices, substitute fallback chains, CCITT/JBIG2/JPX masks, JPEGs through their colour space): GovDocs pages fully vector 97.39 % -> 99.46 %. Next: more batches, CAD and scanned books; the residual high-frequency diffs on scanned grids are resampling, not errors.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
 7. **Forms and signatures remainder:** opt-in online revocation checks when validating; the ESIC extension entry; timestamp requests with hashes other than SHA-256.
-7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
+7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
 10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.

@@ -316,6 +316,10 @@
                           Command="{Binding SaveCleanCopyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified."><MenuItem.Icon><Path Data="{StaticResource IconCleanCopy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Protect with _Password..." Command="{Binding ProtectWithPasswordCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Saves an encrypted copy (AES-256) with an open password, restrictions guarded by a permissions password, or both." />
+                <MenuItem Header="Remove Sec_urity..." Command="{Binding RemoveSecurityCommand}" IsEnabled="{Binding CanRemoveSecurity}"
+                          ToolTip="Saves an unencrypted copy. Needs the document's permissions password." />
                 <MenuItem Header="Sign _Document..."
                           Command="{Binding BeginSignatureCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
