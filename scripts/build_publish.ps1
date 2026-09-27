@@ -212,6 +212,17 @@ if (Test-Path "$RootDir\THIRD_PARTY_NOTICES.md") {
 Write-Host "`n[4/5] Generating Software Bill of Materials (SBOM)..." -ForegroundColor Yellow
 & "$ScriptDir\generate_sbom.ps1" -OutputDir "$PublishDir" -Version "$AppVersion"
 
+# 7. Installer size gate (eng/releasegate/README.md): the payload and the installer just built,
+#    against the committed baseline. Growth past the tolerance fails the release; an intended
+#    increase is a baseline refresh committed with the change that caused it.
+Write-Host "`n>> Checking the installer size against eng/releasegate/baseline-payload.json..." -ForegroundColor Yellow
+dotnet run --project "$RootDir\eng\releasegate\ReleaseGate.Tool\ReleaseGate.Tool.csproj" -c Release -- `
+    payload --dir "$AppStagingDir" --installer "$PublishDir\PdfViewerSetup.exe" `
+    --baseline "$RootDir\eng\releasegate\baseline-payload.json" --check --out "$PublishDir\payload-size.json"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "The installer size gate failed (see above). If the growth is intended, refresh the baseline as eng/releasegate/README.md describes."
+}
+
 # Clean up staging folders & temporary zip
 Remove-Item -Path $AppStagingDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $InstallerStaging -Recurse -Force -ErrorAction SilentlyContinue

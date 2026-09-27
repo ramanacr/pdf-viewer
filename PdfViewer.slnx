@@ -11,4 +11,5 @@
   <Project Path="tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj" />
   <Project Path="benchmarks/PdfViewer.Benchmarks/PdfViewer.Benchmarks.csproj" />
   <Project Path="eng/vectorpdf/tools/VectorPdf.Tool/VectorPdf.Tool.csproj" />
+  <Project Path="eng/releasegate/ReleaseGate.Tool/ReleaseGate.Tool.csproj" />
 </Solution>

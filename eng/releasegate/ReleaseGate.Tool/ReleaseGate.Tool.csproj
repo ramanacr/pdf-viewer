@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ReleaseGate.Tool</RootNamespace>
+    <AssemblyName>releasegate</AssemblyName>
+    <Description>Release gates: cold/warm start to first page, and installer payload size, each against a committed baseline. Not shipped.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    Deliberately no reference to the application: the startup gate measures the published
+    executable from the outside, exactly as a user launches it. The measurement and comparison
+    logic is linked into PdfViewer.Tests as source, where it is unit tested.
+  -->
+
+</Project>
