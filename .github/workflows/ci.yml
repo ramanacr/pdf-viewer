@@ -66,6 +66,15 @@ jobs:
       shell: pwsh
       run: ./scripts/generate_sbom.ps1
 
+    # Code signing (eng/signing/README.md): a throwaway self-signed certificate for this run, so
+    # every build exercises the signing and verification path. Releases sign with the owner's key.
+    - name: Create a throwaway signing certificate
+      shell: pwsh
+      run: |
+        $dir = Join-Path $env:RUNNER_TEMP "signing"
+        ./scripts/new_signing_certificate.ps1 -OutputDir $dir -Subject "CN=PDF Viewer CI (throwaway)" -ValidYears 1 -PlainPasswordFile
+        "PDFVIEWER_SIGN_PFX=$(Join-Path $dir 'codesign.pfx')" >> $env:GITHUB_ENV
+
     - name: Verify Release Packaging Script
       id: publish
       shell: pwsh

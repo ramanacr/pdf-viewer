@@ -284,7 +284,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
 7. **Forms and signatures remainder:** filling and signing encrypted documents (the incremental writer must encrypt appended objects); calculate, format and validate scripts; long-term validation (PAdES-B-LT: DSS with certificates, OCSP and CRLs) and opt-in online revocation checks.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
-8. **Release remainder:** code signing of the installer and executable; startup-time baseline on a cold machine; an installer-size gate.
+8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
 10. **Editing remainder:** text and images inside form XObjects; vertical writing; shaping for complex scripts in new text (ligatures, Arabic, Indic); kerning for new text.
 

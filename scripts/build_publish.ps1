@@ -8,7 +8,9 @@
 
 param(
     # Publish and verify the payload, but build no installer (CI).
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Leave the executables unsigned even when a signing certificate is available.
+    [switch]$NoSign
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +80,21 @@ dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to publish PdfViewer application."
+}
+
+# Authenticode: the app is signed before it goes into the installer's payload, and the installer
+# after it is built (eng/signing/README.md). The certificate is PDFVIEWER_SIGN_PFX, or the
+# self-signed one scripts/new_signing_certificate.ps1 creates for this user.
+if ([string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_PFX)) {
+    $DefaultPfx = Join-Path $env:LOCALAPPDATA "PdfViewer\signing\codesign.pfx"
+    if (Test-Path $DefaultPfx) { $env:PDFVIEWER_SIGN_PFX = $DefaultPfx }
+}
+$Sign = -not $NoSign -and -not [string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_PFX)
+if ($Sign) {
+    Write-Host "`n>> Signing PdfViewer.exe..." -ForegroundColor Yellow
+    & "$ScriptDir\sign_files.ps1" -Files "$AppStagingDir\PdfViewer.exe" -Description "PDF Viewer"
+} else {
+    Write-Host "`n>> No signing certificate (see eng/signing/README.md): the executables are left unsigned." -ForegroundColor DarkYellow
 }
 
 # Copy assets folder into AppStagingDir so the installer delivers them to the user directory
@@ -187,6 +204,11 @@ dotnet publish "$RootDir\src\Installer\PdfViewerInstaller.csproj" `
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to publish PdfViewerSetup installer."
+}
+
+if ($Sign) {
+    Write-Host "`n>> Signing PdfViewerSetup.exe..." -ForegroundColor Yellow
+    & "$ScriptDir\sign_files.ps1" -Files "$InstallerStaging\PdfViewerSetup.exe" -Description "PDF Viewer Setup"
 }
 
 # Move final artifacts to publish root

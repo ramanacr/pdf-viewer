@@ -12,7 +12,6 @@ using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Signatures;
 using PdfViewer.Models;
 using PdfViewer.Services;
-using PdfEngine.Vector.Signatures;
 
 namespace PdfViewer.ViewModels;
 
