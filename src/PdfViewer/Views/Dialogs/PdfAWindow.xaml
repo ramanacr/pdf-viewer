@@ -18,7 +18,7 @@
                 <Button Content="_Check" Margin="12,0,0,0" Padding="14,3" Click="Check_Click"
                         ToolTip="Checks every requirement of the chosen part and level, and lists what the document does not meet." />
                 <Button Content="Convert and _Save..." Margin="8,0,0,0" Padding="14,3" Click="Convert_Click" IsEnabled="{Binding CanConvert}"
-                        ToolTip="Writes a PDF/A copy (PDF/A-2b or -3b): fonts embedded, colour profiled, metadata written, scripts removed. The original is not changed." />
+                        ToolTip="Writes a PDF/A copy (PDF/A-1b, -2b or -3b): fonts embedded, colour profiled, metadata written, scripts removed. The original is not changed." />
                 <Button x:Name="OpenButton" Content="_Open Copy" Margin="8,0,0,0" Padding="14,3" Click="Open_Click" Visibility="Collapsed" />
             </StackPanel>
             <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,10" AutomationProperties.LiveSetting="Polite" />

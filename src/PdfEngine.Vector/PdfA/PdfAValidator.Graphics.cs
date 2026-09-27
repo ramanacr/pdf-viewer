@@ -191,6 +191,8 @@ internal sealed partial class PdfAChecker
         int q = 0, tr = 0;
         string? font = null;
         var trStack = new Stack<int>();
+        // The font is part of the graphics state: Q restores the one q saved.
+        var fontStack = new Stack<string?>();
         // Whether a fill or stroke colour was set: until then painting uses the initial DeviceGray black.
         bool fillSet = depth > 0, strokeSet = depth > 0;
         var colourStack = new Stack<(bool, bool)>();
@@ -229,12 +231,14 @@ internal sealed partial class PdfAChecker
                 case "q":
                     q++;
                     trStack.Push(tr);
+                    fontStack.Push(font);
                     colourStack.Push((fillSet, strokeSet));
                     if (q > 28) Fail("6.1.12", "6.1.13", 8, "The content nests q more than 28 deep.", where);
                     break;
                 case "Q":
                     if (q > 0) q--;
                     if (trStack.Count > 0) tr = trStack.Pop();
+                    if (fontStack.Count > 0) font = fontStack.Pop();
                     if (colourStack.Count > 0) (fillSet, strokeSet) = colourStack.Pop();
                     break;
                 // Painting in the initial colour paints in DeviceGray.

@@ -215,14 +215,14 @@ internal sealed partial class PdfAChecker
         return font.IsComposite && font.CidOrdering != null;
     }
 
-    private static CffFont? CffOf(PreparedFontProgram prepared)
+    internal static CffFont? CffOf(PreparedFontProgram prepared)
     {
         var tables = Sfnt.ReadTables(prepared.Sfnt, out _);
         return tables != null && tables.TryGetValue("CFF ", out var cff) ? CffFont.TryParse(cff) : null;
     }
 
     /// <summary>Whether the embedded program has the glyph a code shows.</summary>
-    private static bool GlyphPresent(PdfFont font, PreparedFontProgram prepared, TrueTypeFontFile? truetype, CffFont? cff, int code, int cid)
+    internal static bool GlyphPresent(PdfFont font, PreparedFontProgram prepared, TrueTypeFontFile? truetype, CffFont? cff, int code, int cid)
     {
         if (truetype != null)
         {

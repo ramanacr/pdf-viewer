@@ -18,8 +18,9 @@ public sealed record PdfAIssueItem(string Rule, string Message, string? Location
 
 /// <summary>
 /// PDF/A for the open document: checks it against a chosen part and level (reporting every rule
-/// it breaks, by ISO 19005 clause), and converts it to PDF/A-2b or -3b as a new file, reporting
-/// what was changed and anything that could not be fixed.
+/// it breaks, by ISO 19005 clause), and converts it to PDF/A-1b, -2b or -3b as a new file, reporting
+/// what was changed and anything that could not be fixed (PDF/A-1b is refused, with the reason, for a
+/// document that uses transparency).
 /// </summary>
 public sealed partial class PdfAViewModel : ObservableObject
 {
@@ -58,7 +59,7 @@ public sealed partial class PdfAViewModel : ObservableObject
     [ObservableProperty]
     private string? _convertedPath;
 
-    public bool CanConvert => SelectedFlavour is "PDF/A-2b" or "PDF/A-3b";
+    public bool CanConvert => SelectedFlavour is "PDF/A-1b" or "PDF/A-2b" or "PDF/A-3b";
 
     partial void OnSelectedFlavourChanged(string value) => OnPropertyChanged(nameof(CanConvert));
 
@@ -93,7 +94,7 @@ public sealed partial class PdfAViewModel : ObservableObject
         }
     }
 
-    /// <summary>Converts to the selected PDF/A-2b or -3b and writes the result to <paramref name="outputPath"/> (never over the original).</summary>
+    /// <summary>Converts to the selected PDF/A-1b, -2b or -3b and writes the result to <paramref name="outputPath"/> (never over the original).</summary>
     public async Task<bool> ConvertAsync(string outputPath)
     {
         if (!CanConvert) return false;
