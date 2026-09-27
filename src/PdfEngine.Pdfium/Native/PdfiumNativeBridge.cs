@@ -231,6 +231,10 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void FPDF_ClosePage(IntPtr page);
 
+    /// <summary>The page box (crop box within the media box) in unrotated user space: where page coordinates start.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_GetPageBoundingBox(SafePageHandle page, out FS_RECTF rect);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern float FPDF_GetPageWidthF(SafePageHandle page);
 

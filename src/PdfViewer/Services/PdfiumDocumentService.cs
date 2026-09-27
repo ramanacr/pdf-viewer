@@ -628,6 +628,7 @@ public class PdfiumDocumentService : IPdfDocumentService
 
                     if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, p - 1, out var size) == 0) continue;
                     GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
+                    var (originX, originY) = PageOrigin(page);
 
                     using var searchHandle = PdfiumNativeBridge.FPDFText_FindStart(textPage, findBytes, flags, 0);
                     if (searchHandle == null || searchHandle.IsInvalid) continue;
@@ -689,8 +690,8 @@ public class PdfiumDocumentService : IPdfDocumentService
                         double padH = 2.5;
                         double padX = 1.0;
 
-                        double normX = Math.Max(0, (minLeft - padX) / pageWidth);
-                        double normY = Math.Max(0, 1.0 - ((maxTop + padY) / pageHeight));
+                        double normX = Math.Max(0, (minLeft - originX - padX) / pageWidth);
+                        double normY = Math.Max(0, 1.0 - ((maxTop - originY + padY) / pageHeight));
                         double normW = Math.Max(0.005, ((maxRight - minLeft) + (padX * 2)) / pageWidth);
                         double normH = Math.Max(0.005, ((maxTop - minBottom) + padH) / pageHeight);
 
@@ -726,6 +727,18 @@ public class PdfiumDocumentService : IPdfDocumentService
     /// (commonly clamped into the top-left corner), even though the rendered bitmap itself
     /// was correct.
     /// </summary>
+    /// <summary>
+    /// Where the page's coordinates start: the lower-left corner of its crop box in user space.
+    /// FPDFText_GetCharBox, FPDFAnnot_GetRect and friends report absolute user-space points, while
+    /// this viewer's normalized coordinates start at the crop box. On pages whose crop box does
+    /// not start at 0,0 (scans, many publisher PDFs) selections, search hits and annotations were
+    /// all shifted by the crop box's offset.
+    /// </summary>
+    private static (double X, double Y) PageOrigin(SafePageHandle page) =>
+        PdfiumNativeBridge.FPDF_GetPageBoundingBox(page, out var box) != 0
+            ? (Math.Min(box.left, box.right), Math.Min(box.top, box.bottom))
+            : (0, 0);
+
     private static void GetUnrotatedPageSize(SafePageHandle page, FS_SIZEF displaySize, out double width, out double height)
     {
         double w = displaySize.width > 0 ? displaySize.width : 612;
@@ -760,6 +773,7 @@ public class PdfiumDocumentService : IPdfDocumentService
 
             if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var size) == 0) return list;
             GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
+            var (originX, originY) = PageOrigin(page);
 
             int totalChars = PdfiumNativeBridge.FPDFText_CountChars(textPage);
             if (totalChars <= 0) return list;
@@ -781,7 +795,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                 {
                     if (inWord && currentWord.Length > 0 && wordLeft != double.MaxValue)
                     {
-                        AddSegment(list, pageNumber, currentWord.ToString(), wordLeft, wordTop, wordRight, wordBottom, pageWidth, pageHeight);
+                        AddSegment(list, pageNumber, currentWord.ToString(), wordLeft - originX, wordTop - originY, wordRight - originX, wordBottom - originY, pageWidth, pageHeight);
                         currentWord.Clear();
                         wordLeft = double.MaxValue;
                         wordTop = double.MinValue;
@@ -805,7 +819,7 @@ public class PdfiumDocumentService : IPdfDocumentService
 
             if (inWord && currentWord.Length > 0 && wordLeft != double.MaxValue)
             {
-                AddSegment(list, pageNumber, currentWord.ToString(), wordLeft, wordTop, wordRight, wordBottom, pageWidth, pageHeight);
+                AddSegment(list, pageNumber, currentWord.ToString(), wordLeft - originX, wordTop - originY, wordRight - originX, wordBottom - originY, pageWidth, pageHeight);
             }
 
             // Sort in standard reading order (top-to-bottom, left-to-right)
@@ -872,6 +886,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, pageNumber - 1, out var size) == 0)
                 return PdfViewer.Text.PageTextLayout.Empty;
             GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
+            var (charOriginX, charOriginY) = PageOrigin(page);
 
             int count = PdfiumNativeBridge.FPDFText_CountChars(textPage);
             for (int i = 0; i < count; i++)
@@ -898,9 +913,9 @@ public class PdfiumDocumentService : IPdfDocumentService
                 if (text is not ("\r" or "\n"))
                 {
                     if (PdfiumNativeBridge.FPDFText_GetLooseCharBox(textPage, i, out var r) != 0 && r.right > r.left && r.top > r.bottom)
-                        box = new Rect(r.left / pageWidth, 1.0 - r.top / pageHeight, (r.right - r.left) / pageWidth, (r.top - r.bottom) / pageHeight);
+                        box = new Rect((r.left - charOriginX) / pageWidth, 1.0 - (r.top - charOriginY) / pageHeight, (r.right - r.left) / pageWidth, (r.top - r.bottom) / pageHeight);
                     else if (PdfiumNativeBridge.FPDFText_GetCharBox(textPage, i, out double l, out double rt, out double b, out double t) != 0 && rt > l && t > b)
-                        box = new Rect(l / pageWidth, 1.0 - t / pageHeight, (rt - l) / pageWidth, (t - b) / pageHeight);
+                        box = new Rect((l - charOriginX) / pageWidth, 1.0 - (t - charOriginY) / pageHeight, (rt - l) / pageWidth, (t - b) / pageHeight);
                 }
                 glyphs.Add(new PdfViewer.Text.TextGlyph(text, box, generated, hyphen));
             }
@@ -1171,6 +1186,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                 if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(_document, p - 1, out var size) == 0) continue;
                 // FPDFAnnot_GetRect is in unrotated page space, same as char boxes.
                 GetUnrotatedPageSize(page, size, out double pageWidth, out double pageHeight);
+                var (annotOriginX, annotOriginY) = PageOrigin(page);
 
                 int annotCount = PdfiumNativeBridge.FPDFPage_GetAnnotCount(page);
                 for (int i = 0; i < annotCount; i++)
@@ -1213,8 +1229,8 @@ public class PdfiumDocumentService : IPdfDocumentService
 
                     if (PdfiumNativeBridge.FPDFAnnot_GetRect(annot, out var rect) == 0) continue;
 
-                    double normX = Math.Max(0, rect.left / pageWidth);
-                    double normY = Math.Max(0, 1.0 - (rect.top / pageHeight));
+                    double normX = Math.Max(0, (rect.left - annotOriginX) / pageWidth);
+                    double normY = Math.Max(0, 1.0 - ((rect.top - annotOriginY) / pageHeight));
                     double normW = Math.Max(0.01, (rect.right - rect.left) / pageWidth);
                     double normH = Math.Max(0.01, (rect.top - rect.bottom) / pageHeight);
 
@@ -1278,7 +1294,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                                 if (PdfiumNativeBridge.FPDFAnnot_GetAttachmentPoints(annot, (UIntPtr)qi, out var q) == 0) continue;
                                 float qx0 = Math.Min(Math.Min(q.x1, q.x2), Math.Min(q.x3, q.x4)), qx1 = Math.Max(Math.Max(q.x1, q.x2), Math.Max(q.x3, q.x4));
                                 float qy0 = Math.Min(Math.Min(q.y1, q.y2), Math.Min(q.y3, q.y4)), qy1 = Math.Max(Math.Max(q.y1, q.y2), Math.Max(q.y3, q.y4));
-                                quads.Add(new Rect(qx0 / pageWidth, 1.0 - qy1 / pageHeight, (qx1 - qx0) / pageWidth, (qy1 - qy0) / pageHeight));
+                                quads.Add(new Rect((qx0 - annotOriginX) / pageWidth, 1.0 - (qy1 - annotOriginY) / pageHeight, (qx1 - qx0) / pageWidth, (qy1 - qy0) / pageHeight));
                             }
                             if (quads.Count > 1) model.SetQuads(quads);
                         }
@@ -1298,7 +1314,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                             if (PdfiumNativeBridge.FPDFAnnot_GetInkListPath(annot, path, ptBuf, ptCount) <= 0) continue;
 
                             model.InkStrokes.Add(ptBuf
-                                .Select(pt => new Point(Math.Max(0, pt.x / pageWidth), Math.Max(0, 1.0 - (pt.y / pageHeight))))
+                                .Select(pt => new Point(Math.Max(0, (pt.x - annotOriginX) / pageWidth), Math.Max(0, 1.0 - ((pt.y - annotOriginY) / pageHeight))))
                                 .ToList());
                         }
                     }
@@ -1410,6 +1426,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             {
                 // Gather page dimensions so the export can emit real PDF points.
                 var pageSizes = new Dictionary<int, (double Width, double Height)>();
+                var pageOrigins = new Dictionary<int, (double X, double Y)>();
                 lock (_docLock)
                 {
                     if (_document != null && !_document.IsInvalid)
@@ -1422,11 +1439,12 @@ public class PdfiumDocumentService : IPdfDocumentService
 
                             GetUnrotatedPageSize(pg, sz, out double w, out double h);
                             pageSizes[pageNumber] = (w, h);
+                            pageOrigins[pageNumber] = PageOrigin(pg);
                         }
                     }
                 }
 
-                ExportAnnotationsToXfdf(targetPath, annotations, pageSizes);
+                ExportAnnotationsToXfdf(targetPath, annotations, pageSizes, pageOrigins);
                 return;
             }
 
@@ -1472,6 +1490,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                     if (!annotationsByPage.TryGetValue(pageIndex + 1, out var pageAnnotations)) continue;
 
                     if (PdfiumNativeBridge.FPDF_GetPageSizeByIndexF(saveDoc, pageIndex, out var size) == 0) continue;
+                    var (saveOriginX, saveOriginY) = PageOrigin(page);
 
                     // Annotation rectangles are in UNROTATED page space, which is not what
                     // FPDF_GetPageSizeByIndexF reports for a page carrying /Rotate 90 or 270.
@@ -1501,10 +1520,10 @@ public class PdfiumDocumentService : IPdfDocumentService
                         using var nativeAnnot = PdfiumNativeBridge.FPDFPage_CreateAnnot(page, subtype);
                         if (nativeAnnot == null || nativeAnnot.IsInvalid) continue;
 
-                        float left = (float)(annot.X * pageWidth);
-                        float bottom = (float)((1.0 - (annot.Y + annot.Height)) * pageHeight);
-                        float right = (float)((annot.X + annot.Width) * pageWidth);
-                        float top = (float)((1.0 - annot.Y) * pageHeight);
+                        float left = (float)(saveOriginX + annot.X * pageWidth);
+                        float bottom = (float)(saveOriginY + (1.0 - (annot.Y + annot.Height)) * pageHeight);
+                        float right = (float)(saveOriginX + (annot.X + annot.Width) * pageWidth);
+                        float top = (float)(saveOriginY + (1.0 - annot.Y) * pageHeight);
 
                         var rect = new FS_RECTF { left = left, bottom = bottom, right = right, top = top };
                         PdfiumNativeBridge.FPDFAnnot_SetRect(nativeAnnot, ref rect);
@@ -1524,8 +1543,8 @@ public class PdfiumDocumentService : IPdfDocumentService
                             var boxes = annot.Quads.Count > 0 ? annot.Quads : new List<Rect> { new(annot.X, annot.Y, annot.Width, annot.Height) };
                             foreach (var q in boxes)
                             {
-                                float ql = (float)(q.X * pageWidth), qr = (float)((q.X + q.Width) * pageWidth);
-                                float qt = (float)((1.0 - q.Y) * pageHeight), qb = (float)((1.0 - (q.Y + q.Height)) * pageHeight);
+                                float ql = (float)(saveOriginX + q.X * pageWidth), qr = (float)(saveOriginX + (q.X + q.Width) * pageWidth);
+                                float qt = (float)(saveOriginY + (1.0 - q.Y) * pageHeight), qb = (float)(saveOriginY + (1.0 - (q.Y + q.Height)) * pageHeight);
                                 var quad = new FS_QUADPOINTSF
                                 {
                                     x1 = ql, y1 = qt,
@@ -1571,7 +1590,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                                 if (stroke == null || stroke.Count < 2) continue;
 
                                 var pts = stroke
-                                    .Select(p => new FS_POINTF { x = (float)(p.X * pageWidth), y = (float)((1.0 - p.Y) * pageHeight) })
+                                    .Select(p => new FS_POINTF { x = (float)(saveOriginX + p.X * pageWidth), y = (float)(saveOriginY + (1.0 - p.Y) * pageHeight) })
                                     .ToArray();
                                 PdfiumNativeBridge.FPDFAnnot_AddInkStroke(nativeAnnot, pts, pts.Length);
                             }
@@ -1678,7 +1697,8 @@ public class PdfiumDocumentService : IPdfDocumentService
     public static void ExportAnnotationsToXfdf(
         string xfdfPath,
         IEnumerable<AnnotationModel> annotations,
-        IReadOnlyDictionary<int, (double Width, double Height)>? pageSizes = null)
+        IReadOnlyDictionary<int, (double Width, double Height)>? pageSizes = null,
+        IReadOnlyDictionary<int, (double X, double Y)>? pageOrigins = null)
     {
         string? outDir = Path.GetDirectoryName(xfdfPath);
         if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
@@ -1716,10 +1736,11 @@ public class PdfiumDocumentService : IPdfDocumentService
                 ph = ps.Height;
             }
 
-            double left = a.X * pw;
-            double right = (a.X + a.Width) * pw;
-            double bottom = (1.0 - a.Y - a.Height) * ph;
-            double top = (1.0 - a.Y) * ph;
+            var (ox, oy) = pageOrigins != null && pageOrigins.TryGetValue(a.PageNumber, out var po) ? po : (0.0, 0.0);
+            double left = ox + a.X * pw;
+            double right = ox + (a.X + a.Width) * pw;
+            double bottom = oy + (1.0 - a.Y - a.Height) * ph;
+            double top = oy + (1.0 - a.Y) * ph;
 
             string rect = string.Format(CultureInfo.InvariantCulture, "{0:F4},{1:F4},{2:F4},{3:F4}", left, bottom, right, top);
             string colorAttr = ToXfdfRgbHex(a.ColorHex);

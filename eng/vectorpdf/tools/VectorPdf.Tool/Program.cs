@@ -37,6 +37,7 @@ public static class Program
             "tiles" => await TileBench.RunAsync(args),
             "gen" when args.Length >= 2 => Gen(args),
             "diffpage" when args.Length >= 4 => await DiffPage.RunAsync(args),
+            "redact" => await RedactSmoke.RunAsync(args),
             _ => 2,
         };
     }

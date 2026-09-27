@@ -76,6 +76,11 @@ public partial class MainWindow : Window
         document.ConfirmFunc = ConfirmDialog;
         document.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
         document.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
+        document.ShowApplyRedactionsFunc = (marks, suggested) =>
+        {
+            var dialog = new ApplyRedactionsDialog(marks, suggested) { Owner = this };
+            return dialog.ShowDialog() == true ? dialog.Result : null;
+        };
         document.ShowSignDialogFunc = (placement, canCertify) =>
         {
             var dialog = new SignDocumentDialog(placement, document.Metadata?.FilePath ?? string.Empty, canCertify) { Owner = this };
@@ -449,6 +454,12 @@ public partial class MainWindow : Window
         {
             case Key.F11:
                 ToggleFullScreen();
+                e.Handled = true;
+                break;
+
+            case Key.Escape when _vm.IsMarkingRedaction:
+                _vm.IsMarkingRedaction = false;
+                _vm.StatusText = "Marking stopped.";
                 e.Handled = true;
                 break;
 
@@ -902,19 +913,20 @@ public partial class MainWindow : Window
         if (e.LeftButton != MouseButtonState.Pressed) return;
         if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
 
-        // Placing a signature: drag its box.
-        if (_vm.IsPlacingSignature)
+        // Placing a signature, or marking an area for redaction: drag a box.
+        if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
         {
             _annotStartPoint = e.GetPosition(canvas);
             _isPlacingSignatureBox = true;
             _isDrawingAnnotation = true; // the drag preview below follows the pointer
             canvas.CaptureMouse();
+            var tint = _vm.IsMarkingRedaction ? Color.FromRgb(0xD9, 0x30, 0x25) : Color.FromRgb(0x1A, 0x73, 0xE8);
             _previewShape = new System.Windows.Shapes.Rectangle
             {
-                Stroke = new SolidColorBrush(Color.FromRgb(0x1A, 0x73, 0xE8)),
+                Stroke = new SolidColorBrush(tint),
                 StrokeDashArray = new DoubleCollection { 4, 3 },
                 StrokeThickness = 1.5,
-                Fill = new SolidColorBrush(Color.FromArgb(0x22, 0x1A, 0x73, 0xE8)),
+                Fill = new SolidColorBrush(Color.FromArgb(0x22, tint.R, tint.G, tint.B)),
             };
             Canvas.SetLeft(_previewShape, _annotStartPoint.X);
             Canvas.SetTop(_previewShape, _annotStartPoint.Y);
@@ -1210,7 +1222,7 @@ public partial class MainWindow : Window
         }
 
         // 3. Placing a signature: crosshair. Hovering over text: I-beam cursor
-        if (_vm.IsPlacingSignature)
+        if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
         {
             canvas.Cursor = Cursors.Cross;
         }
@@ -1287,6 +1299,15 @@ public partial class MainWindow : Window
             double left = Math.Max(0, Math.Min(_annotStartPoint.X, end.X));
             double top = Math.Max(0, Math.Min(_annotStartPoint.Y, end.Y));
             double width = Math.Abs(end.X - _annotStartPoint.X), height = Math.Abs(end.Y - _annotStartPoint.Y);
+            if (_vm.IsMarkingRedaction)
+            {
+                e.Handled = true;
+                if (width >= 3 && height >= 3)
+                    _vm.AddRedactionMark(page.PageNumber, new Rect(left / page.UnrotatedDisplayWidth, top / page.UnrotatedDisplayHeight,
+                        Math.Min(1 - left / page.UnrotatedDisplayWidth, width / page.UnrotatedDisplayWidth),
+                        Math.Min(1 - top / page.UnrotatedDisplayHeight, height / page.UnrotatedDisplayHeight)));
+                return; // marking stays on for the next area
+            }
             if (width < 8 || height < 8)
             {
                 // A click, not a drag: a box of the usual signature size (180 x 50 pt) centred there.
