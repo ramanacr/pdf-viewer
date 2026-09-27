@@ -7,7 +7,8 @@ using System.Linq;
 namespace PdfEngine.Vector.Editing;
 
 /// <summary>An installed font face: where it is and what it is called.</summary>
-public sealed record SystemFontFace(string Path, int Index, string Family, string Subfamily, string PostScriptName, int Weight, bool Italic)
+/// <param name="LegacyFamily">The family as older software names it ("Arial Narrow" where the typographic family is "Arial").</param>
+public sealed record SystemFontFace(string Path, int Index, string Family, string Subfamily, string PostScriptName, int Weight, bool Italic, string? LegacyFamily = null)
 {
     public bool Bold => Weight >= 600;
 }
@@ -51,7 +52,7 @@ public sealed class SystemFontCatalog
                 int count = TrueTypeFontFile.FontCount(data);
                 for (int i = 0; i < count; i++)
                     if (TrueTypeFontFile.ReadNames(data, i) is { } n && n.Family.Length > 0)
-                        faces.Add(new SystemFontFace(path, i, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic));
+                        faces.Add(new SystemFontFace(path, i, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily));
             }
         }
         return new SystemFontCatalog(faces);
@@ -71,7 +72,9 @@ public sealed class SystemFontCatalog
     public SystemFontFace? FindFamily(string family, bool bold, bool italic)
     {
         string key = Squash(family);
-        var candidates = Faces.Where(f => Squash(f.Family) == key).ToList();
+        // The legacy family first: "Arial Narrow" is its own family there, but only a style of "Arial" typographically.
+        var candidates = Faces.Where(f => f.LegacyFamily != null && Squash(f.LegacyFamily) == key).ToList();
+        if (candidates.Count == 0) candidates = Faces.Where(f => Squash(f.Family) == key).ToList();
         if (candidates.Count == 0) return null;
         int weight = bold ? 700 : 400;
         return candidates.OrderBy(f => (f.Italic == italic ? 0 : 1000) + Math.Abs(f.Weight - weight)).First();
@@ -94,7 +97,9 @@ public sealed class SystemFontCatalog
             string style = name.Contains('-') ? name[(name.IndexOf('-') + 1)..] : name.Contains(',') ? name[(name.IndexOf(',') + 1)..] : string.Empty;
             string family = name.Split('-', ',')[0];
             bold |= style.Contains("Bold", StringComparison.OrdinalIgnoreCase) || style.Contains("Black", StringComparison.OrdinalIgnoreCase)
-                    || style.Contains("Semibold", StringComparison.OrdinalIgnoreCase) || style.Contains("Heavy", StringComparison.OrdinalIgnoreCase);
+                    || style.Contains("Semibold", StringComparison.OrdinalIgnoreCase) || style.Contains("Heavy", StringComparison.OrdinalIgnoreCase)
+                    || style.Contains("Demi", StringComparison.OrdinalIgnoreCase);
+            serif |= LooksSerif(name);
             italic |= style.Contains("Italic", StringComparison.OrdinalIgnoreCase) || style.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
             foreach (var candidate in FamilyCandidates(family))
                 if (FindFamily(candidate, bold, italic) is { } f) return f;
@@ -120,15 +125,25 @@ public sealed class SystemFontCatalog
         foreach (var suffix in new[] { "PSMT", "MT", "PS" })
             if (family.EndsWith(suffix, StringComparison.Ordinal) && family.Length > suffix.Length)
                 yield return family[..^suffix.Length];
-        // PostScript names drop the spaces a family has: "TimesNewRoman" is "Times New Roman".
-        yield return family switch
-        {
-            "Helvetica" or "HelveticaNeue" => "Arial",
-            "Times" or "TimesRoman" => "Times New Roman",
-            "Courier" => "Courier New",
-            _ => family,
-        };
+        // PostScript families Windows installs under other names (or their closest design).
+        foreach (var (prefix, alias) in Aliases)
+            if (family.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { yield return alias; break; }
     }
+
+    private static readonly (string Prefix, string Family)[] Aliases =
+    {
+        ("HelveticaNeue", "Arial"), ("Helvetica", "Arial"), ("TimesRoman", "Times New Roman"), ("TimesNewRoman", "Times New Roman"), ("Times", "Times New Roman"),
+        ("CourierNew", "Courier New"), ("Courier", "Courier New"), ("Palatino", "Palatino Linotype"), ("BookAntiqua", "Book Antiqua"),
+        ("AvantGarde", "Century Gothic"), ("ITCAvantGarde", "Century Gothic"), ("Futura", "Century Gothic"), ("Bookman", "Bookman Old Style"),
+        ("NewCenturySchlbk", "Century Schoolbook"), ("CenturySchoolbook", "Century Schoolbook"), ("ZapfChancery", "Monotype Corsiva"),
+        ("GillSans", "Gill Sans MT"), ("Garamond", "Garamond"), ("Frutiger", "Arial"), ("Univers", "Arial"), ("Optima", "Candara"),
+        ("Myriad", "Segoe UI"), ("Minion", "Cambria"), ("Tahoma", "Tahoma"), ("Verdana", "Verdana"), ("Georgia", "Georgia"),
+    };
+
+    /// <summary>Serif by its name when there is no font descriptor to say so.</summary>
+    private static bool LooksSerif(string name) =>
+        new[] { "Serif", "Times", "Roman", "Garamond", "Palatino", "Bookman", "Century", "Georgia", "Minion", "Caslon", "Baskerville", "Cambria", "Antiqua" }
+            .Any(t => name.Contains(t, StringComparison.OrdinalIgnoreCase)) && !name.Contains("Sans", StringComparison.OrdinalIgnoreCase);
 
     internal static string StripSubset(string name) =>
         name.Length > 7 && name[6] == '+' && name.Take(6).All(char.IsAsciiLetterUpper) ? name[7..] : name;

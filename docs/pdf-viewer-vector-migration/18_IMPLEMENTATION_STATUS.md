@@ -156,6 +156,43 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - Delete removes the selection, Add Text and Add Image place new content, and Ctrl+Z / Ctrl+Y undo and redo;
   - edits are in-memory revisions saved incrementally, and editing a signed document is confirmed first.
 
+### PDF/A
+- **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
+  - file syntax, including the raw header, trailers, cross-reference sections, streams, strings and names;
+  - implementation limits;
+  - output intents and ICC profiles, and device colour;
+  - graphics state, images (with JPEG 2000 boxes), XObjects and transparency;
+  - fonts: embedding, subsets, metrics, encodings, .notdef and Unicode;
+  - annotations, forms, actions, optional content, embedded and associated files, and permissions;
+  - XMP metadata against the XMP 2004 and 2005 schema tables and the PDF/A extension schema containers.
+- Only resources a content stream actually uses are checked (ISO 19005-1 Cor.2). Issues are numbered by clause and test as veraPDF numbers them.
+- **Scoring** with `vectorpdf pdfa` against the labelled veraPDF, Isartor and TWG files in the corpus:
+
+  | Flavour | Valid files accepted | Invalid files rejected |
+  |---|---|---|
+  | PDF/A-1b | 279/279 | 521/527 |
+  | PDF/A-2b | 399/399 | 605/627 |
+  | PDF/A-2u | 11/12 | 9/10 |
+  | PDF/A-3b | 7/7 | 5/5 |
+
+- **Converter** (`PdfA/PdfAConverter`) to PDF/A-2b or -3b: a full, unencrypted rewrite.
+  - Missing widget appearances are generated from the field values, and missing annotation appearances are generated as Acrobat draws them (`Annotations/PdfAnnotationAppearances`).
+  - Fonts that are not embedded are embedded from the installed fonts. A matching family is preferred, with PostScript aliases such as Palatino to Palatino Linotype and AvantGarde to Century Gothic.
+  - The document's widths are written into each embedded program's metrics. Layout never moves, and inconsistent widths in fonts that were already embedded are repaired the same way.
+  - An output intent is added: a generated sRGB v2 profile, or the Windows CMYK profile for CMYK documents so their CMYK stays device colour. Default colour spaces and ICC alternates are added where needed.
+  - XMP is rebuilt from the valid existing properties plus the document information.
+  - Scripts, forbidden actions and annotations, transfer functions, OPI, PostScript and external stream data are removed, along with filters PDF/A does not allow.
+  - Optional content is named and ordered.
+  - PDF/A-3 keeps embedded files as associated files; PDF/A-2 removes them.
+  - The result is validated, and anything that could not be fixed is reported.
+- `vectorpdf pdfa-convert` over the 284 GovDocs files:
+  - 248 convert to fully valid PDF/A-2b, with no errors.
+  - The rest are left with issues the converter cannot fix without changing the page: text showing codes whose glyph the font lacks, ZapfDingbats with no installed equivalent, and conflicting widths on a shared glyph.
+  - Compared through PDFium, 7 converted pages differ from the original. All use fonts the original did not embed, where each reader picks its own stand-in.
+- **Viewer:**
+  - Tools > PDF/A checks against a chosen part and level, listing each rule broken, and saves a converted copy with the changes made and anything left over; the copy can be opened.
+  - The status bar shows the PDF/A claim of an opened document.
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
