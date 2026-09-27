@@ -112,10 +112,10 @@ internal static class OpenTypeLayout
 }
 
 /// <summary>
-/// Glyph substitution (GSUB) for shaping new text: single, multiple and ligature substitutions
-/// (also through extension lookups), for the features a script's default language system turns on.
-/// Positional forms (isol, init, medi, fina) apply only to the glyphs whose joining form they are.
-/// Contextual lookups are not applied.
+/// Glyph substitution (GSUB) for shaping new text: single, multiple and ligature substitutions, and
+/// contextual and chained contextual ones that apply them where a sequence matches (all three
+/// formats), also through extension lookups, for the features a script's default language system
+/// turns on. Positional forms (isol, init, medi, fina) apply only to the glyphs whose joining form they are.
 /// </summary>
 internal sealed class OpenTypeSubstitution
 {
@@ -138,25 +138,15 @@ internal sealed class OpenTypeSubstitution
         try
         {
             var t = _gsub;
-            int lookupList = BigEndian.U16(t, 8), lookupCount = BigEndian.U16(t, lookupList);
             foreach (var (index, feature) in OpenTypeLayout.Lookups(t, script, features))
             {
-                if (index >= lookupCount) continue;
-                int lookup = lookupList + BigEndian.U16(t, lookupList + 2 + index * 2);
-                int type = BigEndian.U16(t, lookup), flag = BigEndian.U16(t, lookup + 2), subtables = BigEndian.U16(t, lookup + 4);
-                var subs = new List<(int Type, int Offset)>();
-                for (int s = 0; s < subtables; s++)
-                {
-                    int sub = lookup + BigEndian.U16(t, lookup + 6 + s * 2);
-                    if (type == 7) subs.Add((BigEndian.U16(t, sub + 2), sub + (int)Math.Min(BigEndian.U32(t, sub + 4), int.MaxValue)));
-                    else subs.Add((type, sub));
-                }
+                if (Lookup(index) is not { } lookup) continue;
                 bool positional = Positional.Contains(feature);
                 for (int i = 0; i < glyphs.Count; i++)
                 {
-                    if (Ignored(glyphs[i].Gid, flag) || (positional && glyphs[i].Form != feature)) continue;
-                    foreach (var (subType, sub) in subs)
-                        if (ApplyAt(glyphs, i, subType, sub, flag)) break;
+                    if (Ignored(glyphs[i].Gid, lookup.Flag) || (positional && glyphs[i].Form != feature)) continue;
+                    foreach (var (subType, sub) in lookup.Subtables)
+                        if (ApplyAt(glyphs, i, subType, sub, lookup.Flag, 0)) break;
                 }
             }
         }
@@ -166,10 +156,29 @@ internal sealed class OpenTypeSubstitution
         }
     }
 
-    private bool ApplyAt(List<ShapingGlyph> glyphs, int i, int type, int sub, int flag)
+    /// <summary>A lookup's flag and its subtables (extension subtables resolved), or null when there is no such lookup.</summary>
+    private (int Flag, List<(int Type, int Offset)> Subtables)? Lookup(int index)
+    {
+        var t = _gsub;
+        int lookupList = BigEndian.U16(t, 8), lookupCount = BigEndian.U16(t, lookupList);
+        if (index < 0 || index >= lookupCount) return null;
+        int lookup = lookupList + BigEndian.U16(t, lookupList + 2 + index * 2);
+        int type = BigEndian.U16(t, lookup), flag = BigEndian.U16(t, lookup + 2), subtables = BigEndian.U16(t, lookup + 4);
+        var subs = new List<(int Type, int Offset)>();
+        for (int s = 0; s < subtables; s++)
+        {
+            int sub = lookup + BigEndian.U16(t, lookup + 6 + s * 2);
+            if (type == 7) subs.Add((BigEndian.U16(t, sub + 2), sub + (int)Math.Min(BigEndian.U32(t, sub + 4), int.MaxValue)));
+            else subs.Add((type, sub));
+        }
+        return (flag, subs);
+    }
+
+    private bool ApplyAt(List<ShapingGlyph> glyphs, int i, int type, int sub, int flag, int depth)
     {
         var t = _gsub;
         int format = BigEndian.U16(t, sub);
+        if (type is 5 or 6) return depth < 4 && Contextual(glyphs, i, type, format, sub, flag, depth);
         int coverage = OpenTypeLayout.Coverage(t, sub + BigEndian.U16(t, sub + 2), glyphs[i].Gid);
         if (coverage < 0) return false;
         switch (type)
@@ -229,6 +238,165 @@ internal sealed class OpenTypeSubstitution
             }
         }
         return false;
+    }
+
+    // ------------------------------------------------------------------ contextual (5) and chained contextual (6)
+
+    /// <summary>
+    /// Matches a rule at glyph <paramref name="i"/> (the input sequence from there, and for chained
+    /// rules the glyphs before and after it) and applies its lookups at their input positions.
+    /// </summary>
+    private bool Contextual(List<ShapingGlyph> glyphs, int i, int type, int format, int sub, int flag, int depth)
+    {
+        var t = _gsub;
+        // Glyphs the lookup sees: those its flag does not skip.
+        int Next(int from, int step)
+        {
+            int k = from + step;
+            while (k >= 0 && k < glyphs.Count && Ignored(glyphs[k].Gid, flag)) k += step;
+            return k;
+        }
+        // The positions of a sequence that matches, or null.
+        List<int>? Input(int count, Func<int, int, bool> matches)
+        {
+            var positions = new List<int> { i };
+            int k = i;
+            for (int n = 1; n < count; n++)
+            {
+                k = Next(k, 1);
+                if (k >= glyphs.Count || !matches(n, glyphs[k].Gid)) return null;
+                positions.Add(k);
+            }
+            return positions;
+        }
+        bool Before(int count, Func<int, int, bool> matches)
+        {
+            int k = i;
+            for (int n = 0; n < count; n++)
+            {
+                k = Next(k, -1);
+                if (k < 0 || !matches(n, glyphs[k].Gid)) return false;
+            }
+            return true;
+        }
+        bool After(int last, int count, Func<int, int, bool> matches)
+        {
+            int k = last;
+            for (int n = 0; n < count; n++)
+            {
+                k = Next(k, 1);
+                if (k >= glyphs.Count || !matches(n, glyphs[k].Gid)) return false;
+            }
+            return true;
+        }
+
+        if (format == 3)
+        {
+            if (type == 5)
+            {
+                int count = BigEndian.U16(t, sub + 2), records = BigEndian.U16(t, sub + 4);
+                bool Covered(int n, int gid) => OpenTypeLayout.Coverage(t, sub + BigEndian.U16(t, sub + 6 + n * 2), gid) >= 0;
+                if (count == 0 || !Covered(0, glyphs[i].Gid) || Input(count, Covered) is not { } input) return false;
+                return ApplyRecords(glyphs, input, sub + 6 + count * 2, records, depth);
+            }
+            int at = sub + 2;
+            int backCount = BigEndian.U16(t, at);
+            int backs = at + 2;
+            at = backs + backCount * 2;
+            int inputCount = BigEndian.U16(t, at);
+            int inputs = at + 2;
+            at = inputs + inputCount * 2;
+            int aheadCount = BigEndian.U16(t, at);
+            int aheads = at + 2;
+            at = aheads + aheadCount * 2;
+            int recordCount = BigEndian.U16(t, at);
+            bool InputCovered(int n, int gid) => OpenTypeLayout.Coverage(t, sub + BigEndian.U16(t, inputs + n * 2), gid) >= 0;
+            if (inputCount == 0 || !InputCovered(0, glyphs[i].Gid)) return false;
+            if (!Before(backCount, (n, gid) => OpenTypeLayout.Coverage(t, sub + BigEndian.U16(t, backs + n * 2), gid) >= 0)) return false;
+            if (Input(inputCount, InputCovered) is not { } matched) return false;
+            if (!After(matched[^1], aheadCount, (n, gid) => OpenTypeLayout.Coverage(t, sub + BigEndian.U16(t, aheads + n * 2), gid) >= 0)) return false;
+            return ApplyRecords(glyphs, matched, at + 2, recordCount, depth);
+        }
+
+        int coverage = OpenTypeLayout.Coverage(t, sub + BigEndian.U16(t, sub + 2), glyphs[i].Gid);
+        if (coverage < 0 || format is not (1 or 2)) return false;
+        int backClasses = 0, inputClasses, aheadClasses = 0, setCount, sets;
+        if (type == 5)
+        {
+            inputClasses = format == 2 ? sub + BigEndian.U16(t, sub + 4) : 0;
+            setCount = BigEndian.U16(t, sub + (format == 2 ? 6 : 4));
+            sets = sub + (format == 2 ? 8 : 6);
+        }
+        else if (format == 2)
+        {
+            backClasses = sub + BigEndian.U16(t, sub + 4);
+            inputClasses = sub + BigEndian.U16(t, sub + 6);
+            aheadClasses = sub + BigEndian.U16(t, sub + 8);
+            setCount = BigEndian.U16(t, sub + 10);
+            sets = sub + 12;
+        }
+        else
+        {
+            inputClasses = 0;
+            setCount = BigEndian.U16(t, sub + 4);
+            sets = sub + 6;
+        }
+        // Rules are grouped by the first glyph: its coverage index, or (format 2) its class.
+        int setIndex = format == 2 ? OpenTypeLayout.ClassOf(t, inputClasses, glyphs[i].Gid) : coverage;
+        if (setIndex >= setCount) return false;
+        int setOffset = BigEndian.U16(t, sets + setIndex * 2);
+        if (setOffset == 0) return false;
+        int set = sub + setOffset;
+        int rules = BigEndian.U16(t, set);
+        for (int r = 0; r < rules; r++)
+        {
+            int rule = set + BigEndian.U16(t, set + 2 + r * 2);
+            bool Is(int classDef, int value, int gid) => format == 2 ? OpenTypeLayout.ClassOf(t, classDef, gid) == value : gid == value;
+            if (type == 5)
+            {
+                int count = BigEndian.U16(t, rule), records = BigEndian.U16(t, rule + 2);
+                if (Input(count, (n, gid) => Is(inputClasses, BigEndian.U16(t, rule + 4 + (n - 1) * 2), gid)) is not { } input) continue;
+                return ApplyRecords(glyphs, input, rule + 4 + (count - 1) * 2, records, depth);
+            }
+            int at = rule;
+            int backCount = BigEndian.U16(t, at);
+            int backs = at + 2;
+            at = backs + backCount * 2;
+            int inputCount = BigEndian.U16(t, at);
+            int inputs = at + 2;
+            at = inputs + Math.Max(inputCount - 1, 0) * 2;
+            int aheadCount = BigEndian.U16(t, at);
+            int aheads = at + 2;
+            at = aheads + aheadCount * 2;
+            int recordCount = BigEndian.U16(t, at);
+            if (inputCount == 0) continue;
+            if (!Before(backCount, (n, gid) => Is(backClasses, BigEndian.U16(t, backs + n * 2), gid))) continue;
+            if (Input(inputCount, (n, gid) => Is(inputClasses, BigEndian.U16(t, inputs + (n - 1) * 2), gid)) is not { } matched) continue;
+            if (!After(matched[^1], aheadCount, (n, gid) => Is(aheadClasses, BigEndian.U16(t, aheads + n * 2), gid))) continue;
+            return ApplyRecords(glyphs, matched, at + 2, recordCount, depth);
+        }
+        return false;
+    }
+
+    // Each record applies a lookup at one input position (later positions shift when a lookup
+    // splits or joins glyphs).
+    private bool ApplyRecords(List<ShapingGlyph> glyphs, List<int> input, int records, int count, int depth)
+    {
+        var t = _gsub;
+        for (int r = 0; r < count; r++)
+        {
+            int sequenceIndex = BigEndian.U16(t, records + r * 4), lookupIndex = BigEndian.U16(t, records + r * 4 + 2);
+            if (sequenceIndex >= input.Count || Lookup(lookupIndex) is not { } lookup) continue;
+            int at = input[sequenceIndex];
+            if (at >= glyphs.Count) continue;
+            int before = glyphs.Count;
+            foreach (var (subType, sub) in lookup.Subtables)
+                if (ApplyAt(glyphs, at, subType, sub, lookup.Flag, depth + 1)) break;
+            int change = glyphs.Count - before;
+            if (change != 0)
+                for (int k = sequenceIndex + 1; k < input.Count; k++) input[k] += change;
+        }
+        return true;
     }
 
     // Lookup flags: 0x2 ignores base glyphs, 0x4 ligatures, 0x8 marks (GDEF classes 1, 2, 3).

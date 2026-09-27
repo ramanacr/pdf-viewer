@@ -158,10 +158,11 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Vertical writing (Identity-V and other vertical CMaps): columns are paragraphs, read top to bottom and right to left, and edited down the column with the font's vertical advances. Characters the font lacks come from an installed font, set upright in the column, in their vertical forms (GSUB vert/vrt2) where the font has them. A column that grows continues in the next column to the left.
 - New characters in a composite font's own glyphs: a one-byte code is no longer taken for a CMap that reads two, which had sent every new character in such fonts to an installed font.
 - Right-to-left and cursive scripts:
-  - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, including extension lookups, for ccmp, isol/init/medi/fina, rlig and liga);
+  - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, and contextual and chained contextual lookups in all three formats, including extension lookups, for ccmp, isol/init/medi/fina, rlig, calt and liga);
+  - marks are placed on their letters' anchors and do not advance (GPOS mark-to-base, mark-to-ligature and mark-to-mark), so vowel marks sit over and under the letters they belong to;
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
   - a cursive word that changed is shaped again as a whole in an installed font, because the document's glyphs for its letters are in the forms their old neighbours needed;
-  - not yet: contextual lookups (GSUB 5 and 6), mark positioning (GPOS mark attachment), and Indic reordering.
+  - not yet: Indic reordering, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -314,7 +315,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** contextual substitutions, mark positioning and Indic reordering in new text; sideways Latin text in vertical columns.
+10. **Editing remainder:** Indic reordering and GPOS cursive attachment in new text; sideways Latin text in vertical columns.
 
 ---
 

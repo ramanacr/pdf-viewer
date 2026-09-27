@@ -37,7 +37,7 @@ internal sealed class BlockLayout
         public int End; // index in the new text after this item
         public int OldLine = -1, OldIndex = -1; // an old glyph drawn again: where it was
         /// <summary>A shaped word (right-to-left or cursive): its glyphs in drawing order, each at its offset along the baseline.</summary>
-        public List<(OutGlyph Glyph, double Offset)>? Cluster;
+        public List<(OutGlyph Glyph, double Offset, double Rise)>? Cluster;
         public int Level; // bidirectional embedding level (odd: right to left)
         public PdfPoint Offset; // where the glyph's origin is from the pen, in text space (an upright glyph in a column)
     }
@@ -153,16 +153,16 @@ internal sealed class BlockLayout
                     var tm = item.Template.Matrix;
                     int after = li < n ? _b.Lines[li].Glyphs.Max(g => g.Op) : -1;
                     var shift = new PdfPoint(item.Offset.X * tm.A + item.Offset.Y * tm.C, item.Offset.X * tm.B + item.Offset.Y * tm.D);
-                    void Place(OutGlyph glyph, double at)
+                    void Place(OutGlyph glyph, double at, double rise = 0)
                     {
-                        var o = new PdfPoint(_b.Origin.X + at * _b.U.X + t * _b.V.X + shift.X, _b.Origin.Y + at * _b.U.Y + t * _b.V.Y + shift.Y);
+                        var o = new PdfPoint(_b.Origin.X + at * _b.U.X + (t + rise) * _b.V.X + shift.X, _b.Origin.Y + at * _b.U.Y + (t + rise) * _b.V.Y + shift.Y);
                         glyph.Matrix = new PdfMatrix(tm.A, tm.B, tm.C, tm.D, o.X, o.Y);
                         glyph.Line = li;
                         glyph.After = after;
                         output.Add(glyph);
                     }
                     if (item.Glyph != null) Place(item.Glyph, x0);
-                    if (item.Cluster != null) foreach (var (glyph, offset) in item.Cluster) Place(glyph, x0 + offset);
+                    if (item.Cluster != null) foreach (var (glyph, offset, rise) in item.Cluster) Place(glyph, x0 + offset, rise);
                     x0 += item.Width;
                 }
                 li++;
@@ -359,13 +359,15 @@ internal sealed class BlockLayout
         if (builder == null) return null;
         double userScale = Math.Sqrt(template.Matrix.A * template.Matrix.A + template.Matrix.B * template.Matrix.B);
         var shapedStyle = style with { FontResource = builder.ResourceName, Font = null, WordSpacing = 0 };
-        var cluster = new List<(OutGlyph, double)>();
-        double x = 0;
+        var cluster = new List<(OutGlyph, double, double)>();
+        double x = 0, rise = Math.Sqrt(template.Matrix.C * template.Matrix.C + template.Matrix.D * template.Matrix.D);
         foreach (var (g, _) in TextShaper.ShapeLine(word, _ => builder, b => b.Font))
         {
             if (g.Gid <= 0) continue;
-            double advance = (builder.Font.Advance(g.Gid) / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
-            cluster.Add((new OutGlyph { Code = builder.Encode(g.Gid, g.Text), Style = shapedStyle, Advance = advance, Text = g.Text }, x));
+            bool mark = g.Advance == 0;
+            double advance = ((g.Advance ?? builder.Font.Advance(g.Gid)) / 1000.0 * style.FontSize + (mark ? 0 : style.CharSpacing)) * style.Scaling / 100.0;
+            double dx = g.Dx / 1000.0 * style.FontSize * style.Scaling / 100.0 * userScale, dy = g.Dy / 1000.0 * style.FontSize * rise;
+            cluster.Add((new OutGlyph { Code = builder.Encode(g.Gid, g.Text), Style = shapedStyle, Advance = advance, Text = g.Text }, x + dx, dy));
             x += advance * userScale;
         }
         if (cluster.Count == 0) return null;
