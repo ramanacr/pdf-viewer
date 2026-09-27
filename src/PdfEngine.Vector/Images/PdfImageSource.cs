@@ -74,6 +74,7 @@ public sealed class PdfImageSource : IPdfImageSource
         ct.ThrowIfCancellationRequested();
 
         byte[]? alpha = BuildAlpha(dict, width, height, ct);
+        var jpegMask = JpegSoftMask(dict);
 
         if (decoded.ImageFilter == "DCTDecode")
         {
@@ -94,10 +95,10 @@ public sealed class PdfImageSource : IPdfImageSource
                 : null;
             // Adobe CMYK JPEGs store inverted components; a /Decode [1 0 …] flips them back.
             return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, FromStartOfImage(decoded.Data), alpha,
-                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map);
+                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map) { JpegMask = jpegMask };
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
-            return DecodeJpx(dict, decoded.Data, alpha, ct);
+            return DecodeJpx(dict, decoded.Data, alpha, ct) with { JpegMask = jpegMask };
         byte[] samples = DecodeSamples(decoded, width, height, ct);
 
         byte[] bgra = isMask
@@ -110,7 +111,18 @@ public sealed class PdfImageSource : IPdfImageSource
                 bgra[p] = (byte)(bgra[p] * alpha[i] / 255);
         }
 
-        return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra);
+        return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Bgra32, bgra) { JpegMask = jpegMask };
+    }
+
+    /// <summary>A soft mask compressed as JPEG, which the backend decodes (the core has no JPEG codec); null otherwise.</summary>
+    private PdfJpegMask? JpegSoftMask(PdfDictionary dict)
+    {
+        if (_resolver.Resolve(dict["SMask"]) is not PdfStream smask) return null;
+        var md = smask.Dictionary;
+        int mw = checked((int)(md.GetInteger("Width") ?? 0)), mh = checked((int)(md.GetInteger("Height") ?? 0));
+        if (mw <= 0 || mh <= 0 || (long)mw * mh > _limits.MaxImagePixels) return null;
+        var decoded = _decoder.DecodeImageStream(smask);
+        return decoded.ImageFilter == "DCTDecode" ? new PdfJpegMask(FromStartOfImage(decoded.Data), mw, mh, IsInvertedDecode(md, 1)) : null;
     }
 
     /// <summary>
@@ -497,7 +509,8 @@ public sealed class PdfImageSource : IPdfImageSource
     private byte[]? BuildAlpha(PdfDictionary dict, int width, int height, CancellationToken ct)
     {
         if (_resolver.Resolve(dict["SMask"]) is PdfStream smask)
-            return DecodeMaskPlane(smask, width, height, soft: true, ct);
+            return _decoder.DecodeImageStream(smask).ImageFilter == "DCTDecode" ? null // the backend applies it (JpegSoftMask)
+                : DecodeMaskPlane(smask, width, height, soft: true, ct);
         if (_resolver.Resolve(dict["Mask"]) is PdfStream stencil)
             return DecodeMaskPlane(stencil, width, height, soft: false, ct);
         return null;

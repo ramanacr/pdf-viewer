@@ -1313,8 +1313,15 @@ internal sealed class Replayer : IDisposable
             string? text = g.Unicode;
             if (string.IsNullOrEmpty(text) || text == " " || text == " ")
                 continue;
-            uint cp = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)char.ConvertToUtf32(text, 0);
+            int unicode = char.ConvertToUtf32(text, 0);
+            uint cp = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)unicode;
             ushort index = face.GetGlyphIndices(new[] { cp })[0];
+            // A re-encoded Symbol font shows its characters by codes of its own: find them by what they are.
+            if (index == 0 && symbolCodes && Fonts.SymbolFontCodes.CodeFor(unicode) is int symbolCode)
+                index = face.GetGlyphIndices(new[] { (uint)(0xF000 + symbolCode) })[0];
+            // Adobe's private-use forms (the serif registered sign, pieces of tall brackets) by their standard character.
+            if (index == 0 && !symbolCodes && Fonts.SymbolFontCodes.StandardFor(unicode) is int standard)
+                index = face.GetGlyphIndices(new[] { (uint)standard })[0];
             if (index == 0)
             {
                 if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0))
@@ -1479,6 +1486,12 @@ internal sealed class Replayer : IDisposable
             pixels = decoded.Format == PdfDecodedImageFormat.Bgra32 ? decoded.Data.ToArray() : DecodeJpeg(decoded, out width, out height);
             if (decoded.Format == PdfDecodedImageFormat.Jpeg && decoded.Alpha is ReadOnlyMemory<byte> alpha)
                 ApplyAlpha(pixels, width, height, alpha.Span, decoded.Width, decoded.Height);
+            if (decoded.JpegMask is { } mask)
+            {
+                var maskPixels = WicJpeg.Decode(_res.Wic, new PdfDecodedImage(mask.Width, mask.Height, PdfDecodedImageFormat.Jpeg, mask.Data), out int mw, out int mh);
+                var plane = (mask with { Width = mw, Height = mh }).ToAlpha(maskPixels, 4, mw * 4);
+                ApplyAlpha(pixels, width, height, plane, mw, mh);
+            }
             _decoded[image.Source.CacheKey] = (pixels, width, height);
             return true;
         }
