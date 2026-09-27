@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "metric": "ms from process creation to page 1 rendered (firstPageRendered)",
+  "recordedUtc": "2026-09-27T13:56:12.8257021Z",
+  "environment": "developer workstation",
+  "engine": "Auto",
+  "machine": {
+    "os": "Microsoft Windows 10.0.26200",
+    "processor": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "logicalProcessors": 8,
+    "runtime": ".NET 9.0.20"
+  },
+  "document": "startup-probe.pdf",
+  "documentSha256": "B49601EFC5C4A7297B6CE9D11FA4F561B653DB407A5E8A72F19D0E5F20C53B6C",
+  "warm": {
+    "runs": 15,
+    "discarded": 2,
+    "median": 4587.2,
+    "p95": 6042.3,
+    "min": 3621.9,
+    "max": 6042.3,
+    "mean": 4654.6,
+    "samples": [
+      6042.3,
+      4550,
+      5147.8,
+      4075.1,
+      3621.9,
+      4587.2,
+      4563.5,
+      4382.9,
+      4872.5,
+      4565,
+      4931,
+      4658.1,
+      4591,
+      4576.2,
+      4654.2
+    ],
+    "milestoneMedians": {
+      "appStartup": 1279.1,
+      "documentOpenStart": 3619.3,
+      "firstPageRendered": 4587.2,
+      "firstPageSurface": 4546.7,
+      "windowLoaded": 3590.3,
+      "windowShown": 3652.7
+    }
+  },
+  "cold": {
+    "runs": 3,
+    "discarded": 0,
+    "median": 6732.9,
+    "p95": 11486,
+    "min": 6034.5,
+    "max": 11486,
+    "mean": 8084.5,
+    "samples": [
+      6034.5,
+      6732.9,
+      11486
+    ],
+    "milestoneMedians": {
+      "appStartup": 3439.9,
+      "documentOpenStart": 5686.5,
+      "firstPageRendered": 6732.9,
+      "firstPageSurface": 6706.4,
+      "windowLoaded": 5656.5,
+      "windowShown": 7670.1
+    }
+  },
+  "tolerance": {
+    "relative": 0.35,
+    "absoluteMs": 250,
+    "crossEnvironmentRelative": 1,
+    "crossEnvironmentAbsoluteMs": 500,
+    "rationale": "Same environment: medians of ten launches move with background load; \u002B35 % \u002B 250 ms is past that noise and still catches a phase that doubles. Different environment (CI against a workstation baseline): hardware differs, so only a gross regression (\u002B100 % \u002B 500 ms) is evidence. Only the warm median is gated; cold starts cannot be made truly cold without administrator rights."
+  }
+}

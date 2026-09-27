@@ -67,8 +67,31 @@ jobs:
       run: ./scripts/generate_sbom.ps1
 
     - name: Verify Release Packaging Script
+      id: publish
       shell: pwsh
       run: ./scripts/build_publish.ps1 -DryRun
+
+    # Release gates on the payload the step above staged in publish/app (eng/releasegate/README.md).
+    # Both run whenever the publish succeeded, so one failing does not hide the other's numbers.
+    - name: Installer Payload Size Gate
+      if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+      shell: pwsh
+      run: dotnet run --project eng/releasegate/ReleaseGate.Tool/ReleaseGate.Tool.csproj --configuration Release --no-build -- payload --dir publish/app --baseline eng/releasegate/baseline-payload.json --check --out payload-size.json
+
+    - name: Cold-Start Gate
+      if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+      shell: pwsh
+      run: dotnet run --project eng/releasegate/ReleaseGate.Tool/ReleaseGate.Tool.csproj --configuration Release --no-build -- startup --app publish/app --environment "github windows-latest" --baseline eng/releasegate/baseline-startup.json --check --out startup-timings.json
+
+    - name: Upload Release Gate Measurements
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-gates
+        path: |
+          payload-size.json
+          startup-timings.json
+        if-no-files-found: ignore
 
   # Nightly (and on demand): the rights-cleared corpus (eng/vectorpdf/corpus) against the committed
   # baseline. Files are fetched at pinned commits and hash-verified; nothing is committed and no

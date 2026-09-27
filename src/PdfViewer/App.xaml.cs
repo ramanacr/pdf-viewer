@@ -10,12 +10,33 @@ public partial class App : Application
 {
     public static string? StartupPdfPath { get; private set; }
 
+    /// <summary>Set only for a <c>--startup-probe</c> launch (the cold-start release gate).</summary>
+    internal static StartupProbe? Probe { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        // First, so the milestone measures what the runtime and host cost before any of ours.
+        Probe = StartupProbe.TryCreate(e.Args);
+        Probe?.Mark("appStartup");
+
         base.OnStartup(e);
+
+        if (Probe != null)
+        {
+            // A measurement must not add to the user's recent files or read their answers.
+            RecentFilesService.SetSettingsDirectoryForTests(Probe.SettingsDirectory);
+            PrivacySettings.SetSettingsDirectoryForTests(Probe.SettingsDirectory);
+            SigningSettings.SetDirectoryForTests(Probe.SettingsDirectory);
+        }
 
         // Initialize PDFium engine
         PdfiumNativeBridge.EnsureInitialized();
+
+        if (Probe != null)
+        {
+            StartupPdfPath = Probe.DocumentPath;
+            return;
+        }
 
         // Process command line args for opening files directly or CLI shell actions
         if (e.Args.Length > 0)

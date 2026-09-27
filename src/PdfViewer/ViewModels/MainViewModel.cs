@@ -581,6 +581,7 @@ public partial class MainViewModel : ObservableObject
             await LoadFormAsync();
             IsSignatureBannerDismissed = false;
             _ = ValidateSignaturesAsync();
+            _ = DetectPdfAAsync();
 
             // Inspect what the document carries. Done after the first render so opening
             // stays responsive, and reported rather than acted upon.
