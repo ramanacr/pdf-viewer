@@ -65,8 +65,9 @@ Largest inside PdfViewer.exe (22 bundled files):
      ...
 ```
 
-(That last listing shows a real finding at the time of writing: `pdfium.dll` is bundled twice,
-because `src/PdfViewer/PdfViewer.csproj` publishes it to two target paths.)
+(That last listing shows a real finding this gate made: `pdfium.dll` was bundled twice, because
+the project files published it to two target paths. It is now deployed once, beside the
+application, which took 6.93 MiB off the payload and about 3.5 MiB off the installer.)
 
 A shrink of more than the tolerance is reported as a note asking for a refresh, so the gate
 holds the gain.

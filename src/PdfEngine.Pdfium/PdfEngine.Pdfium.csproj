@@ -23,11 +23,13 @@
     <InternalsVisibleTo Include="PdfViewer.Tests" />
   </ItemGroup>
 
+  <!--
+    pdfium.dll is deployed once, beside the assembly: that is the first path the DllImport
+    resolver in Native/PdfiumNativeBridge.cs tries, and the directory the default native probe
+    searches (in a single-file publish, the bundle's extraction directory). A second copy under
+    runtimes\win-x64\native\ was bundled into PdfViewer.exe as well, doubling its 7 MB.
+  -->
   <ItemGroup>
-    <None Include="..\PdfViewer\runtimes\win-x64\native\pdfium.dll" Link="runtimes\win-x64\native\pdfium.dll" Condition="Exists('..\PdfViewer\runtimes\win-x64\native\pdfium.dll')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>runtimes\win-x64\native\pdfium.dll</TargetPath>
-    </None>
     <None Include="..\PdfViewer\runtimes\win-x64\native\pdfium.dll" Link="pdfium.dll" Condition="Exists('..\PdfViewer\runtimes\win-x64\native\pdfium.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>pdfium.dll</TargetPath>
