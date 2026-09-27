@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
@@ -68,9 +69,32 @@ public static class PdfCmsSigner
                 using (w.PushSequence())         //         GeneralNames
                 using (w.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 4, isConstructed: true))) // directoryName [4]
                     w.WriteEncodedValue(certificate.IssuerName.RawData);
-                w.WriteInteger(certificate.SerialNumberBytes.Span);
+                WriteSerial(w, certificate.SerialNumberBytes.Span);
             }
         }
         return w.Encode();
+    }
+
+    /// <summary>
+    /// The serial number INTEGER with the certificate's own content bytes. AsnWriter.WriteInteger
+    /// rejects non-minimal encodings, which some CAs issue; the ESS reference must match the
+    /// certificate byte for byte either way.
+    /// </summary>
+    private static void WriteSerial(AsnWriter w, ReadOnlySpan<byte> serial)
+    {
+        try
+        {
+            w.WriteInteger(serial);
+        }
+        catch (ArgumentException)
+        {
+            var raw = new List<byte> { 0x02 };
+            int n = serial.Length;
+            if (n < 0x80) raw.Add((byte)n);
+            else if (n <= 0xFF) { raw.Add(0x81); raw.Add((byte)n); }
+            else { raw.Add(0x82); raw.Add((byte)(n >> 8)); raw.Add((byte)n); }
+            raw.AddRange(serial.ToArray());
+            w.WriteEncodedValue(raw.ToArray());
+        }
     }
 }

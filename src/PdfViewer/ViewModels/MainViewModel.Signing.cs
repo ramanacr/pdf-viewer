@@ -12,6 +12,7 @@ using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Signatures;
 using PdfViewer.Models;
 using PdfViewer.Services;
+using PdfEngine.Vector.Signatures;
 
 namespace PdfViewer.ViewModels;
 
@@ -26,12 +27,16 @@ public sealed record SignatureOptions(
     string? Location,
     string? ContactInfo,
     Uri? TimestampServer,
-    string OutputPath);
+    string OutputPath,
+    int? CertificationLevel = null);
 
 public partial class MainViewModel
 {
-    /// <summary>Shows the signing dialog for a placement; null when the user cancels.</summary>
-    public Func<SignaturePlacement, SignatureOptions?>? ShowSignDialogFunc { get; set; }
+    /// <summary>Shows the signing dialog for a placement (and whether the document can still be certified); null when the user cancels.</summary>
+    public Func<SignaturePlacement, bool, SignatureOptions?>? ShowSignDialogFunc { get; set; }
+
+    /// <summary>Only an unsigned document can be certified.</summary>
+    public bool CanCertify => !HasSignatures;
 
     /// <summary>Waiting for the user to drag the signature's box on a page.</summary>
     [ObservableProperty]
@@ -86,7 +91,7 @@ public partial class MainViewModel
             ShowAlert(reason, "Sign Document", MessageBoxButton.OK, MessageBoxImage.Information);
             return false;
         }
-        if (ShowSignDialogFunc?.Invoke(placement) is not { } options)
+        if (ShowSignDialogFunc?.Invoke(placement, CanCertify) is not { } options)
         {
             StatusText = "Signing cancelled.";
             return false;
@@ -126,6 +131,7 @@ public partial class MainViewModel
                 ContactInfo = options.ContactInfo,
                 SigningTime = DateTimeOffset.Now,
                 ContentsSize = options.TimestampServer != null ? 32768 : 16384,
+                CertificationLevel = options.CertificationLevel,
             };
             var timestamp = options.TimestampServer is { } server ? TimestampClient.For(server) : null;
             signed = await SignWithRoomAsync(doc, current, request, options.Certificate, timestamp);
@@ -194,6 +200,90 @@ public partial class MainViewModel
         double y = crop.Y + (1 - normalized.Y - normalized.Height) * crop.Height;
         return new PdfRect(x, y, w, h);
     }
+
+    // ------------------------------------------------------------------ validation
+
+    /// <summary>The document's signatures, oldest first, as validated.</summary>
+    public System.Collections.ObjectModel.ObservableCollection<SignatureItemViewModel> Signatures { get; } = new();
+
+    [ObservableProperty]
+    private bool _hasSignatures;
+
+    /// <summary>The one-line verdict over all signatures (the banner above the page).</summary>
+    [ObservableProperty]
+    private string? _signatureBanner;
+
+    /// <summary>"ok", "warn" or "bad".</summary>
+    [ObservableProperty]
+    private string _signatureBannerLevel = "ok";
+
+    [ObservableProperty]
+    private bool _isSignatureBannerDismissed;
+
+    private int _signatureValidation;
+
+    /// <summary>
+    /// Validates every signature against the document as it is now (unsaved form changes
+    /// included, so the panel shows what they would do to each signature).
+    /// </summary>
+    public async Task ValidateSignaturesAsync()
+    {
+        int run = ++_signatureValidation;
+        byte[]? bytes = _docService.CurrentBytes;
+        System.Collections.Generic.IReadOnlyList<PdfSignatureCheck> checks;
+        int revisions = 1;
+        try
+        {
+            if (bytes == null || _docService.IsDecryptedCopy) checks = Array.Empty<PdfSignatureCheck>();
+            else
+            {
+                string? password = _openPassword;
+                checks = await Task.Run(() => PdfSignatureValidator.ValidateAsync(bytes, password));
+                revisions = PdfSignatureValidator.RevisionEnds(bytes).Count;
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            checks = Array.Empty<PdfSignatureCheck>();
+        }
+        if (run != _signatureValidation) return; // a newer validation is under way
+
+        Signatures.Clear();
+        foreach (var c in checks) Signatures.Add(SignatureItemViewModel.From(c, revisions));
+        HasSignatures = Signatures.Count > 0;
+        if (!HasSignatures)
+        {
+            SignatureBanner = null;
+            return;
+        }
+        bool anyBad = Signatures.Any(s => s.Level == "bad");
+        bool anyWarn = Signatures.Any(s => s.Level == "warn");
+        var people = checks.Where(c => !c.IsDocumentTimestamp).ToList();
+        var certifier = people.FirstOrDefault(c => c.CertificationLevel != null);
+        string who = certifier != null ? $"Certified by {certifier.SignerName}"
+            : people.Count == 1 ? $"Signed by {people[0].SignerName}"
+            : people.Count > 1 ? $"Signed by {people.Count} people" : "Timestamped";
+        bool several = checks.Count > 1;
+        SignatureBannerLevel = anyBad ? "bad" : anyWarn ? "warn" : "ok";
+        SignatureBanner = anyBad
+            ? $"{who}. At least one signature is invalid, or the document was changed in a way its signatures do not allow."
+            : anyWarn
+                ? $"{who}. The document is intact, but {(several ? "at least one signer's" : "the signer's")} identity could not be verified."
+                : $"{who}. {(several ? "All signatures are" : "The signature is")} valid.";
+    }
+
+    [RelayCommand]
+    private void ShowSignaturePanel()
+    {
+        IsSidebarOpen = true;
+        SelectedSidebarTab = SignaturesTabIndex;
+    }
+
+    [RelayCommand]
+    private void DismissSignatureBanner() => IsSignatureBannerDismissed = true;
+
+    /// <summary>The sidebar tab that lists signatures.</summary>
+    public const int SignaturesTabIndex = 4;
 
     /// <summary>Signature fields in the document that are waiting to be signed.</summary>
     public System.Collections.Generic.IReadOnlyList<FormFieldViewModel> EmptySignatureFields =>

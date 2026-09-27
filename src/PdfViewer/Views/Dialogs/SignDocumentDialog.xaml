@@ -73,6 +73,21 @@
                    Foreground="{DynamicResource TextSecondaryBrush}"
                    Text="No signing certificate was found in your personal certificate store. Use a certificate file, or install a digital ID from your organisation or a certificate authority." />
 
+        <!-- Approval or certification -->
+        <Grid x:Name="CertifyRow" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Signature type" Style="{StaticResource FieldLabel}" />
+            <ComboBox Grid.Column="1" x:Name="CertifyCombo" Height="28" SelectedIndex="0" AutomationProperties.Name="Signature type">
+                <ComboBoxItem Content="Approve - others can still fill in, sign and comment" />
+                <ComboBoxItem Content="Certify - allow filling in forms and signing" />
+                <ComboBoxItem Content="Certify - allow filling in, signing and commenting" />
+                <ComboBoxItem Content="Certify - allow no changes" />
+            </ComboBox>
+        </Grid>
+
         <!-- Details recorded in the signature -->
         <Grid Margin="0,14,0,0">
             <Grid.ColumnDefinitions>

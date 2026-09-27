@@ -24,6 +24,12 @@ public sealed record PdfSignatureRequest
     public string? Location { get; init; }
     public string? ContactInfo { get; init; }
     public DateTimeOffset SigningTime { get; init; } = DateTimeOffset.Now;
+    /// <summary>
+    /// Certify rather than approve (a DocMDP signature, ISO 32000-2 12.8.2.2): the changes later
+    /// revisions may make. 1 none, 2 form filling and signing, 3 also annotations. Only the first
+    /// signature in a document can certify it.
+    /// </summary>
+    public int? CertificationLevel { get; init; }
     /// <summary>Bytes reserved for the CMS signature (hex doubles it in the file). Timestamps and long chains need more.</summary>
     public int ContentsSize { get; init; } = 16384;
 }
@@ -109,6 +115,27 @@ public static class PdfSigner
         if (!string.IsNullOrWhiteSpace(request.Reason)) sig["Reason"] = PdfObjectWriter.TextString(request.Reason!);
         if (!string.IsNullOrWhiteSpace(request.Location)) sig["Location"] = PdfObjectWriter.TextString(request.Location!);
         if (!string.IsNullOrWhiteSpace(request.ContactInfo)) sig["ContactInfo"] = PdfObjectWriter.TextString(request.ContactInfo!);
+        if (request.CertificationLevel is int level)
+        {
+            if (level is < 1 or > 3)
+                throw new ArgumentOutOfRangeException(nameof(request), "A certification level is 1, 2 or 3.");
+            if (PdfAcroForm.Read(document)?.Fields.Any(f => f.Kind == PdfFormFieldKind.Signature && f.IsSigned) == true)
+                throw new InvalidOperationException("The document is already signed; only the first signature can certify it.");
+            sig["Reference"] = new PdfArray(new PdfObject[]
+            {
+                new PdfDictionary(new Dictionary<string, PdfObject>
+                {
+                    ["Type"] = new PdfName("SigRef"),
+                    ["TransformMethod"] = new PdfName("DocMDP"),
+                    ["TransformParams"] = new PdfDictionary(new Dictionary<string, PdfObject>
+                    {
+                        ["Type"] = new PdfName("TransformParams"),
+                        ["P"] = new PdfInteger(level),
+                        ["V"] = new PdfName("1.2"),
+                    }),
+                }),
+            });
+        }
         // Placeholders: patched in place once the file is laid out (same length, so no offset moves).
         sig["ByteRange"] = new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(9999999999), new PdfInteger(9999999999), new PdfInteger(9999999999) });
         sig["Contents"] = new PdfString(new byte[request.ContentsSize], IsHex: true);
@@ -192,6 +219,16 @@ public static class PdfSigner
             objects[an] = new PdfDictionary(acro);
         else
             objects[rootRef.ObjectNumber] = With(Current(rootRef.ObjectNumber), "AcroForm", new PdfDictionary(acro));
+        if (request.CertificationLevel != null)
+        {
+            // /Perms /DocMDP points at the certifying signature.
+            var catalog = Current(rootRef.ObjectNumber);
+            var perms = new Dictionary<string, PdfObject>((r.Resolve(catalog["Perms"]) as PdfDictionary)?.Entries ?? new Dictionary<string, PdfObject>())
+            {
+                ["DocMDP"] = new PdfIndirectRef(sigNumber),
+            };
+            objects[rootRef.ObjectNumber] = With(catalog, "Perms", new PdfDictionary(perms));
+        }
 
         byte[] bytes = PdfIncrementalWriter.Append(original, document, objects);
         // Search from the signature object itself, so nothing else in the update can be mistaken for it.

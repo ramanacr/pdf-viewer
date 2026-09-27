@@ -346,11 +346,24 @@ public sealed class PdfiumSignatureService : IPdfSignatureService
     /// The /Contents hex string is padded with trailing zero bytes to a fixed size; the DER
     /// parser rejects them.
     /// </summary>
+    /// <summary>
+    /// The signature without the zero padding of its placeholder. The DER length says where the
+    /// value ends; trimming trailing zero bytes instead cut the last byte off every signature
+    /// that happens to end in 0x00 (about one in 256) and reported it invalid.
+    /// </summary>
     private static byte[] TrimTrailingZeros(byte[] data)
     {
-        int end = data.Length;
-        while (end > 0 && data[end - 1] == 0) end--;
-        return end == data.Length ? data : data.AsSpan(0, end).ToArray();
+        try
+        {
+            System.Formats.Asn1.AsnDecoder.ReadEncodedValue(data, System.Formats.Asn1.AsnEncodingRules.BER, out _, out _, out int consumed);
+            return consumed == data.Length ? data : data.AsSpan(0, consumed).ToArray();
+        }
+        catch (System.Formats.Asn1.AsnContentException)
+        {
+            int end = data.Length;
+            while (end > 0 && data[end - 1] == 0) end--;
+            return end == data.Length ? data : data.AsSpan(0, end).ToArray();
+        }
     }
 
     private static byte[]? TryReadDocumentBytes(PdfiumDocument document)

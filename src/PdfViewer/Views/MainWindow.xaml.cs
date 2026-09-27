@@ -76,9 +76,9 @@ public partial class MainWindow : Window
         document.ConfirmFunc = ConfirmDialog;
         document.ConfirmComponentDownloadFunc = ConfirmComponentDownload;
         document.ConfirmSaveBeforeClosingFunc = ConfirmSaveBeforeClosing;
-        document.ShowSignDialogFunc = placement =>
+        document.ShowSignDialogFunc = (placement, canCertify) =>
         {
-            var dialog = new SignDocumentDialog(placement, document.Metadata?.FilePath ?? string.Empty) { Owner = this };
+            var dialog = new SignDocumentDialog(placement, document.Metadata?.FilePath ?? string.Empty, canCertify) { Owner = this };
             return dialog.ShowDialog() == true ? dialog.Result : null;
         };
         document.ScrollToPageAction = ScrollToPage;
@@ -890,6 +890,12 @@ public partial class MainWindow : Window
     private System.Windows.Threading.DispatcherTimer? _selectionScrollTimer;
     private readonly System.Collections.Generic.List<Canvas> _selectionCanvases = new();
     private DateTime _selectionCanvasesAt;
+
+    private void SignatureItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBox { SelectedItem: SignatureItemViewModel item } && item.HasPage)
+            _vm.CurrentPageNumber = item.PageNumber;
+    }
 
     private void PageCanvas_MouseDown(object sender, MouseButtonEventArgs e)
     {

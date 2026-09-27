@@ -341,6 +341,9 @@ public static class PdfiumNativeBridge
     public static extern SafeDocumentHandle FPDF_CreateNewDocument();
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDF_GetSignatureCount(SafeDocumentHandle document);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDF_SaveAsCopy(SafeDocumentHandle document, ref FPDF_FILEWRITE file_write, uint flags);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

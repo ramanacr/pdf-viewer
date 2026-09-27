@@ -139,6 +139,87 @@ public class SigningViewerTests : IDisposable
     }
 
     [Fact]
+    public async Task CommentingOnASignedDocument_KeepsItsSignatureValid()
+    {
+        string path = Write("signed-then-commented.pdf", FormPdfFixture.Build());
+        var vm = await Open(path);
+        using var cert = Certificate("Ada Lovelace");
+        Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
+            new SignatureOptions(cert, null, null, null, null, path)), vm.StatusText);
+        byte[] signedBytes = File.ReadAllBytes(path);
+
+        vm.AddAnnotation(new AnnotationModel { PageNumber = 1, Type = AnnotationType.Rectangle, X = 0.6, Y = 0.1, Width = 0.2, Height = 0.1, ColorHex = "#FF0000", StrokeThickness = 2 });
+        await vm.SaveAsync();
+        byte[] saved = File.ReadAllBytes(path);
+
+        Assert.True(saved.Length > signedBytes.Length);
+        Assert.True(saved.AsSpan(0, signedBytes.Length).SequenceEqual(signedBytes), "the signed revision is kept byte for byte");
+        var check = Assert.Single(await PdfEngine.Vector.Signatures.PdfSignatureValidator.ValidateAsync(saved));
+        Assert.True(check.Verdict == PdfEngine.Vector.Signatures.PdfSignatureVerdict.ValidWithPermittedChanges, check.Summary);
+        Assert.True(check.LaterChanges.HasFlag(PdfEngine.Vector.Signatures.PdfLaterChanges.Annotations), check.LaterChanges.ToString());
+        Assert.Single((await Open(path)).AllAnnotations);
+    }
+
+    [Fact]
+    public async Task SignaturePanel_ShowsEachSignaturesVerdict()
+    {
+        string path = Write("panel.pdf", FormPdfFixture.Build());
+        var vm = await Open(path);
+        Assert.False(vm.HasSignatures);
+        using var cert = Certificate("Ada Lovelace");
+        Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
+            new SignatureOptions(cert, "Approved", null, null, null, path)), vm.StatusText);
+        await vm.ValidateSignaturesAsync();
+
+        var item = Assert.Single(vm.Signatures);
+        Assert.Equal("Signed by Ada Lovelace", item.Title);
+        Assert.Equal("warn", item.Level); // intact, but a self-signed identity is unknown
+        Assert.Contains("identity is unknown", item.Status);
+        Assert.Contains("Reason: Approved", item.Details);
+        Assert.True(item.HasPage);
+        Assert.Equal("warn", vm.SignatureBannerLevel);
+        Assert.StartsWith("Signed by Ada Lovelace. The document is intact", vm.SignatureBanner);
+
+        // Filling a field (not yet saved) shows up as a permitted change to the signature.
+        var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
+        Assert.True(await vm.CommitFormFieldAsync(name, new PdfFieldChange("person.name", Text: "Later")));
+        await vm.ValidateSignaturesAsync();
+        var after = Assert.Single(vm.Signatures);
+        Assert.Equal(PdfEngine.Vector.Signatures.PdfSignatureVerdict.ValidWithPermittedChanges, after.Check.Verdict);
+        Assert.Contains("filled in", after.Summary);
+
+        // Tools > Verify opens the panel.
+        vm.IsSidebarOpen = false;
+        await vm.VerifySignaturesCommand.ExecuteAsync(null);
+        Assert.True(vm.IsSidebarOpen);
+        Assert.Equal(MainViewModel.SignaturesTabIndex, vm.SelectedSidebarTab);
+    }
+
+    [Fact]
+    public async Task CertifiedWithNoChangesAllowed_FlagsALaterFill()
+    {
+        string path = Write("certified.pdf", FormPdfFixture.Build());
+        var vm = await Open(path);
+        Assert.True(vm.CanCertify);
+        using var cert = Certificate("Author");
+        Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
+            new SignatureOptions(cert, null, null, null, null, path, CertificationLevel: 1)), vm.StatusText);
+        await vm.ValidateSignaturesAsync();
+        Assert.False(vm.CanCertify);
+        var item = Assert.Single(vm.Signatures);
+        Assert.Equal("Certified by Author", item.Title);
+        Assert.Contains("no changes are allowed", item.Details);
+
+        var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
+        Assert.True(await vm.CommitFormFieldAsync(name, new PdfFieldChange("person.name", Text: "Not allowed")));
+        await vm.ValidateSignaturesAsync();
+        var after = Assert.Single(vm.Signatures);
+        Assert.Equal("bad", after.Level);
+        Assert.Equal(PdfEngine.Vector.Signatures.PdfSignatureVerdict.ModifiedAfterSigning, after.Check.Verdict);
+        Assert.Equal("bad", vm.SignatureBannerLevel);
+    }
+
+    [Fact]
     public async Task UnsavedAnnotations_MustBeSavedFirst()
     {
         string path = Write("notes.pdf", FormPdfFixture.Build());
@@ -167,7 +248,7 @@ public class SigningViewerTests : IDisposable
 
         using var cert = Certificate("Grace Hopper");
         SignaturePlacement? asked = null;
-        vm.ShowSignDialogFunc = p => { asked = p; return new SignatureOptions(cert, "Approved", null, null, null, path); };
+        vm.ShowSignDialogFunc = (p, _) => { asked = p; return new SignatureOptions(cert, "Approved", null, null, null, path); };
         Assert.True(await vm.PlaceSignatureAsync(new SignaturePlacement(field.PageNumber, null, field.FullName)), vm.StatusText);
         Assert.Equal("Approver", asked!.FieldName);
 
@@ -181,7 +262,7 @@ public class SigningViewerTests : IDisposable
         string path = Write("keep.pdf", FormPdfFixture.Build());
         byte[] before = File.ReadAllBytes(path);
         var vm = await Open(path);
-        vm.ShowSignDialogFunc = _ => null;
+        vm.ShowSignDialogFunc = (_, _) => null;
         vm.BeginSignatureCommand.Execute(null);
         Assert.True(vm.IsPlacingSignature);
         Assert.False(await vm.PlaceSignatureAsync(new SignaturePlacement(1, new Rect(0.1, 0.1, 0.3, 0.1))));

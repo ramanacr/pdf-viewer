@@ -27,9 +27,11 @@ public partial class SignDocumentDialog : Window
 
     public SignatureOptions? Result { get; private set; }
 
-    public SignDocumentDialog(SignaturePlacement placement, string documentPath)
+    public SignDocumentDialog(SignaturePlacement placement, string documentPath, bool canCertify = true)
     {
         InitializeComponent();
+        // Certification is for the author's first signature: a signed document can only be approved.
+        if (!canCertify) CertifyRow.Visibility = Visibility.Collapsed;
         PlacementText.Text = placement.FieldName != null
             ? $"Signs the field \"{placement.FieldName}\". The signature covers the document as it is now; later changes show as changes made after signing."
             : $"Adds a visible signature to page {placement.PageNumber}. The signature covers the document as it is now; later changes show as changes made after signing.";
@@ -153,7 +155,14 @@ public partial class SignDocumentDialog : Window
         _settings.UseTimestamp = timestamp != null;
         _settings.Save();
 
-        Result = new SignatureOptions(certificate, _settings.Reason, _settings.Location, _settings.ContactInfo, timestamp, OutputBox.Text);
+        int? certification = CertifyRow.Visibility == Visibility.Visible ? CertifyCombo.SelectedIndex switch
+        {
+            1 => 2,
+            2 => 3,
+            3 => 1,
+            _ => (int?)null,
+        } : null;
+        Result = new SignatureOptions(certificate, _settings.Reason, _settings.Location, _settings.ContactInfo, timestamp, OutputBox.Text, certification);
         DialogResult = true;
     }
 

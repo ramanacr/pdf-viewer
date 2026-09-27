@@ -579,6 +579,8 @@ public partial class MainViewModel : ObservableObject
             _formChangedSinceSave = false;
             _savedAnnotationsFingerprint = AnnotationsFingerprint();
             await LoadFormAsync();
+            IsSignatureBannerDismissed = false;
+            _ = ValidateSignaturesAsync();
 
             // Inspect what the document carries. Done after the first render so opening
             // stays responsive, and reported rather than acted upon.
@@ -1878,6 +1880,7 @@ public partial class MainViewModel : ObservableObject
             _formChangedSinceSave = false;
             _savedAnnotationsFingerprint = AnnotationsFingerprint();
             StatusText = $"Saved {Path.GetFileName(originalPath)}.";
+            if (HasSignatures) _ = ValidateSignaturesAsync();
         }
         catch (Exception ex)
         {
@@ -1992,6 +1995,7 @@ public partial class MainViewModel : ObservableObject
         _ = RenderVisiblePagesAsync();
         _ = RenderThumbnailsAsync();
         StatusText = $"Filled \"{field.AccessibleName}\".";
+        if (HasSignatures) _ = ValidateSignaturesAsync(); // shows what the change does to each signature
         return true;
     }
 
@@ -3088,48 +3092,19 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public async Task VerifySignaturesAsync()
     {
-        if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
-
+        if (!IsDocumentLoaded) return;
         StatusText = "Verifying digital signatures...";
-        try
+        await ValidateSignaturesAsync();
+        if (!HasSignatures)
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
-            var signatures = await engine.SignatureService.GetSignaturesAsync(doc);
-
-            if (signatures.Count == 0)
-            {
-                StatusText = "This document is not digitally signed.";
-                ShowAlert("This document contains no digital signatures.",
-                    "Digital Signatures", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var report = new StringBuilder();
-            foreach (var s in signatures)
-            {
-                report.AppendLine($"{s.FieldName}: {s.Status}");
-                if (!string.IsNullOrWhiteSpace(s.SignerName)) report.AppendLine($"    Signer: {s.SignerName}");
-                if (s.SigningTime.HasValue) report.AppendLine($"    Signed: {s.SigningTime:yyyy-MM-dd HH:mm:ss} UTC");
-                if (!string.IsNullOrWhiteSpace(s.Reason)) report.AppendLine($"    Reason: {s.Reason}");
-                if (!string.IsNullOrWhiteSpace(s.StatusMessage)) report.AppendLine($"    {s.StatusMessage}");
-                report.AppendLine();
-            }
-
-            bool allValid = signatures.All(s => s.Status == PdfEngine.Signatures.SignatureStatus.Valid);
-            StatusText = allValid
-                ? $"{signatures.Count} signature(s) verified successfully."
-                : "One or more signatures could not be validated.";
-
-            ShowAlert(report.ToString().TrimEnd(), "Digital Signatures", MessageBoxButton.OK,
-                allValid ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            StatusText = "This document is not digitally signed.";
+            ShowAlert("This document contains no digital signatures.",
+                "Digital Signatures", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
-        catch (Exception ex)
-        {
-            StatusText = $"Signature verification failed: {ex.Message}";
-            ShowAlert($"Could not verify signatures:\n\n{ex.Message}",
-                "Digital Signatures", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        StatusText = SignatureBanner ?? string.Empty;
+        IsSignatureBannerDismissed = false;
+        ShowSignaturePanel();
     }
 
     /// <summary>

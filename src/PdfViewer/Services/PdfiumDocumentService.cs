@@ -1433,6 +1433,11 @@ public class PdfiumDocumentService : IPdfDocumentService
                     if (saveDoc == null || saveDoc.IsInvalid)
                         throw new InvalidOperationException("Failed to instantiate document copy for saving.");
 
+                // A signed document is saved as an incremental update: rewriting it would change
+                // the bytes its signatures cover and break every one of them. Its page content is
+                // left exactly as it is too - only the annotations change.
+                bool signed = PdfiumNativeBridge.FPDF_GetSignatureCount(saveDoc) > 0 && mode != AnnotationSaveMode.Flattened;
+
                 // The set handed in is the whole truth about this document's annotations, so
                 // the copy has to start without the ones it was loaded with. Adding on top of
                 // them meant every save duplicated what was already in the file, and deleting
@@ -1562,7 +1567,7 @@ public class PdfiumDocumentService : IPdfDocumentService
                         }
                     }
 
-                    PdfiumNativeBridge.FPDFPage_GenerateContent(page);
+                    if (!signed) PdfiumNativeBridge.FPDFPage_GenerateContent(page);
                 }
 
                 if (mode == AnnotationSaveMode.Flattened)
@@ -1606,7 +1611,8 @@ public class PdfiumDocumentService : IPdfDocumentService
                     }
                 };
 
-                int success = PdfiumNativeBridge.FPDF_SaveAsCopy(saveDoc, ref writer, PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
+                int success = PdfiumNativeBridge.FPDF_SaveAsCopy(saveDoc, ref writer,
+                    signed ? PdfiumNativeBridge.FPDF_INCREMENTAL : PdfiumNativeBridge.FPDF_NO_INCREMENTAL);
                 GC.KeepAlive(writer);
 
                 if (writeFailure != null)

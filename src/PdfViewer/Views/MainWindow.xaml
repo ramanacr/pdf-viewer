@@ -942,6 +942,57 @@
                             </ListBox>
                         </Grid>
                     </TabItem>
+
+                    <TabItem Header="Signatures" Style="{StaticResource SidebarTabItemStyle}">
+                        <Grid>
+                            <TextBlock Text="This document is not digitally signed."
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding HasSignatures, Converter={StaticResource InverseBoolToVis}}" />
+                            <ListBox ItemsSource="{Binding Signatures}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Padding="4"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Signatures"
+                                     MouseDoubleClick="SignatureItem_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:SignatureItemViewModel}">
+                                        <Border Padding="8,8" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BorderBrush}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Ellipse x:Name="Mark" Width="12" Height="12" Margin="0,3,8,0" VerticalAlignment="Top" Fill="#1E8E3E" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                    <TextBlock Text="{Binding Status}" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0" x:Name="StatusLine" Foreground="#1E8E3E" />
+                                                    <TextBlock Text="{Binding Summary}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{Binding Identity}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{Binding When}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <Expander Header="Details" FontSize="11" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                        <TextBlock Text="{Binding Details}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    </Expander>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding Level}" Value="warn">
+                                                <Setter TargetName="Mark" Property="Fill" Value="#E37400" />
+                                                <Setter TargetName="StatusLine" Property="Foreground" Value="#B06000" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Level}" Value="bad">
+                                                <Setter TargetName="Mark" Property="Fill" Value="#D93025" />
+                                                <Setter TargetName="StatusLine" Property="Foreground" Value="#D93025" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </TabItem>
                 </TabControl>
             </Border>
 
@@ -1032,6 +1083,52 @@
                         </StackPanel>
                     </Border>
                 </Grid>
+
+                <!-- Signature banner: the verdict over every signature, over the top of the page -->
+                <Border x:Name="SignatureBannerBar"
+                        VerticalAlignment="Top"
+                        Panel.ZIndex="20"
+                        Padding="12,6"
+                        BorderThickness="0,0,0,1"
+                        AutomationProperties.Name="Signature status"
+                        AutomationProperties.LiveSetting="Polite">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Setter Property="Background" Value="#E6F4EA" />
+                            <Setter Property="BorderBrush" Value="#1E8E3E" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding HasSignatures}" Value="True" />
+                                        <Condition Binding="{Binding IsSignatureBannerDismissed}" Value="False" />
+                                        <Condition Binding="{Binding IsDocumentLoaded}" Value="True" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </MultiDataTrigger>
+                                <DataTrigger Binding="{Binding SignatureBannerLevel}" Value="warn">
+                                    <Setter Property="Background" Value="#FEF7E0" />
+                                    <Setter Property="BorderBrush" Value="#E37400" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding SignatureBannerLevel}" Value="bad">
+                                    <Setter Property="Background" Value="#FCE8E6" />
+                                    <Setter Property="BorderBrush" Value="#D93025" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <DockPanel LastChildFill="True">
+                        <Button DockPanel.Dock="Right" Content="&#x2715;" Width="24" Height="24" Margin="6,0,0,0"
+                                Background="Transparent" BorderThickness="0" Foreground="#202124" Cursor="Hand"
+                                ToolTip="Hide" AutomationProperties.Name="Hide signature status"
+                                Command="{Binding DismissSignatureBannerCommand}" />
+                        <Button DockPanel.Dock="Right" Content="Signature Panel" Height="24" Padding="10,0"
+                                Background="White" BorderBrush="#DADCE0" BorderThickness="1" Foreground="#202124" Cursor="Hand"
+                                Command="{Binding ShowSignaturePanelCommand}" />
+                        <TextBlock Text="{Binding SignatureBanner}" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="#202124" FontWeight="SemiBold" Margin="0,0,8,0" />
+                    </DockPanel>
+                </Border>
 
                 <!-- Document Loaded Viewport -->
                 <ScrollViewer x:Name="DocumentScrollViewer"

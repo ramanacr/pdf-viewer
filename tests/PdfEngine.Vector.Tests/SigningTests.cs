@@ -96,10 +96,12 @@ public class SigningTests : IDisposable
             var range = ((PdfArray)sig["ByteRange"]!).Select(o => ((PdfInteger)o).Value).ToArray();
             var signed = pdf.AsSpan((int)range[0], (int)range[1]).ToArray().Concat(pdf.AsSpan((int)range[2], (int)range[3]).ToArray()).ToArray();
             // The CMS is the hex string in the gap, read from the file itself (not the parsed object).
-            string hex = Encoding.ASCII.GetString(pdf, (int)range[1] + 1, (int)(range[2] - range[1] - 2)).TrimEnd('0');
-            if (hex.Length % 2 == 1) hex += "0";
+            string hex = Encoding.ASCII.GetString(pdf, (int)range[1] + 1, (int)(range[2] - range[1] - 2));
+            byte[] padded = Convert.FromHexString(hex);
+            // The DER length says where the value ends (trimming zeros would cut a value ending in 0x00).
+            AsnDecoder.ReadEncodedValue(padded, AsnEncodingRules.DER, out _, out _, out int consumed);
             var cms = new SignedCms(new ContentInfo(signed), detached: true);
-            cms.Decode(Convert.FromHexString(hex));
+            cms.Decode(padded.AsSpan(0, consumed).ToArray());
             list.Add((sig, signed, cms, range));
         }
         return list.OrderBy(s => s.Item4[3]).Reverse().ToArray();
@@ -149,6 +151,28 @@ public class SigningTests : IDisposable
         var info = Assert.Single(await PdfiumVerify(signed));
         Assert.True(info.Status == SignatureStatus.Untrusted, info.StatusMessage);
         Assert.Equal("I approve this contract", info.Reason);
+    }
+
+    [Fact]
+    public async Task SignatureEndingInAZeroByte_StillVerifies()
+    {
+        // About one signature in 256 ends in 0x00; trimming the placeholder's zero padding used to
+        // cut that byte off and report a valid signature as invalid.
+        using var cert = Certificate("Signer");
+        byte[] pdf = PlainPdf();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        byte[]? signed = null;
+        for (int attempt = 0; attempt < 5000 && signed == null; attempt++)
+        {
+            var prepared = PdfSigner.Prepare(doc, pdf, new PdfSignatureRequest { SignerName = "Signer", SigningTime = DateTimeOffset.UnixEpoch.AddSeconds(attempt) });
+            byte[] cms = await PdfCmsSigner.SignAsync(prepared.SignedBytes(), cert);
+            if (cms[^1] == 0) signed = prepared.Complete(cms);
+        }
+        Assert.NotNull(signed);
+        var info = Assert.Single(await PdfiumVerify(signed!));
+        Assert.True(info.Status == SignatureStatus.Untrusted, info.StatusMessage);
+        var check = Assert.Single(await PdfSignatureValidator.ValidateAsync(signed!));
+        Assert.True(check.IntegrityValid, check.Summary);
     }
 
     [Fact]
