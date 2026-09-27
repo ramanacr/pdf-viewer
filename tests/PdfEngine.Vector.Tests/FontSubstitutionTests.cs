@@ -161,6 +161,45 @@ public class FontSubstitutionTests
         Assert.True(toPdfium <= 2.0 && badPdfium <= 0.02, $"vs PDFium mean {toPdfium:F2}, {badPdfium:P2} off");
     }
 
+    /// <summary>
+    /// A substitute's glyphs are fitted to the document's /Widths: four Ms at 400/1000 em (Arial's
+    /// is 833) are narrowed so they do not run into each other; four is at 500 (Arial's is 222) are
+    /// widened a little and centred, so the gaps fall between them evenly.
+    /// </summary>
+    [Fact]
+    public async Task Direct2D_SubstituteGlyphs_AreFittedToTheirWidths()
+    {
+        var b = new VectorPdfBuilder();
+        string widths = string.Join(" ", Enumerable.Range(32, 95).Select(c => c == 'M' ? "400" : "500"));
+        int desc = b.Add("<< /Type /FontDescriptor /FontName /Arial /Flags 32 /FontBBox [-665 -325 2000 1040] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 88 >>");
+        int font = b.Add($"<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 126 /Widths [{widths}] /Encoding /WinAnsiEncoding /FontDescriptor {desc} 0 R >>");
+        b.AddPage("BT /F1 40 Tf 20 150 Td (MMMM) Tj 0 -100 Td (iiii) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>");
+        byte[] pdf = b.Build();
+
+        using var renderer = new Direct2DVectorRenderer();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        Assert.Empty(await renderer.AnalyzeAsync(list));
+        using var page = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 });
+        var px = page.Pixels.ToArray();
+        // Ink columns of a band of rows (y down).
+        List<int> Columns(int top, int bottom)
+        {
+            var columns = new List<int>();
+            for (int x = 0; x < page.WidthPixels; x++)
+                for (int y = top; y < bottom; y++)
+                    if (px[y * page.Stride + x * 4] < 128) { columns.Add(x); break; }
+            return columns;
+        }
+        var ms = Columns(200 - 150 - 32, 200 - 150 + 2);
+        // Four advances of 16 pt: the Ms' ink spans at most 64 pt (one of Arial's is 33 pt wide at this size).
+        Assert.InRange(ms.Max() - ms.Min(), 55, 64);
+        var iis = Columns(200 - 50 - 30, 200 - 50 + 2);
+        // Each i sits in the middle of its 20 pt: the first starts well after the text does.
+        Assert.InRange(iis.Min(), 20 + 5, 20 + 10);
+        Assert.InRange(iis.Max(), 20 + 60 + 5, 20 + 60 + 15);
+    }
+
     private static bool Is(SystemFontFace face, string family) =>
         string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase) || string.Equals(face.LegacyFamily, family, StringComparison.OrdinalIgnoreCase);
 }

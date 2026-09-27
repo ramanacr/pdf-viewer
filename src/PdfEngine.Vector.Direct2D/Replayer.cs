@@ -1115,15 +1115,17 @@ internal sealed class Replayer : IDisposable
             float sign = run.FontSize < 0 ? -1 : 1;
             var (glyphMatrix, glyphOffsets) = GlyphFrame(run.Face, (float)Math.Abs(run.FontSize), r.Offsets);
             var glyphToUser = glyphMatrix * new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise) * M(run.TextMatrix);
-            using var outline = _res.Factory.CreatePathGeometry();
-            using (var sink = outline.Open())
+            foreach (var (indices, offsets, scale) in ScaledPieces(r.Indices, glyphOffsets, r.Scales))
             {
-                sink.SetFillMode(FillMode.Winding);
-                r.Face.GetGlyphRunOutline((float)Math.Abs(run.FontSize), r.Indices, new float[r.Indices.Length],
-                    glyphOffsets, false, false, sink);
-                sink.Close();
+                using var outline = _res.Factory.CreatePathGeometry();
+                using (var sink = outline.Open())
+                {
+                    sink.SetFillMode(FillMode.Winding);
+                    r.Face.GetGlyphRunOutline((float)Math.Abs(run.FontSize), indices, new float[indices.Length], offsets, false, false, sink);
+                    sink.Close();
+                }
+                parts.Add(_res.Factory.CreateTransformedGeometry(outline, Matrix3x2.CreateScale(scale, 1) * glyphToUser));
             }
-            parts.Add(_res.Factory.CreateTransformedGeometry(outline, glyphToUser));
         }
         ID2D1Geometry? result = parts.Count switch
         {
@@ -1223,7 +1225,7 @@ internal sealed class Replayer : IDisposable
     private string _lastTextProblem = string.Empty;
 
     /// <summary>Font face and glyph indices for a run; null when the backend cannot draw it faithfully.</summary>
-    private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets)? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
+    private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
     {
         var run = cmd.Run;
         byGlyphId = false;
@@ -1259,7 +1261,7 @@ internal sealed class Replayer : IDisposable
                 ids.Add(g.GlyphId < glyphCount ? g.GlyphId : (ushort)0);
                 offs.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
             }
-            return (dw, ids.ToArray(), offs.ToArray());
+            return (dw, ids.ToArray(), offs.ToArray(), null);
         }
 
         // Not embedded: a system substitute. Every glyph of the run must be found in one face, so
@@ -1284,7 +1286,7 @@ internal sealed class Replayer : IDisposable
                 continue;
             var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign);
             if (mapped != null)
-                return (candidate, mapped.Value.Indices, mapped.Value.Offsets);
+                return (candidate, mapped.Value.Indices, mapped.Value.Offsets, mapped.Value.Scales);
         }
         _lastTextProblem = family == null ? "No system substitute for font" : "Substitute font lacks a glyph used by this text";
         return null;
@@ -1294,11 +1296,18 @@ internal sealed class Replayer : IDisposable
     private static readonly string[] UnicodeFallbackFamilies =
         { "Segoe UI Symbol", "Arial", "Segoe UI", "Cambria Math", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic", "Nirmala UI", "Ebrima" };
 
-    /// <summary>Glyph indices for every drawable glyph of a run in <paramref name="face"/>, or null if one is missing.</summary>
-    private static (ushort[] Indices, Vector2[] Offsets)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign)
+    /// <summary>
+    /// Glyph indices for every drawable glyph of a run in <paramref name="face"/>, or null if one is
+    /// missing; with the horizontal scale of each (null when all are 1). A substitute's glyph is fitted
+    /// to the document's /Widths, as Acrobat's substitutes are: one wider than its width is narrowed so
+    /// it does not run into the next, and one narrower is widened by up to a tenth and centred in the
+    /// rest, so the gaps fall evenly instead of all after it.
+    /// </summary>
+    private static (ushort[] Indices, Vector2[] Offsets, float[]? Scales)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign)
     {
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
+        var widths = new List<double>(run.Glyphs.Count);
         foreach (var g in run.Glyphs)
         {
             string? text = g.Unicode;
@@ -1314,8 +1323,50 @@ internal sealed class Replayer : IDisposable
             }
             indices.Add(index);
             offsets.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
+            widths.Add(g.Width);
         }
-        return (indices.ToArray(), offsets.ToArray());
+        var ids = indices.ToArray();
+        float[]? scales = null;
+        if (ids.Length > 0 && widths.Exists(w => w > 0))
+        {
+            var metrics = new GlyphMetrics[ids.Length];
+            face.GetDesignGlyphMetrics(ids, metrics, false);
+            double unitsPerEm = Math.Max(1, (int)face.Metrics.DesignUnitsPerEm);
+            double em = Math.Abs(run.FontSize);
+            for (int i = 0; i < ids.Length; i++)
+            {
+                double own = metrics[i].AdvanceWidth / unitsPerEm;
+                if (widths[i] <= 0 || own <= 0 || Math.Abs(widths[i] - own) <= own * 0.01) continue;
+                double scale = Math.Min(widths[i] / own, 1.10);
+                scales ??= Enumerable.Repeat(1f, ids.Length).ToArray();
+                scales[i] = (float)scale;
+                // Centred in what is left of its width (glyph space: text space without Tz).
+                double gap = (widths[i] - own * scale) * em / 2;
+                if (gap > 0) offsets[i] = offsets[i] with { X = offsets[i].X + (float)(gap * sign) };
+            }
+        }
+        return (ids, offsets.ToArray(), scales);
+    }
+
+    /// <summary>A resolved run in pieces of one horizontal glyph scale: each piece's glyphs and offsets, in its scaled glyph space.</summary>
+    private static IEnumerable<(ushort[] Indices, GlyphOffset[] Offsets, float Scale)> ScaledPieces(ushort[] indices, GlyphOffset[] offsets, float[]? scales)
+    {
+        if (scales == null)
+        {
+            yield return (indices, offsets, 1f);
+            yield break;
+        }
+        int i = 0;
+        while (i < indices.Length)
+        {
+            int j = i + 1;
+            while (j < indices.Length && scales[j] == scales[i]) j++;
+            float s = scales[i];
+            // The piece is drawn scaled by s across: its positions are divided by s so they land where they were.
+            var pieceOffsets = offsets[i..j].Select(o => new GlyphOffset { AdvanceOffset = o.AdvanceOffset / s, AscenderOffset = o.AscenderOffset }).ToArray();
+            yield return (indices[i..j], pieceOffsets, s);
+            i = j;
+        }
     }
 
     /// <summary>
@@ -1354,37 +1405,40 @@ internal sealed class Replayer : IDisposable
         // Glyph space (y-down baseline at the origin, em = |Tfs|) → text space → user → device.
         var (glyphMatrix, glyphOffsets) = GlyphFrame(run.Face, (float)Math.Abs(run.FontSize), r.Offsets);
         var glyphToText = glyphMatrix * new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise);
-        var transform = glyphToText * M(run.TextMatrix) * full;
-
-        var glyphRun = new GlyphRun
-        {
-            FontFace = r.Face,
-            FontEmSize = (float)Math.Abs(run.FontSize),
-            Indices = r.Indices,
-            Advances = new float[r.Indices.Length],
-            Offsets = glyphOffsets,
-        };
 
         int mode = run.RenderingMode;
         bool fill = mode is 0 or 2 or 4 or 6, stroke = mode is 1 or 2 or 5 or 6;
-        ctx.Transform = transform;
-        if (fill)
+        foreach (var (indices, offsets, scale) in ScaledPieces(r.Indices, glyphOffsets, r.Scales))
         {
-            using var brush = ctx.CreateSolidColorBrush(Color(cmd.Paint.Color, cmd.Paint.Alpha));
-            ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural);
-        }
-        if (stroke && run.StrokePaint is PdfPaint sp && run.Stroke is PdfStroke st)
-        {
-            using var outline = _res.Factory.CreatePathGeometry();
-            using (var sink = outline.Open())
+            var glyphRun = new GlyphRun
             {
-                r.Face.GetGlyphRunOutline(glyphRun.FontEmSize, glyphRun.Indices, glyphRun.Advances, glyphRun.Offsets, false, false, sink);
-                sink.Close();
+                FontFace = r.Face,
+                FontEmSize = (float)Math.Abs(run.FontSize),
+                Indices = indices,
+                Advances = new float[indices.Length],
+                Offsets = offsets,
+            };
+            var pieceToText = Matrix3x2.CreateScale(scale, 1) * glyphToText;
+            var pieceTransform = pieceToText * M(run.TextMatrix) * full;
+            ctx.Transform = pieceTransform;
+            if (fill)
+            {
+                using var brush = ctx.CreateSolidColorBrush(Color(cmd.Paint.Color, cmd.Paint.Alpha));
+                ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural);
             }
-            using var brush = ctx.CreateSolidColorBrush(Color(sp.Color, sp.Alpha));
-            // Stroke width is user space: express it in glyph space.
-            float textScale = MathF.Sqrt(MathF.Abs((glyphToText * M(run.TextMatrix)).GetDeterminant()));
-            Stroke(ctx, outline, brush, st with { Width = st.Width / Math.Max(textScale, 1e-6), DashArray = null }, transform);
+            if (stroke && run.StrokePaint is PdfPaint sp && run.Stroke is PdfStroke st)
+            {
+                using var outline = _res.Factory.CreatePathGeometry();
+                using (var sink = outline.Open())
+                {
+                    r.Face.GetGlyphRunOutline(glyphRun.FontEmSize, glyphRun.Indices, glyphRun.Advances, glyphRun.Offsets, false, false, sink);
+                    sink.Close();
+                }
+                using var brush = ctx.CreateSolidColorBrush(Color(sp.Color, sp.Alpha));
+                // Stroke width is user space: express it in glyph space.
+                float textScale = MathF.Sqrt(MathF.Abs((pieceToText * M(run.TextMatrix)).GetDeterminant()));
+                Stroke(ctx, outline, brush, st with { Width = st.Width / Math.Max(textScale, 1e-6), DashArray = null }, pieceTransform);
+            }
         }
     }
 
