@@ -1,0 +1,43 @@
+<UserControl x:Class="PdfViewer.Views.Dialogs.PageMarkCommonPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SurfaceBgBrush}"
+             Foreground="{DynamicResource TextPrimaryBrush}">
+    <!-- What the page-mark dialogs share: the preview, the pages the marks go on, and Add / Update / Remove. DataContext: a PageMarkDialogViewModel. -->
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Bottom">
+            <TextBlock Text="Pages" FontWeight="SemiBold" Margin="0,12,0,4" />
+            <StackPanel Orientation="Horizontal">
+                <RadioButton Content="All pages" IsChecked="{Binding AllPages}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                <RadioButton Content="From" VerticalAlignment="Center" Margin="0,0,6,0" IsChecked="{Binding SomePages}" />
+                <TextBox Width="44" Text="{Binding RangeFrom, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="First page" />
+                <TextBlock Text="to" VerticalAlignment="Center" Margin="6,0" />
+                <TextBox Width="44" Text="{Binding RangeTo, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Last page" />
+                <ComboBox Width="70" Margin="10,0,0,0" ItemsSource="{Binding Subsets}" SelectedItem="{Binding Subset}"
+                          AutomationProperties.Name="All, odd or even pages" ToolTip="All the pages in the range, or only the odd or even ones." />
+            </StackPanel>
+            <TextBlock Text="{Binding Message}" Foreground="#C5221F" TextWrapping="Wrap" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button Content="_Add" Width="84" Height="30" IsDefault="True" Command="{Binding AddCommand}" Margin="0,0,8,0"
+                        ToolTip="Adds these marks to the pages, next to any already there." />
+                <Button Content="_Update" Width="84" Height="30" Command="{Binding UpdateCommand}" Margin="0,0,8,0"
+                        ToolTip="Replaces the marks of this kind already on the document (Acrobat's too) with these." />
+                <Button Content="_Remove" Width="84" Height="30" Command="{Binding RemoveCommand}" Margin="0,0,8,0"
+                        ToolTip="Removes every mark of this kind from the document, and nothing else." />
+                <Button Content="Cancel" Width="84" Height="30" IsCancel="True" />
+            </StackPanel>
+        </StackPanel>
+        <DockPanel>
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <Button DockPanel.Dock="Right" Content="&#x25B6;" Width="28" Command="{Binding NextPreviewPageCommand}" AutomationProperties.Name="Next page" />
+                <Button DockPanel.Dock="Right" Content="&#x25C0;" Width="28" Margin="0,0,4,0" Command="{Binding PreviousPreviewPageCommand}" AutomationProperties.Name="Previous page" />
+                <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}">
+                    <Run Text="Preview of page" /> <Run Text="{Binding PreviewPage, Mode=OneWay}" /> <Run Text="of" /> <Run Text="{Binding PageCount, Mode=OneWay}" />
+                </TextBlock>
+            </DockPanel>
+            <Border BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" Background="#525659" Padding="8">
+                <Image Source="{Binding PreviewImage}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Preview of the page with the marks" />
+            </Border>
+        </DockPanel>
+    </DockPanel>
+</UserControl>
