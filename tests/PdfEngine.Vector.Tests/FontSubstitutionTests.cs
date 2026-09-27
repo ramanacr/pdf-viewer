@@ -47,7 +47,7 @@ public class FontSubstitutionTests
     [InlineData("Bookman-Light", 34, "Bookman Old Style", "Times New Roman", false, false)]
     [InlineData("NewCenturySchlbk-Roman", 34, "Century Schoolbook", "Times New Roman", false, false)]
     [InlineData("GillSans-Bold", 34, "Gill Sans MT", "Arial", true, false)]
-    [InlineData("Optima", 32, "Candara", "Arial", false, false)]
+    [InlineData("Optima", 32, "Arial", "Arial", false, false)] // Candara is the closer design, but not metric-compatible: its glyphs leave gaps at Optima widths
     [InlineData("MyriadPro-Regular", 32, "Segoe UI", "Arial", false, false)]
     [InlineData("MinionPro-Regular", 34, "Cambria", "Times New Roman", false, false)]
     [InlineData("SegoeUI-Semibold", 32, "Segoe UI", "Segoe UI", true, false)]

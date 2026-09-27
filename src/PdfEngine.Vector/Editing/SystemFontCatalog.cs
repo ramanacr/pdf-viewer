@@ -194,7 +194,7 @@ public sealed class SystemFontCatalog
         ("CourierNew", "Courier New"), ("Courier", "Courier New"), ("Palatino", "Palatino Linotype"), ("BookAntiqua", "Book Antiqua"),
         ("ITCAvantGarde", "Century Gothic"), ("AvantGarde", "Century Gothic"), ("Futura", "Century Gothic"), ("ITCBookman", "Bookman Old Style"), ("Bookman", "Bookman Old Style"),
         ("NewCenturySchlbk", "Century Schoolbook"), ("CenturySchoolbook", "Century Schoolbook"), ("ITCZapfChancery", "Monotype Corsiva"), ("ZapfChancery", "Monotype Corsiva"),
-        ("GillSans", "Gill Sans MT"), ("Garamond", "Garamond"), ("Frutiger", "Arial"), ("Univers", "Arial"), ("Optima", "Candara"),
+        ("GillSans", "Gill Sans MT"), ("Garamond", "Garamond"), ("Frutiger", "Arial"), ("Univers", "Arial"),
         ("Myriad", "Segoe UI"), ("Minion", "Cambria"), ("LucidaGrande", "Lucida Sans Unicode"), ("Tahoma", "Tahoma"), ("Verdana", "Verdana"), ("Georgia", "Georgia"),
     };
 
