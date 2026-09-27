@@ -42,12 +42,21 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Typed errors** (`Diagnostics/PdfVectorExceptions.cs`): syntax, object resolution, unsupported feature, resource limit, encryption; every document-open data error surfaces as `PdfSyntaxException`.
 - **Document:** encryption gate (`PdfEncryptedDocumentException`), xref reconstruction by scanning (damaged/missing `startxref`, xref-stream-only files, catalog in object streams), hybrid `/XRefStm`, object-header validation with one rebuild, object-count limit, cached object-stream index, serialized resolver, indirect `/Length`, off-thread single-flight display-list builds, **bounded LRU display-list cache** (`MaxCachedDisplayListCommands`), crop box clipped to media box, `/Rotate` snapped to 90°.
 - **Images** (`Images/PdfImageSource.cs`): lazy decode (display lists don't pin pixels), any colour space, 1/2/4/8/16 bpc, `/Decode`, stencil masks with fill colour, `/SMask`, stencil and colour-key `/Mask`, JPEG passthrough with Adobe-CMYK handling.
+- **JPEG 2000 reliability:** CoreJ2K does not decode lossy colour codestreams (the 9/7 wavelet with the irreversible colour transform) the same way twice. In every such image in the corpus, the second and later components differed from one decode to the next, so images came out garbled and changed from run to run. Those images now go to the fallback renderer (PDFium's OpenJPEG). Lossless and gray codestreams decode the same every time and stay on the vector path, decoded one at a time on the decoder's own thread. The corpus "JPEG 2000 noise" in the edit and redraw smokes was this.
+- **JPEG soft masks** (/SMask with /DCTDecode): the core has no JPEG codec, so it hands the mask to the backend (`PdfDecodedImage.JpegMask`), which decodes it with WIC or WPF and applies it as alpha. With the Symbol fix, no GovDocs file falls back to PDFium for fonts or images any more.
 - **Streams, functions, colour** (merged from a parallel workstream): bounded streaming Flate, LZW with `/EarlyChange`, typed unknown-filter errors, image-filter stop (`DecodeImageStream`); PDF functions types 0/2/3/4 with bounds; CalGray/CalRGB/Lab/ICCBased (via `/N` or `/Alternate`), Indexed over any base, Separation/DeviceN tint transforms, Pattern spaces, flagged unknowns.
 - **Fonts** (merged from a parallel workstream): identity-keyed font cache, Standard/WinAnsi/MacRoman/Differences + AGL, token-based ToUnicode (arrays, surrogates, caps), real Standard-14 widths, code→CID CMaps (Identity, embedded, variable-length), CIDToGIDMap, sfnt `cmap` 0/4/6/12 lookup for embedded TrueType, Type3 model, descriptor metrics.
 
 ### Windows backend (`PdfEngine.Vector.Windows`)
 - `WpfDisplayListCompiler` → frozen, resolution-independent `DrawingGroup`; `WindowsVectorRenderer` rasterizes it and **composites fallback regions last** from an `IPdfFallbackProvider` (hybrid) or outlines them (strict).
 - **Glyph runs from the embedded TrueType/OpenType program by glyph ID** (ADR-006). Without a loadable program: a metric-compatible system substitute placed at the PDF-computed positions; if the substitute lacks a glyph, or the program is bare Type1/CFF, the run becomes a **backend fallback region** instead of `.notdef` boxes.
+- **Fonts that are not embedded** are drawn with the installed font chosen by `SystemFontCatalog.Match`, the one routine editing, PDF/A conversion, annotations and both renderers share:
+  1. the exact PostScript name, if its weight and slant fit;
+  2. the family name as written, then without MT/PSMT/PS, then without the style words written into it (weight from Thin to Black, Italic/Oblique, Narrow/Condensed);
+  3. aliases for PostScript and Adobe families (Helvetica to Arial, Palatino to Palatino Linotype, AvantGarde to Century Gothic, and so on), limited to the metric-compatible regular and bold weights;
+  4. the class of font: fixed pitch, script, serif, else sans. A name that plainly says sans overrides a wrong serif flag.
+  - A Symbol font re-encoded with codes of its own is drawn with the installed Symbol font by what each glyph is, and Adobe's private-use forms (the serif registered and copyright signs, pieces of tall brackets) by their standard characters (`Fonts/SymbolFontCodes`).
+  - Over the 284 GovDocs files, 21 render closer to PDFium and 2 differ more: one is image noise, and one is Optima, which PDFium draws as a serif. Substitute glyphs are fitted to the document's /Widths in the Direct2D renderer, as Acrobat's substitutes are: a glyph wider than its width is narrowed so it does not run into the next, and a narrower one is widened by up to a tenth and centred in the rest. (PDFium leaves them as they are, so wide substitutes overlap there.)
 - Correct image orientation, `/Rotate` + viewer rotation, shading extend bands and radial clip, hairline and dash handling in page units, byte-bounded image cache, one long-lived STA render thread, `AnalyzeAsync` and `BuildPageDrawingAsync` for hosts.
 
 ### Composition root (`PdfViewer`)
@@ -118,6 +127,12 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Signing** (`Signatures/PdfSigner`, `PdfCmsSigner`): PAdES (`ETSI.CAdES.detached`) as an incremental update; a new or existing field with a visible appearance; certification (DocMDP 1-3); an optional RFC 3161 timestamp through a client the caller supplies (the only network request, opt-in, sending only a hash).
 - **Validation** (`Signatures/PdfSignatureValidator`), with no network: integrity over the byte ranges; the chain at the signing (or timestamp) time; timestamps; later revisions classified (signatures, form fields, annotations, metadata or other) and weighed against the certification level. The viewer shows a verdict banner and a Signatures panel.
 - Saving annotations on a signed document is incremental, so its signatures stay valid.
+- **Long-term validation**:
+  - PAdES-B-LT adds a DSS with the certificates, OCSP responses and CRLs each signature needs.
+  - PAdES-B-LTA adds RFC 3161 document timestamps (`Signatures/PdfDocumentTimestamp`), each covering the validation data before it. A timestamp is accepted only when it was granted, its imprint and nonce match the request, and its signature verifies. Renewal is another timestamp over the last.
+  - Validation reports each signature's level (B-B, B-T, B-LT, B-LTA) and when its archive timestamp needs renewing.
+  - A document timestamp is a permitted change at every certification level. A "timestamp" with a visible appearance is not treated as one.
+- **Signature appearances** (`Signatures/PdfSignatureAppearance`): text only, name and details, picture and details, or picture only, with a choice of details. A picture is chosen from a file or drawn in the signing dialog, kept with transparency, and remembered on the computer only if asked. Names Helvetica cannot show are set in an embedded installed font.
 
 ### Redaction
 - `Redaction/PdfRedactor` removes content rather than covering it:
@@ -143,11 +158,20 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - lines before the first change are untouched, unchanged glyphs keep their own codes, and once the text matches the old text again the rest keeps its exact glyphs, only moved if the paragraph grew or shrank.
 - Characters the document's font lacks (subsets embed only the glyphs they used) are written in the installed version of the same font, else a font of the same kind, embedded as a TrueType subset (Type0, Identity-H, with widths and ToUnicode). Whole words switch font, never single letters.
 - Kerning: glyphs that were side by side keep the spacing they had (the document's own kerning and tracking), even when their line is laid out again. New glyphs are kerned by their font's pair kerning (GPOS 'kern' pair adjustments, formats 1 and 2, also through extension lookups; else the legacy kern table): an embedded installed font by its glyphs, and a document font the way its installed original kerns (same PostScript name, or same family and style; a stand-in's kerning is never used).
+- Vertical writing (Identity-V and other vertical CMaps): columns are paragraphs, read top to bottom and right to left, and edited down the column with the font's vertical advances. Characters the font lacks come from an installed font, set upright in the column, in their vertical forms (GSUB vert/vrt2) where the font has them. A column that grows continues in the next column to the left.
+- New characters in a composite font's own glyphs: a one-byte code is no longer taken for a CMap that reads two, which had sent every new character in such fonts to an installed font.
 - Right-to-left and cursive scripts:
-  - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, including extension lookups, for ccmp, isol/init/medi/fina, rlig and liga);
+  - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, and contextual and chained contextual lookups in all three formats, including extension lookups, for ccmp, isol/init/medi/fina, rlig, calt and liga);
+  - marks are placed on their letters' anchors and do not advance (GPOS mark-to-base, mark-to-ligature and mark-to-mark), so vowel marks sit over and under the letters they belong to;
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
   - a cursive word that changed is shaped again as a whole in an installed font, because the document's glyphs for its letters are in the forms their old neighbours needed;
-  - not yet: contextual lookups (GSUB 5 and 6), mark positioning (GPOS mark attachment), and Indic reordering.
+  - Indic scripts in new text (`Editing/IndicShaper`: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), as the OpenType Indic specification and HarfBuzz shape them:
+    - syllables, base consonants, reph and pre-base matra reordering, and the basic features with their per-glyph masks;
+    - final reordering, then the presentation features and GPOS (abvm, blwm, dist, kern);
+    - v2 script tags fall back to v1 tags.
+    - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
+    - Reordered syllables carry /ActualText, so they extract as typed.
+  - not yet: Indic shaping when typing into an existing paragraph, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -182,7 +206,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   | PDF/A-2u | 11/12 | 9/10 |
   | PDF/A-3b | 7/7 | 5/5 |
 
-- **Converter** (`PdfA/PdfAConverter`) to PDF/A-2b or -3b: a full, unencrypted rewrite.
+- **Converter** (`PdfA/PdfAConverter`) to PDF/A-1b, -2b or -3b: a full, unencrypted rewrite.
   - Missing widget appearances are generated from the field values, and missing annotation appearances are generated as Acrobat draws them (`Annotations/PdfAnnotationAppearances`).
   - Fonts that are not embedded are embedded from the installed fonts. A matching family is preferred, with PostScript aliases such as Palatino to Palatino Linotype and AvantGarde to Century Gothic.
   - The document's widths are written into each embedded program's metrics. Layout never moves, and inconsistent widths in fonts that were already embedded are repaired the same way.
@@ -191,10 +215,17 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - Scripts, forbidden actions and annotations, transfer functions, OPI, PostScript and external stream data are removed, along with filters PDF/A does not allow.
   - Optional content is named and ordered.
   - PDF/A-3 keeps embedded files as associated files; PDF/A-2 removes them.
+  - Codes whose glyph the font program lacks (they draw .notdef) are taken out of the text operators of pages, forms and appearances (`PdfA/NotdefGlyphRemover`). Each is replaced by a TJ adjustment, so every other glyph stays exactly where it was, and the rest of each stream is kept byte for byte.
+  - A glyph two codes share with different /Widths is copied for one of them (`PdfA/TrueTypeGlyphCopies`), and that code is remapped through the font's cmap, private-use names or CIDToGIDMap. Both widths then hold.
+  - PDF/A-1b:
+    - Refused, with the reason, for documents that use transparency (constant alpha, blend modes, soft masks, groups) or hidden layers: flattening would change them.
+    - Otherwise the converter writes a 1.4 header, re-encodes JPEG 2000 as Flate, and removes optional content, embedded files and the annotation types PDF/A-1 forbids.
+    - It keeps or writes /CharSet and /CIDSet, and writes XMP 2004 with the preferred prefixes.
   - The result is validated, and anything that could not be fixed is reported.
 - `vectorpdf pdfa-convert` over the 284 GovDocs files:
-  - 248 convert to fully valid PDF/A-2b, with no errors.
-  - The rest are left with issues the converter cannot fix without changing the page: text showing codes whose glyph the font lacks, ZapfDingbats with no installed equivalent, and conflicting widths on a shared glyph.
+  - 266 convert to fully valid PDF/A-2b (248 before .notdef removal and glyph copies), with no errors.
+  - 251 convert to fully valid PDF/A-1b, and 10 are refused (transparency or hidden layers).
+  - The rest are left with issues the converter cannot fix without changing the page: ZapfDingbats with no installed equivalent, symbolic TrueType fonts with an /Encoding, /C colours without an RGB intent, and damaged ICC profiles.
   - Compared through PDFium, 7 converted pages differ from the original. All use fonts the original did not embed, where each reader picks its own stand-in.
 - **Viewer:**
   - Tools > PDF/A checks against a chosen part and level, listing each rule broken, and saves a converted copy with the changes made and anything left over; the copy can be opened.
@@ -289,11 +320,11 @@ Not started by design (M9/M10). PDFium still ships and is required.
 4. **Remaining font coverage:** bare CFF with a non-uniform FontMatrix (classified).
 5. **Transparency remainder:** non-isolated groups nested inside isolated groups with transparent backdrops (composited as isolated); JBIG2 colour extension and 12-pixel extended templates.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
-7. **Forms and signatures remainder:** filling and signing encrypted documents (the incremental writer must encrypt appended objects); calculate, format and validate scripts; long-term validation (PAdES-B-LT: DSS with certificates, OCSP and CRLs) and opt-in online revocation checks.
+7. **Forms and signatures remainder:** opt-in online revocation checks when validating; the ESIC extension entry; timestamp requests with hashes other than SHA-256.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** vertical writing; contextual substitutions, mark positioning and Indic reordering in new text.
+10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
 
 ---
 

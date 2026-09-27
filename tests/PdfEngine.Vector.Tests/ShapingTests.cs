@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -149,5 +150,48 @@ public class ShapingTests
         string read = await engine.TextService.ExtractPageTextAsync(pdoc, 1);
         Assert.Contains("صديقي", read);
         Assert.Contains("مرحبا", read);
+    }
+
+    private static byte[] U16(params int[] values) => values.SelectMany(v => new[] { (byte)(v >> 8), (byte)v }).ToArray();
+
+    /// <summary>
+    /// A GSUB whose 'calt' feature runs one chained contextual lookup (format 3): glyph 5 followed by
+    /// glyph 7 becomes glyph 9, through a nested single substitution.
+    /// </summary>
+    private static byte[] ChainedGsub()
+    {
+        var scriptList = U16(1).Concat("DFLT"u8.ToArray()).Concat(U16(8)).Concat(U16(4, 0)).Concat(U16(0, 0xFFFF, 1, 0)).ToArray();
+        var featureList = U16(1).Concat("calt"u8.ToArray()).Concat(U16(8)).Concat(U16(0, 1, 0)).ToArray();
+        var chain = U16(3, 0, 1, 18, 1, 24, 1, 0, 1).Concat(U16(1, 1, 5)).Concat(U16(1, 1, 7)).ToArray();
+        var lookup0 = U16(6, 0, 1, 8).Concat(chain).ToArray();
+        var single = U16(2, 8, 1, 9).Concat(U16(1, 1, 5)).ToArray();
+        var lookup1 = U16(1, 0, 1, 8).Concat(single).ToArray();
+        var lookupList = U16(2, 6, 6 + lookup0.Length).Concat(lookup0).Concat(lookup1).ToArray();
+        int features = 10 + scriptList.Length, lookups = features + featureList.Length;
+        return U16(1, 0, 10, features, lookups).Concat(scriptList).Concat(featureList).Concat(lookupList).ToArray();
+    }
+
+    [Fact]
+    public void ChainedContextualSubstitution_AppliesItsLookup_WhereTheSequenceMatches()
+    {
+        var gsub = OpenTypeSubstitution.Read(new Dictionary<string, byte[]> { ["GSUB"] = ChainedGsub() })!;
+        var run = new List<ShapingGlyph> { new() { Gid = 5, Text = "a" }, new() { Gid = 7, Text = "b" }, new() { Gid = 5, Text = "a" }, new() { Gid = 8, Text = "c" } };
+        gsub.Apply(run, "latn", new[] { "calt" });
+        Assert.Equal(new[] { 9, 7, 5, 8 }, run.Select(g => g.Gid)); // only the 5 that a 7 follows
+    }
+
+    [Fact]
+    public void ArabicMarks_SitOnTheirLetters_AndDoNotAdvance()
+    {
+        if (Installed("arial.ttf") is not { } arial || arial.Positioning == null) return;
+        var shaped = TextShaper.ShapeLine("بَت", _ => arial, f => f); // beh, fatha, teh
+        var fatha = shaped.Single(g => g.Glyph.Text == "َ").Glyph;
+        Assert.Equal(0, fatha.Advance);
+        // Moved onto the beh's anchor (the short initial beh brings it down a little from where it is designed).
+        Assert.True(fatha.Dx != 0 || fatha.Dy != 0, "the fatha is placed on its anchor");
+        Assert.InRange(fatha.Dy, -400, 400);
+        // Drawing order: teh, beh, then the fatha over the beh.
+        Assert.Equal("ت", shaped[0].Glyph.Text);
+        Assert.Equal("ب", shaped[1].Glyph.Text);
     }
 }

@@ -93,7 +93,7 @@ public static class PdfContentEditor
         bool italic = (font?.IsItalic ?? false) || name.Contains("Italic", StringComparison.OrdinalIgnoreCase) || name.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
         string? family = fonts?.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false)?.Family;
         return new PdfEditableText(b.Id, b.Text, b.Bounds, b.LineBounds, name, family, b.Lines[0].Size, bold, italic, first.Style.FillRgb,
-            b.Alignment, Math.Atan2(b.U.Y, b.U.X) * 180 / Math.PI, b.Pitch);
+            b.Alignment, b.Vertical ? Math.Atan2(b.V.Y, b.V.X) * 180 / Math.PI : Math.Atan2(b.U.Y, b.U.X) * 180 / Math.PI, b.Pitch, b.Vertical);
     }
 
     // ------------------------------------------------------------------ editing a page
@@ -266,6 +266,8 @@ internal sealed class OutGlyph
     public int After = -1;
     /// <summary>The text it shows (for kerning it against its neighbours).</summary>
     public string Text = string.Empty;
+    /// <summary>What it and the glyphs next to it with the same span read as, when drawn out of reading order.</summary>
+    public ActualTextSpan? Actual;
 
     public static OutGlyph From(ContentGlyph g) => new() { Matrix = g.Matrix, Code = g.Code, Style = g.Style, Advance = g.Advance, Line = -1 - g.Op, After = g.Op, Text = g.Text };
 }
@@ -281,8 +283,14 @@ internal static class GlyphEmitter
         {
             var first = glyphs[i];
             int j = i + 1;
-            while (j < glyphs.Count && SameRun(first, glyphs[j], glyphs[j - 1])) j++;
+            while (j < glyphs.Count && ReferenceEquals(glyphs[j].Actual, first.Actual) && SameRun(first, glyphs[j], glyphs[j - 1])) j++;
+            // Glyphs drawn out of reading order (an Indic syllable with a reph or a pre-base matra)
+            // are marked with the text they read as, so extraction reads that instead.
+            var actual = first.Actual;
+            if (actual != null && (i == 0 || !ReferenceEquals(glyphs[i - 1].Actual, actual)))
+                sb.Append("/Span << /ActualText <FEFF").Append(Convert.ToHexString(Encoding.BigEndianUnicode.GetBytes(actual.Text))).Append("> >> BDC\n");
             EmitRun(sb, glyphs, i, j, inPlace);
+            if (actual != null && (j == glyphs.Count || !ReferenceEquals(glyphs[j].Actual, actual))) sb.Append("EMC\n");
             i = j;
         }
     }
@@ -296,11 +304,12 @@ internal static class GlyphEmitter
         var m = first.Matrix;
         var n = g.Matrix;
         if (Math.Abs(m.A - n.A) > 1e-6 || Math.Abs(m.B - n.B) > 1e-6 || Math.Abs(m.C - n.C) > 1e-6 || Math.Abs(m.D - n.D) > 1e-6) return false;
-        // On the run's baseline, and not behind the glyph before it.
-        double lenSq = m.A * m.A + m.B * m.B;
+        // On the run's baseline (a column's centre line, in vertical writing).
+        var (ax, ay) = a.Vertical ? (m.C, m.D) : (m.A, m.B);
+        double lenSq = ax * ax + ay * ay;
         if (lenSq < 1e-18) return false;
         double dx = n.E - m.E, dy = n.F - m.F;
-        double across = (dx * -m.B + dy * m.A) / Math.Sqrt(lenSq);
+        double across = (dx * -ay + dy * ax) / Math.Sqrt(lenSq);
         return Math.Abs(across) < 1e-3;
     }
 
@@ -309,8 +318,10 @@ internal static class GlyphEmitter
         var first = glyphs[from];
         var st = first.Style;
         var m = first.Matrix;
-        double lenSq = m.A * m.A + m.B * m.B;
-        double scale = st.FontSize * st.Scaling / 100.0;
+        // Positions along the writing direction: text space x, or y down a column (where TJ moves the pen by fs / 1000 per unit, without Tz).
+        var (ax, ay) = st.Vertical ? (m.C, m.D) : (m.A, m.B);
+        double lenSq = ax * ax + ay * ay;
+        double scale = st.Vertical ? st.FontSize : st.FontSize * st.Scaling / 100.0;
         string state = !inPlace ? st.StateOps : st.ColorOps.Length > 0 ? st.ColorOps : "0 g 0 G ";
         sb.Append("q ").Append(state).Append("BT /").Append(PdfObjectWriter.EscapeName(st.FontResource)).Append(' ').Append(PageContentWalker.F(st.FontSize)).Append(" Tf ")
           .Append(PageContentWalker.F(st.CharSpacing)).Append(" Tc ").Append(PageContentWalker.F(st.WordSpacing)).Append(" Tw ")
@@ -322,7 +333,7 @@ internal static class GlyphEmitter
         for (int i = from; i < to; i++)
         {
             var g = glyphs[i];
-            double x = ((g.Matrix.E - m.E) * m.A + (g.Matrix.F - m.F) * m.B) / lenSq;
+            double x = ((g.Matrix.E - m.E) * ax + (g.Matrix.F - m.F) * ay) / lenSq;
             if (i > from && Math.Abs(scale) > 1e-12)
             {
                 double adjust = -(x - expected) * 1000 / scale;
@@ -412,6 +423,7 @@ internal sealed class PageSession
             if (Builder(face) is { } fb) yield return fb;
     }
 
+    private static readonly string[] VerticalFeatures = { "vert", "vrt2" };
     private readonly Dictionary<string, EmbeddedFontBuilder> _byResource = new(StringComparer.Ordinal);
     private readonly Dictionary<PdfFont, TrueTypeFontFile?> _designs = new(ReferenceEqualityComparer.Instance);
 
@@ -459,13 +471,20 @@ internal sealed class PageSession
     }
 
     /// <summary>A character in the first installed font that has it, in the style given (with that font instead).</summary>
-    public (byte[] Code, double Width0, GlyphStyle Style)? EncodeWithInstalled(string element, GlyphStyle style, bool bold, bool italic)
+    /// <param name="vertical">For a column: the font's vertical forms (brackets and punctuation turned for vertical writing).</param>
+    public (byte[] Code, double Width0, GlyphStyle Style)? EncodeWithInstalled(string element, GlyphStyle style, bool bold, bool italic, bool vertical = false)
     {
         int cp = char.ConvertToUtf32(element, 0);
         foreach (var builder in Chain(style.Font, bold, italic))
         {
             int gid = builder.Font.GlyphFor(cp);
             if (gid <= 0) continue;
+            if (vertical && builder.Font.Substitution is { } gsub)
+            {
+                var run = new List<ShapingGlyph> { new() { Gid = gid, Text = element } };
+                gsub.Apply(run, "hani", VerticalFeatures);
+                if (run.Count == 1 && run[0].Gid > 0) gid = run[0].Gid;
+            }
             return (builder.Encode(gid, element), builder.Font.Advance(gid), style with { FontResource = builder.ResourceName, Font = null, WordSpacing = 0 });
         }
         return null;
@@ -507,15 +526,17 @@ internal sealed class PageSession
                     continue;
                 }
                 // Pair kerning in left-to-right text (right-to-left pairs are kerned in reading order, which is not read here).
-                if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0)
+                if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0 && !p.Glyph.Kerned && !g.Kerned)
                     s += builder.Font.Kerning(p.Glyph.Gid, g.Gid) / 1000.0 * size;
-                var origin = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
-                double advance = builder.Font.Advance(g.Gid) / 1000.0 * size;
+                // A mark on its anchor: moved from the pen, and not moving it.
+                double gx = s + g.Dx / 1000.0 * size, gy = t + g.Dy / 1000.0 * size;
+                var origin = new PdfPoint(add.Baseline.X + gx * cos - gy * sin, add.Baseline.Y + gx * sin + gy * cos);
+                double advance = (g.Advance ?? builder.Font.Advance(g.Gid)) / 1000.0 * size;
                 var style = new GlyphStyle(builder.ResourceName, null, size, 0, 0, 100, 0, 0, color, rgb);
                 result.Add(new OutGlyph
                 {
                     Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = builder.Encode(g.Gid, g.Text), Style = style,
-                    Advance = advance, Line = int.MinValue + li, Text = g.Text,
+                    Advance = advance, Line = int.MinValue + li, Text = g.Text, Actual = g.Actual,
                 });
                 previous = (g, builder);
                 s += advance;
@@ -549,45 +570,7 @@ internal sealed class PageSession
 
     public string AddImage(PdfImageContent image)
     {
-        if (image.Width <= 0 || image.Height <= 0) throw new ArgumentException("The image has no pixels.");
-        var dict = new Dictionary<string, PdfObject>
-        {
-            ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Image"),
-            ["Width"] = new PdfInteger(image.Width), ["Height"] = new PdfInteger(image.Height), ["BitsPerComponent"] = new PdfInteger(8),
-        };
-        byte[] data;
-        switch (image.Encoding)
-        {
-            case PdfImageEncoding.Jpeg:
-                dict["ColorSpace"] = new PdfName(image.Components == 1 ? "DeviceGray" : "DeviceRGB");
-                dict["Filter"] = new PdfName("DCTDecode");
-                data = image.Data;
-                break;
-            case PdfImageEncoding.Gray:
-                if (image.Data.Length < (long)image.Width * image.Height) throw new ArgumentException("The image data is too short.");
-                dict["ColorSpace"] = new PdfName("DeviceGray");
-                dict["Filter"] = new PdfName("FlateDecode");
-                data = ContentRedactor.Deflate(image.Data);
-                break;
-            default:
-                if (image.Data.Length < (long)image.Width * image.Height * 3) throw new ArgumentException("The image data is too short.");
-                dict["ColorSpace"] = new PdfName("DeviceRGB");
-                dict["Filter"] = new PdfName("FlateDecode");
-                data = ContentRedactor.Deflate(image.Data);
-                break;
-        }
-        if (image.Alpha is { } alpha && alpha.Any(a => a != 255))
-        {
-            int mask = _allocate();
-            _objects[mask] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
-            {
-                ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Image"), ["Width"] = new PdfInteger(image.Width), ["Height"] = new PdfInteger(image.Height),
-                ["BitsPerComponent"] = new PdfInteger(8), ["ColorSpace"] = new PdfName("DeviceGray"), ["Filter"] = new PdfName("FlateDecode"),
-            }, ContentRedactor.Deflate(alpha));
-            dict["SMask"] = new PdfIndirectRef(mask);
-        }
-        int number = _allocate();
-        _objects[number] = PdfObjectWriter.NewStream(dict, data);
+        int number = PdfImageXObject.Write(image, _allocate, _objects);
         string name = Unique("ImEd", _xobjectNames);
         _newXObjects[name] = new PdfIndirectRef(number);
         return name;

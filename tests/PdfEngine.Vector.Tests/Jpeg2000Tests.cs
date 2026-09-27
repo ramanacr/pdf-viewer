@@ -23,7 +23,7 @@ public class Jpeg2000Tests
     private readonly ITestOutputHelper _output;
     public Jpeg2000Tests(ITestOutputHelper output) => _output = output;
 
-    private static byte[] Encode(int w, int h, int components, bool jp2 = false)
+    private static byte[] Encode(int w, int h, int components, bool jp2 = false, bool lossless = true)
     {
         var planes = new int[components][];
         for (int c = 0; c < components; c++)
@@ -41,7 +41,7 @@ public class Jpeg2000Tests
         }
         var source = new InterleavedImageSource(w, h, components, 8, new bool[components], planes);
         var p = J2kImage.GetDefaultEncoderParameterList();
-        p["lossless"] = "on";
+        p["lossless"] = lossless ? "on" : "off";
         p["file_format"] = jp2 ? "on" : "off";
         return J2kImage.ToBytes(source, p);
     }
@@ -134,6 +134,27 @@ public class Jpeg2000Tests
 
     [Fact]
     public Task Rgba_WithSMaskInData() => AssertMatches("rgba", "/SMaskInData 1", Encode(64, 48, 4, jp2: true));
+
+    /// <summary>
+    /// CoreJ2K decodes lossy colour codestreams (9/7 wavelet with the irreversible colour transform)
+    /// differently from one decode to the next, so those go to the fallback renderer; lossless and
+    /// gray ones are decoded here.
+    /// </summary>
+    [Fact]
+    public async Task LossyColourCodestreams_GoToTheFallbackRenderer()
+    {
+        Assert.False(PdfEngine.Vector.Images.PdfImageSource.IsUnreliableJpx(Encode(64, 48, 3)));
+        Assert.False(PdfEngine.Vector.Images.PdfImageSource.IsUnreliableJpx(Encode(64, 48, 1, lossless: false)));
+        byte[] lossy = Encode(64, 48, 3, lossless: false);
+        Assert.True(PdfEngine.Vector.Images.PdfImageSource.IsUnreliableJpx(lossy));
+
+        var b = new VectorPdfBuilder();
+        int image = b.AddStream("/Type /XObject /Subtype /Image /Width 64 /Height 48 /Filter /JPXDecode /ColorSpace /DeviceRGB /BitsPerComponent 8", lossy);
+        b.AddPage("q 180 0 0 135 10 30 cm /Im1 Do Q", $"<< /XObject << /Im1 {image} 0 R >> >>");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        using var renderer = new Direct2DVectorRenderer();
+        Assert.NotEmpty(await renderer.AnalyzeAsync(await doc.GetPageDisplayListAsync(1)));
+    }
 
     [Fact]
     public async Task MutatedCodestreams_FailOnlyWithTypedErrors()

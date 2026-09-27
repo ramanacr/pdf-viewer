@@ -79,6 +79,11 @@ internal sealed class WpfFontCache : IDisposable
         string family;
         if (name.Contains("Dingbat", StringComparison.OrdinalIgnoreCase))
             return null; // no metric- or glyph-compatible system font
+        // The installed font of that name or design first, as the Direct2D backend chooses it.
+        if (!name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase)
+            && PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Match(name, bold, italic, face?.IsSerif == true, face?.IsFixedPitch == true, face?.IsScript == true) is { } catalogFace
+            && GetInstalled(catalogFace, bold, italic) is { } match)
+            return match;
         if (name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase))
             family = "Symbol";
         else if (face?.IsFixedPitch == true || name.Contains("Courier", StringComparison.OrdinalIgnoreCase) || name.Contains("Mono", StringComparison.OrdinalIgnoreCase))
@@ -99,6 +104,30 @@ internal sealed class WpfFontCache : IDisposable
         GlyphTypeface? glyphTypeface = typeface.TryGetGlyphTypeface(out var gt) ? gt : null;
         _substitutes[key] = glyphTypeface;
         return glyphTypeface;
+    }
+
+    /// <summary>The installed face the shared font catalogue chose, from its file (a single-font file only).</summary>
+    private GlyphTypeface? GetInstalled(PdfEngine.Vector.Editing.SystemFontFace installed, bool bold, bool italic)
+    {
+        if (installed.Index != 0 || installed.Path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var simulations = (bold && !installed.Bold ? StyleSimulations.BoldSimulation : StyleSimulations.None)
+                          | (italic && !installed.Italic ? StyleSimulations.ItalicSimulation : StyleSimulations.None);
+        string key = $"file:{installed.Path}|{simulations}";
+        if (_substitutes.TryGetValue(key, out var cached))
+            return cached;
+        GlyphTypeface? typeface;
+        try
+        {
+            typeface = new GlyphTypeface(new Uri(installed.Path), simulations);
+            _ = typeface.GlyphCount;
+        }
+        catch (Exception ex) when (ex is FileFormatException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            typeface = null;
+        }
+        _substitutes[key] = typeface;
+        return typeface;
     }
 
     private static bool TryInstalledFamily(string postScriptName, out string family)
