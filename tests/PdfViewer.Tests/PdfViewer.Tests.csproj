@@ -35,6 +35,7 @@
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\FormPdfFixture.cs" Link="Fixtures\FormPdfFixture.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\ScriptedFormFixture.cs" Link="Fixtures\ScriptedFormFixture.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\PdfTestEncryption.cs" Link="Fixtures\PdfTestEncryption.cs" />
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\TestPki.cs" Link="Fixtures\TestPki.cs" />
     <None Update="xunit.runner.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

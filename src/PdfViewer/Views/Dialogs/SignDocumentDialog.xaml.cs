@@ -162,7 +162,9 @@ public partial class SignDocumentDialog : Window
             3 => 1,
             _ => (int?)null,
         } : null;
-        Result = new SignatureOptions(certificate, _settings.Reason, _settings.Location, _settings.ContactInfo, timestamp, OutputBox.Text, certification);
+        // Long-term validation is asked for each time and not remembered: it contacts the certificate authority.
+        Result = new SignatureOptions(certificate, _settings.Reason, _settings.Location, _settings.ContactInfo, timestamp, OutputBox.Text, certification,
+            AddLongTermValidation: LtvCheck.IsChecked == true);
         DialogResult = true;
     }
 

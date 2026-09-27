@@ -12,7 +12,6 @@ using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Signatures;
 using PdfViewer.Models;
 using PdfViewer.Services;
-using PdfEngine.Vector.Signatures;
 
 namespace PdfViewer.ViewModels;
 
@@ -28,12 +27,20 @@ public sealed record SignatureOptions(
     string? ContactInfo,
     Uri? TimestampServer,
     string OutputPath,
-    int? CertificationLevel = null);
+    int? CertificationLevel = null,
+    bool AddLongTermValidation = false);
 
 public partial class MainViewModel
 {
     /// <summary>Shows the signing dialog for a placement (and whether the document can still be certified); null when the user cancels.</summary>
     public Func<SignaturePlacement, bool, SignatureOptions?>? ShowSignDialogFunc { get; set; }
+
+    /// <summary>
+    /// Where long-term validation data comes from: the certificate authorities, over HTTP. It is
+    /// called only after the user has asked for that data (the signing option, or the panel's
+    /// command after confirming), never by opening or validating a document.
+    /// </summary>
+    public Func<IPdfRevocationSource> RevocationSourceFactory { get; set; } = () => new HttpRevocationSource();
 
     /// <summary>Only an unsigned document can be certified.</summary>
     public bool CanCertify => !HasSignatures;
@@ -144,27 +151,26 @@ public partial class MainViewModel
             return false;
         }
 
+        // Long-term validation data, only when the user ticked it: the signature is made first and
+        // the data appended after it; if the data cannot be had, the signed document is saved without it.
+        PdfLtvResult? ltv = null;
+        string? ltvFailure = null;
+        if (options.AddLongTermValidation)
+        {
+            StatusText = "Adding long-term validation data (contacting the certificate authority)...";
+            try
+            {
+                ltv = await AddValidationDataAsync(signed);
+                signed = ltv.Bytes;
+            }
+            catch (Exception ex) when (IsValidationDataFailure(ex))
+            {
+                ltvFailure = ex.Message;
+            }
+        }
+
         string output = Path.GetFullPath(options.OutputPath);
-        string directory = Path.GetDirectoryName(output) ?? string.Empty;
-        string temporaryPath = Path.Combine(directory, $".{Path.GetFileName(output)}.signing");
-        string backupPath = temporaryPath + ".bak";
-        try
-        {
-            await File.WriteAllBytesAsync(temporaryPath, signed);
-            if (File.Exists(output)) ReplaceOriginal(temporaryPath, output, backupPath);
-            else File.Move(temporaryPath, output);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            StatusText = "The signed document was not saved.";
-            ShowAlert($"The signed document could not be saved:\n\n{ex.Message}", "Sign Document", MessageBoxButton.OK, MessageBoxImage.Error);
-            return false;
-        }
-        finally
-        {
-            TryDeleteQuietly(temporaryPath);
-            TryDeleteQuietly(backupPath);
-        }
+        if (!await WriteSignedFileAsync(output, signed, "Sign Document")) return false;
 
         // Show the signed file, as saved: its signature is what the reader now sees.
         HasUnsavedChanges = false;
@@ -172,7 +178,138 @@ public partial class MainViewModel
         await LoadDocumentAsync(output, _openPassword);
         if (pageToShow >= 1 && pageToShow <= PageCount) CurrentPageNumber = pageToShow;
         StatusText = $"Signed by {SigningCertificates.SignerName(options.Certificate)} and saved to {Path.GetFileName(output)}.";
+        if (ltvFailure != null || ltv is { IsComplete: false })
+        {
+            StatusText += " Long-term validation data could not be added in full.";
+            ShowAlert("The document was signed and saved, but its long-term validation data is incomplete:\n\n" + (ltvFailure ?? Problems(ltv!)),
+                "Sign Document", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        else if (ltv != null) StatusText += " Long-term validation data was added.";
         return true;
+    }
+
+    /// <summary>Writes a signed file beside its destination and swaps it in, so a failure never leaves it half-written.</summary>
+    private async Task<bool> WriteSignedFileAsync(string output, byte[] bytes, string caption)
+    {
+        string directory = Path.GetDirectoryName(output) ?? string.Empty;
+        string temporaryPath = Path.Combine(directory, $".{Path.GetFileName(output)}.signing");
+        string backupPath = temporaryPath + ".bak";
+        try
+        {
+            await File.WriteAllBytesAsync(temporaryPath, bytes);
+            if (File.Exists(output)) ReplaceOriginal(temporaryPath, output, backupPath);
+            else File.Move(temporaryPath, output);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StatusText = "The signed document was not saved.";
+            ShowAlert($"The signed document could not be saved:\n\n{ex.Message}", caption, MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+        finally
+        {
+            TryDeleteQuietly(temporaryPath);
+            TryDeleteQuietly(backupPath);
+        }
+    }
+
+    // ------------------------------------------------------------------ long-term validation
+
+    /// <summary>Why validation data cannot be added right now, or null.</summary>
+    public string? WhyCannotAddValidationData()
+    {
+        if (!IsDocumentLoaded || _docService.CurrentBytes == null || string.IsNullOrEmpty(_docService.CurrentFilePath)) return "Open a signed document first.";
+        if (!HasSignatures) return "This document is not digitally signed.";
+        if (_docService.IsDecryptedCopy) return "This document is encrypted for specific recipients; validation data cannot be added to it.";
+        if (_docService.Permissions is { CanFillForms: false, CanModify: false })
+            return "This document's security settings do not allow changes.";
+        if (HasUnsavedChanges) return "Save your changes first: validation data is added to the document as it is saved.";
+        return null;
+    }
+
+    /// <summary>
+    /// Adds long-term validation data to the open, signed document and saves it in place. Only
+    /// after the user confirms are the certificate authorities asked about the signers'
+    /// certificates; the answers are appended as an incremental update, so every signature stays valid.
+    /// </summary>
+    [RelayCommand]
+    private async Task AddLongTermValidationAsync()
+    {
+        const string caption = "Add Long-Term Validation Data";
+        if (WhyCannotAddValidationData() is { } reason)
+        {
+            ShowAlert(reason, caption, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        string path = _docService.CurrentFilePath!;
+        if (!Confirm(
+                "Long-term validation data lets these signatures be validated years from now, after their certificates expire. " +
+                "To get it, the viewer contacts the certificate authorities named in the signers' certificates (their OCSP " +
+                "responders, revocation lists and issuer certificates). Only certificate identifiers are sent, never the document.\n\n" +
+                $"The data is added to {Path.GetFileName(path)} as an update; the signatures stay valid.\n\nContact the certificate authorities now?",
+                caption))
+        {
+            StatusText = "Long-term validation data was not added.";
+            return;
+        }
+
+        byte[] current = _docService.CurrentBytes!;
+        int pageToShow = CurrentPageNumber;
+        StatusText = "Contacting the certificate authorities...";
+        PdfLtvResult result;
+        try
+        {
+            result = await AddValidationDataAsync(current);
+        }
+        catch (Exception ex) when (IsValidationDataFailure(ex))
+        {
+            StatusText = "Long-term validation data was not added.";
+            ShowAlert($"Long-term validation data could not be added:\n\n{ex.Message}", caption, MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        if (!result.Changed)
+        {
+            StatusText = result.IsComplete ? "The document already holds all the validation data there is." : "No validation data could be obtained.";
+            if (!result.IsComplete) ShowAlert("No validation data could be obtained:\n\n" + Problems(result), caption, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (!await WriteSignedFileAsync(path, result.Bytes, caption)) return;
+
+        HasUnsavedChanges = false;
+        _formChangedSinceSave = false;
+        await LoadDocumentAsync(path, _openPassword);
+        if (pageToShow >= 1 && pageToShow <= PageCount) CurrentPageNumber = pageToShow;
+        StatusText = result.IsComplete
+            ? $"Long-term validation data was added to {Path.GetFileName(path)}."
+            : $"Some long-term validation data was added to {Path.GetFileName(path)}; some could not be obtained.";
+        if (!result.IsComplete)
+            ShowAlert("Some validation data could not be obtained:\n\n" + Problems(result), caption, MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private async Task<PdfLtvResult> AddValidationDataAsync(byte[] signed)
+    {
+        var source = RevocationSourceFactory();
+        try
+        {
+            string? password = _openPassword;
+            return await Task.Run(() => PdfLtv.AddValidationDataAsync(signed, source, password));
+        }
+        finally
+        {
+            (source as IDisposable)?.Dispose();
+        }
+    }
+
+    private static bool IsValidationDataFailure(Exception ex) =>
+        ex is CryptographicException or NotSupportedException or InvalidOperationException or ArgumentException
+            or System.Net.Http.HttpRequestException or TaskCanceledException or IOException;
+
+    /// <summary>The problems of every signature, one per line (at most a handful).</summary>
+    private static string Problems(PdfLtvResult result)
+    {
+        var lines = result.Signatures.SelectMany(s => s.Problems).Distinct().ToList();
+        return string.Join("\n", lines.Take(6)) + (lines.Count > 6 ? $"\n(and {lines.Count - 6} more)" : string.Empty);
     }
 
     /// <summary>Signs; when the signature outgrows the space reserved for it (a long chain, a large timestamp), reserves more and signs again.</summary>
