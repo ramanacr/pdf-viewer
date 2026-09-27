@@ -164,7 +164,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - marks are placed on their letters' anchors and do not advance (GPOS mark-to-base, mark-to-ligature and mark-to-mark), so vowel marks sit over and under the letters they belong to;
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
   - a cursive word that changed is shaped again as a whole in an installed font, because the document's glyphs for its letters are in the forms their old neighbours needed;
-  - not yet: Indic reordering, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
+  - Indic scripts in new text (`Editing/IndicShaper`: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), as the OpenType Indic specification and HarfBuzz shape them:
+    - syllables, base consonants, reph and pre-base matra reordering, and the basic features with their per-glyph masks;
+    - final reordering, then the presentation features and GPOS (abvm, blwm, dist, kern);
+    - v2 script tags fall back to v1 tags.
+    - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
+    - Reordered syllables carry /ActualText, so they extract as typed.
+  - not yet: Indic shaping when typing into an existing paragraph, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -317,7 +323,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** Indic reordering and GPOS cursive attachment in new text; sideways Latin text in vertical columns.
+10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
 
 ---
 
