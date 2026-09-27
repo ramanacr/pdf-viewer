@@ -155,6 +155,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - lines before the first change are untouched, unchanged glyphs keep their own codes, and once the text matches the old text again the rest keeps its exact glyphs, only moved if the paragraph grew or shrank.
 - Characters the document's font lacks (subsets embed only the glyphs they used) are written in the installed version of the same font, else a font of the same kind, embedded as a TrueType subset (Type0, Identity-H, with widths and ToUnicode). Whole words switch font, never single letters.
 - Kerning: glyphs that were side by side keep the spacing they had (the document's own kerning and tracking), even when their line is laid out again. New glyphs are kerned by their font's pair kerning (GPOS 'kern' pair adjustments, formats 1 and 2, also through extension lookups; else the legacy kern table): an embedded installed font by its glyphs, and a document font the way its installed original kerns (same PostScript name, or same family and style; a stand-in's kerning is never used).
+- Vertical writing (Identity-V and other vertical CMaps): columns are paragraphs, read top to bottom and right to left, and edited down the column with the font's vertical advances. Characters the font lacks come from an installed font, set upright in the column, in their vertical forms (GSUB vert/vrt2) where the font has them. A column that grows continues in the next column to the left.
+- New characters in a composite font's own glyphs: a one-byte code is no longer taken for a CMap that reads two, which had sent every new character in such fonts to an installed font.
 - Right-to-left and cursive scripts:
   - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, including extension lookups, for ccmp, isol/init/medi/fina, rlig and liga);
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
@@ -305,7 +307,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** vertical writing; contextual substitutions, mark positioning and Indic reordering in new text.
+10. **Editing remainder:** contextual substitutions, mark positioning and Indic reordering in new text; sideways Latin text in vertical columns.
 
 ---
 

@@ -39,6 +39,7 @@ internal sealed class BlockLayout
         /// <summary>A shaped word (right-to-left or cursive): its glyphs in drawing order, each at its offset along the baseline.</summary>
         public List<(OutGlyph Glyph, double Offset)>? Cluster;
         public int Level; // bidirectional embedding level (odd: right to left)
+        public PdfPoint Offset; // where the glyph's origin is from the pen, in text space (an upright glyph in a column)
     }
 
     public (HashSet<ContentGlyph> Gone, List<OutGlyph> Output) Layout(string newText)
@@ -151,9 +152,10 @@ internal sealed class BlockLayout
                 {
                     var tm = item.Template.Matrix;
                     int after = li < n ? _b.Lines[li].Glyphs.Max(g => g.Op) : -1;
+                    var shift = new PdfPoint(item.Offset.X * tm.A + item.Offset.Y * tm.C, item.Offset.X * tm.B + item.Offset.Y * tm.D);
                     void Place(OutGlyph glyph, double at)
                     {
-                        var o = new PdfPoint(_b.Origin.X + at * _b.U.X + t * _b.V.X, _b.Origin.Y + at * _b.U.Y + t * _b.V.Y);
+                        var o = new PdfPoint(_b.Origin.X + at * _b.U.X + t * _b.V.X + shift.X, _b.Origin.Y + at * _b.U.Y + t * _b.V.Y + shift.Y);
                         glyph.Matrix = new PdfMatrix(tm.A, tm.B, tm.C, tm.D, o.X, o.Y);
                         glyph.Line = li;
                         glyph.After = after;
@@ -262,7 +264,9 @@ internal sealed class BlockLayout
             }
             var tmpl = template[j];
             var style = tmpl.Style;
-            double userScale = Math.Sqrt(tmpl.Matrix.A * tmpl.Matrix.A + tmpl.Matrix.B * tmpl.Matrix.B);
+            bool vertical = style.Vertical;
+            // Text space to user space along the line: the x axis, or down the column.
+            double userScale = vertical ? Math.Sqrt(tmpl.Matrix.C * tmpl.Matrix.C + tmpl.Matrix.D * tmpl.Matrix.D) : Math.Sqrt(tmpl.Matrix.A * tmpl.Matrix.A + tmpl.Matrix.B * tmpl.Matrix.B);
             int length = text[j] == ' ' ? 1 : StringInfo.GetNextTextElementLength(text, j);
             string element = text.Substring(j, length);
             // Right to left, a bracket is drawn (and reads) as its mirror image.
@@ -270,29 +274,48 @@ internal sealed class BlockLayout
             bool space = element == " ";
             bool bold = style.Font?.IsBold ?? false, italic = style.Font?.IsItalic ?? false;
             var item = new Item { Template = tmpl, Space = space, BreakAfter = element is "-" or "‐" or "–", End = j + length, UserScale = userScale };
-            var wordInstalled = installedWord && !space ? _session.EncodeWithInstalled(element, style, bold, italic) : null;
+            var wordInstalled = installedWord && !space ? _session.EncodeWithInstalled(element, style, bold, italic, vertical) : null;
             if (wordInstalled is { } inWord)
             {
-                double advance = (inWord.Width0 / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
-                item.Glyph = new OutGlyph { Code = inWord.Code, Style = inWord.Style, Advance = advance, Text = element };
-                item.Width = advance * userScale;
+                if (vertical) Upright(item, inWord, style, userScale, element);
+                else
+                {
+                    double advance = (inWord.Width0 / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
+                    item.Glyph = new OutGlyph { Code = inWord.Code, Style = inWord.Style, Advance = advance, Text = element };
+                    item.Width = advance * userScale;
+                }
             }
             else if (_session.Encoder(style.Font) is { } encoder && encoder.TryEncode(element, out var code, out double w0))
             {
                 bool wordSpace = code.Length == 1 && code[0] == 32;
-                double advance = (w0 / 1000.0 * style.FontSize + style.CharSpacing + (wordSpace ? style.WordSpacing : 0)) * style.Scaling / 100.0;
+                double advance;
+                if (vertical && style.Font is { } vfont)
+                {
+                    // Down the column by the font's vertical advance (negative in text space).
+                    vfont.ReadCode(code, 0, out _, out int cid);
+                    advance = vfont.GetVerticalMetrics(cid).W1y / 1000.0 * style.FontSize + style.CharSpacing + (wordSpace ? style.WordSpacing : 0);
+                    item.Width = -advance * userScale;
+                }
+                else
+                {
+                    advance = (w0 / 1000.0 * style.FontSize + style.CharSpacing + (wordSpace ? style.WordSpacing : 0)) * style.Scaling / 100.0;
+                    item.Width = advance * userScale;
+                }
                 item.Glyph = new OutGlyph { Code = code, Style = style, Advance = advance, Text = element };
-                item.Width = advance * userScale;
             }
             else if (space)
             {
                 item.Width = _b.WordGap; // the font has no space: the gap alone separates the words
             }
-            else if (_session.EncodeWithInstalled(element, style, bold, italic) is { } installed)
+            else if (_session.EncodeWithInstalled(element, style, bold, italic, vertical) is { } installed)
             {
-                double advance = (installed.Width0 / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
-                item.Glyph = new OutGlyph { Code = installed.Code, Style = installed.Style, Advance = advance, Text = element };
-                item.Width = advance * userScale;
+                if (vertical) Upright(item, installed, style, userScale, element);
+                else
+                {
+                    double advance = (installed.Width0 / 1000.0 * style.FontSize + style.CharSpacing) * style.Scaling / 100.0;
+                    item.Glyph = new OutGlyph { Code = installed.Code, Style = installed.Style, Advance = advance, Text = element };
+                    item.Width = advance * userScale;
+                }
             }
             else
             {
@@ -306,6 +329,16 @@ internal sealed class BlockLayout
         }
         Kern(items);
         return items;
+    }
+
+    // A glyph of a horizontal installed font set upright in a column: centred across it, its em box
+    // hanging from the pen (as a vertical font's default metrics place it), advancing one em down.
+    private static void Upright(Item item, (byte[] Code, double Width0, GlyphStyle Style) encoded, GlyphStyle column, double userScale, string element)
+    {
+        double fs = column.FontSize;
+        item.Glyph = new OutGlyph { Code = encoded.Code, Style = encoded.Style, Advance = encoded.Width0 / 1000.0 * fs, Text = element };
+        item.Offset = new PdfPoint(-encoded.Width0 / 2000.0 * fs, -0.88 * fs);
+        item.Width = (fs + column.CharSpacing) * userScale;
     }
 
     private static bool IsRightToLeft(char c) => c is >= '\u0590' and <= '\u08FF' or >= '\uFB1D' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF';
@@ -356,6 +389,7 @@ internal sealed class BlockLayout
                 continue;
             }
             var st = a.Glyph.Style;
+            if (_b.Vertical) continue;
             double k = _session.Kerning(st, a.Glyph.Code, a.Glyph.Text, b.Glyph.Style, b.Glyph.Code, b.Glyph.Text);
             if (k != 0) a.Width += k / 1000.0 * st.FontSize * st.Scaling / 100.0 * a.UserScale;
         }

@@ -29,7 +29,7 @@ public static class EditSmoke
         var files = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).Take(limit).ToList();
         using var engine = new PdfiumEngine();
         using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
-        int ok = 0, skipped = 0, failed = 0, redrawDiffers = 0, missing = 0, changedOutside = 0, noText = 0, notFound = 0;
+        int ok = 0, skipped = 0, failed = 0, redrawDiffers = 0, missing = 0, changedOutside = 0, noText = 0, notFound = 0, readDifferently = 0;
         var clock = Stopwatch.StartNew();
         using var report = outPath != null ? new StreamWriter(outPath) : null;
         var fonts = SystemFontCatalog.Installed;
@@ -57,13 +57,14 @@ public static class EditSmoke
                 case "text-missing": missing++; break;
                 case "changed-outside": changedOutside++; break;
                 case "text-not-found": notFound++; break;
+                case "read-differently": readDifferently++; break;
                 default: failed++; break;
             }
             if (status != "ok") Console.WriteLine($"{status,-16} {name}  {detail}");
             report?.WriteLine(JsonSerializer.Serialize(new { file = name, status, detail }));
         }
         Console.WriteLine($"\n{files.Count} files in {clock.Elapsed.TotalSeconds:F0} s: ok {ok}, skipped {skipped}, no paragraph {noText}, redraw differs {redrawDiffers}, " +
-                          $"text missing {missing}, changed outside {changedOutside}, text not found {notFound}, errors {failed}");
+                          $"text missing {missing}, changed outside {changedOutside}, text not found {notFound}, read differently by PDFium {readDifferently}, errors {failed}");
         return failed + missing > 0 ? 1 : 0;
     }
 
@@ -87,6 +88,13 @@ public static class EditSmoke
                 return pdfiumWords >= 10 ? ("text-not-found", $"PDFium reads {pdfiumWords} words; {editable.Texts.Count} paragraphs found") : ("no-paragraph", "");
             }
             var area = Inflate(block.Bounds, block.FontSize);
+            // PDFium must read the paragraph as we do, or reading the edit back proves nothing.
+            await using (var original = await engine.OpenDocumentAsync(bytes))
+            {
+                string before = await engine.TextService.ExtractPageTextAsync(original, 1);
+                if (!Words(block.Text).Where(w => w.Length >= 3).Take(3).All(w => before.Contains(w, StringComparison.Ordinal)))
+                    return ("read-differently", "PDFium reads the paragraph's text differently");
+            }
 
             // 1. The paragraph drawn again where it was: the page must look the same.
             var redraw = PdfContentEditor.Apply(doc, bytes, new[] { new PdfTransformContent(1, PdfEditTarget.Text, block.Id, PdfMatrix.Identity) });
