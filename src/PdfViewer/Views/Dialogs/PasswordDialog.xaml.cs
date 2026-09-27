@@ -12,6 +12,16 @@ public partial class PasswordDialog : Window
         InitializeComponent();
         MessageTextBlock.Text = $"'{fileName}' is encrypted. Please enter the password to unlock:";
         Loaded += (s, e) => PasswordInputBox.Focus();
+        Closed += (s, e) => PasswordInputBox.Clear();
+    }
+
+    /// <summary>The same prompt for another password, such as the permissions password.</summary>
+    public PasswordDialog(string fileName, string heading, string message, string okText) : this(fileName)
+    {
+        Title = heading;
+        HeadingTextBlock.Text = heading;
+        MessageTextBlock.Text = message;
+        OkButton.Content = okText;
     }
 
     private void OkButton_Click(object sender, RoutedEventArgs e)

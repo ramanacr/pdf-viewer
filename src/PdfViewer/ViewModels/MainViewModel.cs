@@ -576,6 +576,7 @@ public partial class MainViewModel : ObservableObject
             _ = RenderThumbnailsAsync();
 
             _openPassword = password;
+            await RefreshSecurityDetailsAsync();
             _formChangedSinceSave = false;
             _savedAnnotationsFingerprint = AnnotationsFingerprint();
             await LoadFormAsync();
@@ -607,6 +608,8 @@ public partial class MainViewModel : ObservableObject
         HasForm = false;
         FormReadOnlyReason = null;
         DocumentPermissions = PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
+        SecurityMethod = "No security";
+        IsOwnerPasswordKnown = true;
         _searchCts?.Cancel();
         _docService.CloseDocument();
         _cache.Clear();
@@ -2137,6 +2140,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (Metadata != null)
         {
+            Metadata.SecurityMethod = SecurityMethod;
+            Metadata.SecurityPermissions = PermissionsDescription;
             ShowPropertiesAction?.Invoke(Metadata);
         }
     }

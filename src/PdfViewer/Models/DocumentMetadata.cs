@@ -24,6 +24,12 @@ public class DocumentMetadata
     public string PdfFormatVersion { get; set; } = string.Empty;
     public bool IsEncrypted { get; set; }
     public bool IsLinearized { get; set; }
+
+    /// <summary>"Password security, AES-256", "No security"; filled in when the properties are shown.</summary>
+    public string SecurityMethod { get; set; } = "No security";
+
+    /// <summary>What the reader may do, one permission per line.</summary>
+    public string SecurityPermissions { get; set; } = string.Empty;
     
     public double DefaultPageWidthPt { get; set; }
     public double DefaultPageHeightPt { get; set; }

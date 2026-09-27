@@ -80,7 +80,7 @@ public static class PdfObjectWriter
         new(new PdfDictionary(entries), 0, data.Length, null, data);
 
     /// <summary>Drops /Crypt from /Filter (and its /DecodeParms slot) once the data is decrypted.</summary>
-    private static PdfDictionary WithoutCryptFilter(PdfDictionary dict, bool decrypted)
+    internal static PdfDictionary WithoutCryptFilter(PdfDictionary dict, bool decrypted)
     {
         if (!decrypted)
             return dict;

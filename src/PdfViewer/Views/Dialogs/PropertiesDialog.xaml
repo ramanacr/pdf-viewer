@@ -4,7 +4,7 @@
         Title="Document Properties"
         Icon="pack://application:,,,/assets/app_icon.png"
         Width="520"
-        Height="540"
+        Height="640"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
         Background="{DynamicResource SurfaceBgBrush}"
@@ -154,6 +154,29 @@
 
                     <TextBlock Grid.Row="4" Grid.Column="0" Text="PDF Engine:" Style="{StaticResource LabelStyle}" />
                     <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding LicenseStatus, Mode=OneWay}" FontWeight="SemiBold" Style="{StaticResource ValueStyle}" />
+                </Grid>
+
+                <!-- Section 4: Security -->
+                <TextBlock Text="Security" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,8" />
+                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Margin="0,0,0,10" />
+
+                <Grid Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Security Method:" Style="{StaticResource LabelStyle}" />
+                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding SecurityMethod, Mode=OneWay}" Style="{StaticResource ValueStyle}"
+                             AutomationProperties.Name="Security method" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Permissions:" Style="{StaticResource LabelStyle}" VerticalAlignment="Top" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SecurityPermissions, Mode=OneWay}" Style="{StaticResource ValueStyle}"
+                             TextWrapping="Wrap" AutomationProperties.Name="Permissions" />
                 </Grid>
             </StackPanel>
         </ScrollViewer>
