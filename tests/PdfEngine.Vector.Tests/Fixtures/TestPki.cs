@@ -244,3 +244,78 @@ internal sealed class FakeRevocationSource : IPdfRevocationSource
     private X509Certificate2 Signing(X509Certificate2 issuer) =>
         new[] { _pki.Root, _pki.Intermediate }.First(c => c.Thumbprint == issuer.Thumbprint);
 }
+
+/// <summary>
+/// A time-stamping authority in memory (RFC 3161): it decodes the request, and grants a token
+/// over the request's message imprint with its nonce, signed by <see cref="Certificate"/> (a
+/// test PKI certificate with the critical id-kp-timeStamping usage) with an ESS
+/// signing-certificate-v2 attribute. It counts requests, and can be told to misbehave.
+/// </summary>
+internal sealed class FakeTimestampAuthority : IPdfTimestampClient
+{
+    public FakeTimestampAuthority(X509Certificate2 certificate, DateTimeOffset? time = null)
+    {
+        Certificate = certificate;
+        Time = time;
+    }
+
+    public X509Certificate2 Certificate { get; }
+    /// <summary>The time vouched for; null uses the current time.</summary>
+    public DateTimeOffset? Time { get; set; }
+    public int Calls { get; private set; }
+    public List<byte[]> Requests { get; } = new();
+    /// <summary>Answer with a token over some other hash (an authority answering the wrong request).</summary>
+    public bool WrongImprint { get; set; }
+    /// <summary>Refuse (PKIStatus rejection).</summary>
+    public bool Reject { get; set; }
+    /// <summary>Pad the token with an unsigned attribute of this many bytes (to outgrow the space reserved for it).</summary>
+    public int Padding { get; set; }
+    /// <summary>Further certificates to include in the token (the authority's issuers), as some authorities do.</summary>
+    public List<X509Certificate2> Chain { get; } = new();
+
+    public Task<byte[]> RequestAsync(byte[] request, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Requests.Add(request);
+        return Task.FromResult(Respond(request));
+    }
+
+    public byte[] Respond(byte[] requestBytes)
+    {
+        if (!System.Security.Cryptography.Pkcs.Rfc3161TimestampRequest.TryDecode(requestBytes, out var request, out _) || request == null)
+            throw new InvalidOperationException("Not a timestamp request.");
+        var w = new AsnWriter(AsnEncodingRules.DER);
+        if (Reject)
+        {
+            using (w.PushSequence())
+            using (w.PushSequence())
+                w.WriteInteger(2); // rejection
+            return w.Encode();
+        }
+        byte[] imprint = request.GetMessageHash().ToArray();
+        if (WrongImprint) imprint[0] ^= 0xFF;
+        var info = new System.Security.Cryptography.Pkcs.Rfc3161TimestampTokenInfo(new Oid("1.2.3.4.5"), request.HashAlgorithmId, imprint,
+            serialNumber: RandomNumberGenerator.GetBytes(8), timestamp: Time ?? DateTimeOffset.UtcNow, nonce: request.GetNonce());
+        var cms = new System.Security.Cryptography.Pkcs.SignedCms(new System.Security.Cryptography.Pkcs.ContentInfo(new Oid("1.2.840.113549.1.9.16.1.4"), info.Encode()));
+        var signer = new System.Security.Cryptography.Pkcs.CmsSigner(Certificate)
+        {
+            DigestAlgorithm = new Oid("2.16.840.1.101.3.4.2.1"),
+            IncludeOption = request.RequestSignerCertificate ? X509IncludeOption.EndCertOnly : X509IncludeOption.None,
+        };
+        signer.SignedAttributes.Add(new AsnEncodedData("1.2.840.113549.1.9.16.2.47", PdfCmsSigner.SigningCertificateV2(Certificate)));
+        if (request.RequestSignerCertificate) signer.Certificates.AddRange(Chain.ToArray());
+        if (Padding > 0)
+        {
+            var pad = new AsnWriter(AsnEncodingRules.DER);
+            pad.WriteOctetString(new byte[Padding]);
+            signer.UnsignedAttributes.Add(new AsnEncodedData("1.2.3.4.5.6", pad.Encode()));
+        }
+        cms.ComputeSignature(signer, silent: true);
+        using (w.PushSequence())
+        {
+            using (w.PushSequence()) w.WriteInteger(0); // granted
+            w.WriteEncodedValue(cms.Encode());
+        }
+        return w.Encode();
+    }
+}

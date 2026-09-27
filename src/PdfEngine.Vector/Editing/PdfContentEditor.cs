@@ -549,45 +549,7 @@ internal sealed class PageSession
 
     public string AddImage(PdfImageContent image)
     {
-        if (image.Width <= 0 || image.Height <= 0) throw new ArgumentException("The image has no pixels.");
-        var dict = new Dictionary<string, PdfObject>
-        {
-            ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Image"),
-            ["Width"] = new PdfInteger(image.Width), ["Height"] = new PdfInteger(image.Height), ["BitsPerComponent"] = new PdfInteger(8),
-        };
-        byte[] data;
-        switch (image.Encoding)
-        {
-            case PdfImageEncoding.Jpeg:
-                dict["ColorSpace"] = new PdfName(image.Components == 1 ? "DeviceGray" : "DeviceRGB");
-                dict["Filter"] = new PdfName("DCTDecode");
-                data = image.Data;
-                break;
-            case PdfImageEncoding.Gray:
-                if (image.Data.Length < (long)image.Width * image.Height) throw new ArgumentException("The image data is too short.");
-                dict["ColorSpace"] = new PdfName("DeviceGray");
-                dict["Filter"] = new PdfName("FlateDecode");
-                data = ContentRedactor.Deflate(image.Data);
-                break;
-            default:
-                if (image.Data.Length < (long)image.Width * image.Height * 3) throw new ArgumentException("The image data is too short.");
-                dict["ColorSpace"] = new PdfName("DeviceRGB");
-                dict["Filter"] = new PdfName("FlateDecode");
-                data = ContentRedactor.Deflate(image.Data);
-                break;
-        }
-        if (image.Alpha is { } alpha && alpha.Any(a => a != 255))
-        {
-            int mask = _allocate();
-            _objects[mask] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
-            {
-                ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Image"), ["Width"] = new PdfInteger(image.Width), ["Height"] = new PdfInteger(image.Height),
-                ["BitsPerComponent"] = new PdfInteger(8), ["ColorSpace"] = new PdfName("DeviceGray"), ["Filter"] = new PdfName("FlateDecode"),
-            }, ContentRedactor.Deflate(alpha));
-            dict["SMask"] = new PdfIndirectRef(mask);
-        }
-        int number = _allocate();
-        _objects[number] = PdfObjectWriter.NewStream(dict, data);
+        int number = PdfImageXObject.Write(image, _allocate, _objects);
         string name = Unique("ImEd", _xobjectNames);
         _newXObjects[name] = new PdfIndirectRef(number);
         return name;
