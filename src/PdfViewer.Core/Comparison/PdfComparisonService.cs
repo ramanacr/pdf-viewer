@@ -94,6 +94,45 @@ public sealed class PdfComparisonService : IPdfComparisonService
         };
     }
 
+    /// <summary>
+    /// Word-level differences between two documents' text, with where each changed word is on
+    /// its page. The whole document is compared at once, so text that moved across a page
+    /// break is not a change.
+    /// </summary>
+    public async ValueTask<IReadOnlyList<TextChange>> CompareTextAsync(IPdfDocument documentA, IPdfDocument documentB,
+        bool ignoreCase = false, CancellationToken cancellationToken = default)
+    {
+        async Task<List<CompareWord>> WordsOf(IPdfDocument doc)
+        {
+            var words = new List<CompareWord>();
+            for (int p = 1; p <= doc.PageCount; p++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var s in await _textService.ExtractTextSegmentsAsync(doc, p, cancellationToken))
+                    if (!string.IsNullOrWhiteSpace(s.Text))
+                        words.AddRange(Tokens(s.Text.Trim(), p, s.X, s.Y, s.Width, s.Height));
+            }
+            return words;
+        }
+        var a = await WordsOf(documentA);
+        var b = await WordsOf(documentB);
+        return await Task.Run(() => TextComparer.Compare(a, b, ignoreCase), cancellationToken);
+    }
+
+    /// <summary>
+    /// A word split into its letters-and-digits and its punctuation, each with its share of the
+    /// word's box: "email." and "email" then match, and a comma added after a word is just the comma.
+    /// </summary>
+    internal static IEnumerable<CompareWord> Tokens(string text, int page, double x, double y, double w, double h)
+    {
+        var matches = System.Text.RegularExpressions.Regex.Matches(text, @"[\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}\s]+");
+        foreach (System.Text.RegularExpressions.Match m in matches)
+        {
+            double x0 = x + w * m.Index / text.Length, width = w * m.Length / text.Length;
+            yield return new CompareWord(m.Value, page, x0, y, width, h);
+        }
+    }
+
     public async ValueTask<RenderedPage> GenerateVisualDiffPageAsync(
         IPdfDocument documentA,
         IPdfDocument documentB,

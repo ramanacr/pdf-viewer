@@ -2839,6 +2839,9 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Opens the side-by-side comparison of two files (old path, new path, the old one's password).</summary>
+    public Action<string, string, string?>? ShowCompareAction { get; set; }
+
     /// <summary>
     /// Compares the open document against another and reports where they differ.
     /// </summary>
@@ -2853,6 +2856,13 @@ public partial class MainViewModel : ObservableObject
             Title = "Select the document to compare against"
         };
         if (picker.ShowDialog() != true) return;
+
+        // The side-by-side comparison, when the window is available.
+        if (ShowCompareAction != null)
+        {
+            ShowCompareAction(_docService.CurrentFilePath, picker.FileName, _openPassword);
+            return;
+        }
 
         StatusText = "Comparing documents...";
         try
