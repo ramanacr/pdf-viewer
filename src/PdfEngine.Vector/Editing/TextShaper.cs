@@ -17,8 +17,10 @@ internal static class TextShaper
     /// <summary>
     /// A shaped glyph, in drawing order, with the embedding level of the text it shows (odd: right to
     /// left); where it is drawn from the pen (1/1000 em) and how far it moves the pen (null: its own advance).
+    /// Glyphs drawn out of reading order share the <paramref name="Actual"/> text they read as; a
+    /// <paramref name="Kerned"/> glyph's advance has the font's pair kerning in it already.
     /// </summary>
-    public readonly record struct Shaped(int Gid, string Text, int Level, double Dx = 0, double Dy = 0, double? Advance = null);
+    public readonly record struct Shaped(int Gid, string Text, int Level, double Dx = 0, double Dy = 0, double? Advance = null, ActualTextSpan? Actual = null, bool Kerned = false);
 
     private static readonly string[] CursiveFeatures = { "ccmp", "isol", "fina", "medi", "init", "rlig", "calt", "liga" };
     private static readonly string[] DefaultFeatures = { "ccmp", "liga", "rlig" };
@@ -30,8 +32,8 @@ internal static class TextShaper
     public static List<(Shaped Glyph, T Font)> ShapeLine<T>(string line, Func<string, T?> fontFor, Func<T, TrueTypeFontFile> file) where T : class
     {
         var levels = Bidi.Levels(line);
-        // Runs of one level and one font, in logical order.
-        var runs = new List<(int Start, int End, int Level, T? Font)>();
+        // Runs of one level and one font, in logical order (words of Indic script in runs of their own).
+        var runs = new List<(int Start, int End, int Level, T? Font, bool Indic)>();
         int i = 0;
         while (i < line.Length)
         {
@@ -39,24 +41,30 @@ internal static class TextShaper
             bool space = line[i] == ' ';
             while (wordEnd < line.Length && (line[wordEnd] == ' ') == space) wordEnd++;
             var font = fontFor(line[i..wordEnd]);
+            bool indic = !space && IndicShaper.Handles(line[i..wordEnd]);
             for (int k = i; k < wordEnd;)
             {
                 int e = k;
                 while (e < wordEnd && levels[e] == levels[k]) e++;
-                if (runs.Count > 0 && runs[^1].End == k && runs[^1].Level == levels[k] && ReferenceEquals(runs[^1].Font, font))
-                    runs[^1] = (runs[^1].Start, e, levels[k], font);
-                else runs.Add((k, e, levels[k], font));
+                if (runs.Count > 0 && runs[^1].End == k && runs[^1].Level == levels[k] && ReferenceEquals(runs[^1].Font, font) && runs[^1].Indic == indic)
+                    runs[^1] = (runs[^1].Start, e, levels[k], font, indic);
+                else runs.Add((k, e, levels[k], font, indic));
                 k = e;
             }
             i = wordEnd;
         }
 
         var glyphs = new List<(Shaped Glyph, T Font)>();
-        foreach (var (start, end, level, font) in runs)
+        foreach (var (start, end, level, font, indic) in runs)
         {
             if (font == null) continue;
             var f = file(font);
             string text = line[start..end];
+            if (indic)
+            {
+                foreach (var shaped in IndicShaper.Shape(text, f, level)) glyphs.Add((shaped, font));
+                continue;
+            }
             bool rtl = (level & 1) != 0;
             var buffer = new List<ShapingGlyph>();
             var forms = ArabicJoining.Forms(text);
@@ -110,6 +118,14 @@ internal static class TextShaper
         }
         return "latn";
     }
+}
+
+/// <summary>What a run of glyphs reads as when their order or number does not tell it (written as /ActualText); one per run, compared by reference.</summary>
+internal sealed class ActualTextSpan
+{
+    public ActualTextSpan(string text) => Text = text;
+
+    public string Text { get; }
 }
 
 /// <summary>Arabic joining (Unicode chapter 9.2): the positional form each letter takes.</summary>
