@@ -19,6 +19,7 @@ namespace PdfViewer.Tests;
 /// A password-protected form in the viewer: filled (each commit an encrypted revision both
 /// engines reload with the password), saved, signed and re-opened.
 /// </summary>
+[Collection(SigningSettingsCollection.Name)]
 public class EncryptedFormViewerTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "EncryptedFormViewer_" + Guid.NewGuid().ToString("N"));

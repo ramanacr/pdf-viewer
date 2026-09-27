@@ -137,6 +137,16 @@ internal sealed class WpfImageCache
             }
         }
 
+        if (image.JpegMask is { } mask)
+        {
+            using var stream = new MemoryStream(mask.Data.ToArray(), writable: false);
+            var frame = new FormatConvertedBitmap(BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0], PixelFormats.Gray8, null, 0);
+            int mw = frame.PixelWidth, mh = frame.PixelHeight, stride = (mw + 3) & ~3;
+            var gray = new byte[stride * mh];
+            frame.CopyPixels(gray, stride, 0);
+            bitmap = ApplyAlpha(bitmap, (mask with { Width = mw, Height = mh }).ToAlpha(gray, 1, stride), mw, mh);
+        }
+
         bitmap.Freeze();
         return bitmap;
     }

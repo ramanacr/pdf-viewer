@@ -25,6 +25,7 @@ namespace PdfViewer.Tests;
 /// revision (filled fields included) signed and saved, the signed file re-opened, and the
 /// preconditions (unsaved annotations) and certificate rules that keep a signature honest.
 /// </summary>
+[Collection(SigningSettingsCollection.Name)]
 public class SigningViewerTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "SigningViewer_" + Guid.NewGuid().ToString("N"));
