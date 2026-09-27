@@ -124,8 +124,17 @@ public sealed class PdfiumSignatureService : IPdfSignatureService
         SignedCms cms;
         try
         {
+            byte[] blob = TrimTrailingZeros(contents);
             cms = new SignedCms();
-            cms.Decode(TrimTrailingZeros(contents));
+            cms.Decode(blob);
+            // Detached signatures (adbe.pkcs7.detached, ETSI.CAdES.detached - nearly all of them)
+            // carry no content: the signed bytes are the byte ranges, so verify against those.
+            // Without this, CheckSignature digests empty content and every such signature fails.
+            if (cms.ContentInfo.Content.Length == 0)
+            {
+                cms = new SignedCms(new ContentInfo(signedBytes), detached: true);
+                cms.Decode(blob);
+            }
         }
         catch (CryptographicException ex)
         {
@@ -136,6 +145,15 @@ public sealed class PdfiumSignatureService : IPdfSignatureService
             ? DescribeSigner(cms.SignerInfos[0].Certificate)
             : string.Empty;
 
+        // The CMS content must match the bytes the PDF actually covers. Checked first: a changed
+        // byte also fails the CMS check below, but "modified since signing" is the right report.
+        if (!DigestMatches(cms, signedBytes))
+        {
+            return (SignatureStatus.DocumentModified,
+                "The document has been modified since it was signed: the signed digest does not match the file.",
+                signer);
+        }
+
         // Verify the CMS itself. Signature-only check: chain trust is evaluated separately
         // so an untrusted-but-intact signature is reported as Untrusted, not Invalid.
         try
@@ -145,14 +163,6 @@ public sealed class PdfiumSignatureService : IPdfSignatureService
         catch (CryptographicException ex)
         {
             return (SignatureStatus.Invalid, $"The signature is not cryptographically valid: {ex.Message}", signer);
-        }
-
-        // The CMS content must match the bytes the PDF actually covers.
-        if (!DigestMatches(cms, signedBytes))
-        {
-            return (SignatureStatus.DocumentModified,
-                "The document has been modified since it was signed: the signed digest does not match the file.",
-                signer);
         }
 
         // A byte range that does not span the whole file means content was appended after
@@ -336,11 +346,24 @@ public sealed class PdfiumSignatureService : IPdfSignatureService
     /// The /Contents hex string is padded with trailing zero bytes to a fixed size; the DER
     /// parser rejects them.
     /// </summary>
+    /// <summary>
+    /// The signature without the zero padding of its placeholder. The DER length says where the
+    /// value ends; trimming trailing zero bytes instead cut the last byte off every signature
+    /// that happens to end in 0x00 (about one in 256) and reported it invalid.
+    /// </summary>
     private static byte[] TrimTrailingZeros(byte[] data)
     {
-        int end = data.Length;
-        while (end > 0 && data[end - 1] == 0) end--;
-        return end == data.Length ? data : data.AsSpan(0, end).ToArray();
+        try
+        {
+            System.Formats.Asn1.AsnDecoder.ReadEncodedValue(data, System.Formats.Asn1.AsnEncodingRules.BER, out _, out _, out int consumed);
+            return consumed == data.Length ? data : data.AsSpan(0, consumed).ToArray();
+        }
+        catch (System.Formats.Asn1.AsnContentException)
+        {
+            int end = data.Length;
+            while (end > 0 && data[end - 1] == 0) end--;
+            return end == data.Length ? data : data.AsSpan(0, end).ToArray();
+        }
     }
 
     private static byte[]? TryReadDocumentBytes(PdfiumDocument document)

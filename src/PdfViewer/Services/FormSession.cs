@@ -49,7 +49,7 @@ public sealed class FormSession : IDisposable
             return null;
         }
         var form = PdfAcroForm.Read(doc);
-        if (form == null || !form.Fields.Any(f => f.Kind is not (PdfFormFieldKind.PushButton or PdfFormFieldKind.Signature)))
+        if (form == null || !form.Fields.Any(Presented))
         {
             doc.Dispose();
             return null;
@@ -61,6 +61,10 @@ public sealed class FormSession : IDisposable
         return new FormSession(service, doc, bytes, form, reason);
     }
 
+    /// <summary>Fields the page layer shows: everything fillable, and signature fields still waiting to be signed.</summary>
+    private static bool Presented(PdfFormField f) =>
+        f.Kind != PdfFormFieldKind.PushButton && !(f.Kind == PdfFormFieldKind.Signature && f.IsSigned);
+
     /// <summary>View models for every visible widget, in tab order (page, then position in the page's /Annots).</summary>
     public List<FormFieldViewModel> CreateFieldViewModels()
     {
@@ -68,7 +72,7 @@ public sealed class FormSession : IDisposable
         int tab = 0;
         foreach (var field in Form.Fields.OrderBy(f => f.Widgets.Select(w => w.PageNumber).DefaultIfEmpty(int.MaxValue).Min()))
         {
-            if (field.Kind is PdfFormFieldKind.PushButton or PdfFormFieldKind.Signature)
+            if (!Presented(field))
                 continue;
             var created = FormFieldViewModel.FromField(field, PageBox, tab).ToList();
             tab += created.Count;

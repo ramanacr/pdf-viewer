@@ -8,9 +8,11 @@ namespace PdfViewer.Services;
 /// Controls the only thing this application ever sends over the network.
 ///
 /// The product promise is that nothing leaves the user's machine. There is no telemetry, no
-/// analytics, no account and no cloud sync anywhere in this codebase - the single outbound
-/// request is an optional check against the public GitHub releases API, and this type is
-/// what governs it.
+/// analytics, no account and no cloud sync anywhere in this codebase - the single automatic
+/// outbound request is an optional check against the public GitHub releases API, and this
+/// type is what governs it. (The only other request is one the user makes on purpose: a
+/// signature timestamp from a server they enter while signing, which receives only a hash of
+/// the signature - see <see cref="SigningSettings"/>.)
 ///
 /// It is OFF until the user answers, so a fresh install is silent. A reader that promises
 /// privacy must not make its first network call before being asked.

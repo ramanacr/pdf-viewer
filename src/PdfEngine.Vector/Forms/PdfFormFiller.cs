@@ -394,7 +394,7 @@ public static class PdfFormFiller
         return lines;
     }
 
-    private static string Escape(string text, FontMetrics metrics)
+    internal static string Escape(string text, FontMetrics metrics)
     {
         var sb = new StringBuilder(text.Length);
         foreach (char c in text)

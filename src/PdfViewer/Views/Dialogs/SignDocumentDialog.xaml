@@ -1,0 +1,145 @@
+<Window x:Class="PdfViewer.Views.Dialogs.SignDocumentDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sign Document"
+        Width="520"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{DynamicResource SurfaceBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        ShowInTaskbar="False">
+    <Window.Resources>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+        </Style>
+        <Style x:Key="FieldBox" TargetType="TextBox">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBgBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBgBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="20">
+        <TextBlock x:Name="HeaderText" Text="Sign Document" FontSize="16" FontWeight="Bold" Margin="0,0,0,4" />
+        <TextBlock x:Name="PlacementText" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14" />
+
+        <!-- Signing identity -->
+        <TextBlock Text="Sign as" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ComboBox x:Name="CertificateCombo" Height="44" AutomationProperties.Name="Signing certificate"
+                      SelectionChanged="CertificateCombo_SelectionChanged">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="2,1">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Detail}" FontSize="11" Opacity="0.75" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="1" Content="Certificate file..." Margin="8,0,0,0" Height="44"
+                    Style="{StaticResource SecondaryButton}" Click="BrowseCertificate_Click"
+                    ToolTip="Sign with a .pfx or .p12 file" />
+        </Grid>
+        <Grid x:Name="PfxPasswordRow" Visibility="Collapsed" Margin="0,4,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="File password" Style="{StaticResource FieldLabel}" />
+            <PasswordBox Grid.Column="1" x:Name="PfxPasswordBox" Height="28" Padding="6,4"
+                         AutomationProperties.Name="Certificate file password"
+                         Background="{DynamicResource SurfaceAltBgBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
+                         BorderBrush="{DynamicResource BorderBrush}" />
+        </Grid>
+        <TextBlock x:Name="NoCertificateText" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,4,0,0"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   Text="No signing certificate was found in your personal certificate store. Use a certificate file, or install a digital ID from your organisation or a certificate authority." />
+
+        <!-- Approval or certification -->
+        <Grid x:Name="CertifyRow" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Signature type" Style="{StaticResource FieldLabel}" />
+            <ComboBox Grid.Column="1" x:Name="CertifyCombo" Height="28" SelectedIndex="0" AutomationProperties.Name="Signature type">
+                <ComboBoxItem Content="Approve - others can still fill in, sign and comment" />
+                <ComboBoxItem Content="Certify - allow filling in forms and signing" />
+                <ComboBoxItem Content="Certify - allow filling in, signing and commenting" />
+                <ComboBoxItem Content="Certify - allow no changes" />
+            </ComboBox>
+        </Grid>
+
+        <!-- Details recorded in the signature -->
+        <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Reason" Style="{StaticResource FieldLabel}" />
+            <ComboBox Grid.Column="1" x:Name="ReasonBox" IsEditable="True" Height="28" AutomationProperties.Name="Reason for signing">
+                <ComboBoxItem Content="I am the author of this document" />
+                <ComboBoxItem Content="I have reviewed this document" />
+                <ComboBoxItem Content="I approve this document" />
+                <ComboBoxItem Content="I agree to the terms defined by this document" />
+            </ComboBox>
+            <TextBlock Grid.Row="1" Text="Location" Style="{StaticResource FieldLabel}" Margin="0,8,10,0" />
+            <TextBox Grid.Row="1" Grid.Column="1" x:Name="LocationBox" Style="{StaticResource FieldBox}" Margin="0,8,0,0"
+                     AutomationProperties.Name="Location" />
+            <TextBlock Grid.Row="2" Text="Contact" Style="{StaticResource FieldLabel}" Margin="0,8,10,0" />
+            <TextBox Grid.Row="2" Grid.Column="1" x:Name="ContactBox" Style="{StaticResource FieldBox}" Margin="0,8,0,0"
+                     AutomationProperties.Name="Contact information" />
+        </Grid>
+
+        <!-- Timestamp -->
+        <CheckBox x:Name="TimestampCheck" Margin="0,16,0,4" Content="Add a timestamp from a time-stamping authority"
+                  Foreground="{DynamicResource TextPrimaryBrush}" Checked="TimestampCheck_Changed" Unchecked="TimestampCheck_Changed" />
+        <TextBox x:Name="TimestampBox" Style="{StaticResource FieldBox}" AutomationProperties.Name="Timestamp server address"
+                 ToolTip="The server's address, for example one your organisation provides" />
+        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"
+                   Text="A timestamp proves when you signed. Only a fingerprint of the signature is sent to the server, never the document." />
+
+        <!-- Where the signed file goes -->
+        <TextBlock Text="Save the signed document to" Style="{StaticResource FieldLabel}" Margin="0,16,0,4" />
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="OutputBox" Style="{StaticResource FieldBox}" IsReadOnly="True" AutomationProperties.Name="Signed document location" />
+            <Button Grid.Column="1" Content="Change..." Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Click="ChangeOutput_Click" />
+        </Grid>
+
+        <TextBlock x:Name="ErrorText" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,12,0,0" Foreground="#D93025" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button x:Name="SignButton" Content="Sign" Width="100" Height="32" IsDefault="True"
+                    Background="{DynamicResource AccentBrush}" Foreground="White" BorderThickness="0" FontWeight="SemiBold"
+                    Click="SignButton_Click" Margin="0,0,8,0" />
+            <Button Content="Cancel" Width="80" Height="32" IsCancel="True" Style="{StaticResource SecondaryButton}" />
+        </StackPanel>
+    </StackPanel>
+</Window>
