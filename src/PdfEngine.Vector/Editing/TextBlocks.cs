@@ -114,7 +114,7 @@ internal static class TextBlocks
                 double s = Dot(d, current.U), t = Dot(d, current.V);
                 bool sameDirection = Dot(u, current.U) > 0.999;
                 double tol = Math.Max(size, current.Size);
-                if (sameDirection && Math.Abs(t - current.Baseline) < 0.25 * tol && s >= current.End - 0.5 * tol && s <= current.End + 1.5 * tol)
+                if (sameDirection && g.Context == current.Glyphs[0].Context && Math.Abs(t - current.Baseline) < 0.25 * tol && s >= current.End - 0.5 * tol && s <= current.End + 1.5 * tol)
                 {
                     current.Glyphs.Add(g);
                     current.End = Math.Max(current.End, s + UserAdvance(g));
@@ -146,7 +146,7 @@ internal static class TextBlocks
                     if (Angle(a) != Angle(b)) break;
                     double tol = Math.Max(a.Size, b.Size);
                     if (Dot(b.Glyphs[0].Origin, a.V) - Dot(a.Glyphs[0].Origin, a.V) > 0.25 * tol) break;
-                    if (Dot(a.U, b.U) < 0.999 || Math.Min(a.Size, b.Size) < 0.7 * tol) continue;
+                    if (Dot(a.U, b.U) < 0.999 || Math.Min(a.Size, b.Size) < 0.7 * tol || a.Glyphs[0].Context != b.Glyphs[0].Context) continue;
                     double bStart = Dot(Sub(b.Glyphs[0].Origin, a.Glyphs[0].Origin), a.U), bEnd = bStart + (b.End - b.Start);
                     double gapAfter = bStart - a.End, gapBefore = -bEnd;
                     bool adjacent = (gapAfter >= -0.3 * tol && gapAfter <= 1.0 * tol) || (gapBefore >= -0.3 * tol && gapBefore <= 1.0 * tol);
@@ -222,7 +222,7 @@ internal static class TextBlocks
             foreach (var candidate in open)
             {
                 var (block, last) = candidate;
-                if (Dot(block.U, line.U) < 0.999) continue;
+                if (Dot(block.U, line.U) < 0.999 || block.Lines[0].Glyphs[0].Context != line.Glyphs[0].Context) continue;
                 double ratio = line.Size / last.Size;
                 if (ratio < 0.8 || ratio > 1.25) continue;
                 var lo = line.Glyphs[0].Origin;

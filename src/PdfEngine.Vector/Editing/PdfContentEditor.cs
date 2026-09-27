@@ -105,6 +105,7 @@ public static class PdfContentEditor
         var node = document.PageTree.Pages[pageNumber - 1];
         var (walker, blocks) = Load(document, pageNumber);
         var session = new PageSession(node.Resources, r, catalog, allocate, objects, warnings);
+        session.Reserve(walker.FormResourceNames);
         var removed = new HashSet<(int, int)>();
         var output = new List<OutGlyph>();
         var inPlace = new Dictionary<int, List<OutGlyph>>();
@@ -227,7 +228,10 @@ public static class PdfContentEditor
             GlyphEmitter.Emit(content, e.Value, inPlace: true);
             return content.ToString();
         });
-        byte[] rewritten = walker.Rewrite(removed, imageChanges, insertions);
+        // Fonts are written before the rewrite, so copies of edited form XObjects can name them too.
+        var forms = new FormCopies { Allocate = allocate, Objects = objects, Fonts = session.WriteFonts(embedded), XObjects = session.NewXObjects };
+        byte[] rewritten = walker.Rewrite(removed, imageChanges, insertions, forms);
+        session.AddXObjects(forms.PageXObjects);
         if (walker.AlternateTextsRemoved > 0)
             warnings.Add("Replacement text (/ActualText) of edited words was removed, so it no longer contradicts what the page shows.");
         var sb = new StringBuilder("q\n").Append(Encoding.Latin1.GetString(rewritten)).Append("Q\n");
@@ -348,6 +352,7 @@ internal sealed class PageSession
     private readonly Dictionary<(string, int), EmbeddedFontBuilder?> _builders = new();
     private readonly Dictionary<string, PdfObject> _newXObjects = new();
     private readonly HashSet<string> _fontNames, _xobjectNames;
+    private Dictionary<string, PdfObject>? _writtenFonts;
 
     public PageSession(PdfDictionary resources, Parsing.PdfObjectResolver r, SystemFontCatalog catalog, Func<int> allocate, Dictionary<int, PdfObject> objects, List<string> warnings)
     {
@@ -362,6 +367,16 @@ internal sealed class PageSession
     }
 
     public List<string> Warnings => _warnings;
+
+    /// <summary>Names new fonts and images must not take (those the page's form XObjects use).</summary>
+    public void Reserve(IEnumerable<string> names)
+    {
+        foreach (string name in names)
+        {
+            _fontNames.Add(name);
+            _xobjectNames.Add(name);
+        }
+    }
 
     public FontEncoder? Encoder(PdfFont? font)
     {
@@ -492,17 +507,39 @@ internal sealed class PageSession
         return name;
     }
 
+    /// <summary>The images the edits added, by resource name.</summary>
+    public IReadOnlyDictionary<string, PdfObject> NewXObjects => _newXObjects;
+
+    /// <summary>Adds XObjects (copies of edited forms) to the page's resources.</summary>
+    public void AddXObjects(IReadOnlyDictionary<string, PdfObject> xobjects)
+    {
+        foreach (var (k, v) in xobjects)
+        {
+            _xobjectNames.Add(k);
+            _newXObjects[k] = v;
+        }
+    }
+
+    /// <summary>Writes the fonts that were used (once; nothing may be encoded with them afterwards) and returns them by resource name.</summary>
+    public IReadOnlyDictionary<string, PdfObject> WriteFonts(List<string> embedded)
+    {
+        if (_writtenFonts != null) return _writtenFonts;
+        _writtenFonts = new Dictionary<string, PdfObject>();
+        foreach (var builder in _builders.Values)
+        {
+            if (builder is not { IsUsed: true }) continue;
+            _writtenFonts[builder.ResourceName] = new PdfIndirectRef(builder.Write(_allocate, _objects));
+            embedded.Add(builder.Font.FamilyName + (builder.Font.SubfamilyName is "Regular" ? string.Empty : " " + builder.Font.SubfamilyName));
+        }
+        return _writtenFonts;
+    }
+
     /// <summary>Writes the fonts that were used, and returns the page's resources with everything new in them.</summary>
     public PdfDictionary Finish(List<string> embedded)
     {
         var res = new Dictionary<string, PdfObject>(_resources.Entries);
         var fonts = new Dictionary<string, PdfObject>((_r.Resolve(_resources["Font"]) as PdfDictionary)?.Entries ?? new Dictionary<string, PdfObject>());
-        foreach (var builder in _builders.Values)
-        {
-            if (builder is not { IsUsed: true }) continue;
-            fonts[builder.ResourceName] = new PdfIndirectRef(builder.Write(_allocate, _objects));
-            embedded.Add(builder.Font.FamilyName + (builder.Font.SubfamilyName is "Regular" ? string.Empty : " " + builder.Font.SubfamilyName));
-        }
+        foreach (var (k, v) in WriteFonts(embedded)) fonts[k] = v;
         if (fonts.Count > 0) res["Font"] = new PdfDictionary(fonts);
         if (_newXObjects.Count > 0)
         {
