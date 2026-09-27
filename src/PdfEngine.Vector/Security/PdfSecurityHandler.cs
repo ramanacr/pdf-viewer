@@ -163,8 +163,10 @@ public abstract class PdfSecurityHandler
             case PdfDictionary d:
             {
                 Dictionary<string, PdfObject>? copy = null;
+                bool signature = IsSignatureDictionary(d);
                 foreach (var (k, v) in d.Entries)
                 {
+                    if (signature && k == "Contents") continue; // never encrypted (7.6.2)
                     var dv = DecryptStrings(v, num, gen);
                     if (!ReferenceEquals(dv, v))
                     {
@@ -177,6 +179,82 @@ public abstract class PdfSecurityHandler
             default:
                 return obj;
         }
+    }
+
+    /// <summary>
+    /// A signature dictionary, whose /Contents is not encrypted (ISO 32000-2 7.6.2): the signature
+    /// is computed over the file as written, so it cannot sit inside the encryption.
+    /// </summary>
+    internal static bool IsSignatureDictionary(PdfDictionary d) =>
+        d.GetName("Type") is "Sig" or "DocTimeStamp" || (d["ByteRange"] != null && d["Contents"] is PdfString);
+
+    // ------------------------------------------------------------------ encryption
+
+    /// <summary>
+    /// Encrypts an object written into this document (an incremental update) with the object's
+    /// key: every string, and a stream's data. The same exceptions as reading apply:
+    /// cross-reference streams, unencrypted metadata, and a signature's /Contents.
+    /// </summary>
+    public PdfObject EncryptObject(PdfObject obj, int objectNumber, int generation)
+    {
+        if (FileKey == null)
+            throw new InvalidOperationException("The security handler is not authenticated.");
+        switch (obj)
+        {
+            case PdfStream stream:
+            {
+                var dict = (PdfDictionary)EncryptStrings(stream.Dictionary, objectNumber, generation);
+                string? type = dict.GetName("Type");
+                if (type == "XRef" || (type == "Metadata" && !EncryptMetadata))
+                    return stream with { Dictionary = dict };
+                var method = StreamMethod(dict);
+                byte[] cipher = Encrypt(stream.GetRawBytes().ToArray(), method, objectNumber, generation);
+                return stream with { Dictionary = dict, CachedRawBytes = cipher, Decrypted = false };
+            }
+            default:
+                return EncryptStrings(obj, objectNumber, generation);
+        }
+    }
+
+    private PdfObject EncryptStrings(PdfObject obj, int num, int gen)
+    {
+        switch (obj)
+        {
+            case PdfString s when _stringMethod != PdfCryptMethod.None:
+                return new PdfString(Encrypt(s.RawBytes.ToArray(), _stringMethod, num, gen), IsHex: true);
+            case PdfArray a:
+                return new PdfArray(a.Select(item => EncryptStrings(item, num, gen)).ToArray());
+            case PdfDictionary d:
+            {
+                bool signature = IsSignatureDictionary(d);
+                var copy = new Dictionary<string, PdfObject>(d.Entries.Count);
+                foreach (var (k, v) in d.Entries)
+                    copy[k] = signature && k == "Contents" ? v : EncryptStrings(v, num, gen);
+                return new PdfDictionary(copy);
+            }
+            default:
+                return obj;
+        }
+    }
+
+    private byte[] Encrypt(byte[] data, PdfCryptMethod method, int num, int gen)
+    {
+        if (method == PdfCryptMethod.None)
+            return data;
+        byte[] key = ObjectKey(method, num, gen);
+        if (method == PdfCryptMethod.Rc4)
+            return Rc4(key, data);
+        // AES: a random 16-byte IV first, then CBC with PKCS#5 padding (7.6.3.2).
+        byte[] iv = RandomNumberGenerator.GetBytes(16);
+        int pad = 16 - data.Length % 16;
+        var padded = new byte[data.Length + pad];
+        Array.Copy(data, padded, data.Length);
+        for (int i = data.Length; i < padded.Length; i++) padded[i] = (byte)pad;
+        byte[] body = AesCbcNoPadding(key, iv, padded, decrypt: false);
+        var result = new byte[16 + body.Length];
+        Array.Copy(iv, result, 16);
+        Array.Copy(body, 0, result, 16, body.Length);
+        return result;
     }
 
     private byte[] Decrypt(byte[] data, PdfCryptMethod method, int num, int gen)

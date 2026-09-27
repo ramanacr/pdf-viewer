@@ -118,9 +118,19 @@ public class PdfiumDocumentService : IPdfDocumentService
 
     public async Task ReloadFromBytesAsync(byte[] bytes, CancellationToken ct = default)
     {
+        // A new revision of the same document: the password it was opened with still opens it.
         string path = CurrentFilePath;
-        await OpenDocumentFromBytesAsync(bytes, path, ct).ConfigureAwait(false);
+        string? password = _openPassword;
+        await Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            _securityPolicy.EnsureDocumentSizeAllowed(bytes.Length, path);
+            return OpenFromBytes(bytes, path, password);
+        }, ct).ConfigureAwait(false);
     }
+
+    /// <summary>The password the current document was opened with (null when it needs none).</summary>
+    private string? _openPassword;
 
     public async Task<DocumentMetadata> OpenDocumentFromBytesAsync(byte[] bytes, string filePath, CancellationToken ct = default)
     {
@@ -164,6 +174,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             }
 
             _document = doc;
+            _openPassword = password;
             _formEnvironment = PdfiumFormEnvironment.Create(doc);
             _nativeBuffer = nativeBuf;
             _fileBytes = bytes;
