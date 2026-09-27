@@ -75,6 +75,15 @@ public partial class PageViewModel : ObservableObject
 
     /// <summary>Areas marked for redaction (normalized, unrotated, top-left origin), until applied or cleared.</summary>
     public ObservableCollection<System.Windows.Rect> RedactionMarks { get; } = new();
+
+    /// <summary>The page's paragraphs and images while text and images are being edited.</summary>
+    public ObservableCollection<ContentEditItem> EditItems { get; } = new();
+
+    /// <summary><see cref="EditItems"/> reflect the current revision.</summary>
+    public bool EditItemsLoaded { get; set; }
+
+    /// <summary>The read of <see cref="EditItems"/> in progress (callers share it).</summary>
+    internal System.Threading.Tasks.Task? EditItemsTask { get; set; }
     public ObservableCollection<PageTextSegment> SelectedSegments { get; } = new();
 
     [ObservableProperty]

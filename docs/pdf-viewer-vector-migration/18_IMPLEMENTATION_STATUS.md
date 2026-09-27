@@ -134,6 +134,28 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 ### Searchable scans
 - `Ocr/PdfTextLayerWriter` adds recognized words as invisible text (render mode 3) in a glyphless Type0 font whose ToUnicode map gives back any Unicode. Each word is placed on and stretched to its box, and follows `/Rotate`; it is written as an incremental update. The viewer recognizes only the pages without text (Windows OCR), shows progress and can be stopped, and makes the result searchable at once.
 
+### Editing page text and images
+- `Editing/PdfContentEditor` finds each page's paragraphs and images and edits them.
+- Paragraphs: lines are grouped with their width, line spacing and alignment (left, centred, right, justified), and line ends that are real line breaks are kept. A drop shadow (the same text drawn twice, a hair apart) is edited as one paragraph.
+- Edited text:
+  - reflows within the paragraph's width and alignment; a single line grows along its baseline, and a word longer than the line overflows rather than being cut;
+  - every character keeps the font, size, colour and spacing of the character it replaces (new characters take those of the one before them);
+  - lines before the first change are untouched, unchanged glyphs keep their own codes, and once the text matches the old text again the rest keeps its exact glyphs, only moved if the paragraph grew or shrank.
+- Characters the document's font lacks (subsets embed only the glyphs they used) are written in the installed version of the same font, else a font of the same kind, embedded as a TrueType subset (Type0, Identity-H, with widths and ToUnicode). Whole words switch font, never single letters.
+- Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
+- Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
+- `vectorpdf edit` over the 3,197-file corpus:
+  - page 1's longest paragraph is redrawn unchanged, then one of its words is replaced;
+  - 575 files edited cleanly: PDFium reads the new word back, and nothing changes outside the paragraph;
+  - redrawing unchanged differs on 2 files, both from JPEG 2000 logos that decode differently from run to run;
+  - 2 files with corrupt content streams are refused;
+  - the other files have no paragraph on page 1 (conformance test files, and scans whose text is an invisible OCR layer).
+- The viewer's Edit Text & Images mode (Ctrl+E):
+  - outlines paragraphs and images; double-click edits text in place, in its font, size, colour and alignment;
+  - drag moves, a drag on an image's corners resizes it (proportionally, unless Shift is held), and the context menu replaces or turns images;
+  - Delete removes the selection, Add Text and Add Image place new content, and Ctrl+Z / Ctrl+Y undo and redo;
+  - edits are in-memory revisions saved incrementally, and editing a signed document is confirmed first.
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
@@ -227,6 +249,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same recipients.
 8. **Release remainder:** code signing of the installer and executable; startup-time baseline on a cold machine; an installer-size gate.
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
+10. **Editing remainder:** text and images inside form XObjects; vertical writing; shaping for complex scripts in new text (ligatures, Arabic, Indic); kerning for new text.
 
 ---
 

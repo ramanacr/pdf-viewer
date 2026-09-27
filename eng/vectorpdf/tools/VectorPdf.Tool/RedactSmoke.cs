@@ -97,7 +97,7 @@ public static class RedactSmoke
 
     internal static byte[]? Jpeg(PdfEngine.Vector.PdfDecodedImage decoded) => PdfEngine.Vector.Direct2D.WicJpeg.TryDecode(decoded, out _, out _);
 
-    private static async Task<double> DifferentOutside(PdfVectorDocument before, PdfVectorDocument after, PdfEngine.Vector.Direct2D.Direct2DVectorRenderer renderer, PdfRect band, PdfRect crop, int rotation)
+    internal static async Task<double> DifferentOutside(PdfVectorDocument before, PdfVectorDocument after, PdfEngine.Vector.Direct2D.Direct2DVectorRenderer renderer, PdfRect band, PdfRect crop, int rotation)
     {
         const double dpi = 36;
         var a = await renderer.RenderAsync(await before.GetPageDisplayListAsync(1), new RenderRequest { PageNumber = 1, Dpi = dpi }, null, CancellationToken.None);
