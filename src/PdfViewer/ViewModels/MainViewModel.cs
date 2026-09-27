@@ -219,6 +219,25 @@ public partial class MainViewModel : ObservableObject
     // Dialog & UI callback delegates
     public Func<string, Task<string?>>? RequestPasswordFunc { get; set; }
     public Action<DocumentMetadata>? ShowPropertiesAction { get; set; }
+
+    /// <summary>Opens read mode (set by the window).</summary>
+    public Action? ShowReadModeAction { get; set; }
+
+    /// <summary>
+    /// Read mode: the text reflowed, readable by screen readers. It extracts content for
+    /// accessibility, so it honours the document's permission for that (bit 10).
+    /// </summary>
+    [RelayCommand]
+    public void ShowReadMode()
+    {
+        if (!IsDocumentLoaded) return;
+        if (!Permit(DocumentPermissions.CanExtractForAccessibility, "extracting text for accessibility")) return;
+        ShowReadModeAction?.Invoke();
+    }
+
+    /// <summary>A page's content for accessibility (tags when present, else inferred).</summary>
+    public Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default) =>
+        _docService.ExtractAccessibleContentAsync(pageNumber, ct);
     public Func<DocumentMetadata, (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi)>? ShowExportDialogFunc { get; set; }
     public Func<DocumentMetadata, (bool Confirmed, string TargetPath, AnnotationSaveMode Mode)>? ShowSaveAnnotatedDialogFunc { get; set; }
     public Func<IPdfDocumentService, int, bool>? ShowPrintDialogFunc { get; set; }

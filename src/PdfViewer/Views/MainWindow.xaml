@@ -48,6 +48,8 @@
         <KeyBinding Modifiers="Ctrl" Key="D0" Command="{Binding ActiveDocument.FitPageCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="NumPad0" Command="{Binding ActiveDocument.FitPageCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="D1" Command="{Binding ActiveDocument.FitWidthCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="D4" Command="{Binding ActiveDocument.ShowReadModeCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="NumPad4" Command="{Binding ActiveDocument.ShowReadModeCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="NumPad1" Command="{Binding ActiveDocument.FitWidthCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="R" Command="{Binding ActiveDocument.RotateClockwiseCommand}" />
         <KeyBinding Modifiers="Ctrl+Shift" Key="R" Command="{Binding ActiveDocument.RotateCounterClockwiseCommand}" />
@@ -201,6 +203,8 @@
                           ToolTip="Returns to the page you jumped away from."><MenuItem.Icon><Path Data="{StaticResource IconArrowLeft}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Forward" Command="{Binding GoForwardCommand}" InputGestureText="Alt+Right"><MenuItem.Icon><Path Data="{StaticResource IconArrowRight}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
+                <MenuItem Header="_Read Mode" Command="{Binding ShowReadModeCommand}" InputGestureText="Ctrl+4" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="The text reflowed for reading, and for screen readers: headings, paragraphs, lists and figure descriptions." />
                 <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11"><MenuItem.Icon><Path Data="{StaticResource IconFullScreen}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Continuous Scrolling" Command="{Binding SetContinuousViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
@@ -1056,6 +1060,8 @@
                                     <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:PageViewModel}">
                                     <Border HorizontalAlignment="Center"
+                                            AutomationProperties.Name="{Binding PageNumber, StringFormat=Page {0}}"
+                                            AutomationProperties.HelpText="Press Ctrl+4 for read mode, which a screen reader can read."
                                             Margin="10,0,10,20"
                                             Background="{DynamicResource PageBgBrush}"
                                             CornerRadius="2">
