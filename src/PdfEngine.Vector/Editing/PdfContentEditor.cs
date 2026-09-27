@@ -486,32 +486,66 @@ internal sealed class PageSession
         {
             string line = lines[li].Normalize(NormalizationForm.FormC).Replace('\t', ' ');
             double s = 0, t = -li * 1.2 * size;
-            OutGlyph? previous = null;
-            var e = StringInfo.GetTextElementEnumerator(line);
-            while (e.MoveNext())
+            (TextShaper.Shaped Glyph, EmbeddedFontBuilder Font)? previous = null;
+            // Shaped in the order it is read (joining, ligatures), then drawn left to right.
+            foreach (var (g, builder) in TextShaper.ShapeLine(line, word => FontFor(word, primary, f.Bold, f.Italic), b => b.Font))
             {
-                string element = (string)e.Current;
-                (byte[] Code, double Width0, GlyphStyle Style)? encoded = null;
-                var style = new GlyphStyle(primary?.ResourceName ?? string.Empty, null, size, 0, 0, 100, 0, 0, color, rgb);
-                if (primary != null && primary.Font.GlyphFor(char.ConvertToUtf32(element, 0)) is > 0 and var gid)
-                    encoded = (primary.Encode(gid, element), primary.Font.Advance(gid), style);
-                else encoded = EncodeWithInstalled(element, style, f.Bold, f.Italic);
-                if (encoded is not { } enc)
+                if (g.Gid <= 0)
                 {
-                    if (element.Trim().Length == 0) s += 0.25 * size;
-                    else _warnings.Add($"No installed font has the character \"{element}\"; it was left out.");
                     previous = null;
+                    if (g.Text.Trim().Length == 0) { if (!IsFormat(g.Text)) s += 0.25 * size; continue; }
+                    // No font has the whole word: this character from the first that has it.
+                    var plain = new GlyphStyle(builder.ResourceName, null, size, 0, 0, 100, 0, 0, color, rgb);
+                    if (EncodeWithInstalled(g.Text, plain, f.Bold, f.Italic) is not { } alone)
+                    {
+                        _warnings.Add($"No installed font has the character \"{g.Text}\"; it was left out.");
+                        continue;
+                    }
+                    var at = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
+                    result.Add(new OutGlyph { Matrix = new PdfMatrix(cos, sin, -sin, cos, at.X, at.Y), Code = alone.Code, Style = alone.Style, Advance = alone.Width0 / 1000.0 * size, Line = int.MinValue + li, Text = g.Text });
+                    s += alone.Width0 / 1000.0 * size;
                     continue;
                 }
-                if (previous != null) s += Kerning(previous.Style, previous.Code, previous.Text, enc.Style, enc.Code, element) / 1000.0 * size;
+                // Pair kerning in left-to-right text (right-to-left pairs are kerned in reading order, which is not read here).
+                if (previous is { } p && ReferenceEquals(p.Font, builder) && (p.Glyph.Level & 1) == 0 && (g.Level & 1) == 0)
+                    s += builder.Font.Kerning(p.Glyph.Gid, g.Gid) / 1000.0 * size;
                 var origin = new PdfPoint(add.Baseline.X + s * cos - t * sin, add.Baseline.Y + s * sin + t * cos);
-                double advance = enc.Width0 / 1000.0 * size;
-                result.Add(previous = new OutGlyph { Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = enc.Code, Style = enc.Style, Advance = advance, Line = int.MinValue + li, Text = element });
+                double advance = builder.Font.Advance(g.Gid) / 1000.0 * size;
+                var style = new GlyphStyle(builder.ResourceName, null, size, 0, 0, 100, 0, 0, color, rgb);
+                result.Add(new OutGlyph
+                {
+                    Matrix = new PdfMatrix(cos, sin, -sin, cos, origin.X, origin.Y), Code = builder.Encode(g.Gid, g.Text), Style = style,
+                    Advance = advance, Line = int.MinValue + li, Text = g.Text,
+                });
+                previous = (g, builder);
                 s += advance;
             }
         }
         return result;
     }
+
+    // The font a word of new text is written in: the chosen one when it has every character, else
+    // the first installed font that does (one design per word), else the chosen one for what it has.
+    private EmbeddedFontBuilder? FontFor(string word, EmbeddedFontBuilder? primary, bool bold, bool italic)
+    {
+        bool Has(EmbeddedFontBuilder b)
+        {
+            for (int i = 0; i < word.Length;)
+            {
+                int cp = char.ConvertToUtf32(word, i);
+                string c = char.ConvertFromUtf32(cp);
+                if (c != " " && !IsFormat(c) && b.Font.GlyphFor(cp) <= 0) return false;
+                i += c.Length;
+            }
+            return true;
+        }
+        if (primary != null && Has(primary)) return primary;
+        foreach (var b in Chain(null, bold, italic))
+            if (Has(b)) return b;
+        return primary ?? Chain(null, bold, italic).FirstOrDefault();
+    }
+
+    private static bool IsFormat(string c) => c.Length > 0 && CharUnicodeInfo.GetUnicodeCategory(c, 0) == UnicodeCategory.Format;
 
     public string AddImage(PdfImageContent image)
     {
