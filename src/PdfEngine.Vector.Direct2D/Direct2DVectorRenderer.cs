@@ -75,6 +75,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         {
             UseRealizations = true,
             InvertColors = invert,
+            WindowedRealizations = WindowedRealizations,
         };
         _replayers.AddFirst((key, replayer));
         while (_replayers.Count > ReplayerCacheCapacity)
@@ -89,6 +90,27 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
     {
         foreach (var (_, replayer) in _replayers) replayer.Dispose();
         _replayers.Clear();
+    }
+
+    /// <summary>
+    /// Tessellate only near the region drawn (Replayer.Realizations.cs); off realizes every
+    /// geometry whole. Applies to replayers created afterwards.
+    /// </summary>
+    internal bool WindowedRealizations { get; set; } = true;
+
+    /// <summary>Realizations built, windowed, and rebuilt for a region beyond their window, over the cached replayers (tests).</summary>
+    internal (int Built, int Windowed, int Rebuilt) RealizationCounts
+    {
+        get
+        {
+            _gate.Wait();
+            try
+            {
+                return (_replayers.Sum(n => n.Replayer.RealizationsBuilt), _replayers.Sum(n => n.Replayer.WindowedRealizationsBuilt),
+                    _replayers.Sum(n => n.Replayer.RealizationsRebuilt));
+            }
+            finally { _gate.Release(); }
+        }
     }
 
     /// <param name="forceSoftware">Render on WARP even when a GPU exists (the tier RDP sessions and VMs get).</param>
@@ -279,6 +301,86 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         }
     }
 
+    /// <summary>
+    /// Builds, off the caller's thread, what a render of <paramref name="region"/> at this scale
+    /// reuses: the page's replayer and the tessellations of every path the region shows. A viewer
+    /// calls it as soon as a new zoom is requested, while the scaled previous tiles are shown, so
+    /// the crisp tile then only draws. The replay goes to a one-pixel target: nothing is
+    /// rasterized that the render would redo. Cancel it when the zoom changes again; the
+    /// tessellations built until then stay valid.
+    /// </summary>
+    public async Task PrepareAsync(IPdfDisplayList list, RenderRequest request, PixelRegion region, bool invertColors, CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var geometry = PageGeometry.From(list, request);
+        var r = ClampRegion(region, geometry);
+        if (r.Width <= 0 || r.Height <= 0)
+            return;
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var pageToPixels = geometry.PageUserToPixels();
+            var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), invertColors, ct);
+            await Task.Run(() =>
+            {
+                for (int attempt = 0; ; attempt++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        DrawProbe(replay, geometry, r);
+                        return;
+                    }
+                    catch (SharpGenException ex) when (attempt == 0 && IsDeviceLost((uint)ex.HResult))
+                    {
+                        DisposeTileSurfaces();
+                        _res.CreateDevice();
+                        foreach (var (_, cached) in _replayers) cached.ResetDeviceResources();
+                    }
+                }
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private ID2D1Bitmap1? _probeTarget;
+    private ID2D1DeviceContext? _probeContext;
+
+    /// <summary>Replays the region's transform and culling onto a one-pixel target.</summary>
+    private void DrawProbe(Replayer replay, PageGeometry g, PixelRegion r)
+    {
+        var ctx = _res.Context!;
+        if (_probeTarget == null || !ReferenceEquals(_probeContext, ctx))
+        {
+            _probeTarget?.Dispose();
+            _probeTarget = ctx.CreateBitmap(new SizeI(1, 1), IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target));
+            _probeContext = ctx;
+        }
+        var pageToDevice = g.PageUserToPixels() * Matrix3x2.CreateTranslation(-r.X, -r.Y);
+        Matrix3x2.Invert(pageToDevice, out var deviceToPage);
+        var visible = TransformRect(deviceToPage, new Vector2(0, 0), new Vector2(r.Width, r.Height));
+        ctx.Target = _probeTarget;
+        ctx.BeginDraw();
+        try
+        {
+            ctx.Transform = Matrix3x2.Identity;
+            ctx.AntialiasMode = AntialiasMode.PerPrimitive;
+            ctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            if (_res.DocumentTextParams != null) ctx.TextRenderingParams = _res.DocumentTextParams;
+            replay.Draw(ctx, pageToDevice, visible);
+        }
+        finally
+        {
+            var hr = ctx.EndDraw();
+            ctx.Target = null;
+            if (hr.Failure) throw new SharpGenException(hr);
+        }
+    }
+
     private SharedTexture? DrawShared(Replayer replay, IPdfDisplayList list, PageGeometry g,
         List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, PixelRegion r, bool invert)
     {
@@ -401,6 +503,9 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         _tileStaging?.Dispose();
         _tileTarget = _tileStaging = null;
         _tileContext = null;
+        _probeTarget?.Dispose();
+        _probeTarget = null;
+        _probeContext = null;
     }
 
     private static bool IsDeviceLost(uint hr) => hr is D2DERR_RECREATE_TARGET or DXGI_ERROR_DEVICE_REMOVED or DXGI_ERROR_DEVICE_RESET;

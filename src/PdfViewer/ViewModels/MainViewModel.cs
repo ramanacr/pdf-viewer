@@ -1257,6 +1257,10 @@ public partial class MainViewModel : ObservableObject
     public Task RequestPageDetailAsync(PageViewModel page, System.Windows.Rect visibleDips, double devicePixelsPerDip) =>
         page.UpdateDetailAsync(_docService, visibleDips, devicePixelsPerDip, RotationAngle, IsNightMode);
 
+    /// <summary>Starts the background work for a visible page's detail tile at a new zoom (see <see cref="PageViewModel.PrepareDetail"/>).</summary>
+    public void PreparePageDetail(PageViewModel page, System.Windows.Rect visibleDips, double devicePixelsPerDip) =>
+        page.PrepareDetail(_docService, visibleDips, devicePixelsPerDip, RotationAngle, IsNightMode);
+
     public void RenderPagesInViewport(double viewportTop, double viewportHeight)
     {
         if (!IsDocumentLoaded || Pages.Count == 0 || !IsMultiPageLayout) return;

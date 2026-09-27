@@ -9,7 +9,7 @@ using PdfEngine.Vector.Document;
 namespace VectorPdf.Tool;
 
 /// <summary>
-/// vectorpdf tiles &lt;dir&gt; [--software] [--top N] [--pages-per-file N]
+/// vectorpdf tiles &lt;dir&gt; [--software] [--top N] [--pages-per-file N] [--no-prepare]
 ///
 /// Measures what the viewer's Direct2D page host does on real documents: the page bitmap at the
 /// viewer's DPI buckets (150/200/300) and the viewport detail tile (visible area plus half a
@@ -174,6 +174,37 @@ internal static class TileBench
             }
         }
         columns = columns.Append("zoomstep").ToArray();
+
+        // The same zoom steps as the viewer runs them: the tile work is prepared as soon as the zoom
+        // is requested, the tile itself asked for after the 90 ms debounce. Measured from the zoom
+        // request to the crisp tile; without preparation that is zoomstep + 90 ms.
+        if (!args.Contains("--no-prepare"))
+        {
+            using var prep = new Direct2DVectorRenderer(forceSoftware: software);
+            samples["zoomprep"] = new List<double>();
+            foreach (var (file, page, _, _) in heavy)
+            {
+                using var doc = await PdfVectorDocument.OpenAsync(await File.ReadAllBytesAsync(file));
+                var list = await doc.GetPageDisplayListAsync(page);
+                (await prep.RenderAsync(list, new RenderRequest { PageNumber = page, Dpi = 72 }, null, CancellationToken.None)).Page.Dispose();
+                for (double zoom = 4.0; zoom <= 16.0; zoom *= 1.25)
+                {
+                    double pxPerPt = zoom * DeviceScale * 96.0 / 72.0;
+                    var request = new RenderRequest { PageNumber = page, Dpi = pxPerPt * 72 };
+                    var (fullW, fullH) = Direct2DVectorRenderer.OutputSize(list, request);
+                    int w = (int)Math.Min(fullW, WindowWidthDip * DeviceScale), h = (int)Math.Min(fullH, WindowHeightDip * DeviceScale);
+                    var region = new PixelRegion((fullW - w) / 2, (fullH - h) / 2, w, h);
+                    var sw = Stopwatch.StartNew();
+                    var prepared = prep.PrepareAsync(list, request, region, invertColors: false, CancellationToken.None);
+                    await Task.Delay(90);
+                    var r = await prep.RenderAsync(list, request, null, region, invertColors: false, CancellationToken.None);
+                    samples["zoomprep"].Add(sw.Elapsed.TotalMilliseconds);
+                    r.Page.Dispose();
+                    await prepared;
+                }
+            }
+            columns = columns.Append("zoomprep").ToArray();
+        }
 
         Console.WriteLine(string.Create(inv, $"commands: max {(heavy.Count > 0 ? heavy[0].Commands : 0)}, median of heaviest {(heavy.Count > 0 ? heavy[heavy.Count / 2].Commands : 0)}"));
         foreach (var c in columns)

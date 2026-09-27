@@ -29,16 +29,17 @@ public class Direct2DPageHostTests : IDisposable
         try { Directory.Delete(_dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
-    private string SquarePdf()
+    private string SquarePdf() => Pdf("square.pdf", "0 g 50 50 100 100 re f", "[0 0 200 200]");
+
+    private string Pdf(string name, string content, string mediaBox)
     {
         Directory.CreateDirectory(_dir);
-        string path = Path.Combine(_dir, "square.pdf");
-        string content = "0 g 50 50 100 100 re f";
+        string path = Path.Combine(_dir, name);
         var objects = new[]
         {
             "<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R >>",
+            $"<< /Type /Page /Parent 2 0 R /MediaBox {mediaBox} /Resources << >> /Contents 4 0 R >>",
             $"<< /Length {content.Length} >>\nstream\n{content}\nendstream",
         };
         using var ms = new MemoryStream();
@@ -110,9 +111,14 @@ public class Direct2DPageHostTests : IDisposable
         await page.UpdateDetailAsync(service, new Rect(720, 1420, 400, 300), 1.0, 0, false);
         Assert.Same(same, page.DetailImage);
 
-        // A zoom change drops the stale tile.
+        // A zoom change keeps the stale tile, stretched to the new zoom, until the crisp one replaces it.
+        var before = page.DetailRect;
         page.UpdateScale(8);
-        Assert.Null(page.DetailImage);
+        Assert.Same(same, page.DetailImage);
+        Assert.Equal(new Rect(before.X / 2, before.Y / 2, before.Width / 2, before.Height / 2), page.DetailRect);
+        await page.UpdateDetailAsync(service, new Rect(360, 710, 400, 300), 1.0, 0, false);
+        Assert.NotSame(same, page.DetailImage);
+        Assert.True(page.DetailRect.Contains(new Rect(360, 710, 400, 300)));
     }
 
     [Fact]
@@ -238,6 +244,101 @@ public class Direct2DPageHostTests : IDisposable
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(60)), "the GPU presenter test did not finish within 60 s");
         if (error != null) throw error;
+    }
+
+    /// <summary>Records preparations; with <see cref="Hold"/> each one waits for its cancellation instead of running.</summary>
+    public class PrepareRecorder : DispatchProxy
+    {
+        public IPdfDocumentService Inner { get; set; } = null!;
+        public bool Hold { get; set; }
+        public List<(Int32Rect Region, double PixelsPerPoint, System.Threading.CancellationToken Token, Task Work)> Prepared { get; } = new();
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == nameof(IPdfDocumentService.PreparePageRegionAsync))
+            {
+                var ct = (System.Threading.CancellationToken)args![8]!;
+                var work = Hold ? Task.Delay(System.Threading.Timeout.Infinite, ct) : (Task)method.Invoke(Inner, args)!;
+                Prepared.Add((new Int32Rect((int)args[3]!, (int)args[4]!, (int)args[5]!, (int)args[6]!), (double)args[2]!, ct, work));
+                return work;
+            }
+            return method.Invoke(Inner, args);
+        }
+    }
+
+    [Fact]
+    public async Task ZoomRequest_PreparesTheVisibleTile_AndTheNextZoomCancelsIt()
+    {
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        await service.OpenDocumentAsync(SquarePdf());
+        var proxy = DispatchProxy.Create<IPdfDocumentService, PrepareRecorder>();
+        var recorder = (PrepareRecorder)(object)proxy;
+        recorder.Inner = service;
+        recorder.Hold = true;
+
+        var page = new PageViewModel(1, 200, 200);
+        await page.LoadImageAsync(new AsyncPageRenderer(service, new LruPageCache(8)), 150, 0);
+        page.UpdateScale(16);
+        var visible = new Rect(700, 1400, 400, 300);
+        page.PrepareDetail(proxy, visible, 1.0, 0, false);
+        var first = Assert.Single(recorder.Prepared);
+        Assert.Equal(new Int32Rect(700, 1400, 400, 300), first.Region); // the region the first tile renders
+        Assert.Equal(16, first.PixelsPerPoint, 4);
+        page.PrepareDetail(proxy, visible, 1.0, 0, false);             // same zoom and area: already under way
+        Assert.Single(recorder.Prepared);
+
+        page.UpdateScale(20);                                            // the zoom moves on
+        Assert.True(first.Token.IsCancellationRequested);
+        page.PrepareDetail(proxy, new Rect(875, 1750, 400, 300), 1.0, 0, false);
+        Assert.Equal(2, recorder.Prepared.Count);
+        Assert.Equal(20, recorder.Prepared[1].PixelsPerPoint, 4);
+        Assert.False(recorder.Prepared[1].Token.IsCancellationRequested);
+
+        // A tile render for another zoom cancels it too; one for the same zoom lets it run.
+        await page.UpdateDetailAsync(proxy, new Rect(875, 1750, 400, 300), 1.0, 0, false);
+        Assert.False(recorder.Prepared[1].Token.IsCancellationRequested);
+        page.ClearDetail();
+        Assert.True(recorder.Prepared[1].Token.IsCancellationRequested);
+
+        // An unzoomed page needs no tile, so nothing is prepared.
+        page.UpdateScale(1);
+        page.PrepareDetail(proxy, new Rect(0, 0, 200, 200), 1.0, 0, false);
+        Assert.Equal(2, recorder.Prepared.Count);
+    }
+
+    [Fact]
+    public async Task PreparedDetailTile_EqualsTheTileRenderedWithoutPreparation()
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var rng = new Random(1234);
+        var content = new StringBuilder();
+        for (int i = 0; i < 120; i++)
+            content.Append(inv, $"{rng.NextDouble():F2} {rng.NextDouble():F2} {rng.NextDouble():F2} RG {rng.Next(1, 4)} w {rng.Next(0, 612)} {rng.Next(0, 792)} m {rng.Next(0, 612)} {rng.Next(0, 792)} {rng.Next(0, 612)} {rng.Next(0, 792)} {rng.Next(0, 612)} {rng.Next(0, 792)} c S\n");
+        content.Append("0.2 0.5 0.9 rg -100 300 m 300 -300 900 1100 700 400 c h f\n");
+        string pdf = Pdf("curves.pdf", content.ToString(), "[0 0 612 792]");
+
+        async Task<byte[]> TileAsync(bool prepare)
+        {
+            using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+            await service.OpenDocumentAsync(pdf);
+            var proxy = DispatchProxy.Create<IPdfDocumentService, PrepareRecorder>();
+            ((PrepareRecorder)(object)proxy).Inner = service;
+            var page = new PageViewModel(1, 612, 792);
+            await page.LoadImageAsync(new AsyncPageRenderer(service, new LruPageCache(8)), 150, 0);
+            page.UpdateScale(16);
+            var visible = new Rect(4500, 6000, 1200, 900); // 1600 % at 150 % display scaling
+            if (prepare)
+            {
+                page.PrepareDetail(proxy, visible, 1.5, 0, false);
+                await Assert.Single(((PrepareRecorder)(object)proxy).Prepared).Work;
+            }
+            await page.UpdateDetailAsync(proxy, visible, 1.5, 0, false);
+            return Pixels(Assert.IsAssignableFrom<BitmapSource>(page.DetailImage));
+        }
+
+        var synchronous = await TileAsync(prepare: false);
+        var prepared = await TileAsync(prepare: true);
+        Assert.True(synchronous.AsSpan().SequenceEqual(prepared), "the prepared tile differs from the synchronous one");
     }
 
     private static void Pump(Task task)
