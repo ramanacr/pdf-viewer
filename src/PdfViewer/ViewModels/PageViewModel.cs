@@ -72,6 +72,9 @@ public partial class PageViewModel : ObservableObject
 
     /// <summary>The page's form field widgets, for the page's form layer.</summary>
     public ObservableCollection<FormFieldViewModel> FormFields { get; } = new();
+
+    /// <summary>Areas marked for redaction (normalized, unrotated, top-left origin), until applied or cleared.</summary>
+    public ObservableCollection<System.Windows.Rect> RedactionMarks { get; } = new();
     public ObservableCollection<PageTextSegment> SelectedSegments { get; } = new();
 
     [ObservableProperty]

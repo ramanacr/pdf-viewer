@@ -42,14 +42,15 @@ public partial class MainViewModel
     [ObservableProperty]
     private bool _isPlacingSignature;
 
+    // Placing a signature, marking for redaction and drawing annotations exclude each other.
     partial void OnIsPlacingSignatureChanged(bool value)
     {
-        if (value) ActiveAnnotationTool = null;
+        if (value) { ActiveAnnotationTool = null; IsMarkingRedaction = false; }
     }
 
     partial void OnActiveAnnotationToolChanged(AnnotationType? value)
     {
-        if (value != null) IsPlacingSignature = false;
+        if (value != null) { IsPlacingSignature = false; IsMarkingRedaction = false; }
     }
 
     /// <summary>Why the document cannot be signed right now, or null.</summary>

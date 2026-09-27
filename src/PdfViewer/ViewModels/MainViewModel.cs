@@ -1515,65 +1515,20 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Permanently redacts the selected text and writes the result to a new document.
-    ///
-    /// Redaction removes the underlying content, so it deliberately never overwrites the
-    /// open file - the user always keeps the unredacted original.
+    /// Redacts the selected text in one step: marks it, then applies every mark (the content is
+    /// removed in a new copy; the open file is never overwritten).
     /// </summary>
     [RelayCommand]
     public async Task RedactSelectionAsync()
     {
         if (!Permit(DocumentPermissions.CanModify, "editing") || !PermitFileOperation("Redaction")) return;
-        if (string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
-
-        var areas = BuildRedactionAreasFromSelection();
-
-        if (areas.Count == 0)
+        if (!Pages.Any(p => p.SelectedSegments.Count > 0))
         {
-            ShowAlert("Select the text you want to redact first.", "Redact",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            ShowAlert("Select the text you want to redact first.", "Redact", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-
-        var confirm = MessageBoxResult.Yes;
-        if (ShowMessageBoxAction == null)
-        {
-            confirm = MessageBox.Show(
-                $"Permanently remove the selected text from {areas.Count} area(s)?\n\n" +
-                "The text is deleted from the saved copy and cannot be recovered from it. " +
-                "Your open document is not modified.",
-                "Confirm Redaction", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        }
-        if (confirm != MessageBoxResult.Yes) return;
-
-        var target = new SaveFileDialog
-        {
-            Filter = "PDF Files (*.pdf)|*.pdf",
-            Title = "Save redacted document as",
-            FileName = $"{Path.GetFileNameWithoutExtension(_docService.CurrentFilePath)}_redacted.pdf"
-        };
-        if (target.ShowDialog() != true) return;
-
-        StatusText = $"Redacting {areas.Count} area(s)...";
-        try
-        {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
-            await engine.RedactionService.ApplyRedactionsAsync(doc, target.FileName, areas);
-
-            ClearSelection();
-            StatusText = $"Redacted {areas.Count} area(s) into {Path.GetFileName(target.FileName)}.";
-            ShowAlert(
-                $"Redacted document saved to:\n{target.FileName}\n\n" +
-                "The redacted text has been removed from the file, not merely covered.",
-                "Redact", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Redaction failed: {ex.Message}";
-            ShowAlert($"Could not redact the document:\n\n{ex.Message}", "Redact",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        MarkSelectionForRedactionCommand.Execute(null);
+        await ApplyRedactionsAsync();
     }
 
     #endregion

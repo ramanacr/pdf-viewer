@@ -119,6 +119,18 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - **Validation** (`Signatures/PdfSignatureValidator`), with no network: integrity over the byte ranges; the chain at the signing (or timestamp) time; timestamps; later revisions classified (signatures, form fields, annotations, metadata or other) and weighed against the certification level. The viewer shows a verdict banner and a Signatures panel.
 - Saving annotations on a signed document is incremental, so its signatures stay valid.
 
+### Redaction
+- `Redaction/PdfRedactor` removes content rather than covering it:
+  - text: glyphs under a mark go, and the rest keep their exact positions through `TJ` adjustments; invisible text goes too;
+  - vector fills and strokes are cut to the area outside the marks;
+  - image pixels under a mark are blanked in new image objects (JPEG through WIC; CCITT and JBIG2 stencils);
+  - form XObjects and annotation appearances are rewritten recursively;
+  - shadings are clipped away from the marks;
+  - `/ActualText` and `/Alt` about removed text are dropped;
+  - form fields touched by a mark are removed.
+- The output is a full rewrite: only reachable objects, no earlier revisions, and the original encryption kept.
+- `vectorpdf redact` over the 3,197-file corpus: 3,167 of 3,181 openable files clean, 0 with text left under the band, 2 malformed files refused. The viewer marks selected text, dragged areas or every search match, and applies them into a new copy.
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).

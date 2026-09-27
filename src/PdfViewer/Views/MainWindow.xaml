@@ -192,10 +192,21 @@
                 <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSelectAll}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconDeselect}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_Redact Selected Text..."
-                          Command="{Binding RedactSelectionCommand}"
-                          IsEnabled="{Binding HasTextSelection}"
-                          ToolTip="Permanently removes the selected text and saves the result as a new document."><MenuItem.Icon><Path Data="{StaticResource IconRedact}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Redact" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconRedact}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon>
+                    <MenuItem Header="Mark Selected _Text" Command="{Binding MarkSelectionForRedactionCommand}" IsEnabled="{Binding HasTextSelection}"
+                              ToolTip="Marks the selected text for redaction." />
+                    <MenuItem Header="Mark an _Area" Command="{Binding BeginMarkRedactionAreaCommand}"
+                              ToolTip="Drag over any part of a page (text, pictures, drawings) to mark it." />
+                    <MenuItem Header="Mark All _Search Results" Command="{Binding MarkSearchResultsForRedactionCommand}"
+                              ToolTip="Marks every match of the current search, on every page." />
+                    <Separator />
+                    <MenuItem Header="_Apply Redactions..." Command="{Binding ApplyRedactionsCommand}"
+                              ToolTip="Removes everything under the marks in a new copy. The original is not changed." />
+                    <MenuItem Header="_Clear Marks" Command="{Binding ClearRedactionMarksCommand}" />
+                    <Separator />
+                    <MenuItem Header="_Redact Selected Text Now..." Command="{Binding RedactSelectionCommand}" IsEnabled="{Binding HasTextSelection}"
+                              ToolTip="Marks the selected text and applies it straight away." />
+                </MenuItem>
             </MenuItem>
 
             <MenuItem Header="_View">
@@ -1481,6 +1492,7 @@
                                                 </Canvas.ContextMenu>
                                             </Canvas>
                                             <views:FormFieldsLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 7. form fields: real editors over the page -->
+                                            <views:RedactionMarksLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 8. areas marked for redaction -->
                                             </Grid>
                                         </Grid>
                                     </Border>
@@ -1806,6 +1818,7 @@
                                     </Canvas.ContextMenu>
                                 </Canvas>
                                 <views:FormFieldsLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
+                                <views:RedactionMarksLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 </Grid>
                             </Grid>
                         </Border>
