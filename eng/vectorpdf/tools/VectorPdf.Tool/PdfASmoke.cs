@@ -95,17 +95,19 @@ public static class PdfASmoke
     }
 
     /// <summary>
-    /// vectorpdf pdfa-convert &lt;dir&gt; [--limit N]: converts every file to PDF/A-2b, validates the
-    /// result and compares page 1 with the original (it must look the same). Reports what stays
-    /// non-conforming by rule. Document text is never printed.
+    /// vectorpdf pdfa-convert &lt;dir&gt; [--limit N] [--flavour 1b|2b|3b]: converts every file to PDF/A-2b
+    /// (or the flavour given), validates the result and compares page 1 with the original (it must look
+    /// the same). Reports what stays non-conforming by rule, and the files PDF/A-1b refuses (they use
+    /// transparency). Document text is never printed.
     /// </summary>
     public static async Task<int> ConvertAsync(string[] args)
     {
         string dir = args.Length > 1 ? args[1] : ".";
         int limit = int.TryParse(Program.Option(args, "--limit"), out int l) ? l : int.MaxValue;
+        var flavour = PdfAFlavour.Parse(Program.Option(args, "--flavour")) ?? PdfAFlavour.A2b;
         var files = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).Take(limit).ToList();
         using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
-        int compliant = 0, remaining = 0, failed = 0, skipped = 0, looksDifferent = 0;
+        int compliant = 0, remaining = 0, failed = 0, skipped = 0, looksDifferent = 0, refused = 0;
         var rules = new Dictionary<string, int>(StringComparer.Ordinal);
         var clock = Stopwatch.StartNew();
         foreach (var file in files)
@@ -120,7 +122,9 @@ public static class PdfASmoke
                 using (doc)
                 {
                     if (doc.PageCount == 0) { skipped++; continue; }
-                    var result = PdfAConverter.Convert(doc, bytes);
+                    PdfAConversionResult result;
+                    try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = flavour }); }
+                    catch (PdfAConversionRefusedException) { refused++; continue; }
                     if (Program.Option(args, "--out") is { } outDir) await File.WriteAllBytesAsync(Path.Combine(outDir, Path.GetFileName(file)), result.Bytes);
                     using var after = await PdfVectorDocument.OpenAsync(result.Bytes);
                     // Compared through PDFium on both sides, so our own renderer's font stand-ins do not count.
@@ -142,7 +146,7 @@ public static class PdfASmoke
                 Console.WriteLine($"error  {name}  {ex.GetType().Name}: {ex.Message.Split('\n')[0]}");
             }
         }
-        Console.WriteLine($"\n{files.Count} files in {clock.Elapsed.TotalSeconds:F0} s: PDF/A-2b {compliant}, still non-conforming {remaining}, look different {looksDifferent}, errors {failed}, skipped {skipped}");
+        Console.WriteLine($"\n{files.Count} files in {clock.Elapsed.TotalSeconds:F0} s: {flavour} {compliant}, still non-conforming {remaining}, look different {looksDifferent}, refused {refused}, errors {failed}, skipped {skipped}");
         foreach (var (rule, count) in rules.OrderByDescending(r => r.Value).Take(25)) Console.WriteLine($"  {rule,-16} {count}");
         return failed > 0 ? 1 : 0;
     }
