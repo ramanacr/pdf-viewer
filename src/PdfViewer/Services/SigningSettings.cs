@@ -17,9 +17,23 @@ public sealed class SigningSettings
     public string? ContactInfo { get; set; }
     public string? TimestampServer { get; set; }
     public bool UseTimestamp { get; set; }
+    /// <summary>How the last visible signature was laid out (a PdfSignatureLayout name).</summary>
+    public string? AppearanceLayout { get; set; }
+    public bool ShowDate { get; set; } = true;
+    public bool ShowReason { get; set; } = true;
+    public bool ShowLocation { get; set; } = true;
+    public bool ShowLabels { get; set; } = true;
+    /// <summary>
+    /// The user asked for their signature image to be remembered on this computer (see
+    /// <see cref="SignatureImageStore"/>). Off unless they tick it; unticking it deletes the image.
+    /// </summary>
+    public bool RememberSignatureImage { get; set; }
 
     private static string _directory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PdfViewerNative");
+
+    /// <summary>Where the viewer keeps its signing settings (under %LOCALAPPDATA%).</summary>
+    internal static string Directory => _directory;
 
     private static string FilePath => Path.Combine(_directory, "signing.json");
 
@@ -44,7 +58,7 @@ public sealed class SigningSettings
     {
         try
         {
-            Directory.CreateDirectory(_directory);
+            System.IO.Directory.CreateDirectory(_directory);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

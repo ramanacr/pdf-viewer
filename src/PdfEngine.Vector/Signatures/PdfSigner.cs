@@ -32,6 +32,8 @@ public sealed record PdfSignatureRequest
     public int? CertificationLevel { get; init; }
     /// <summary>Bytes reserved for the CMS signature (hex doubles it in the file). Timestamps and long chains need more.</summary>
     public int ContentsSize { get; init; } = 16384;
+    /// <summary>What a visible signature shows (a handwritten or picture signature, which details, the font); null shows the details as text.</summary>
+    public PdfSignatureAppearance? Appearance { get; init; }
 }
 
 /// <summary>
@@ -91,19 +93,8 @@ public static class PdfSigner
     {
         if (request.ContentsSize < 1024)
             throw new ArgumentOutOfRangeException(nameof(request), "At least 1 KB must be reserved for the signature.");
-        var r = document.Resolver;
-        var trailer = document.XrefTable.Trailer ?? throw new InvalidOperationException("The document has no trailer.");
-        if (trailer["Root"] is not PdfIndirectRef rootRef || r.Resolve(rootRef) is not PdfDictionary root)
-            throw new InvalidOperationException("The document has no catalog.");
-
-        var objects = new Dictionary<int, PdfObject>();
-        int next = PdfIncrementalWriter.NextObjectNumber(document);
-        PdfDictionary Current(int number) =>
-            objects.TryGetValue(number, out var o) ? (PdfDictionary)o : r.Resolve(number) as PdfDictionary
-            ?? throw new InvalidOperationException($"Object {number} is not a dictionary.");
 
         // The signature value.
-        int sigNumber = next++;
         var sig = new Dictionary<string, PdfObject>
         {
             ["Type"] = new PdfName("Sig"),
@@ -136,6 +127,44 @@ public static class PdfSigner
                 }),
             });
         }
+        return Place(document, original, sig, request, "Signature");
+    }
+
+    /// <summary>
+    /// A document timestamp placeholder (ISO 32000-2 12.8.5, PAdES-B-LTA): an invisible field whose
+    /// value is a /Type /DocTimeStamp dictionary with /SubFilter /ETSI.RFC3161. Its /Contents is to
+    /// be the RFC 3161 timestamp token over <see cref="PdfPreparedSignature.SignedBytes"/>.
+    /// </summary>
+    public static PdfPreparedSignature PrepareDocumentTimestamp(PdfVectorDocument document, byte[] original, int contentsSize = 16384)
+    {
+        if (contentsSize < 1024)
+            throw new ArgumentOutOfRangeException(nameof(contentsSize), "At least 1 KB must be reserved for the timestamp.");
+        var sig = new Dictionary<string, PdfObject>
+        {
+            ["Type"] = new PdfName("DocTimeStamp"),
+            ["Filter"] = new PdfName("Adobe.PPKLite"),
+            ["SubFilter"] = new PdfName("ETSI.RFC3161"),
+        };
+        return Place(document, original, sig, new PdfSignatureRequest { SignerName = string.Empty, ContentsSize = contentsSize }, "DocTimeStamp");
+    }
+
+    /// <summary>Appends the signature dictionary, its field and widget, and the form entries, with the placeholders.</summary>
+    private static PdfPreparedSignature Place(PdfVectorDocument document, byte[] original, Dictionary<string, PdfObject> sig,
+        PdfSignatureRequest request, string namePrefix)
+    {
+        var r = document.Resolver;
+        var trailer = document.XrefTable.Trailer ?? throw new InvalidOperationException("The document has no trailer.");
+        if (trailer["Root"] is not PdfIndirectRef rootRef || r.Resolve(rootRef) is not PdfDictionary root)
+            throw new InvalidOperationException("The document has no catalog.");
+
+        var objects = new Dictionary<int, PdfObject>();
+        int next = PdfIncrementalWriter.NextObjectNumber(document);
+        int Allocate() => next++;
+        PdfDictionary Current(int number) =>
+            objects.TryGetValue(number, out var o) ? (PdfDictionary)o : r.Resolve(number) as PdfDictionary
+            ?? throw new InvalidOperationException($"Object {number} is not a dictionary.");
+
+        int sigNumber = next++;
         // Placeholders: patched in place once the file is laid out (same length, so no offset moves).
         sig["ByteRange"] = new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(9999999999), new PdfInteger(9999999999), new PdfInteger(9999999999) });
         sig["Contents"] = new PdfString(new byte[request.ContentsSize], IsHex: true);
@@ -164,7 +193,7 @@ public static class PdfSigner
                 if (w.Rect.Width > 0 && w.Rect.Height > 0)
                 {
                     int apNumber = next++;
-                    objects[apNumber] = Appearance(request, w.Rect.Width, w.Rect.Height, w.Rotation, r);
+                    objects[apNumber] = PdfSignatureAppearanceBuilder.Build(request, w.Rect.Width, w.Rect.Height, w.Rotation, r, Allocate, objects);
                     widget = With(widget, "AP", new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = new PdfIndirectRef(apNumber) }));
                 }
                 objects[w.ObjectNumber] = widget;
@@ -178,7 +207,7 @@ public static class PdfSigner
             int pageNumber = pageRefs[request.PageNumber - 1];
             var page = document.PageTree.Pages[request.PageNumber - 1];
 
-            string name = UniqueName(PdfAcroForm.Read(document));
+            string name = UniqueName(PdfAcroForm.Read(document), namePrefix);
             var rect = request.Rect ?? new PdfRect(0, 0, 0, 0);
             int fieldNumber = next++;
             var field = new Dictionary<string, PdfObject>
@@ -195,7 +224,7 @@ public static class PdfSigner
             if (request.Rect is { Width: > 0, Height: > 0 } visible)
             {
                 int apNumber = next++;
-                objects[apNumber] = Appearance(request, visible.Width, visible.Height, page.RotationDegrees, r);
+                objects[apNumber] = PdfSignatureAppearanceBuilder.Build(request, visible.Width, visible.Height, page.RotationDegrees, r, Allocate, objects);
                 field["AP"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = new PdfIndirectRef(apNumber) });
                 if (page.RotationDegrees != 0)
                     field["MK"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["R"] = new PdfInteger(page.RotationDegrees) });
@@ -287,75 +316,11 @@ public static class PdfSigner
         return result;
     }
 
-    private static string UniqueName(PdfAcroForm? form)
+    private static string UniqueName(PdfAcroForm? form, string prefix)
     {
         var taken = new HashSet<string>(form?.Fields.Select(f => f.FullName) ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
         for (int i = 1; ; i++)
-            if (!taken.Contains("Signature" + i)) return "Signature" + i;
-    }
-
-    /// <summary>The visible signature: who signed, when, why and where, laid out to fit the box.</summary>
-    internal static PdfStream Appearance(PdfSignatureRequest request, double width, double height, int rotation, Parsing.PdfObjectResolver resolver)
-    {
-        bool quarter = rotation is 90 or 270;
-        double w = quarter ? height : width, h = quarter ? width : height;
-        var font = new PdfDictionary(new Dictionary<string, PdfObject>
-        {
-            ["Type"] = new PdfName("Font"),
-            ["Subtype"] = new PdfName("Type1"),
-            ["BaseFont"] = new PdfName("Helvetica"),
-            ["Encoding"] = new PdfName("WinAnsiEncoding"),
-        });
-        var metrics = PdfFormFiller.Metrics(font, resolver);
-
-        var text = new StringBuilder();
-        text.Append("Digitally signed by ").Append(request.SignerName).Append('\n');
-        text.Append("Date: ").Append(request.SigningTime.ToString("yyyy.MM.dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
-        if (!string.IsNullOrWhiteSpace(request.Reason)) text.Append("\nReason: ").Append(request.Reason);
-        if (!string.IsNullOrWhiteSpace(request.Location)) text.Append("\nLocation: ").Append(request.Location);
-
-        double pad = Math.Min(4, Math.Min(w, h) * 0.08);
-        double innerW = Math.Max(1, w - 2 * pad), innerH = Math.Max(1, h - 2 * pad);
-        // The largest size (up to 12 pt) at which the wrapped text fits the box.
-        double size = 12;
-        List<string> lines;
-        while (true)
-        {
-            lines = PdfFormFiller.Wrap(text.ToString(), metrics, size, innerW);
-            if (lines.Count * size * 1.15 <= innerH || size <= 2) break;
-            size = Math.Max(2, size - 0.5);
-        }
-
-        var s = new StringBuilder();
-        s.Append("q BT /Helv ").Append(F(size)).Append(" Tf 0 g\n");
-        double lead = size * 1.15;
-        double y = h - pad - size * 0.9;
-        s.Append(F(pad)).Append(' ').Append(F(y)).Append(" Td ").Append(F(lead)).Append(" TL\n");
-        for (int i = 0; i < lines.Count; i++)
-        {
-            if (i > 0) s.Append("T* ");
-            s.Append('(').Append(PdfFormFiller.Escape(lines[i], metrics)).Append(") Tj\n");
-        }
-        s.Append("ET Q\n");
-
-        var entries = new Dictionary<string, PdfObject>
-        {
-            ["Type"] = new PdfName("XObject"),
-            ["Subtype"] = new PdfName("Form"),
-            ["BBox"] = new PdfArray(new PdfObject[] { Num(0), Num(0), Num(w), Num(h) }),
-            ["Resources"] = new PdfDictionary(new Dictionary<string, PdfObject>
-            {
-                ["Font"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["Helv"] = font }),
-            }),
-        };
-        if (rotation != 0)
-            entries["Matrix"] = rotation switch
-            {
-                90 => new PdfArray(new PdfObject[] { Num(0), Num(1), Num(-1), Num(0), Num(h), Num(0) }),
-                180 => new PdfArray(new PdfObject[] { Num(-1), Num(0), Num(0), Num(-1), Num(w), Num(h) }),
-                _ => new PdfArray(new PdfObject[] { Num(0), Num(-1), Num(1), Num(0), Num(0), Num(w) }),
-            };
-        return PdfObjectWriter.NewStream(entries, Encoding.Latin1.GetBytes(s.ToString()));
+            if (!taken.Contains(prefix + i)) return prefix + i;
     }
 
     /// <summary>A PDF date string (7.9.4): D:YYYYMMDDHHmmSS+HH'mm'.</summary>

@@ -16,9 +16,11 @@ public static class EditImageLoader
     /// <summary>Pictures larger than this many pixels are refused rather than filling memory.</summary>
     public const long MaxPixels = 100_000_000;
 
-    public static PdfImageContent Load(string path)
+    public static PdfImageContent Load(string path) => Load(File.ReadAllBytes(path));
+
+    /// <summary>The same, from the file's bytes.</summary>
+    public static PdfImageContent Load(byte[] file)
     {
-        byte[] file = File.ReadAllBytes(path);
         using var ms = new MemoryStream(file, writable: false);
         var decoder = BitmapDecoder.Create(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         BitmapSource frame = decoder.Frames[0];
