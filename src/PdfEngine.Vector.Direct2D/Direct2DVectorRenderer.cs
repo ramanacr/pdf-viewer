@@ -99,7 +99,10 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
     /// </summary>
     internal bool WindowedRealizations { get; set; } = true;
 
-    /// <summary>Small geometries are drawn without realizations (tests turn it off to exercise realizations).</summary>
+    /// <summary>
+    /// Small geometries are drawn without realizations (tests turn it off to exercise realizations).
+    /// Applies to replayers created afterwards.
+    /// </summary>
     internal bool DrawSmallGeometriesDirectly { get; set; } = true;
 
     /// <summary>Realizations built, windowed, and rebuilt for a region beyond their window, over the cached replayers (tests).</summary>

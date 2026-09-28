@@ -17,10 +17,11 @@ internal sealed partial class Replayer
     /// <summary>Off: every realization covers its whole geometry.</summary>
     public bool WindowedRealizations { get; set; } = true;
 
-    /// <summary>Realizations built so far, how many of them windowed, and how many rebuilt for a region beyond their window.</summary>
     /// <summary>Draw geometries smaller than <see cref="DirectDrawPixels"/> on the device without a realization.</summary>
     public bool DrawSmallGeometriesDirectly { get; set; } = true;
     private const float DirectDrawPixels = 1024f;
+
+    /// <summary>Realizations built so far, how many of them windowed, and how many rebuilt for a region beyond their window.</summary>
     public int RealizationsBuilt { get; private set; }
     public int WindowedRealizationsBuilt { get; private set; }
     public int RealizationsRebuilt { get; private set; }

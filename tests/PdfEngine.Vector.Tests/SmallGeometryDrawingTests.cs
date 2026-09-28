@@ -24,9 +24,9 @@ public class SmallGeometryDrawingTests
             for (int x = 0; x < 60; x++)
             {
                 double cx = 10 + x * 6.5, cy = 10 + y * 6.5;
-                // A small circle (four curves), filled and stroked.
-                content.Append($"{cx + 2} {cy} m {cx + 2} {cy + 1.1} {cx + 1.1} {cy + 2} {cx} {cy + 2} c {cx - 1.1} {cy + 2} {cx - 2} {cy + 1.1} {cx - 2} {cy} c ");
-                content.Append($"{cx - 2} {cy - 1.1} {cx - 1.1} {cy - 2} {cx} {cy - 2} c {cx + 1.1} {cy - 2} {cx + 2} {cy - 1.1} {cx + 2} {cy} c B\n");
+                // A small circle (four curves), filled and stroked; invariant numbers (a decimal comma is not PDF).
+                content.Append(FormattableString.Invariant($"{cx + 2} {cy} m {cx + 2} {cy + 1.1} {cx + 1.1} {cy + 2} {cx} {cy + 2} c {cx - 1.1} {cy + 2} {cx - 2} {cy + 1.1} {cx - 2} {cy} c "));
+                content.Append(FormattableString.Invariant($"{cx - 2} {cy - 1.1} {cx - 1.1} {cy - 2} {cx} {cy - 2} c {cx + 1.1} {cy - 2} {cx + 2} {cy - 1.1} {cx + 2} {cy} c B\n"));
             }
         var b = new VectorPdfBuilder();
         b.AddPage(content.ToString(), "<< >>", mediaBox: "[0 0 400 400]");
