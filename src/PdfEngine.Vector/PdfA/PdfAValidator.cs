@@ -43,6 +43,17 @@ public static class PdfAValidator
         return PdfAFlavour.Parse($"{p}{conformance}");
     }
 
+    /// <summary>
+    /// Only the font rules (6.2.11), as PDF/A-2u states them, for the fonts page content shows. PDF/UA-1
+    /// 7.21 has the same requirements, so its checker reports these under its own clauses.
+    /// </summary>
+    internal static IReadOnlyList<PdfAIssue> FontIssues(PdfVectorDocument document, byte[] file)
+    {
+        var checker = new PdfAChecker(document, file, PdfAFlavour.A2u);
+        checker.RunFonts();
+        return checker.Issues.Where(i => i.Clause.StartsWith("6.2.11", StringComparison.Ordinal)).ToList();
+    }
+
     internal static XmpPacket? ReadMetadata(PdfVectorDocument document)
     {
         var r = document.Resolver;
@@ -64,6 +75,8 @@ internal sealed partial class PdfAChecker
     private readonly bool _unicode;
     private readonly Dictionary<string, int> _perRule = new(StringComparer.Ordinal);
     private const int MaxPerRule = 25;
+    /// <summary>Walk a page's content streams as one (for the font check PDF/UA runs); PDF/A validation walks them one by one.</summary>
+    private bool _joinContents;
 
     public List<PdfAIssue> Issues { get; } = new();
 
@@ -107,6 +120,14 @@ internal sealed partial class PdfAChecker
         Guard(CheckOptionalContent);
         Guard(CheckEmbeddedFiles);
         Guard(CheckPermissions);
+    }
+
+    /// <summary>Walks the pages to learn which fonts show which codes, then checks just the fonts.</summary>
+    public void RunFonts()
+    {
+        _joinContents = true;
+        Guard(CheckPages);
+        Guard(CheckFonts);
     }
 
     /// <summary>A rule that cannot be evaluated (a broken structure) is reported, not thrown.</summary>
