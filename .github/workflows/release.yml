@@ -1,0 +1,121 @@
+name: Release
+
+# Builds, signs and publishes a GitHub release when a version tag (v1.2.3) is pushed, or on demand
+# for an existing tag. The app and installer are Authenticode-signed with the project's release
+# certificate (self-signed for now; eng/signing/README.md), whose public part is attached to the
+# release so users can check the signer's thumbprint.
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release (e.g. v3.5.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+    - name: Checkout the tag
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.tag || github.ref }}
+        fetch-depth: 0 # the version comes from the nearest tag
+
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    # The release certificate lives only in repository secrets (never in the repository):
+    # PDFVIEWER_RELEASE_PFX (base64 of the PFX) and PDFVIEWER_RELEASE_PFX_PASSWORD.
+    # A release is never published unsigned.
+    - name: Restore the release signing certificate
+      shell: pwsh
+      env:
+        PFX_BASE64: ${{ secrets.PDFVIEWER_RELEASE_PFX }}
+        PFX_PASSWORD: ${{ secrets.PDFVIEWER_RELEASE_PFX_PASSWORD }}
+      run: |
+        # Trimmed: a secret set from a pipe or a file often ends with a newline, which is not part of the password.
+        $base64 = "$env:PFX_BASE64".Trim()
+        $password = "$env:PFX_PASSWORD".Trim()
+        if ([string]::IsNullOrEmpty($base64) -or [string]::IsNullOrEmpty($password)) {
+          throw "The release signing certificate is not configured: set the PDFVIEWER_RELEASE_PFX and PDFVIEWER_RELEASE_PFX_PASSWORD secrets (eng/signing/README.md)."
+        }
+        $dir = Join-Path $env:RUNNER_TEMP "signing"
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $pfx = Join-Path $dir "codesign.pfx"
+        [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($base64))
+        $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $password,
+          [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+        [IO.File]::WriteAllBytes((Join-Path $dir "PdfViewer-codesign.cer"), $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+        "PDFVIEWER_SIGN_PFX=$pfx" >> $env:GITHUB_ENV
+        "PDFVIEWER_SIGN_PASSWORD=$password" >> $env:GITHUB_ENV
+        "SIGNER_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+        "SIGNER_SUBJECT=$($cert.Subject)" >> $env:GITHUB_ENV
+        "SIGNER_EXPIRES=$($cert.NotAfter.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
+
+    - name: Build, sign and package
+      shell: pwsh
+      env:
+        # A timestamp keeps signatures valid after the certificate expires; it contacts the
+        # authority named in the repository variable, so it is off unless that is set.
+        PDFVIEWER_SIGN_TIMESTAMP_URL: ${{ vars.PDFVIEWER_SIGN_TIMESTAMP_URL }}
+      run: ./scripts/build_publish.ps1
+
+    - name: Check the signatures
+      shell: pwsh
+      run: |
+        foreach ($file in "publish/PdfViewer.exe", "publish/PdfViewerSetup.exe") {
+          $s = Get-AuthenticodeSignature -FilePath $file
+          if ($null -eq $s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne $env:SIGNER_THUMBPRINT) { throw "$file is not signed by the release certificate." }
+          if ($s.Status -in @("HashMismatch", "NotSigned", "Incompatible")) { throw "$file has a broken signature: $($s.Status)" }
+          Write-Host "$file signed by $($s.SignerCertificate.Subject) ($($s.SignerCertificate.Thumbprint))"
+        }
+
+    - name: Publish the release
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        Copy-Item (Join-Path $env:RUNNER_TEMP "signing/PdfViewer-codesign.cer") publish/
+        $assets = @("publish/PdfViewerSetup.exe", "publish/PdfViewer.exe", "publish/PdfViewer-codesign.cer",
+                    "publish/SampleDocument.pdf", "publish/System.Speech.dll", "publish/THIRD_PARTY_NOTICES.md",
+                    "publish/sbom.cyclonedx.json", "publish/sbom.spdx.json") | Where-Object { Test-Path $_ }
+        $notes = @"
+        ## Signed download
+
+        ``PdfViewerSetup.exe`` and ``PdfViewer.exe`` are Authenticode-signed (SHA-256) by **$env:SIGNER_SUBJECT**.
+
+        - Certificate thumbprint (SHA-1): ``$env:SIGNER_THUMBPRINT``
+        - Valid until $env:SIGNER_EXPIRES
+
+        The certificate is self-signed for now, so Windows reports the publisher as unknown and SmartScreen may warn. The signature still proves the files are exactly what this release built. To check a download, run this in PowerShell and compare the thumbprint with the one above (``PdfViewer-codesign.cer`` is the certificate's public part):
+
+        ``````powershell
+        (Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
+        ``````
+
+        See the [code signing policy](https://github.com/$env:GITHUB_REPOSITORY/blob/main/CODE_SIGNING_POLICY.md) and the [MIT licence](https://github.com/$env:GITHUB_REPOSITORY/blob/main/LICENSE).
+        "@
+        $notesFile = Join-Path $env:RUNNER_TEMP "notes.md"
+        Set-Content -Path $notesFile -Value $notes
+        gh release view $env:TAG *> $null
+        if ($LASTEXITCODE -eq 0) {
+          gh release upload $env:TAG @assets --clobber
+        } else {
+          gh release create $env:TAG @assets --title $env:TAG --notes-file $notesFile --verify-tag
+        }
+        if ($LASTEXITCODE -ne 0) { throw "Publishing the release failed." }
+
+    - name: Remove the certificate from the runner
+      if: always()
+      shell: pwsh
+      run: Remove-Item -Recurse -Force (Join-Path $env:RUNNER_TEMP "signing") -ErrorAction SilentlyContinue
