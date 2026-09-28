@@ -357,7 +357,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 6. **Real-world corpus:** the rights-cleared corpus is conformance-heavy; add scanned, CAD and publishing samples under their licences.
 7. **Forms and signatures remainder:** opt-in online revocation checks when validating; the ESIC extension entry; timestamp requests with hashes other than SHA-256.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
-8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate (eng/signing/README.md); a certificate from a trusted CA (and timestamping) is still needed before Windows shows a known publisher. Startup and installer-size gates are in place (eng/releasegate).
+8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
 10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
 
