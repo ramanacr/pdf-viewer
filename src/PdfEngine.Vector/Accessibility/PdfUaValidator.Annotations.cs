@@ -32,10 +32,7 @@ internal sealed partial class PdfUaChecker
             {
                 if (_r.Resolve(item) is not PdfDictionary annot) continue;
                 any = true;
-                int? number = item is PdfIndirectRef r ? r.ObjectNumber : null;
-                var rect = RectOf(annot);
-                if (number is { } n && rect is { } rc) _annotRects[n] = (i, rc);
-                CheckAnnotation(annot, number, rect, page.CropBox, i + 1);
+                CheckAnnotation(annot, item is PdfIndirectRef r ? r.ObjectNumber : null, RectOf(annot), page.CropBox, i + 1);
             }
             if (!any) continue;
             string? tabs = page.Dictionary.GetName("Tabs");

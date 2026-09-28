@@ -308,6 +308,8 @@
                           Command="{Binding ShowPdfACommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Checks the document against PDF/A (ISO 19005) and saves an archival PDF/A copy." />
+                <MenuItem Header="Accessi_bility Check..." Command="{Binding ShowAccessibilityCheckCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Checks the document against PDF/UA (ISO 14289) and the Matterhorn Protocol, and says how to fix each issue." />
                 <MenuItem Header="Reduce File _Size..."
                           Command="{Binding ShowReduceSizeCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"

@@ -55,6 +55,10 @@ internal sealed partial class PdfUaChecker
         {
             var page = _doc.PageTree.Pages[i];
             var scan = new PageScan { Page = i };
+            // Where annotations are, for the bounds of the elements that tag them.
+            if (_r.Resolve(page.Dictionary["Annots"]) is PdfArray annots)
+                foreach (var a in annots)
+                    if (a is PdfIndirectRef ar && _r.Resolve(a) is PdfDictionary ad && RectOf(ad) is { } rect) _annotRects[ar.ObjectNumber] = (i, rect);
             int? structParents = _r.Resolve(page.Dictionary["StructParents"]) is { } sp && sp.TryGetInteger(out long spv) ? (int)spv : null;
             var data = new List<byte>();
             foreach (var content in page.Contents)
@@ -254,9 +258,8 @@ internal sealed partial class PdfUaChecker
         string? lang = props == null ? null : TextOf(props, "Lang");
         bool artifact = tag == "Artifact";
         bool inReal = marked.Any(x => x.Mcid != null), inArtifact = marked.Any(x => x.Artifact);
-        var bounds = default(PdfRect?);
         if (artifact && inReal)
-            Report("01-003", "7.1", PdfUaCategory.PageContent, "An artifact is marked inside tagged content.", page: scan.Page + 1, bounds: bounds);
+            Report("01-003", "7.1", PdfUaCategory.PageContent, "An artifact is marked inside tagged content.", page: scan.Page + 1);
         if (mcid != null && inArtifact)
             Report("01-004", "7.1", PdfUaCategory.PageContent, "Tagged content (with an MCID) is inside an artifact.", page: scan.Page + 1);
         StructElem? owner = null;
