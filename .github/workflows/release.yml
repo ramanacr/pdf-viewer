@@ -43,18 +43,21 @@ jobs:
         PFX_BASE64: ${{ secrets.PDFVIEWER_RELEASE_PFX }}
         PFX_PASSWORD: ${{ secrets.PDFVIEWER_RELEASE_PFX_PASSWORD }}
       run: |
-        if ([string]::IsNullOrEmpty($env:PFX_BASE64) -or [string]::IsNullOrEmpty($env:PFX_PASSWORD)) {
+        # Trimmed: a secret set from a pipe or a file often ends with a newline, which is not part of the password.
+        $base64 = "$env:PFX_BASE64".Trim()
+        $password = "$env:PFX_PASSWORD".Trim()
+        if ([string]::IsNullOrEmpty($base64) -or [string]::IsNullOrEmpty($password)) {
           throw "The release signing certificate is not configured: set the PDFVIEWER_RELEASE_PFX and PDFVIEWER_RELEASE_PFX_PASSWORD secrets (eng/signing/README.md)."
         }
         $dir = Join-Path $env:RUNNER_TEMP "signing"
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
         $pfx = Join-Path $dir "codesign.pfx"
-        [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
-        $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:PFX_PASSWORD,
+        [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($base64))
+        $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $password,
           [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
         [IO.File]::WriteAllBytes((Join-Path $dir "PdfViewer-codesign.cer"), $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
         "PDFVIEWER_SIGN_PFX=$pfx" >> $env:GITHUB_ENV
-        "PDFVIEWER_SIGN_PASSWORD=$($env:PFX_PASSWORD)" >> $env:GITHUB_ENV
+        "PDFVIEWER_SIGN_PASSWORD=$password" >> $env:GITHUB_ENV
         "SIGNER_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
         "SIGNER_SUBJECT=$($cert.Subject)" >> $env:GITHUB_ENV
         "SIGNER_EXPIRES=$($cert.NotAfter.ToString('yyyy-MM-dd'))" >> $env:GITHUB_ENV
@@ -99,6 +102,8 @@ jobs:
         ``````powershell
         (Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
         ``````
+
+        See the [code signing policy](https://github.com/$env:GITHUB_REPOSITORY/blob/main/CODE_SIGNING_POLICY.md) and the [MIT licence](https://github.com/$env:GITHUB_REPOSITORY/blob/main/LICENSE).
         "@
         $notesFile = Join-Path $env:RUNNER_TEMP "notes.md"
         Set-Content -Path $notesFile -Value $notes

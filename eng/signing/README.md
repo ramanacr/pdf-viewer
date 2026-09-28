@@ -44,7 +44,7 @@ Set them up once with:
 ```
 
 It creates a self-signed release certificate (three years), keeps it in
-`%LOCALAPPDATA%\PdfViewerelease-signing` with its password DPAPI-encrypted for your Windows user,
+`%LOCALAPPDATA%\PdfViewer\release-signing` with its password DPAPI-encrypted for your Windows user,
 and stores it as the two secrets with the GitHub CLI. Keep that folder backed up: the secrets
 cannot be read back, and a new certificate gives releases a new thumbprint.
 

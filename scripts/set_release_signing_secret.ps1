@@ -24,13 +24,16 @@ if ($Force -or -not (Test-Path $pfx)) {
 
 # The password is kept DPAPI-encrypted; decrypt it only to hand it to GitHub.
 $secure = ConvertTo-SecureString ((Get-Content (Join-Path $keep "codesign.password") -Raw).Trim())
-$password = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try {
-    [Convert]::ToBase64String([IO.File]::ReadAllBytes($pfx)) | gh secret set PDFVIEWER_RELEASE_PFX --repo $Repository
+    $password = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    # --body, not a pipe: PowerShell ends piped text with a newline, which would become part of the secret.
+    gh secret set PDFVIEWER_RELEASE_PFX --repo $Repository --body ([Convert]::ToBase64String([IO.File]::ReadAllBytes($pfx)))
     if ($LASTEXITCODE -ne 0) { throw "gh secret set PDFVIEWER_RELEASE_PFX failed." }
-    $password | gh secret set PDFVIEWER_RELEASE_PFX_PASSWORD --repo $Repository
+    gh secret set PDFVIEWER_RELEASE_PFX_PASSWORD --repo $Repository --body $password
     if ($LASTEXITCODE -ne 0) { throw "gh secret set PDFVIEWER_RELEASE_PFX_PASSWORD failed." }
 } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
     $password = $null
 }
 
