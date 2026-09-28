@@ -1879,6 +1879,14 @@
                 <TextBlock Text="{Binding StatusText}" />
             </StatusBarItem>
 
+            <!-- A print job being sent in the background can be stopped here. -->
+            <StatusBarItem Visibility="{Binding IsPrinting, Converter={StaticResource BoolToVis}}">
+                <Button Content="Cancel printing"
+                        Command="{Binding CancelPrintCommand}"
+                        Padding="8,0"
+                        ToolTip="Stop sending this document to the printer" />
+            </StatusBarItem>
+
             <!--
                 Secured-document indicator: the document restricts printing, copying, commenting,
                 form filling, editing or page assembly for this reader (ISO 32000-2 Table 22).
