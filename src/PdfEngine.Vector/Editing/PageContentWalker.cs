@@ -41,6 +41,8 @@ internal sealed class ContentGlyph
     public double Width0, Advance;
     /// <summary>A code the word spacing applies to (a single-byte 32).</summary>
     public bool IsWordSpace;
+    /// <summary>The marked-content identifier (MCID) of the innermost tagged sequence of the page's own content it is in, or -1.</summary>
+    public int Mcid = -1;
     /// <summary>Where it is drawn: 0 for the page's own content, else one drawing of a form XObject.
     /// Glyphs of different drawings use different resources, so they are never one paragraph.</summary>
     public int Context;
@@ -192,6 +194,13 @@ internal sealed class PageContentWalker
         Walk(_content, _resources, new State(), 0, null, null, null, out _);
     }
 
+    private static int CurrentMcid(Stack<(int Index, PdfDictionary? Props, bool Removed, string Tag)> marked)
+    {
+        foreach (var m in marked)
+            if (m.Props?["MCID"] is PdfInteger id) return (int)id.Value;
+        return -1;
+    }
+
     private void Reset()
     {
         Glyphs.Clear();
@@ -250,7 +259,10 @@ internal sealed class PageContentWalker
         void Show(IReadOnlyList<PdfObject> items, string verbatim, string prefix)
         {
             if (insertions != null && insertions.TryGetValue(_showOp, out var inserted)) { pending.Add(inserted); changedHere = true; }
+            int firstGlyph = Glyphs.Count;
             string shown = ShowText(gs, ref tm, items, _showOp++, removed, verbatim, prefix, resources, context, out bool removedAny);
+            if (context == 0 && marked.Count > 0 && CurrentMcid(marked) is int mcid and >= 0)
+                for (int i = firstGlyph; i < Glyphs.Count; i++) Glyphs[i].Mcid = mcid;
             changedHere |= removedAny;
             if (removedAny && marked.Count > 0) { var top = marked.Pop(); marked.Push(top with { Removed = true }); }
             Emit(shown);

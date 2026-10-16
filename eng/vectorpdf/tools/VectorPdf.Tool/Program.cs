@@ -18,6 +18,7 @@ namespace VectorPdf.Tool;
 /// <summary>
 /// vectorpdf bench  [--pages N]               vector vs PDFium timings on a generated document
 /// vectorpdf corpus &lt;dir&gt; [--out file.jsonl] [--diff]   per-file open/fallback/diff report
+/// vectorpdf docx &lt;dir&gt; [--limit N] [--keep dir]   export to Word: package check and text coverage
 /// </summary>
 public static class Program
 {
@@ -41,6 +42,7 @@ public static class Program
             "edit" => await EditSmoke.RunAsync(args),
             "optimize" => await OptimizeSmoke.RunAsync(args),
             "pdfa" => await PdfASmoke.RunAsync(args),
+            "docx" => await DocxSmoke.RunAsync(args),
             "pdfa-convert" => await PdfASmoke.ConvertAsync(args),
             "pdfua" => await PdfUaSmoke.RunAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),
