@@ -39,7 +39,18 @@ internal sealed class ContentGlyph
     /// <summary>Where it is drawn: 0 for the page's own content, else one drawing of a form XObject.
     /// Glyphs of different drawings use different resources, so they are never one paragraph.</summary>
     public int Context;
+    /// <summary>The marked-content span with /ActualText it is drawn in, if any (glyphs drawn out of reading order).</summary>
+    public ContentSpan? Span;
+    /// <summary>On a span's first glyph: the span's other glyphs, which read as nothing on their own (TextBlocks).</summary>
+    public List<ContentGlyph>? Joined;
     public PdfPoint Origin => new(Matrix.E, Matrix.F);
+}
+
+/// <summary>A marked-content sequence with /ActualText: the text its glyphs read as, together.</summary>
+internal sealed class ContentSpan
+{
+    public ContentSpan(string text) => Text = text;
+    public string Text { get; }
 }
 
 /// <summary>An image the page's content draws (an image XObject or an inline image).</summary>
@@ -95,6 +106,14 @@ internal sealed class PageContentWalker
     private int _showOp, _imageIndex, _contexts, _formNames;
     private readonly HashSet<int> _activeForms = new();
     private FormCopies? _forms;
+    // Open marked-content sequences (over forms too): the /ActualText span each opens, or null.
+    private readonly Stack<ContentSpan?> _spans = new();
+
+    private ContentSpan? CurrentSpan()
+    {
+        foreach (var span in _spans) if (span != null) return span;
+        return null;
+    }
     private Dictionary<string, PdfObject>? _lastFormXObjects;
 
     public List<ContentGlyph> Glyphs { get; } = new();
@@ -157,6 +176,7 @@ internal sealed class PageContentWalker
         Glyphs.Clear();
         Images.Clear();
         _showOp = _imageIndex = _contexts = _formNames = 0;
+        _spans.Clear();
         _activeForms.Clear();
         AlternateTextsRemoved = 0;
     }
@@ -401,15 +421,21 @@ internal sealed class PageContentWalker
                 case "BDC":
                 {
                     var props = operands.Count >= 2 ? operands[1] as PdfDictionary : null;
+                    // A property list may also be named in the resources' /Properties.
+                    var spanProps = props ?? (operands.Count >= 2 && operands[1] is PdfName pn
+                        ? _r.Resolve((_r.Resolve(resources["Properties"]) as PdfDictionary)?[pn.Value]) as PdfDictionary : null);
+                    _spans.Push(spanProps?.GetString("ActualText") is { Length: > 0 } actual ? new ContentSpan(actual) : null);
                     marked.Push((output.Count, props, false, operands.Count >= 1 && operands[0] is PdfName tn ? tn.Value : "Span"));
                     Emit(verbatim);
                     break;
                 }
                 case "BMC":
+                    _spans.Push(null);
                     marked.Push((output.Count, null, false, operands.Count >= 1 && operands[0] is PdfName bn ? bn.Value : "Span"));
                     Emit(verbatim);
                     break;
                 case "EMC":
+                    if (_spans.Count > 0) _spans.Pop();
                     if (marked.Count > 0)
                     {
                         var m = marked.Pop();
@@ -576,7 +602,7 @@ internal sealed class PageContentWalker
                     var at = (vertical ? PdfMatrix.CreateTranslation(0, y) : PdfMatrix.CreateTranslation(x, 0)) * tm * gs.Ctm;
                     Glyphs.Add(new ContentGlyph
                     {
-                        Op = op, Index = index, Code = codeBytes, Style = style, Matrix = at, Width0 = w0, Advance = adv, IsWordSpace = wordSpace, Context = context,
+                        Op = op, Index = index, Code = codeBytes, Style = style, Matrix = at, Width0 = w0, Advance = adv, IsWordSpace = wordSpace, Context = context, Span = CurrentSpan(),
                         Text = font?.MapToUnicode(code) ?? ((char)code).ToString(),
                     });
 

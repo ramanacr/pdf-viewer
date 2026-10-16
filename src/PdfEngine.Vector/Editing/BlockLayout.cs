@@ -227,9 +227,9 @@ internal sealed class BlockLayout
                 if (_session.Encoder(template[k].Style.Font) is not { } enc || !enc.TryEncode(text.Substring(k, len), out _, out _)) whole = false;
                 k += len;
             }
-            // A cursive word that changed is shaped again as a whole, in an installed font: the
-            // document's glyphs for its letters are in the forms their old neighbours needed.
-            if (whole && text[ws..we].Any(c => ArabicJoining.Joins(c)))
+            // A cursive or Indic word that changed is shaped again as a whole, in an installed font:
+            // the document's glyphs for its letters are in the forms (and order) their old neighbours needed.
+            if (whole && text[ws..we].Any(c => ArabicJoining.Joins(c) || IsIndic(c)))
                 for (int k = ws; k < we && whole; k++)
                     if (n2o[k] < 0 || (k > ws && n2o[k] != n2o[k - 1] + 1)) whole = false;
             if (!whole) for (int k = ws; k < we; k++) installedWords[k - from] = true;
@@ -253,12 +253,14 @@ internal sealed class BlockLayout
             if (!installedWord && n2o[j] >= 0 && Reusable(n2o[j], j, to, n2o) is { } reuse)
             {
                 var m = reuse.Glyph.Matrix;
-                items.Add(new Item
+                var reused = new Item
                 {
                     Glyph = OutGlyph.From(reuse.Glyph), Template = reuse.Glyph, Width = UserAdvance(reuse.Glyph), UserScale = Math.Sqrt(m.A * m.A + m.B * m.B),
                     Space = reuse.Glyph.Text.Trim().Length == 0, BreakAfter = reuse.Glyph.Text.EndsWith('-'), End = j + reuse.Length,
                     OldLine = _b.Chars[n2o[j]].Line, OldIndex = _b.Chars[n2o[j]].Glyph, Level = levels[j - from],
-                });
+                };
+                if (reuse.Glyph.Joined is { Count: > 0 } joined) JoinedCluster(reused, reuse.Glyph, joined);
+                items.Add(reused);
                 j += reuse.Length;
                 continue;
             }
@@ -341,18 +343,33 @@ internal sealed class BlockLayout
         item.Width = (fs + column.CharSpacing) * userScale;
     }
 
+    // The glyphs of an /ActualText span (an Indic syllable) move as one, keeping where each sits in it.
+    private void JoinedCluster(Item item, ContentGlyph head, List<ContentGlyph> joined)
+    {
+        var all = joined.Prepend(head).ToList();
+        double S(ContentGlyph g) => Dot(Sub(g.Origin, _b.Origin), _b.U);
+        double T(ContentGlyph g) => Dot(Sub(g.Origin, _b.Origin), _b.V);
+        double left = all.Min(S), right = all.Max(g => S(g) + UserAdvance(g)), baseline = T(head);
+        item.Cluster = all.Select(g => (OutGlyph.From(g), S(g) - left, T(g) - baseline)).ToList();
+        item.Glyph = null;
+        item.Width = Math.Max(right - left, 0);
+    }
+
+    private static bool IsIndic(char c) => c is >= 'ऀ' and <= '෿'; // Devanagari to Sinhala
+
     private static bool IsRightToLeft(char c) => c is >= '\u0590' and <= '\u08FF' or >= '\uFB1D' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF';
 
     /// <summary>
-    /// A word in right-to-left or cursive script, shaped in the first installed font that has all of
-    /// it (joining forms, ligatures, drawing order), as one item; null for other words.
+    /// A word in a right-to-left, cursive or Indic script, shaped in the first installed font that has
+    /// all of it (joining forms, ligatures, syllable order), as one item; null for other words.
     /// </summary>
     private Item? ShapedWord(string text, int start, int to, ContentGlyph template, int level)
     {
         int end = start;
         while (end < to && text[end] != ' ') end++;
         string word = text[start..end];
-        if (!word.Any(IsRightToLeft)) return null;
+        bool rtl = word.Any(IsRightToLeft);
+        if (!rtl && !word.Any(IsIndic)) return null;
         var style = template.Style;
         bool bold = style.Font?.IsBold ?? false, italic = style.Font?.IsItalic ?? false;
         var builder = _session.Chain(style.Font, bold, italic).FirstOrDefault(b => word.All(c => char.IsSurrogate(c) || char.GetUnicodeCategory(c) == UnicodeCategory.Format || b.Font.GlyphFor(c) > 0));
@@ -367,11 +384,11 @@ internal sealed class BlockLayout
             bool mark = g.Advance == 0;
             double advance = ((g.Advance ?? builder.Font.Advance(g.Gid)) / 1000.0 * style.FontSize + (mark ? 0 : style.CharSpacing)) * style.Scaling / 100.0;
             double dx = g.Dx / 1000.0 * style.FontSize * style.Scaling / 100.0 * userScale, dy = g.Dy / 1000.0 * style.FontSize * rise;
-            cluster.Add((new OutGlyph { Code = builder.Encode(g.Gid, g.Text), Style = shapedStyle, Advance = advance, Text = g.Text }, x + dx, dy));
+            cluster.Add((new OutGlyph { Code = builder.Encode(g.Gid, g.Text), Style = shapedStyle, Advance = advance, Text = g.Text, Actual = g.Actual }, x + dx, dy));
             x += advance * userScale;
         }
         if (cluster.Count == 0) return null;
-        return new Item { Template = template, Cluster = cluster, Width = x, UserScale = userScale, End = end, Level = Math.Max(level, 1) };
+        return new Item { Template = template, Cluster = cluster, Width = x, UserScale = userScale, End = end, Level = rtl ? Math.Max(level, 1) : level };
     }
 
     // Glyphs that were side by side stay as far apart as they were (the document's own kerning and
