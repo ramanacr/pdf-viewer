@@ -184,6 +184,62 @@ public class IndicShapingTests
         foreach (string word in text.Split(' ')) Assert.Contains(word, read);
     }
 
+    private static async Task<string> Pdfium(byte[] pdf)
+    {
+        using var engine = new PdfiumEngine();
+        await using var pdoc = await engine.OpenDocumentAsync(pdf, null);
+        return await engine.TextService.ExtractPageTextAsync(pdoc, 1);
+    }
+
+    /// <summary>
+    /// Hindi drawn with /ActualText spans reads back in reading order (each syllable's glyphs as one),
+    /// and editing it reshapes the changed word while the unchanged one keeps its glyphs.
+    /// </summary>
+    [Fact]
+    public async Task HindiOnAPage_ReadsInReadingOrder_AndIsEditedAndReshaped()
+    {
+        if (Nirmala() == null) return;
+        var b = new VectorPdfBuilder();
+        b.AddPage("", "<< >>", mediaBox: "[0 0 400 400]");
+        byte[] blank = b.Build();
+        byte[] pdf;
+        using (var doc = await PdfVectorDocument.OpenAsync(blank))
+            pdf = PdfContentEditor.Apply(doc, blank, new PdfContentEdit[] { new PdfAddText(1, new PdfPoint(40, 200), "हिन्दी में", new PdfTextFormat("Nirmala UI", 24)) }).Bytes;
+
+        using var drawn = await PdfVectorDocument.OpenAsync(pdf);
+        var text = Assert.Single(PdfContentEditor.Read(drawn, 1).Texts);
+        Assert.Equal("हिन्दी में", text.Text); // हिन्दी में, not the drawn order
+
+        string edited = "हिन्दी भाषा"; // हिन्दी भाषा
+        var result = PdfContentEditor.Apply(drawn, pdf, new PdfContentEdit[] { new PdfReplaceText(1, text.Id, edited) });
+        string read = await Pdfium(result.Bytes);
+        _output.WriteLine(read);
+        Assert.Contains("भाषा", read);
+        Assert.Contains("हिन्दी", read);
+        using var after = await PdfVectorDocument.OpenAsync(result.Bytes);
+        Assert.Equal(edited, Assert.Single(PdfContentEditor.Read(after, 1).Texts).Text);
+    }
+
+    /// <summary>Hindi typed into an English paragraph is shaped (reordered matra, conjunct) in an installed font.</summary>
+    [Fact]
+    public async Task HindiTypedIntoAParagraph_IsShaped()
+    {
+        if (Nirmala() == null) return;
+        var b = new VectorPdfBuilder();
+        int font = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+        b.AddPage("BT /F1 12 Tf 40 300 Td (Meeting notes for today) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>", mediaBox: "[0 0 400 400]");
+        byte[] pdf = b.Build();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var text = Assert.Single(PdfContentEditor.Read(doc, 1).Texts);
+        string hindi = "हिन्दी"; // हिन्दी
+        var result = PdfContentEditor.Apply(doc, pdf, new PdfContentEdit[] { new PdfReplaceText(1, text.Id, $"Meeting notes {hindi} today") });
+        string read = await Pdfium(result.Bytes);
+        Assert.Contains(hindi, read);
+        Assert.Contains("Meeting notes", read);
+        using var after = await PdfVectorDocument.OpenAsync(result.Bytes);
+        Assert.Equal($"Meeting notes {hindi} today", Assert.Single(PdfContentEditor.Read(after, 1).Texts).Text);
+    }
+
     /// <summary>Windows' shaping of a string in an installed font (Uniscribe, which shares DirectWrite's shaping engine).</summary>
     private static class Uniscribe
     {

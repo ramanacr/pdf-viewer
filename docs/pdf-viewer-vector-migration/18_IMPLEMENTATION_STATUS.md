@@ -196,7 +196,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
     - v2 script tags fall back to v1 tags.
     - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
     - Reordered syllables carry /ActualText, so they extract as typed.
-  - not yet: Indic shaping when typing into an existing paragraph, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
+  - Indic text in existing paragraphs: a changed Indic word is shaped again as a whole in an installed font, and glyphs drawn in a short /ActualText span (a syllable or ligature, within one line) read as that text and move together when their line is laid out again, so Hindi on a page is edited in reading order.
+  - not yet: cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -374,7 +375,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
+10. **Editing remainder:** GPOS cursive attachment; sideways Latin text in vertical columns; word gaps narrower than 0.2 em are read without a space (001150, 001695, 001854), where PDFium inserts one.
 
 ---
 
