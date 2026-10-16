@@ -259,7 +259,7 @@ public static class DocumentPrinter
                     var list = hybrid?.GetPrintableDisplayListAsync(page, ct).GetAwaiter().GetResult();
                     if (list != null && TryAddVectorPage(job, hybrid!, list, rotation, ct) is { } kind)
                     {
-                        if (kind == PrintedPageKind.Vector) vector++;
+                        if (kind != PrintedPageKind.Raster) vector++;
                         else images++;
                         continue;
                     }
