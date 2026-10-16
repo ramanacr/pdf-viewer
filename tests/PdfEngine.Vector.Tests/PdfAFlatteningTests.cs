@@ -67,11 +67,11 @@ public class PdfAFlatteningTests
         return result.Page;
     }
 
-    private static async Task<RenderedPage> Pdfium(byte[] pdf, double dpi, int page = 1)
+    private static async Task<RenderedPage> Pdfium(byte[] pdf, double dpi, int page = 1, bool annotations = false)
     {
         using var engine = new PdfiumEngine();
         await using var doc = await engine.OpenDocumentAsync(pdf, null);
-        return await engine.Renderer.RenderPageAsync(doc, new RenderRequest { PageNumber = page, Dpi = dpi });
+        return await engine.Renderer.RenderPageAsync(doc, new RenderRequest { PageNumber = page, Dpi = dpi, RenderAnnotations = annotations, RenderForms = annotations });
     }
 
     private static async Task<string> Text(byte[] pdf, int page = 1)
@@ -89,7 +89,7 @@ public class PdfAFlatteningTests
     }
 
     /// <summary>The flattened page looks as the original did: drawn by the engine, and by PDFium, before and after.</summary>
-    private async Task AssertLooksTheSame(string name, byte[] original, byte[] flattened, double maxMean = 1.5, double maxBad = 0.006)
+    private async Task AssertLooksTheSame(string name, byte[] original, byte[] flattened, double maxMean = 1.5, double maxBad = 0.006, bool pdfium = true)
     {
         using (var before = await Vector(original, 144))
         using (var after = await Vector(flattened, 144))
@@ -98,6 +98,7 @@ public class PdfAFlatteningTests
             _output.WriteLine($"{name} engine: mean={mean:F3} bad={bad:P3}");
             Assert.True(mean <= maxMean && bad <= maxBad, $"{name}: the engine draws the flattened page differently (mean {mean:F2}, {bad:P2} of pixels)");
         }
+        if (!pdfium) return;
         using (var before = await Pdfium(original, 144))
         using (var after = await Pdfium(flattened, 144))
         {
@@ -385,6 +386,113 @@ public class PdfAFlatteningTests
         Assert.Equal("-30000 -17500", TransparencyFlattener.Adjustments(-47500));
         Assert.Contains("[-30000 -", await PageContent((await Flatten(pdf)).Bytes));
         Assert.Contains(line, await Text(result.Bytes));
+    }
+
+    [Fact]
+    public async Task TranslucentAnnotations_AndAHighlight_GetFlattenedAppearances_AndKeepTheirComments()
+    {
+        var b = new VectorPdfBuilder();
+        int font = b.Add(Helv);
+        // A translucent square (CA 0.5) and a highlight whose appearance multiplies over the text.
+        int squareAp = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 60 40]", "0 0 1 rg 0 0 60 40 re f");
+        int square = b.Add($"<< /Type /Annot /Subtype /Square /Rect [120 120 180 160] /CA 0.5 /F 4 /Contents (Check the figures) /AP << /N {squareAp} 0 R >> >>");
+        int highlightAp = b.AddStream("/Type /XObject /Subtype /Form /BBox [18 96 112 116] /Resources << /ExtGState << /M << /BM /Multiply >> >> >>",
+            "/M gs 1 1 0 rg 18 96 94 20 re f");
+        int highlight = b.Add($"<< /Type /Annot /Subtype /Highlight /Rect [18 96 112 116] /F 4 /QuadPoints [18 116 112 116 18 96 112 96] /Contents (Important) /AP << /N {highlightAp} 0 R >> >>");
+        // An appearance with only an opaque group: cleaned, not drawn as an image.
+        int plainAp = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 20 20] /Group << /S /Transparency >>", "1 0 0 rg 0 0 20 20 re f");
+        int plain = b.Add($"<< /Type /Annot /Subtype /Square /Rect [20 160 40 180] /F 4 /AP << /N {plainAp} 0 R >> >>");
+        b.AddPage("BT /F1 14 Tf 0 0 0 rg 20 100 Td (Marked words) Tj ET 0.8 0.2 0.2 rg 100 100 90 30 re f",
+            $"<< /Font << /F1 {font} 0 R >> >>", extra: $"/Annots [{square} 0 R {highlight} 0 R {plain} 0 R]");
+        byte[] pdf = b.Build();
+
+        var result = await Convert(pdf);
+        await AssertValidPdfA1b(result);
+        Assert.Empty(result.Flattening!.Pages); // the page itself has no transparency
+        Assert.Equal(new[] { "Square", "Highlight" }, result.Flattening.Annotations.Select(a => a.Subtype));
+        Assert.True(result.Flattening.Annotations.Single(a => a.Subtype == "Highlight").Region.ContainsText);
+        Assert.Equal(1, result.Flattening.AnnotationsCleaned);
+        Assert.Contains("Marked words", await Text(result.Bytes));
+
+        // The annotations are still there, with their comments and no opacity of their own.
+        using var doc = await PdfVectorDocument.OpenAsync(result.Bytes);
+        var annots = (PdfArray)doc.Resolver.Resolve(doc.PageTree.Pages[0].Dictionary["Annots"])!;
+        var dicts = annots.Items.Select(a => (PdfDictionary)doc.Resolver.Resolve(a)!).ToList();
+        Assert.Contains(dicts, d => d.GetString("Contents") == "Check the figures" && !d.ContainsKey("CA"));
+        Assert.Contains(dicts, d => d.GetString("Contents") == "Important");
+
+        // As shown with annotations, the page looks as it did. PDFium ignores an annotation's /CA (it
+        // draws the square opaque), so the square is checked on its own: it is now half blue, as
+        // ISO 32000 12.5.2 and Acrobat draw it.
+        using var before = await Pdfium(pdf, 144, annotations: true);
+        using var after = await Pdfium(result.Bytes, 144, annotations: true);
+        int differing = 0;
+        for (int y = 0; y < before.HeightPixels; y++)
+            for (int x = 0; x < before.WidthPixels; x++)
+            {
+                if (x >= 236 && x <= 364 && y >= 76 && y <= 164) continue; // the square (120..180 × 120..160), and a pixel or two
+                var (b1, g1, r1) = InterpreterCoverageTests.Pixel(before, x, y);
+                var (b2, g2, r2) = InterpreterCoverageTests.Pixel(after, x, y);
+                if (Math.Abs(b1 - b2) + Math.Abs(g1 - g2) + Math.Abs(r1 - r2) > 96) differing++;
+            }
+        _output.WriteLine($"annotations PDFium: {differing} pixels differ outside the square");
+        // The highlighted words are in its image, drawn with the engine's Helvetica stand-in rather than PDFium's own.
+        Assert.True(differing < before.WidthPixels * before.HeightPixels / 80, $"{differing} pixels differ");
+        var (sb, sg, sr) = InterpreterCoverageTests.Pixel(after, 300, 90); // over white
+        Assert.True(sb > 230 && sr is > 100 and < 160 && sg is > 100 and < 160, $"the square over white is {sr},{sg},{sb}");
+    }
+
+    [Fact]
+    public async Task OpaqueGroups_InAFormFieldsAppearances_AndInType3Glyphs_AreRemovedWithoutAnyImage()
+    {
+        var b = new VectorPdfBuilder();
+        // A check box whose two states have opaque groups, and a Type 3 glyph drawing an opaque group form.
+        int on = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 20 20] /Group << /S /Transparency >>", "0 0 0 rg 4 4 12 12 re f");
+        int off = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 20 20] /Group << /S /Transparency >>", "0 0 0 RG 1 1 18 18 re S");
+        int widget = b.Add($"<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /V /Yes /AS /Yes /Rect [20 20 40 40] /F 4 /AP << /N << /Yes {on} 0 R /Off {off} 0 R >> >> >>");
+        int groupForm = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 1000 1000] /Group << /S /Transparency >>", "0 0 1000 1000 re f");
+        int glyph = b.AddStream(string.Empty, "1000 0 0 0 1000 1000 d1 /G Do");
+        int font = b.Add($"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /square {glyph} 0 R >>" +
+                         $" /Encoding << /Type /Encoding /Differences [65 /square] >> /FirstChar 65 /LastChar 65 /Widths [1000] /Resources << /XObject << /G {groupForm} 0 R >> >> >>");
+        b.AddPage("BT /T3 30 Tf 0 0 1 rg 60 100 Td (AA) Tj ET", $"<< /Font << /T3 {font} 0 R >> >>", extra: $"/Annots [{widget} 0 R]");
+        b.WithCatalog($"/AcroForm << /Fields [{widget} 0 R] >>");
+        byte[] pdf = b.Build();
+
+        var result = await Convert(pdf);
+        await AssertValidPdfA1b(result);
+        Assert.Empty(result.Flattening!.Pages);
+        Assert.Empty(result.Flattening.Annotations);
+        Assert.Equal(1, result.Flattening.AnnotationsCleaned);
+        Assert.Empty(await Images(result.Bytes));
+        await AssertLooksTheSame("opaque groups", pdf, (await Flatten(pdf)).Bytes, maxMean: 0.2, maxBad: 0.001);
+    }
+
+    [Fact]
+    public void RunLengthEncoding_RoundTrips()
+    {
+        var data = new byte[5000];
+        new Random(3).NextBytes(data.AsSpan(1000, 700));
+        data.AsSpan(3000, 300).Fill(7);
+        var stream = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject> { ["Filter"] = new PdfName("RunLengthDecode") }, TransparencyFlattener.RunLength(data));
+        Assert.Equal(data, new PdfStreamDecoder(null, null).DecodeStream(stream));
+        Assert.True(TransparencyFlattener.RunLength(new byte[100_000]).Length <= 100_000 / 64 + 16);
+    }
+
+    [Fact]
+    public async Task Type3GlyphsDrawnWithAlpha_AreFlattened()
+    {
+        var b = new VectorPdfBuilder();
+        int glyph = b.AddStream(string.Empty, "1000 0 0 0 1000 1000 d1 /G gs 0 0 1000 1000 re f");
+        int font = b.Add($"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /square {glyph} 0 R >>" +
+                         " /Encoding << /Type /Encoding /Differences [65 /square] >> /FirstChar 65 /LastChar 65 /Widths [1000]" +
+                         " /Resources << /ExtGState << /G << /ca 0.5 >> >> >> >>");
+        b.AddPage("0 0 1 rg 30 30 60 60 re f BT /T3 40 Tf 1 0 0 rg 50 50 Td (AA) Tj ET", $"<< /Font << /T3 {font} 0 R >> >>");
+        byte[] pdf = b.Build();
+        var result = await Convert(pdf);
+        await AssertValidPdfA1b(result);
+        Assert.Single(Assert.Single(result.Flattening!.Pages).Regions);
+        // PDFium ignores graphics states inside Type 3 glyph procedures (it draws the glyphs opaque), so only the engine is compared.
+        await AssertLooksTheSame("type 3", pdf, (await Flatten(pdf)).Bytes, pdfium: false);
     }
 
     [Fact]

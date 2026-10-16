@@ -128,12 +128,12 @@ public static class PdfASmoke
                     PdfAConversionResult result;
                     try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = flavour, Rasterizer = rasterizer }); }
                     catch (PdfAConversionRefusedException ex) { refused++; Console.WriteLine($"refused  {name}: {ex.Message}"); continue; }
-                    if (result.Flattening is { Pages.Count: > 0 } flat)
+                    if (result.Flattening is { } flat && (flat.Pages.Count > 0 || flat.Annotations.Count > 0))
                     {
                         flattened++;
                         flattenedPages += flat.Pages.Count;
                         regions += flat.RegionCount;
-                        Console.WriteLine($"flattened  {name}  {flat.Pages.Count} page(s), {flat.RegionCount} region(s), whole pages {flat.Pages.Count(p => p.WholePage)}, {(result.Report.IsCompliant ? "valid" : "issues remain")}");
+                        Console.WriteLine($"flattened  {name}  {flat.Pages.Count} page(s), {flat.RegionCount} region(s), {flat.Annotations.Count} annotation(s), whole pages {flat.Pages.Count(p => p.WholePage)}, {(result.Report.IsCompliant ? "valid" : "issues remain")}");
                     }
                     if (Program.Option(args, "--out") is { } outDir) await File.WriteAllBytesAsync(Path.Combine(outDir, Path.GetFileName(file)), result.Bytes);
                     using var after = await PdfVectorDocument.OpenAsync(result.Bytes);

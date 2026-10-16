@@ -125,7 +125,7 @@ public sealed partial class PdfAViewModel : ObservableObject
             Summary = result.Report.IsCompliant
                 ? $"Saved as {flavour}: {Path.GetFileName(outputPath)}. It passes the {flavour} check."
                 : $"Saved {Path.GetFileName(outputPath)}, but {result.Report.Summary.Count()} rule(s) could not be fixed automatically (listed below).";
-            if (result.Flattening is { Pages.Count: > 0 } flattening) Summary += " " + flattening.Summary + ".";
+            if (result.Flattening is { } flattening && (flattening.Pages.Count > 0 || flattening.Annotations.Count > 0)) Summary += " " + flattening.Summary + ".";
             Flattening = result.Flattening;
             return true;
         }

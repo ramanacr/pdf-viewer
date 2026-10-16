@@ -111,6 +111,7 @@ internal sealed class TransparencyFlattener
         if (_r.Resolve(trailer["Root"]) is not PdfDictionary root) throw new InvalidOperationException("The document has no catalog.");
         var pageNumbers = PdfRedactor.PageObjectNumbers(root, _r);
         var plans = new List<PagePlan>();
+        var annotations = new List<AnnotPlan>();
         for (int i = 0; i < _doc.PageTree.Pages.Count && i < pageNumbers.Count; i++)
         {
             var node = _doc.PageTree.Pages[i];
@@ -120,17 +121,20 @@ internal sealed class TransparencyFlattener
             bool pageGroup = IsGroupForm(node.Dictionary);
             var analysis = new Walker(this, Pass.Analyze, int.MaxValue, crop);
             analysis.Run(content, node.Resources);
+            var pageAnnotations = PlanAnnotations(i, node, content, crop, analysis, options);
+            if (pageAnnotations.Any(a => a.Transparent)) annotations.AddRange(pageAnnotations);
             if (analysis.Units.Count == 0 && !analysis.NeedsCleaning && !pageGroup) continue;
             var plan = new PagePlan { Index = i, ObjectNumber = pageNumbers[i], Node = node, Content = content, Crop = crop, PageGroup = pageGroup, Last = analysis.LastOrdinal };
             if (analysis.Units.Count > 0) PlanRegions(plan, analysis, options);
             plans.Add(plan);
         }
-        if (plans.Count == 0) return null;
+        if (plans.Count == 0 && annotations.Count == 0) return null;
 
-        RenderRegions(plans.Where(p => p.Regions.Count > 0).ToList(), rasterizer);
+        RenderRegions(plans, annotations, rasterizer);
 
         // The final pages: under the images, the images, over the images.
         var overrides = new Dictionary<int, PdfObject>();
+        _finalObjects = overrides;
         var store = new FormStore(this, overrides);
         int groups = 0;
         foreach (var plan in plans)
@@ -168,6 +172,9 @@ internal sealed class TransparencyFlattener
             overrides[plan.ObjectNumber] = new PdfDictionary(page);
         }
 
+        foreach (var annotation in annotations.Where(a => a.Transparent))
+            FinishAnnotation(annotation, overrides, store, Intersect(annotation.Node.CropBox, annotation.Node.MediaBox));
+
         var flattened = plans.Where(p => p.Regions.Count > 0).ToList();
         var report = new PdfFlatteningReport
         {
@@ -177,6 +184,9 @@ internal sealed class TransparencyFlattener
             PagesCleanedOnly = plans.Count - flattened.Count,
             GroupsRemoved = groups + _groupForms.Count,
             InvisibleTextOperators = _hiddenText,
+            Annotations = annotations.Where(a => a.Region != null).Select(a => new PdfFlattenedAnnotation(a.PageIndex + 1, a.Annot.GetName("Subtype") ?? "Annotation",
+                new PdfFlattenedRegion(a.Region!.Bounds, a.Region.Dpi, a.Region.Width, a.Region.Height, a.Region.Text))).ToList(),
+            AnnotationsCleaned = annotations.Count(a => a.Transparent && a.Region == null),
         };
         return new PdfFlatteningResult(PdfAConverter.WriteDecrypted(_doc, overrides), report);
     }
@@ -329,20 +339,21 @@ internal sealed class TransparencyFlattener
 
     private readonly Dictionary<int, string> _renderers = new();
 
+    /// <summary>A page to draw regions of: its content, resources and box, and the regions.</summary>
+    private sealed record RenderJob(int PageIndex, PdfRect Crop, byte[] Content, PdfDictionary Resources, PdfObject? Group, List<Region> Regions);
+
     /// <summary>
     /// Draws every region: a temporary document with a copy of each page (without annotations, with
     /// the content up to the split, and its own crop box, so what depends on it is drawn exactly as on
-    /// the page), of which the rasterizer draws each region's window of pixels.
+    /// the page), and one per annotation to flatten (the whole page with the annotations up to that
+    /// one drawn on it), of which the rasterizer draws each region's window of pixels.
     /// </summary>
-    private void RenderRegions(List<PagePlan> plans, IPdfPageRasterizer rasterizer)
+    private void RenderRegions(List<PagePlan> plans, List<AnnotPlan> annotations, IPdfPageRasterizer rasterizer)
     {
-        if (plans.Count == 0) return;
         var overrides = new Dictionary<int, PdfObject>();
         var store = new FormStore(this, overrides);
-        int pagesNode = Allocate();
-        var kids = new List<PdfObject>();
-        var order = new List<(PagePlan Plan, Region Region, int Page, int PageWidth, int PageHeight, PdfPixelWindow Window)>();
-        foreach (var plan in plans)
+        var jobs = new List<RenderJob>();
+        foreach (var plan in plans.Where(p => p.Regions.Count > 0))
         {
             PdfDictionary resources = plan.Node.Resources;
             byte[] content = plan.Content;
@@ -353,27 +364,37 @@ internal sealed class TransparencyFlattener
                 content = Encoding.Latin1.GetBytes(render.Run(plan.Content, plan.Node.Resources, use));
                 resources = use.Build(sanitize: false, prune: false);
             }
+            jobs.Add(new RenderJob(plan.Index, plan.Crop, content, resources, plan.Node.Dictionary["Group"], plan.Regions));
+        }
+        foreach (var annot in annotations.Where(a => a.Region != null))
+            jobs.Add(AnnotationJob(annot, annotations, overrides));
+        if (jobs.Count == 0) return;
+
+        int pagesNode = Allocate();
+        var kids = new List<PdfObject>();
+        var order = new List<(RenderJob Job, Region Region, int Page)>();
+        foreach (var job in jobs)
+        {
             int contentNumber = Allocate();
-            overrides[contentNumber] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject> { ["Filter"] = new PdfName("FlateDecode") }, ContentRedactor.Deflate(content));
+            overrides[contentNumber] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject> { ["Filter"] = new PdfName("FlateDecode") }, ContentRedactor.Deflate(job.Content));
             // The page's own crop box (and media box), so everything is drawn where the page draws it.
-            var box = RectArray(plan.Crop);
+            var box = RectArray(job.Crop);
             var page = new Dictionary<string, PdfObject>
             {
                 ["Type"] = new PdfName("Page"),
                 ["Parent"] = new PdfIndirectRef(pagesNode),
                 ["MediaBox"] = box,
                 ["CropBox"] = box,
-                ["Resources"] = resources,
+                ["Resources"] = job.Resources,
                 ["Contents"] = new PdfIndirectRef(contentNumber),
             };
-            if (plan.Node.Dictionary["Group"] is { } group) page["Group"] = group;
+            if (job.Group != null) page["Group"] = job.Group;
             int pageNumber = Allocate();
             overrides[pageNumber] = new PdfDictionary(page);
             kids.Add(new PdfIndirectRef(pageNumber));
-            foreach (var region in plan.Regions)
-                order.Add((plan, region, kids.Count, region.GridWidth, region.GridHeight,
-                    new PdfPixelWindow(region.GridX, region.GridHeight - region.GridY - region.Height, region.Width, region.Height)));
-        }        overrides[pagesNode] = new PdfDictionary(new Dictionary<string, PdfObject>
+            foreach (var region in job.Regions) order.Add((job, region, kids.Count));
+        }
+        overrides[pagesNode] = new PdfDictionary(new Dictionary<string, PdfObject>
         {
             ["Type"] = new PdfName("Pages"), ["Kids"] = new PdfArray(kids), ["Count"] = new PdfInteger(kids.Count),
         });
@@ -385,20 +406,257 @@ internal sealed class TransparencyFlattener
 
         byte[] bytes = PdfAConverter.WriteDecrypted(_doc, overrides);
         using var temp = PdfVectorDocument.Open(new MemoryByteSource(bytes), _doc.FilePath);
-        for (int i = 0; i < order.Count; i++)
+        foreach (var (job, region, tempPage) in order)
         {
-            var (plan, region, tempPage, pageWidth, pageHeight, window) = order[i];
+            var window = new PdfPixelWindow(region.GridX, region.GridHeight - region.GridY - region.Height, region.Width, region.Height);
             PdfRasterImage? pixels;
-            try { pixels = rasterizer.Render(temp, bytes, tempPage, pageWidth, pageHeight, window); }
+            try { pixels = rasterizer.Render(temp, bytes, tempPage, region.GridWidth, region.GridHeight, window); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { pixels = null; }
             if (pixels == null || pixels.Width != region.Width || pixels.Height != region.Height || pixels.Bgra.Length < region.Width * region.Height * 4)
                 throw new PdfAConversionRefusedException(
-                    $"PDF/A-1b does not allow transparency, and page {plan.Index + 1} could not be drawn to flatten it. Convert to PDF/A-2b instead.");
+                    $"PDF/A-1b does not allow transparency, and page {job.PageIndex + 1} could not be drawn to flatten it. Convert to PDF/A-2b instead.");
             region.Image = ImageObject(pixels);
-            _renderers[plan.Index] = _renderers.TryGetValue(plan.Index, out var before) && !before.Split(", ").Contains(pixels.Renderer) ? before + ", " + pixels.Renderer : before ?? pixels.Renderer;
+            _renderers[job.PageIndex] = _renderers.TryGetValue(job.PageIndex, out var before) && !before.Split(", ").Contains(pixels.Renderer) ? before + ", " + pixels.Renderer : before ?? pixels.Renderer;
         }
     }
 
+    // ------------------------------------------------------------------ annotations
+
+    /// <summary>An annotation whose appearance has transparency (or which is translucent itself).</summary>
+    private sealed class AnnotPlan
+    {
+        public int PageIndex;
+        public int Order;
+        public PdfIndirectRef Ref = null!;
+        public PdfDictionary Annot = null!;
+        public PdfStream Appearance = null!;
+        public PdfIndirectRef AppearanceRef = null!;
+        /// <summary>Appearance space to page space, as ISO 32000 12.5.5 maps the form's box to /Rect.</summary>
+        public PdfMatrix ToRect;
+        public PdfRect Rect;
+        public double Alpha = 1;
+        /// <summary>Drawn into an image with the page under it (otherwise only cleaned, losslessly).</summary>
+        public Region? Region;
+        public bool Transparent;
+        public PdfPageNode Node = null!;
+        public byte[] PageContent = Array.Empty<byte>();
+    }
+
+    /// <summary>
+    /// The page's visible annotations, in drawing order, with what each needs: an appearance with
+    /// transparent drawing, or a translucent annotation, is drawn with the page under it into an
+    /// image that becomes its appearance (its comments and other entries stay); an appearance with
+    /// only an opaque group or unused alpha is cleaned; the rest are listed (they are drawn under
+    /// later ones) but left alone.
+    /// </summary>
+    private List<AnnotPlan> PlanAnnotations(int index, PdfPageNode node, byte[] content, PdfRect crop, Walker pageAnalysis, PdfFlatteningOptions options)
+    {
+        var plans = new List<AnnotPlan>();
+        if (_r.Resolve(node.Dictionary["Annots"]) is not PdfArray annots) return plans;
+        int order = 0;
+        foreach (var item in annots)
+        {
+            if (item is not PdfIndirectRef aref || _r.Resolve(aref) is not PdfDictionary annot) continue;
+            if (annot.GetName("Subtype") == "Popup") continue;
+            // Form fields stay interactive: their appearances are only ever cleaned, never drawn as images.
+            bool widget = annot.GetName("Subtype") == "Widget";
+            long flags = annot.GetInteger("F") ?? 0;
+            if ((flags & (2 | 32)) != 0) continue; // hidden, or not shown
+            if (_r.Resolve(annot["Rect"]) is not PdfArray { Count: 4 } ra || !ra.Items.All(v => _r.Resolve(v)?.TryGetNumber(out _) == true)) continue;
+            var rect = RectOf(N(_r.Resolve(ra[0])), N(_r.Resolve(ra[1])), N(_r.Resolve(ra[2])), N(_r.Resolve(ra[3])));
+            if (rect.IsEmpty || _r.Resolve(annot["AP"]) is not PdfDictionary ap) continue;
+            var normal = ap["N"];
+            if (_r.Resolve(normal) is PdfDictionary states && annot.GetName("AS") is { } state) normal = states[state];
+            if (normal is not PdfIndirectRef apRef || _r.Resolve(apRef) is not PdfStream appearance) continue;
+            var d = appearance.Dictionary;
+            var bbox = _r.Resolve(d["BBox"]) is PdfArray { Count: 4 } ba && ba.Items.All(v => _r.Resolve(v)?.TryGetNumber(out _) == true)
+                ? RectOf(N(_r.Resolve(ba[0])), N(_r.Resolve(ba[1])), N(_r.Resolve(ba[2])), N(_r.Resolve(ba[3])))
+                : rect;
+            var matrix = _r.Resolve(d["Matrix"]) is PdfArray { Count: 6 } ma && ma.Items.All(v => _r.Resolve(v)?.TryGetNumber(out _) == true)
+                ? new PdfMatrix(N(_r.Resolve(ma[0])), N(_r.Resolve(ma[1])), N(_r.Resolve(ma[2])), N(_r.Resolve(ma[3])), N(_r.Resolve(ma[4])), N(_r.Resolve(ma[5])))
+                : PdfMatrix.Identity;
+            var box = matrix.Transform(bbox);
+            if (box.Width <= 0 || box.Height <= 0) continue;
+            var toRect = new PdfMatrix(rect.Width / box.Width, 0, 0, rect.Height / box.Height, rect.X - box.X * rect.Width / box.Width, rect.Y - box.Y * rect.Height / box.Height);
+            double alpha = _r.Resolve(annot["CA"]) is { } ca && ca.TryGetNumber(out double cav) ? Math.Clamp(cav, 0, 1) : 1;
+
+            var plan = new AnnotPlan
+            {
+                PageIndex = index, Order = order++, Ref = aref, Annot = annot, Appearance = appearance, AppearanceRef = apRef, ToRect = toRect,
+                Rect = rect, Alpha = alpha, Node = node, PageContent = content,
+            };
+            byte[]? apContent;
+            try { apContent = _decoder.DecodeStream(appearance); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { apContent = null; }
+            var analysis = new Walker(this, Pass.Analyze, int.MaxValue, crop);
+            if (apContent != null)
+                analysis.Run(apContent, _r.Resolve(d["Resources"]) as PdfDictionary ?? new PdfDictionary(new Dictionary<string, PdfObject>()), ctm: matrix * toRect);
+            bool noZoomOrRotate = (flags & (8 | 16)) != 0; // their appearance is not where /Rect says when zoomed or turned
+            // Every appearance (other states, down and rollover ones): cleaned when only that is needed.
+            bool othersTransparent = false, othersNeedCleaning = false;
+            foreach (var (_, _, other) in AppearanceStreams(ap))
+            {
+                if (ReferenceEquals(other, appearance)) continue;
+                var (otherUnits, otherCleaning) = AppearanceTransparency(other, crop);
+                othersTransparent |= otherUnits;
+                othersNeedCleaning |= otherCleaning;
+            }
+            bool raster = (alpha < 1 || analysis.Units.Count > 0) && !widget;
+            bool cleaning = IsGroupForm(d) || analysis.NeedsCleaning || othersNeedCleaning;
+            if (widget && (alpha < 1 || analysis.Units.Count > 0 || othersTransparent)) { plans.Add(plan); continue; } // left as it is (and refused)
+            plan.Transparent = raster || cleaning || othersTransparent;
+            if (raster && !noZoomOrRotate && apContent != null)
+            {
+                var area = Intersect(rect, crop);
+                if (!area.IsEmpty)
+                {
+                    bool text = HasTextOperators(apContent) || pageAnalysis.Texts.Any(t => t.Bounds.IntersectsWith(area))
+                                || pageAnalysis.Units.Any(u => u.Text && u.Bounds.IntersectsWith(area));
+                    double dpi = Math.Clamp(text ? Math.Max(options.TextDpi, options.Dpi) : options.Dpi, 36, 2400);
+                    var region = Snap(area, crop, dpi, whole: false);
+                    long pixels = (long)region.Width * region.Height;
+                    if (pixels > options.MaxPixelsPerRegion && options.MaxPixelsPerRegion > 0)
+                        region = Snap(area, crop, dpi * Math.Sqrt(options.MaxPixelsPerRegion / (double)pixels), whole: false);
+                    region.Text = text;
+                    plan.Region = region;
+                }
+            }
+            plans.Add(plan);
+        }
+        return plans;
+    }
+
+    /// <summary>Every appearance stream of an annotation: /N, /R and /D, each one stream or one per state.</summary>
+    private IEnumerable<(string Key, string? State, PdfStream Stream)> AppearanceStreams(PdfDictionary ap)
+    {
+        foreach (var key in new[] { "N", "R", "D" })
+        {
+            var value = _r.Resolve(ap[key]);
+            if (value is PdfStream s) yield return (key, null, s);
+            else if (value is PdfDictionary states)
+                foreach (var (state, v) in states.Entries)
+                    if (_r.Resolve(v) is PdfStream ss) yield return (key, state, ss);
+        }
+    }
+
+    /// <summary>Whether an appearance draws anything transparent, and whether it has anything PDF/A-1 does not allow.</summary>
+    private (bool Units, bool Cleaning) AppearanceTransparency(PdfStream appearance, PdfRect crop)
+    {
+        byte[] content;
+        try { content = _decoder.DecodeStream(appearance); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { return (false, false); }
+        var walker = new Walker(this, Pass.Analyze, int.MaxValue, crop);
+        walker.Run(content, _r.Resolve(appearance.Dictionary["Resources"]) as PdfDictionary ?? new PdfDictionary(new Dictionary<string, PdfObject>()));
+        return (walker.Units.Count > 0, walker.NeedsCleaning || IsGroupForm(appearance.Dictionary));
+    }
+
+    private static bool HasTextOperators(byte[] content)
+    {
+        var s = Encoding.Latin1.GetString(content);
+        return s.Contains("Tj", StringComparison.Ordinal) || s.Contains("TJ", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The page as it shows under and with an annotation: all its content, then every annotation up
+    /// to this one drawn as a viewer draws it (its appearance mapped to /Rect, composited as a group
+    /// with the annotation's opacity).
+    /// </summary>
+    private RenderJob AnnotationJob(AnnotPlan target, List<AnnotPlan> all, Dictionary<int, PdfObject> overrides)
+    {
+        var res = new Dictionary<string, PdfObject>(target.Node.Resources.Entries);
+        var xobjects = new Dictionary<string, PdfObject>((_r.Resolve(res.GetValueOrDefault("XObject")) as PdfDictionary)?.Entries ?? new Dictionary<string, PdfObject>());
+        var states = new Dictionary<string, PdfObject>((_r.Resolve(res.GetValueOrDefault("ExtGState")) as PdfDictionary)?.Entries ?? new Dictionary<string, PdfObject>());
+        var sb = new StringBuilder(Encoding.Latin1.GetString(target.PageContent)).Append("\n");
+        foreach (var a in all.Where(a => a.PageIndex == target.PageIndex && a.Order <= target.Order))
+        {
+            var m = a.ToRect;
+            var wrapper = new Dictionary<string, PdfObject>
+            {
+                ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Form"), ["BBox"] = RectArray(a.Rect),
+                ["Resources"] = new PdfDictionary(new Dictionary<string, PdfObject>
+                {
+                    ["XObject"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["Ap"] = a.AppearanceRef }),
+                }),
+            };
+            if (a.Alpha < 1) wrapper["Group"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["S"] = new PdfName("Transparency") });
+            int number = Allocate();
+            overrides[number] = PdfObjectWriter.NewStream(wrapper, Encoding.Latin1.GetBytes($"q {F(m.A)} {F(m.B)} {F(m.C)} {F(m.D)} {F(m.E)} {F(m.F)} cm /Ap Do Q"));
+            string name = "FlAnnot" + a.Order.ToString(CultureInfo.InvariantCulture);
+            xobjects[name] = new PdfIndirectRef(number);
+            sb.Append("q ");
+            if (a.Alpha < 1)
+            {
+                states[name] = new PdfDictionary(new Dictionary<string, PdfObject> { ["ca"] = new PdfReal(a.Alpha), ["CA"] = new PdfReal(a.Alpha) });
+                sb.Append('/').Append(name).Append(" gs ");
+            }
+            sb.Append('/').Append(name).Append(" Do Q\n");
+        }
+        res["XObject"] = new PdfDictionary(xobjects);
+        if (states.Count > 0) res["ExtGState"] = new PdfDictionary(states);
+        return new RenderJob(target.PageIndex, Intersect(target.Node.CropBox, target.Node.MediaBox) is { IsEmpty: false } c ? c : target.Node.MediaBox,
+            Encoding.Latin1.GetBytes(sb.ToString()), new PdfDictionary(res), target.Node.Dictionary["Group"], new List<Region> { target.Region! });
+    }
+
+    /// <summary>
+    /// The annotation with its new appearance: the flattened image in its area (which becomes its
+    /// /Rect), or a cleaned copy of its appearance; without its opacity, other appearance states and
+    /// down or rollover appearances, which PDF/A-1 viewers would show without the flattening.
+    /// </summary>
+    private void FinishAnnotation(AnnotPlan plan, Dictionary<int, PdfObject> overrides, FormStore store, PdfRect crop)
+    {
+        var e = new Dictionary<string, PdfObject>(plan.Annot.Entries);
+        e.Remove("CA");
+        if (plan.Region is { } region)
+        {
+            int image = Allocate();
+            overrides[image] = region.Image!;
+            region.Image = null;
+            var b = region.Bounds;
+            int form = Allocate();
+            overrides[form] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
+            {
+                ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Form"), ["BBox"] = RectArray(b), ["Filter"] = new PdfName("FlateDecode"),
+                ["Resources"] = new PdfDictionary(new Dictionary<string, PdfObject>
+                {
+                    ["XObject"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["FlIm1"] = new PdfIndirectRef(image) }),
+                }),
+            }, ContentRedactor.Deflate(Encoding.Latin1.GetBytes($"q {F(b.Width)} 0 0 {F(b.Height)} {F(b.X)} {F(b.Y)} cm /FlIm1 Do Q")));
+            e["Rect"] = RectArray(b);
+            e["AP"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = new PdfIndirectRef(form) });
+            e.Remove("AS");
+        }
+        else
+        {
+            // Every appearance cleaned, states kept. One that draws transparency (a state not shown,
+            // or a down or rollover appearance; the shown one has none) is dropped: viewers then show
+            // the normal appearance in its place.
+            if (_r.Resolve(plan.Annot["AP"]) is not PdfDictionary ap) return;
+            var cleaned = new Dictionary<string, PdfObject>(ap.Entries);
+            PdfObject? Clean(PdfObject value)
+            {
+                if (_r.Resolve(value) is not PdfStream stream) return value;
+                var (units, cleaning) = AppearanceTransparency(stream, crop);
+                if (units) return null;
+                if (!cleaning) return value;
+                return new Walker(this, Pass.Under, int.MaxValue, crop, store).CleanCopy(stream, value as PdfIndirectRef) ?? value;
+            }
+            foreach (var key in new[] { "N", "R", "D" })
+            {
+                if (!ap.TryGetValue(key, out var value) || value == null) continue;
+                if (_r.Resolve(value) is PdfDictionary states)
+                {
+                    var s = new Dictionary<string, PdfObject>();
+                    foreach (var (state, v) in states.Entries)
+                        if (Clean(v) is { } c) s[state] = c;
+                    cleaned[key] = new PdfDictionary(s);
+                }
+                else if (Clean(value) is { } c) cleaned[key] = c;
+                else cleaned.Remove(key);
+            }
+            e["AP"] = new PdfDictionary(cleaned);
+        }
+        overrides[plan.Ref.ObjectNumber] = new PdfDictionary(e);
+    }
     /// <summary>
     /// The pixels as an image XObject: 8-bit DeviceRGB (DeviceGray when every pixel is grey),
     /// Flate-compressed with PNG predictors (lossless, as text and line art need).
@@ -417,7 +675,7 @@ internal sealed class TransparencyFlattener
             if (gray) samples[p++] = bgra[i * 4];
             else { samples[p++] = bgra[i * 4 + 2]; samples[p++] = bgra[i * 4 + 1]; samples[p++] = bgra[i * 4]; }
         }
-        return PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
+        var entries = new Dictionary<string, PdfObject>
         {
             ["Type"] = new PdfName("XObject"),
             ["Subtype"] = new PdfName("Image"),
@@ -425,12 +683,51 @@ internal sealed class TransparencyFlattener
             ["Height"] = new PdfInteger(h),
             ["ColorSpace"] = new PdfName(gray ? "DeviceGray" : "DeviceRGB"),
             ["BitsPerComponent"] = new PdfInteger(8),
-            ["Filter"] = new PdfName("FlateDecode"),
-            ["DecodeParms"] = new PdfDictionary(new Dictionary<string, PdfObject>
+        };
+        byte[] flate = ContentRedactor.Deflate(PngPredict(samples, w, h, n));
+        // An almost blank area compresses beyond what readers guarding against decompression bombs
+        // accept (this engine stops at 500 times): run-length encoding expands 64 times at most.
+        if (samples.Length > 64 * 1024 && samples.Length / (double)flate.Length > 400)
+        {
+            entries["Filter"] = new PdfName("RunLengthDecode");
+            return PdfObjectWriter.NewStream(entries, RunLength(samples));
+        }
+        entries["Filter"] = new PdfName("FlateDecode");
+        entries["DecodeParms"] = new PdfDictionary(new Dictionary<string, PdfObject>
+        {
+            ["Predictor"] = new PdfInteger(15), ["Colors"] = new PdfInteger(n), ["BitsPerComponent"] = new PdfInteger(8), ["Columns"] = new PdfInteger(w),
+        });
+        return PdfObjectWriter.NewStream(entries, flate);
+    }
+
+    /// <summary>RunLengthDecode data (ISO 32000 7.4.5): runs of up to 128 equal bytes, literals of up to 128, then the end marker.</summary>
+    internal static byte[] RunLength(byte[] data)
+    {
+        using var ms = new MemoryStream(data.Length / 32 + 16);
+        int i = 0;
+        while (i < data.Length)
+        {
+            int run = 1;
+            while (i + run < data.Length && run < 128 && data[i + run] == data[i]) run++;
+            if (run >= 2)
             {
-                ["Predictor"] = new PdfInteger(15), ["Colors"] = new PdfInteger(n), ["BitsPerComponent"] = new PdfInteger(8), ["Columns"] = new PdfInteger(w),
-            }),
-        }, ContentRedactor.Deflate(PngPredict(samples, w, h, n)));
+                ms.WriteByte((byte)(257 - run));
+                ms.WriteByte(data[i]);
+                i += run;
+                continue;
+            }
+            int start = i, length = 0;
+            while (i < data.Length && length < 128 && !(i + 1 < data.Length && data[i + 1] == data[i]))
+            {
+                i++;
+                length++;
+            }
+            if (length == 0) { i++; length = 1; }
+            ms.WriteByte((byte)(length - 1));
+            ms.Write(data, start, length);
+        }
+        ms.WriteByte(128);
+        return ms.ToArray();
     }
 
     /// <summary>PNG row filters (ISO 32000 7.4.4.4), each row with the filter that leaves the smallest sum, as PNG encoders choose.</summary>
@@ -525,21 +822,80 @@ internal sealed class TransparencyFlattener
             if (_r.Resolve(dict["ExtGState"]) is PdfDictionary own && HasTransparencyKeys(own)) transparent = true;
             if (_r.Resolve(dict["Resources"]) is PdfDictionary res)
             {
-                if (_r.Resolve(res["ExtGState"]) is PdfDictionary states)
-                    transparent |= states.Entries.Values.Any(v => _r.Resolve(v) is PdfDictionary s && HasTransparencyKeys(s));
-                if (_r.Resolve(res["XObject"]) is PdfDictionary xobjects)
-                    transparent |= xobjects.Entries.Values.Any(v => _r.Resolve(v) is PdfStream x
-                        && (x.Dictionary.GetName("Subtype") == "Image" ? ImageHasSoftMask(x.Dictionary) : IsGroupForm(x.Dictionary)));
-                if (_r.Resolve(res["Pattern"]) is PdfDictionary nested && _patterns.Count < 256)
-                {
-                    _patterns[pattern] = false; // a pattern that names itself
-                    transparent |= nested.Entries.Values.Any(PatternIsTransparent);
-                }
+                _patterns[pattern] = false; // a pattern that names itself
+                transparent |= ResourcesAreTransparent(res);
             }
         }
         _patterns[pattern] = transparent;
         return transparent;
     }
+
+    /// <summary>
+    /// Resources (of a pattern cell or Type 3 glyphs) with transparency: graphics states, soft-masked
+    /// images, transparent patterns, and (unless <paramref name="opaqueGroups"/> is false) groups.
+    /// </summary>
+    private bool ResourcesAreTransparent(PdfDictionary res, bool opaqueGroups = true)
+    {
+        bool transparent = false;
+        if (_r.Resolve(res["ExtGState"]) is PdfDictionary states)
+            transparent |= states.Entries.Values.Any(v => _r.Resolve(v) is PdfDictionary s && HasTransparencyKeys(s));
+        if (_r.Resolve(res["XObject"]) is PdfDictionary xobjects)
+            transparent |= xobjects.Entries.Values.Any(v => _r.Resolve(v) is PdfStream x
+                && (x.Dictionary.GetName("Subtype") == "Image" ? ImageHasSoftMask(x.Dictionary) : opaqueGroups && IsGroupForm(x.Dictionary)));
+        if (_r.Resolve(res["Pattern"]) is PdfDictionary nested && _patterns.Count < 256)
+            transparent |= nested.Entries.Values.Any(PatternIsTransparent);
+        return transparent;
+    }
+
+    private readonly Dictionary<PdfFont, bool> _type3 = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Whether a Type 3 font's glyphs draw with transparency (an opaque group in them does not count: it only needs removing).</summary>
+    private bool Type3IsTransparent(PdfFont font)
+    {
+        if (_type3.TryGetValue(font, out bool known)) return known;
+        return _type3[font] = font.Type3Resources is { } res && ResourcesAreTransparent(res, opaqueGroups: false);
+    }
+
+    /// <summary>Whether a Type 3 font's glyph resources have anything PDF/A-1 does not allow, drawn or not.</summary>
+    private bool Type3NeedsCleaning(PdfFont font) => font.Type3Resources is { } res && ResourcesAreTransparent(res);
+
+    /// <summary>
+    /// A Type 3 font dictionary whose glyph resources have their graphics states cleaned; its
+    /// visible text was flattened, so what is left draws nothing or only keeps its advance.
+    /// </summary>
+    private PdfObject SanitizedType3(PdfObject value)
+    {
+        if (_r.Resolve(value) is not PdfDictionary font || font.GetName("Subtype") != "Type3" || _r.Resolve(font["Resources"]) is not PdfDictionary res
+            || !ResourcesAreTransparent(res))
+            return value;
+        if (_cleanedFonts.TryGetValue(font, out var done)) return done;
+        var r = new Dictionary<string, PdfObject>(res.Entries);
+        if (_r.Resolve(res["ExtGState"]) is PdfDictionary states)
+            r["ExtGState"] = new PdfDictionary(states.Entries.ToDictionary(kv => kv.Key, kv => Sanitized(kv.Value)));
+        // Forms in the glyphs lose their groups (only opaque ones can be drawn visibly: transparent glyphs were flattened).
+        if (_r.Resolve(res["XObject"]) is PdfDictionary xobjects)
+            r["XObject"] = new PdfDictionary(xobjects.Entries.ToDictionary(kv => kv.Key, kv => WithoutGroup(kv.Value)));
+        // A font of its own (readers identify fonts by their object).
+        int number = Allocate();
+        _finalObjects![number] = new PdfDictionary(new Dictionary<string, PdfObject>(font.Entries) { ["Resources"] = new PdfDictionary(r) });
+        return _cleanedFonts[font] = new PdfIndirectRef(number);
+    }
+
+    /// <summary>A form XObject without its transparency group (a new object), or the value as it is.</summary>
+    private PdfObject WithoutGroup(PdfObject value)
+    {
+        if (_r.Resolve(value) is not PdfStream form || !IsGroupForm(form.Dictionary)) return value;
+        var e = new Dictionary<string, PdfObject>(form.Dictionary.Entries);
+        e.Remove("Group");
+        int number = Allocate();
+        _finalObjects![number] = form with { Dictionary = new PdfDictionary(e) };
+        if (value is PdfIndirectRef r) _groupForms.Add(r.ObjectNumber);
+        return new PdfIndirectRef(number);
+    }
+
+    private readonly Dictionary<PdfDictionary, PdfIndirectRef> _cleanedFonts = new(ReferenceEqualityComparer.Instance);
+    /// <summary>Where objects of the final file go (set before the final pages are written).</summary>
+    private Dictionary<int, PdfObject>? _finalObjects;
 
     private bool ImageHasSoftMask(PdfDictionary image) =>
         _r.Resolve(image["SMask"]) is PdfStream || (_r.Resolve(image["SMaskInData"]) is { } sid && sid.TryGetNumber(out double v) && v != 0);
@@ -608,6 +964,11 @@ internal sealed class TransparencyFlattener
                 if (category == "XObject") foreach (var (name, value) in Added) m[name] = value;
                 if (m.Count > 0) e[category] = new PdfDictionary(m);
                 else if (map != null || e.ContainsKey(category)) e.Remove(category);
+            }
+            if (sanitize && f._r.Resolve(Source["Font"]) is PdfDictionary fonts)
+            {
+                var cleaned = fonts.Entries.ToDictionary(kv => kv.Key, kv => f.SanitizedType3(kv.Value));
+                if (cleaned.Any(kv => !ReferenceEquals(kv.Value, fonts.Entries[kv.Key]))) e["Font"] = new PdfDictionary(cleaned);
             }
             return new PdfDictionary(e);
         }
@@ -707,8 +1068,26 @@ internal sealed class TransparencyFlattener
 
         private bool Final => _pass is Pass.Under or Pass.Over;
 
-        public string Run(byte[] content, PdfDictionary resources, ResourceUse? use = null) =>
-            Walk(content, resources, new GState(), hidden: false, use ?? new ResourceUse(_f, resources)).Output;
+        public string Run(byte[] content, PdfDictionary resources, ResourceUse? use = null, PdfMatrix? ctm = null) =>
+            Walk(content, resources, new GState { Ctm = ctm ?? PdfMatrix.Identity }, hidden: false, use ?? new ResourceUse(_f, resources)).Output;
+
+        /// <summary>
+        /// A copy of a form (an annotation appearance) without its transparency group and with its
+        /// graphics states cleaned, for one whose drawing has nothing transparent; null when it cannot be read.
+        /// </summary>
+        public PdfIndirectRef? CleanCopy(PdfStream form, PdfIndirectRef? reference)
+        {
+            var own = _f._r.Resolve(form.Dictionary["Resources"]) as PdfDictionary ?? new PdfDictionary(new Dictionary<string, PdfObject>());
+            byte[] content;
+            try { content = _f._decoder.DecodeStream(form); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { return null; }
+            var use = new ResourceUse(_f, own);
+            Enter(reference);
+            WalkResult result;
+            try { result = Walk(content, own, new GState(), hidden: false, use); }
+            finally { Leave(reference); }
+            return _store!.Copy(form, reference?.ObjectNumber, result.Output, use.Build(sanitize: true, prune: true), keepGroup: false);
+        }
 
         private Act Decide(bool hidden, bool transparent, PdfRect? bounds, bool text, out int ordinal)
         {
@@ -1016,7 +1395,10 @@ internal sealed class TransparencyFlattener
                 var (bounds, advanceOnly) = Glyphs(gs, font, ref tm, items, prefix);
                 bool fills = gs.Tr is 0 or 2 or 4 or 6, strokes = gs.Tr is 1 or 2 or 5 or 6;
                 bool visible = fills || strokes;
-                bool transparent = visible && (gs.Blend || gs.SoftMask || (fills && (gs.FillAlpha < 1 || gs.FillPattern)) || (strokes && (gs.StrokeAlpha < 1 || gs.StrokePattern)));
+                // A Type 3 font draws its glyphs with its own procedures, which may use transparency of their own.
+                bool type3 = font?.IsType3 == true && _f.Type3IsTransparent(font);
+                if (font?.IsType3 == true && _pass == Pass.Analyze && _f.Type3NeedsCleaning(font)) NeedsCleaning = true;
+                bool transparent = visible && (type3 || gs.Blend || gs.SoftMask || (fills && (gs.FillAlpha < 1 || gs.FillPattern)) || (strokes && (gs.StrokeAlpha < 1 || gs.StrokePattern)));
                 var b = bounds is { } gb ? Clipped(gs, strokes ? Grow(gb, StrokeGrowth(gs)) : gb) : (PdfRect?)null;
                 var act = Decide(hidden, transparent, visible ? b : null, text: visible, out _);
                 string invisible = $"{(gs.Tr >= 4 ? 7 : 3)} Tr {verbatim} {gs.Tr} Tr";

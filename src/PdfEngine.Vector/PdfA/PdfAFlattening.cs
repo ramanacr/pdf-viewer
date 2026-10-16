@@ -41,8 +41,11 @@ public sealed class PdfFlatteningOptions
     /// <summary>When the flattened areas cover at least this share of the page, the whole page is flattened as one image.</summary>
     public double WholePageCoverage { get; init; } = 0.6;
 
-    /// <summary>Most pixels one flattened area may have; a larger one is drawn at a lower resolution.</summary>
-    public long MaxPixelsPerRegion { get; init; } = 40_000_000;
+    /// <summary>
+    /// Most pixels one flattened area may have; a larger one is drawn at a lower resolution. The
+    /// default keeps an image's samples within what readers decode in one stream (128 MB here).
+    /// </summary>
+    public long MaxPixelsPerRegion { get; init; } = 30_000_000;
 }
 
 /// <summary>An area of a page replaced by an image, in default user space.</summary>
@@ -50,6 +53,9 @@ public sealed record PdfFlattenedRegion(PdfRect Bounds, double Dpi, int WidthPix
 
 /// <summary>A page whose transparency was flattened.</summary>
 public sealed record PdfFlattenedPage(int PageNumber, IReadOnlyList<PdfFlattenedRegion> Regions, bool WholePage, string Renderer);
+
+/// <summary>An annotation whose transparent appearance was replaced by an image of how it looked over the page (its other entries, such as its comment, stay).</summary>
+public sealed record PdfFlattenedAnnotation(int PageNumber, string Subtype, PdfFlattenedRegion Region);
 
 /// <summary>What transparency flattening did to a document.</summary>
 public sealed class PdfFlatteningReport
@@ -66,6 +72,12 @@ public sealed class PdfFlatteningReport
     /// <summary>Text-showing operators kept as invisible text where their transparent drawing was flattened.</summary>
     public required int InvisibleTextOperators { get; init; }
 
+    /// <summary>Annotations whose appearance was flattened.</summary>
+    public IReadOnlyList<PdfFlattenedAnnotation> Annotations { get; init; } = Array.Empty<PdfFlattenedAnnotation>();
+
+    /// <summary>Annotations whose appearance only lost an opaque group or unused alpha.</summary>
+    public int AnnotationsCleaned { get; init; }
+
     public int RegionCount => Pages.Sum(p => p.Regions.Count);
 
     /// <summary>One line for the user: pages, areas and resolutions (never any document text).</summary>
@@ -73,16 +85,23 @@ public sealed class PdfFlatteningReport
     {
         get
         {
-            if (Pages.Count == 0)
-                return $"Removed transparency that did not change the look of {PagesCleanedOnly} page(s)";
-            var dpis = Pages.SelectMany(p => p.Regions).Select(r => Math.Round(r.Dpi)).Distinct().OrderBy(d => d).ToList();
+            if (Pages.Count == 0 && Annotations.Count == 0)
+                return $"Removed transparency that did not change the look of {PagesCleanedOnly + AnnotationsCleaned} page(s) or annotation(s)";
+            var dpis = Pages.SelectMany(p => p.Regions).Concat(Annotations.Select(a => a.Region)).Select(r => Math.Round(r.Dpi)).Distinct().OrderBy(d => d).ToList();
             string dpi = dpis.Count == 1
                 ? $"{dpis[0].ToString(CultureInfo.InvariantCulture)} dpi"
                 : $"{dpis[0].ToString(CultureInfo.InvariantCulture)}-{dpis[^1].ToString(CultureInfo.InvariantCulture)} dpi";
-            string pages = string.Join(", ", Pages.Select(p => p.PageNumber.ToString(CultureInfo.InvariantCulture)));
-            int whole = Pages.Count(p => p.WholePage);
-            string what = whole == Pages.Count ? "whole page(s)" : $"{RegionCount} area(s)";
-            return $"Flattened transparency on page(s) {pages} ({what} drawn as images at {dpi}); everything else stays vector and text stays searchable";
+            var parts = new List<string>();
+            if (Pages.Count > 0)
+            {
+                int whole = Pages.Count(p => p.WholePage);
+                string what = whole == Pages.Count ? "whole page(s)" : $"{RegionCount} area(s)";
+                parts.Add($"{what} drawn as images");
+            }
+            if (Annotations.Count > 0) parts.Add($"{Annotations.Count} annotation appearance(s) drawn as images");
+            string pages = string.Join(", ", Pages.Select(p => p.PageNumber).Concat(Annotations.Select(a => a.PageNumber)).Distinct().Order()
+                .Select(n => n.ToString(CultureInfo.InvariantCulture)));
+            return $"Flattened transparency on page(s) {pages} ({string.Join(", ", parts)} at {dpi}); everything else stays vector and text stays searchable";
         }
     }
 }
