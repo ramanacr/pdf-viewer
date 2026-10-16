@@ -82,17 +82,19 @@ internal static class TextShaper
             string script = cursive ? "arab" : ScriptOf(text);
             f.Substitution?.Apply(buffer, script, cursive ? CursiveFeatures : DefaultFeatures);
             buffer.RemoveAll(g => g.Gid <= 0 && g.Text.Length == 0);
-            // Marks placed on the glyphs they belong to (in reading order, before any reversal).
+            // Cursive glyphs joined and marks placed on the glyphs they belong to (in reading order, before any reversal).
             var gids = buffer.Select(g => g.Gid).ToArray();
             var advances = gids.Select(gid => (double)f.AdvanceUnits(gid)).ToArray();
             var dx = new double[gids.Length];
             var dy = new double[gids.Length];
             var own = (double[])advances.Clone();
-            f.Positioning?.Apply(gids, script, advances, dx, dy);
+            f.Positioning?.Apply(gids, script, advances, dx, dy, rtl);
             for (int k = 0; k < buffer.Count; k++)
             {
                 bool moved = dx[k] != 0 || dy[k] != 0 || advances[k] != own[k];
-                glyphs.Add((moved ? new Shaped(buffer[k].Gid, buffer[k].Text, level, f.ToThousandths((int)Math.Round(dx[k])), f.ToThousandths((int)Math.Round(dy[k])), f.ToThousandths((int)Math.Round(advances[k])))
+                // A joined glyph's advance ends where the next one joins it: it is not kerned as well.
+                bool joined = advances[k] != own[k] && advances[k] != 0;
+                glyphs.Add((moved ? new Shaped(buffer[k].Gid, buffer[k].Text, level, f.ToThousandths((int)Math.Round(dx[k])), f.ToThousandths((int)Math.Round(dy[k])), f.ToThousandths((int)Math.Round(advances[k])), Kerned: joined)
                     : new Shaped(buffer[k].Gid, buffer[k].Text, level), font));
             }
         }
