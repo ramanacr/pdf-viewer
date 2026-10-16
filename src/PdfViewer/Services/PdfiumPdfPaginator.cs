@@ -1,32 +1,52 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
+using PdfEngine.Vector.Direct2D;
 
 namespace PdfViewer.Services;
 
 /// <summary>
-/// Custom DocumentPaginator for high-quality printing of PDF pages rendered via IPdfDocumentService.
+/// Prints pages as images rendered through <see cref="IPdfDocumentService"/>: the path for "Print
+/// as image", for documents that allow only low-quality printing, and for printers Direct2D's
+/// print control cannot drive (see <see cref="DocumentPrinter"/>).
 /// </summary>
 public class PdfiumPdfPaginator : DocumentPaginator
 {
     private readonly IPdfDocumentService _service;
-    private readonly int _startPage;
-    private readonly int _endPage;
+    private readonly IReadOnlyList<int> _pages;
     private readonly Size _pageSize;
+    private readonly PrintRect _printable;
+    private readonly PrintScaling _scaling;
+    private readonly double _scalePercent;
     private readonly int _rotationAngle;
 
+    /// <summary>Pages <paramref name="startPage"/> to <paramref name="endPage"/>, each fitted to a sheet of the given size.</summary>
     public PdfiumPdfPaginator(IPdfDocumentService service, int startPage, int endPage, double pageWidth, double pageHeight, int rotationAngle = 0)
+        : this(service, Enumerable.Range(startPage, Math.Max(0, endPage - startPage + 1)).ToArray(), pageWidth, pageHeight,
+               new PrintRect(0, 0, pageWidth, pageHeight), PrintScaling.Fit, 100, rotationAngle)
+    {
+    }
+
+    /// <param name="pages">One-based page numbers in print order.</param>
+    /// <param name="sheetWidth">Sheet width in DIPs, in the ticket's orientation.</param>
+    /// <param name="printable">The part of the sheet the printer reaches, where pages are placed.</param>
+    public PdfiumPdfPaginator(IPdfDocumentService service, IReadOnlyList<int> pages, double sheetWidth, double sheetHeight,
+        PrintRect printable, PrintScaling scaling, double scalePercent, int rotationAngle)
     {
         _service = service;
-        _startPage = startPage;
-        _endPage = endPage;
-        _pageSize = new Size(pageWidth, pageHeight);
+        _pages = pages;
+        _pageSize = new Size(sheetWidth, sheetHeight);
+        _printable = printable;
+        _scaling = scaling;
+        _scalePercent = scalePercent;
         _rotationAngle = rotationAngle;
     }
 
     public override bool IsPageCountValid => true;
-    public override int PageCount => Math.Max(0, _endPage - _startPage + 1);
+    public override int PageCount => _pages.Count;
 
     public override Size PageSize
     {
@@ -38,27 +58,21 @@ public class PdfiumPdfPaginator : DocumentPaginator
 
     public override DocumentPage GetPage(int pageNumber)
     {
-        int actualPageNum = _startPage + pageNumber;
+        if (pageNumber < 0 || pageNumber >= _pages.Count)
+            return DocumentPage.Missing;
         // Documents that allow only low-quality printing are printed at 150 dpi (Table 22, bit 12).
-        int dpi = _service.Permissions.CanPrintHighQuality ? 300 : 150;
-        var bitmap = _service.RenderPage(actualPageNum, dpi: dpi, rotationAngle: _rotationAngle);
+        int dpi = _service.Permissions.CanPrintHighQuality ? DocumentPrinter.PrintDpi : DocumentPrinter.LowQualityDpi;
+        var bitmap = _service.RenderPage(_pages[pageNumber], dpi: dpi, rotationAngle: _rotationAngle);
 
         var visual = new DrawingVisual();
         using (var dc = visual.RenderOpen())
         {
             if (bitmap != null)
             {
-                // Scale to fit printable area preserving aspect ratio
-                double scaleX = _pageSize.Width / bitmap.PixelWidth;
-                double scaleY = _pageSize.Height / bitmap.PixelHeight;
-                double scale = Math.Min(scaleX, scaleY);
-
-                double drawWidth = bitmap.PixelWidth * scale;
-                double drawHeight = bitmap.PixelHeight * scale;
-                double offsetX = (_pageSize.Width - drawWidth) / 2.0;
-                double offsetY = (_pageSize.Height - drawHeight) / 2.0;
-
-                dc.DrawImage(bitmap, new Rect(offsetX, offsetY, drawWidth, drawHeight));
+                var r = PrintLayout.Place(bitmap.PixelWidth * 72.0 / dpi, bitmap.PixelHeight * 72.0 / dpi, _printable, _scaling, _scalePercent);
+                dc.PushClip(new RectangleGeometry(new Rect(_printable.X, _printable.Y, _printable.Width, _printable.Height)));
+                dc.DrawImage(bitmap, new Rect(r.X, r.Y, r.Width, r.Height));
+                dc.Pop();
             }
         }
 
