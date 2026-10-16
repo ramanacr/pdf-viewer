@@ -26,7 +26,7 @@ internal sealed class TextLine
     /// <summary>Written top to bottom (U runs down the column, V across it); sideways glyphs in it included.</summary>
     public bool Vertical => Glyphs.Count > 0 && InColumn(Glyphs[0]);
 
-    internal static bool InColumn(ContentGlyph g) => g.Style.Vertical || g.Sideways;
+    internal static bool InColumn(ContentGlyph g) => g.Style.Vertical || g.Sideways || g.TateChuYoko != null;
 }
 
 /// <summary>A paragraph (or a single line) of text the page shows, as one editable unit.</summary>
@@ -58,6 +58,7 @@ internal static class TextBlocks
     public static List<TextBlock> Build(IReadOnlyList<ContentGlyph> glyphs)
     {
         MarkSideways(glyphs);
+        MarkTateChuYoko(glyphs);
         var lines = BuildLines(glyphs);
         var blocks = Group(lines);
         for (int i = 0; i < blocks.Count; i++) blocks[i].Id = i;
@@ -126,6 +127,8 @@ internal static class TextBlocks
         {
             g.Sideways = false;
             g.Anchor = default;
+            g.TateChuYoko = null;
+            g.SlotAdvance = 0;
             if (!g.Style.Vertical) continue;
             var (u, v) = VerticalFrame(g.Matrix);
             if (frames.Count < 64 && !frames.Any(f => f.Context == g.Context && Dot(f.U, u) > 0.999 && Dot(f.V, v) > 0.999)) frames.Add((g.Context, u, v));
@@ -142,10 +145,98 @@ internal static class TextBlocks
         }
     }
 
-    internal static (PdfPoint U, PdfPoint V) FrameOf(ContentGlyph g) => g.Style.Vertical ? VerticalFrame(g.Matrix) : Frame(g.Matrix);
+    /// <summary>
+    /// Marks tate-chu-yoko units: a few horizontal glyphs (two digits, "!?") drawn upright side by
+    /// side, no wider than about an em, centred on the centre line of a column, in the slot right
+    /// after or before one of its upright glyphs. They read as part of the column in their own order,
+    /// all of them at the top of the slot, the last advancing one em down the column.
+    /// </summary>
+    private static void MarkTateChuYoko(IReadOnlyList<ContentGlyph> glyphs)
+    {
+        List<ContentGlyph>? column = null;
+        for (int i = 0; i < glyphs.Count;)
+        {
+            if (!Unit(glyphs[i]) || (i > 0 && Follows(glyphs[i - 1], glyphs[i])))
+            {
+                i++;
+                continue;
+            }
+            int e = i + 1;
+            while (e < glyphs.Count && e - i <= 4 && Follows(glyphs[e - 1], glyphs[e])) e++;
+            if (e - i <= 4)
+            {
+                column ??= glyphs.Where(g => g.Style.Vertical && g.Style.RenderMode != 3 && g.Style.FontResource.Length > 0).ToList();
+                if (column.Count == 0) return;
+                TryUnit(glyphs, i, e, column);
+            }
+            i = e;
+        }
+
+        static bool Unit(ContentGlyph g) => !g.Style.Vertical && !g.Sideways && g.Text.Trim().Length > 0 && g.Style.RenderMode != 3;
+
+        // The next glyph on the same baseline, right after the one before.
+        static bool Follows(ContentGlyph a, ContentGlyph b)
+        {
+            if (!Unit(a) || !Unit(b) || a.Context != b.Context) return false;
+            var (au, av) = Frame(a.Matrix);
+            if (Dot(Frame(b.Matrix).U, au) < 0.999) return false;
+            var d = new PdfPoint(b.Matrix.E - a.Matrix.E, b.Matrix.F - a.Matrix.F);
+            double size = Math.Max(EmHeight(a), 1e-6);
+            return Math.Abs(Dot(d, av)) < 0.05 * size && Math.Abs(Dot(d, au) - UserAdvance(a)) < 0.3 * size;
+        }
+    }
+
+    private static void TryUnit(IReadOnlyList<ContentGlyph> glyphs, int from, int to, List<ContentGlyph> column)
+    {
+        var first = glyphs[from];
+        var last = glyphs[to - 1];
+        var (gu, gv) = Frame(first.Matrix);
+        var o = new PdfPoint(first.Matrix.E, first.Matrix.F);
+        double width = Dot(new PdfPoint(last.Matrix.E - o.X, last.Matrix.F - o.Y), gu) + UserAdvance(last);
+        double size = EmHeight(first);
+        // The unit's middle: half way along it, and half way between its font's ascent and descent.
+        double centre = SidewaysCentre(first.Style.Font) * size;
+        var mid = new PdfPoint(o.X + gu.X * width / 2 + gv.X * centre, o.Y + gu.Y * width / 2 + gv.Y * centre);
+        foreach (var col in column)
+        {
+            if (col.Context != first.Context) continue;
+            var (cu, cv) = VerticalFrame(col.Matrix);
+            // Upright in the column: its baseline across the column, its up the column's up.
+            if (Dot(gu, cv) < 0.999 || Dot(gv, cu) > -0.999) continue;
+            double em = EmHeight(col);
+            if (size < 0.6 * em || size > 1.3 * em || width > 1.15 * em || width <= 0) continue;
+            var d = Sub(mid, col.Origin);
+            if (Math.Abs(Dot(d, cv)) > 0.2 * em) continue;
+            double along = Dot(d, cu), end = UserAdvance(col), top;
+            if (Math.Abs(along - (end + em / 2)) < 0.35 * em) top = end; // the slot after it
+            else if (Math.Abs(along + em / 2) < 0.35 * em) top = -em; // the slot before it
+            else continue;
+            var slot = new PdfPoint(col.Origin.X + cu.X * top, col.Origin.Y + cu.Y * top);
+            for (int k = from; k < to; k++)
+            {
+                var g = glyphs[k];
+                g.TateChuYoko = first;
+                g.Anchor = new PdfPoint(slot.X - g.Matrix.E, slot.Y - g.Matrix.F);
+                g.SlotAdvance = k == to - 1 ? em : 0;
+            }
+            return;
+        }
+    }
+
+    internal static (PdfPoint U, PdfPoint V) FrameOf(ContentGlyph g)
+    {
+        if (g.TateChuYoko != null)
+        {
+            // Upright in a column: the column runs against its up, its baseline across the column.
+            var (u, v) = Frame(g.Matrix);
+            return (new PdfPoint(-v.X, -v.Y), u);
+        }
+        return g.Style.Vertical ? VerticalFrame(g.Matrix) : Frame(g.Matrix);
+    }
 
     /// <summary>A glyph's advance along its line, and its size across it, in user units.</summary>
-    internal static double UserAdvance(ContentGlyph g) => g.Style.Vertical
+    internal static double UserAdvance(ContentGlyph g) => g.TateChuYoko != null ? g.SlotAdvance
+        : g.Style.Vertical
         ? -g.Advance * Math.Sqrt(g.Matrix.C * g.Matrix.C + g.Matrix.D * g.Matrix.D) // vertical advances run down: negative in text space
         : g.Advance * Math.Sqrt(g.Matrix.A * g.Matrix.A + g.Matrix.B * g.Matrix.B);
     internal static double EmHeight(ContentGlyph g) => Math.Abs(g.Style.FontSize) * (g.Style.Vertical
@@ -168,6 +259,22 @@ internal static class TextBlocks
 
     private static List<TextLine> BuildLines(IReadOnlyList<ContentGlyph> glyphs)
     {
+        var lines = CollectLines(glyphs);
+        var (reverted, units) = SettleSideways(lines);
+        // A tate-chu-yoko unit that did not join its column's line is horizontal text after all:
+        // the lines are found again without it.
+        if (units)
+        {
+            lines = CollectLines(glyphs);
+            reverted = SettleSideways(lines).Reverted;
+        }
+        if (reverted) MergePieces(lines);
+        JoinSpans(glyphs, lines);
+        return lines;
+    }
+
+    private static List<TextLine> CollectLines(IReadOnlyList<ContentGlyph> glyphs)
+    {
         var lines = new List<TextLine>();
         TextLine? current = null;
         PdfPoint origin = default;
@@ -177,6 +284,12 @@ internal static class TextBlocks
             if (g.Style.RenderMode == 3 || g.Style.FontResource.Length == 0) continue;
             double size = EmHeight(g);
             if (size < 0.5) continue;
+            // A tate-chu-yoko unit's other glyphs go with its first, in the slot it starts.
+            if (g.TateChuYoko is { } head && !ReferenceEquals(head, g) && current != null && current.Glyphs[^1].TateChuYoko == head)
+            {
+                current.Glyphs.Add(g);
+                continue;
+            }
             var (u, v) = FrameOf(g);
             if (current != null)
             {
@@ -202,8 +315,6 @@ internal static class TextBlocks
         foreach (var line in lines) Measure(line);
 
         MergePieces(lines);
-        if (SettleSideways(lines)) MergePieces(lines);
-        JoinSpans(glyphs, lines);
         return lines;
     }
 
@@ -211,18 +322,19 @@ internal static class TextBlocks
     /// Sideways glyphs in a column line sit exactly on its centre line (where its upright glyphs
     /// are), whatever their font's metrics, so the column is laid out again from one line. A line
     /// of sideways glyphs alone is horizontal text turned, not part of a column: it is that again.
-    /// Returns whether any line was.
+    /// Returns whether any line was, and whether any of them had tate-chu-yoko glyphs.
     /// </summary>
-    private static bool SettleSideways(List<TextLine> lines)
+    private static (bool Reverted, bool Units) SettleSideways(List<TextLine> lines)
     {
-        bool reverted = false;
+        bool reverted = false, units = false;
         foreach (var line in lines)
         {
-            if (!line.Glyphs.Any(g => g.Sideways)) continue;
+            if (!line.Glyphs.Any(g => g.Sideways || g.TateChuYoko != null)) continue;
             var upright = line.Glyphs.FirstOrDefault(g => g.Style.Vertical);
             if (upright == null)
             {
-                foreach (var g in line.Glyphs) { g.Sideways = false; g.Anchor = default; }
+                units |= line.Glyphs.Any(g => g.TateChuYoko != null);
+                foreach (var g in line.Glyphs) { g.Sideways = false; g.Anchor = default; g.TateChuYoko = null; g.SlotAdvance = 0; }
                 reverted = true;
             }
             else
@@ -236,7 +348,7 @@ internal static class TextBlocks
             }
             Measure(line);
         }
-        return reverted;
+        return (reverted, units);
     }
 
     /// <summary>Pieces of one line shown separately (a word at a time, or out of order) become one line.</summary>

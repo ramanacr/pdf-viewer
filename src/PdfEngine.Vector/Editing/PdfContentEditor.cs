@@ -53,7 +53,7 @@ public static class PdfContentEditor
                 warnings.Add($"There is no page {page.Key}.");
                 continue;
             }
-            EditPage(document, page.Key, pageObjects[page.Key - 1], page.ToList(), catalog, Allocate, objects, warnings, embedded);
+            EditPage(document, page.Key, pageObjects[page.Key - 1], page.ToList(), catalog, options?.TateChuYoko ?? PdfTateChuYoko.TwoDigits, Allocate, objects, warnings, embedded);
         }
         byte[] bytes = objects.Count == 0 ? original : PdfIncrementalWriter.Append(original, document, objects);
         return new PdfContentEditResult { Bytes = bytes, Warnings = warnings.Distinct().ToList(), EmbeddedFonts = embedded.Distinct().ToList() };
@@ -99,12 +99,12 @@ public static class PdfContentEditor
     // ------------------------------------------------------------------ editing a page
 
     private static void EditPage(PdfVectorDocument document, int pageNumber, int pageObject, List<PdfContentEdit> edits, SystemFontCatalog catalog,
-        Func<int> allocate, Dictionary<int, PdfObject> objects, List<string> warnings, List<string> embedded)
+        PdfTateChuYoko tateChuYoko, Func<int> allocate, Dictionary<int, PdfObject> objects, List<string> warnings, List<string> embedded)
     {
         var r = document.Resolver;
         var node = document.PageTree.Pages[pageNumber - 1];
         var (walker, blocks) = Load(document, pageNumber);
-        var session = new PageSession(node.Resources, r, catalog, allocate, objects, warnings);
+        var session = new PageSession(node.Resources, r, catalog, allocate, objects, warnings) { TateChuYoko = tateChuYoko };
         session.Reserve(walker.FormResourceNames);
         var removed = new HashSet<(int, int)>();
         var output = new List<OutGlyph>();
@@ -384,6 +384,9 @@ internal sealed class PageSession
 
     public List<string> Warnings => _warnings;
 
+    /// <summary>Which digit runs typed into a column are set as tate-chu-yoko.</summary>
+    public PdfTateChuYoko TateChuYoko { get; init; } = PdfTateChuYoko.TwoDigits;
+
     /// <summary>Names new fonts and images must not take (those the page's form XObjects use).</summary>
     public void Reserve(IEnumerable<string> names)
     {
@@ -539,6 +542,37 @@ internal sealed class PageSession
             }
             return (builder.Encode(gid, element), builder.Font.Advance(gid),
                 style with { FontResource = builder.ResourceName, Font = null, FontEntry = null, WordSpacing = 0, VerticalWriting = vertical });
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A tate-chu-yoko run (digits set upright in one em of a column) in the first installed font
+    /// that has all of it, horizontally: two characters in their half-width forms and three in their
+    /// third-width forms where the font has them (GSUB hwid, twid), so less needs compressing.
+    /// </summary>
+    public (List<(byte[] Code, double Width0)> Glyphs, GlyphStyle Style)? EncodeUnitWithInstalled(string run, GlyphStyle style, bool bold, bool italic)
+    {
+        foreach (var builder in Chain(style.Font, bold, italic))
+        {
+            var glyphs = run.Select(c => new ShapingGlyph { Gid = builder.Font.GlyphFor(c), Text = c.ToString() }).ToList();
+            if (glyphs.Any(g => g.Gid <= 0)) continue;
+            if (run.Length is 2 or 3 && builder.Font.Substitution is { } gsub)
+            {
+                string[] feature = { run.Length == 2 ? "hwid" : "twid" };
+                foreach (string script in new[] { "latn", "hani", "kana" })
+                {
+                    var narrow = glyphs.Select(g => new ShapingGlyph { Gid = g.Gid, Text = g.Text }).ToList();
+                    gsub.Apply(narrow, script, feature);
+                    if (narrow.Count == glyphs.Count && narrow.All(g => g.Gid > 0) && narrow.Where((g, i) => g.Gid != glyphs[i].Gid).Any())
+                    {
+                        glyphs = narrow;
+                        break;
+                    }
+                }
+            }
+            return (glyphs.Select(g => (builder.Encode(g.Gid, g.Text), builder.Font.Advance(g.Gid))).ToList(),
+                style with { FontResource = builder.ResourceName, Font = null, FontEntry = null, WordSpacing = 0, VerticalWriting = false });
         }
         return null;
     }

@@ -41,6 +41,8 @@ internal sealed class ContentGlyph
     public double Width0, Advance;
     /// <summary>A code the word spacing applies to (a single-byte 32).</summary>
     public bool IsWordSpace;
+    /// <summary>The marked-content identifier (MCID) of the innermost tagged sequence of the page's own content it is in, or -1.</summary>
+    public int Mcid = -1;
     /// <summary>Where it is drawn: 0 for the page's own content, else one drawing of a form XObject.
     /// Glyphs of different drawings use different resources, so they are never one paragraph.</summary>
     public int Context;
@@ -52,8 +54,19 @@ internal sealed class ContentGlyph
     public bool Sideways;
     /// <summary>For a sideways glyph: from where it is drawn (its baseline) to the column's centre line, in user space.</summary>
     public PdfPoint Anchor;
-    /// <summary>Where the glyph sits on its line: its origin, or for a sideways glyph the point on the column's centre line level with it.</summary>
-    public PdfPoint Origin => new(Matrix.E + Anchor.X, Matrix.F + Anchor.Y);
+    /// <summary>
+    /// A horizontal glyph set upright in one slot of a vertical column with the glyphs next to it
+    /// (tate-chu-yoko, as "12" in 平成12年; TextBlocks): the unit's first glyph (itself for the first).
+    /// </summary>
+    public ContentGlyph? TateChuYoko;
+    /// <summary>For a tate-chu-yoko glyph: its advance down the column in user units (the slot's em on the unit's last glyph, 0 on the others).</summary>
+    public double SlotAdvance;
+    /// <summary>
+    /// Where the glyph sits on its line: its origin; for a sideways glyph the point on the column's
+    /// centre line level with it; for a tate-chu-yoko glyph the top of its slot on the centre line
+    /// (the same point for all the unit's glyphs).
+    /// </summary>
+    public PdfPoint Origin => TateChuYoko is { } head && !ReferenceEquals(head, this) ? head.Origin : new(Matrix.E + Anchor.X, Matrix.F + Anchor.Y);
 }
 
 /// <summary>A marked-content sequence with /ActualText: the text its glyphs read as, together.</summary>
@@ -181,6 +194,13 @@ internal sealed class PageContentWalker
         Walk(_content, _resources, new State(), 0, null, null, null, out _);
     }
 
+    private static int CurrentMcid(Stack<(int Index, PdfDictionary? Props, bool Removed, string Tag)> marked)
+    {
+        foreach (var m in marked)
+            if (m.Props?["MCID"] is PdfInteger id) return (int)id.Value;
+        return -1;
+    }
+
     private void Reset()
     {
         Glyphs.Clear();
@@ -239,7 +259,10 @@ internal sealed class PageContentWalker
         void Show(IReadOnlyList<PdfObject> items, string verbatim, string prefix)
         {
             if (insertions != null && insertions.TryGetValue(_showOp, out var inserted)) { pending.Add(inserted); changedHere = true; }
+            int firstGlyph = Glyphs.Count;
             string shown = ShowText(gs, ref tm, items, _showOp++, removed, verbatim, prefix, resources, context, out bool removedAny);
+            if (context == 0 && marked.Count > 0 && CurrentMcid(marked) is int mcid and >= 0)
+                for (int i = firstGlyph; i < Glyphs.Count; i++) Glyphs[i].Mcid = mcid;
             changedHere |= removedAny;
             if (removedAny && marked.Count > 0) { var top = marked.Pop(); marked.Push(top with { Removed = true }); }
             Emit(shown);

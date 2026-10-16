@@ -60,10 +60,27 @@ public enum PdfImageEncoding
 /// <summary>Image data to place on a page. <paramref name="Alpha"/>: optional 8-bit opacity per pixel.</summary>
 public sealed record PdfImageContent(int Width, int Height, byte[] Data, PdfImageEncoding Encoding, byte[]? Alpha = null, int Components = 3);
 
+/// <summary>
+/// Which runs of half-width digits typed into a vertical column are set as tate-chu-yoko (upright,
+/// side by side in one em of the column, JIS X 4051 and W3C JLREQ); longer runs are turned sideways.
+/// </summary>
+public enum PdfTateChuYoko
+{
+    /// <summary>None: digits are turned sideways like other Latin text.</summary>
+    Off,
+    /// <summary>Runs of one or two digits (and "!!", "!?", "?!", "??") between characters that are not Latin.</summary>
+    TwoDigits,
+    /// <summary>Likewise, runs of up to three digits.</summary>
+    UpToThree,
+}
+
 public sealed class PdfContentEditOptions
 {
     /// <summary>Where fonts for new characters come from (the installed fonts by default).</summary>
     public SystemFontCatalog? Fonts { get; init; }
+
+    /// <summary>Which digit runs typed into a vertical column are set as tate-chu-yoko (two digits by default).</summary>
+    public PdfTateChuYoko TateChuYoko { get; init; } = PdfTateChuYoko.TwoDigits;
 }
 
 public sealed class PdfContentEditResult
