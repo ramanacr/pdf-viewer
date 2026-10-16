@@ -192,6 +192,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Right-to-left and cursive scripts:
   - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, and contextual and chained contextual lookups in all three formats, including extension lookups, for ccmp, isol/init/medi/fina, rlig, calt and liga);
   - marks are placed on their letters' anchors and do not advance (GPOS mark-to-base, mark-to-ligature and mark-to-mark), so vowel marks sit over and under the letters they belong to;
+  - cursive attachment (GPOS 3, also through extension lookups, honouring the lookup flags such as IgnoreMarks): each letter's entry anchor is put on the exit anchor of the letter before it, along the line (advances and x offsets, for left-to-right and right-to-left runs) and across it (y offsets down the joined chain; with the RightToLeft flag the last letter of a word sits on the baseline and the earlier ones hang off it, as in Nastaliq). Marks follow their letters up and down the chain, and raised glyphs are drawn at their own height. Anchors of formats 2 and 3 are read as format 1 (contour points and device tables are not used);
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
   - a cursive word that changed is shaped again as a whole in an installed font, because the document's glyphs for its letters are in the forms their old neighbours needed;
   - Indic scripts in new text (`Editing/IndicShaper`: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), as the OpenType Indic specification and HarfBuzz shape them:
@@ -201,7 +202,6 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
     - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
     - Reordered syllables carry /ActualText, so they extract as typed.
   - Indic text in existing paragraphs: a changed Indic word is shaped again as a whole in an installed font, and glyphs drawn in a short /ActualText span (a syllable or ligature, within one line) read as that text and move together when their line is laid out again, so Hindi on a page is edited in reading order.
-  - not yet: cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -235,12 +235,19 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - objects are packed into object streams with a cross-reference stream. PDF/A-1 documents keep a classic table, a 1.4 header and readable metadata;
   - page thumbnails and applications' private data are dropped;
   - optionally, images shown above a resolution are downsampled to it by averaging, soft masks with them. JPEG images go through the host's codec, and CMYK, indexed and colour-keyed images are left alone.
-- Encrypted documents are refused; signed ones are saved only after confirmation, because their signatures break.
+- Encrypted documents are reduced and stay encrypted the same way:
+  - objects are read through the open document's security handler, and the copy is encrypted again with the same file key. Loose objects and object streams are encrypted; the cross-reference stream and the encryption dictionary are not;
+  - the original encryption dictionary is carried over unchanged: revision (R2 to R6), cipher (RC4 40 and 128-bit, AES-128, AES-256), /P, /EncryptMetadata, and /O, /U, /OE, /UE and /Perms. The first /ID string is kept, because the key of R2 to R4 derives from it;
+  - both passwords therefore keep working, even when the document was opened with the open password only. No password is stored or written, and messages never contain one;
+  - the rewrite is a change: it needs the permissions password (used to open, or given as `PdfOptimizeOptions.OwnerPassword`), or /P bit 4 (changing the document). Otherwise it is refused with a clear message;
+  - certificate-encrypted (public-key) documents are reduced the same way by the engine when the recipient may change them. The viewer only holds a decrypted copy of them, so it does not offer Reduce File Size for them;
+  - tests build R2, R3, R4 (RC4 and AES-128), R5 and R6 documents in-test. The copies are smaller, open with the same passwords, keep the permissions and dictionary entries, and render the same as the original in our engine and in PDFium.
+- Signed documents are saved only after confirmation, because their signatures break.
 - `vectorpdf optimize` over the 3,197-file corpus, lossless settings:
   - 3,176 files are rewritten, and 21 are skipped (encrypted or repaired);
   - 311 MB become 266 MB (86 %), and the GovDocs files lose about a third of their size;
   - PDFium reads the same text on the first pages of every file, and they render as before (checked after the JPEG 2000 fix).
-- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy.
+- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy. An encrypted document is reduced with the password it was opened with. When its permissions forbid changes, the viewer asks for the permissions password.
 
 ### PDF/A
 - **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
@@ -379,7 +386,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** GPOS cursive attachment; tate-chu-yoko (horizontal-in-vertical digits) in vertical columns. Sideways Latin text in vertical columns is done (UAX #50 orientation, the font's horizontal form, read back as part of the column).
+10. **Editing remainder:** tate-chu-yoko (horizontal-in-vertical digits) in vertical columns. Sideways Latin text in vertical columns is done (UAX #50 orientation, the font's horizontal form, read back as part of the column).
 
 ---
 
