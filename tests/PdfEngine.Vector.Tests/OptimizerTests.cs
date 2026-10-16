@@ -108,12 +108,13 @@ public class OptimizerTests
     }
 
     [Fact]
-    public async Task AnEncryptedDocument_IsRefused()
+    public async Task AnEncryptedDocumentThatForbidsChanges_IsRefused_WithoutItsPermissionsPassword()
     {
+        // OptimizerEncryptionTests covers encrypted documents that may be reduced.
         var b = new VectorPdfBuilder();
         b.AddPage("BT ET");
         byte[] pdf = b.Build(new PdfTestEncryption(TestEncryptionKind.Aes256_R6, "secret", "owner"));
         using var doc = await PdfVectorDocument.OpenAsync(pdf, password: "secret");
-        Assert.Throws<InvalidOperationException>(() => PdfOptimizer.Optimize(doc, pdf));
+        Assert.Throws<PdfEngine.Vector.Diagnostics.PdfEncryptedDocumentException>(() => PdfOptimizer.Optimize(doc, pdf));
     }
 }

@@ -121,6 +121,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 
 ### Vertical writing
 - Identity-V and `/WMode 1` CMaps (named or embedded): each glyph's position vector (`/W2`, `/DW2`) is placed on the current point, the point advances by W1y (TJ adjustments apply vertically), glyph Y offsets reach both backends, and selection boxes follow the column.
+- Sideways text in columns (UAX #50): Latin letters, digits, Greek, Cyrillic and other characters whose Vertical_Orientation is R are drawn turned 90° clockwise, reading top to bottom; U and Tu characters (ideographs, kana, Hangul, full-width forms) stay upright; Tr characters (brackets, the long vowel mark) use the font's vertical form (GSUB `vert`/`vrt2`) where it has one, else turn. The property comes from a compact range table compiled from UAX #50 (`Editing/VerticalOrientation.cs`, no data loaded at run time).
 
 ### Interactive forms and digital signatures
 - **Forms** (`Forms/`): AcroForm fields read with inheritance; appearances regenerated for text, comb, multi-line, password, combo and list fields, and `/AS` for buttons. Each commit is an incremental revision (`Document/PdfIncrementalWriter`, classic or xref-stream sections) that both engines reload. PDFium draws widgets again through a form-fill environment and `FPDF_FFLDraw`. The viewer puts native, accessible editors over each widget.
@@ -183,7 +184,10 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - lines before the first change are untouched, unchanged glyphs keep their own codes, and once the text matches the old text again the rest keeps its exact glyphs, only moved if the paragraph grew or shrank.
 - Characters the document's font lacks (subsets embed only the glyphs they used) are written in the installed version of the same font, else a font of the same kind, embedded as a TrueType subset (Type0, Identity-H, with widths and ToUnicode). Whole words switch font, never single letters.
 - Kerning: glyphs that were side by side keep the spacing they had (the document's own kerning and tracking), even when their line is laid out again. New glyphs are kerned by their font's pair kerning (GPOS 'kern' pair adjustments, formats 1 and 2, also through extension lookups; else the legacy kern table): an embedded installed font by its glyphs, and a document font the way its installed original kerns (same PostScript name, or same family and style; a stand-in's kerning is never used).
-- Vertical writing (Identity-V and other vertical CMaps): columns are paragraphs, read top to bottom and right to left, and edited down the column with the font's vertical advances. Characters the font lacks come from an installed font, set upright in the column, in their vertical forms (GSUB vert/vrt2) where the font has them. A column that grows continues in the next column to the left.
+- Vertical writing (Identity-V and other vertical CMaps): columns are paragraphs, read top to bottom and right to left, and edited down the column with the font's vertical advances. Characters the font lacks come from an installed font, set upright in the column, in their vertical forms (GSUB vert/vrt2) where the font has them; the installed font is embedded for vertical writing (Identity-V), so the column reads back as one paragraph. A column that grows continues in the next column to the left.
+  - Sideways runs: characters UAX #50 turns (Latin, digits and the like) typed into a column are drawn turned 90° clockwise, centred across the column and advancing down it by their horizontal widths: in the column's own font under its horizontal CMap (Identity-H for Identity-V, a predefined CMap's -H for its -V: same codes, same glyphs), else an installed font. Ideographs stay upright, so "PDF 2026年" sets "PDF 2026" sideways and "年" upright. A letter replacing one the document set upright (Latin in a vertical font) stays upright like it.
+  - Reading: horizontal glyphs drawn with a text matrix turned a quarter clockwise in the frame of a column (in the same font's horizontal form or any other font) are read as part of that column, in reading order, when they lie on its centre line; a turned run with no column glyphs on its line stays rotated horizontal text. Edits keep an existing sideways run's exact glyphs and baseline, and new letters next to it take that baseline. Content is written in reading order, so plain text extraction (PDFium) reads the column logically.
+  - Not done: tate-chu-yoko (two or three half-width digits set upright side by side in one em of the column) is neither written nor recognised; such digits are turned sideways like other Latin runs, as Word and InDesign do by default.
 - New characters in a composite font's own glyphs: a one-byte code is no longer taken for a CMap that reads two, which had sent every new character in such fonts to an installed font.
 - Right-to-left and cursive scripts:
   - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, and contextual and chained contextual lookups in all three formats, including extension lookups, for ccmp, isol/init/medi/fina, rlig, calt and liga);
@@ -231,12 +235,19 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - objects are packed into object streams with a cross-reference stream. PDF/A-1 documents keep a classic table, a 1.4 header and readable metadata;
   - page thumbnails and applications' private data are dropped;
   - optionally, images shown above a resolution are downsampled to it by averaging, soft masks with them. JPEG images go through the host's codec, and CMYK, indexed and colour-keyed images are left alone.
-- Encrypted documents are refused; signed ones are saved only after confirmation, because their signatures break.
+- Encrypted documents are reduced and stay encrypted the same way:
+  - objects are read through the open document's security handler, and the copy is encrypted again with the same file key. Loose objects and object streams are encrypted; the cross-reference stream and the encryption dictionary are not;
+  - the original encryption dictionary is carried over unchanged: revision (R2 to R6), cipher (RC4 40 and 128-bit, AES-128, AES-256), /P, /EncryptMetadata, and /O, /U, /OE, /UE and /Perms. The first /ID string is kept, because the key of R2 to R4 derives from it;
+  - both passwords therefore keep working, even when the document was opened with the open password only. No password is stored or written, and messages never contain one;
+  - the rewrite is a change: it needs the permissions password (used to open, or given as `PdfOptimizeOptions.OwnerPassword`), or /P bit 4 (changing the document). Otherwise it is refused with a clear message;
+  - certificate-encrypted (public-key) documents are reduced the same way by the engine when the recipient may change them. The viewer only holds a decrypted copy of them, so it does not offer Reduce File Size for them;
+  - tests build R2, R3, R4 (RC4 and AES-128), R5 and R6 documents in-test. The copies are smaller, open with the same passwords, keep the permissions and dictionary entries, and render the same as the original in our engine and in PDFium.
+- Signed documents are saved only after confirmation, because their signatures break.
 - `vectorpdf optimize` over the 3,197-file corpus, lossless settings:
   - 3,176 files are rewritten, and 21 are skipped (encrypted or repaired);
   - 311 MB become 266 MB (86 %), and the GovDocs files lose about a third of their size;
   - PDFium reads the same text on the first pages of every file, and they render as before (checked after the JPEG 2000 fix).
-- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy.
+- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy. An encrypted document is reduced with the password it was opened with. When its permissions forbid changes, the viewer asks for the permissions password.
 
 ### PDF/A
 - **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
@@ -376,7 +387,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** sideways Latin text in vertical columns.
+10. **Editing remainder:** tate-chu-yoko (horizontal-in-vertical digits) in vertical columns. Sideways Latin text in vertical columns is done (UAX #50 orientation, the font's horizontal form, read back as part of the column).
 
 ---
 

@@ -8,9 +8,9 @@ using PdfEngine.Vector.Objects;
 namespace PdfEngine.Vector.Editing;
 
 /// <summary>
-/// A system font embedded for new text: a Type0 font (Identity-H, CID = glyph id) over a
-/// CIDFontType2 whose program is the TrueType font subset to the glyphs used, with widths and a
-/// ToUnicode map so the text can be searched and copied.
+/// A system font embedded for new text: a Type0 font (Identity-H, CID = glyph id; Identity-V for
+/// vertical writing) over a CIDFontType2 whose program is the TrueType font subset to the glyphs
+/// used, with widths and a ToUnicode map so the text can be searched and copied.
 /// </summary>
 internal sealed class EmbeddedFontBuilder
 {
@@ -19,6 +19,8 @@ internal sealed class EmbeddedFontBuilder
     public TrueTypeFontFile Font { get; }
     /// <summary>The resource name the page uses for it.</summary>
     public string ResourceName { get; }
+    /// <summary>Written down a column (Identity-V, the default vertical metrics: one em down, the em box hanging from the pen).</summary>
+    public bool Vertical { get; init; }
 
     public EmbeddedFontBuilder(TrueTypeFontFile font, string resourceName)
     {
@@ -108,7 +110,7 @@ internal sealed class EmbeddedFontBuilder
             ["Type"] = new PdfName("Font"),
             ["Subtype"] = new PdfName("Type0"),
             ["BaseFont"] = new PdfName(baseFont),
-            ["Encoding"] = new PdfName("Identity-H"),
+            ["Encoding"] = new PdfName(Vertical ? "Identity-V" : "Identity-H"),
             ["DescendantFonts"] = new PdfArray(new PdfObject[] { new PdfIndirectRef(cidFont) }),
             ["ToUnicode"] = new PdfIndirectRef(toUnicode),
         });

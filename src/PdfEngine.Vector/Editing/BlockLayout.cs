@@ -39,7 +39,10 @@ internal sealed class BlockLayout
         /// <summary>A shaped word (right-to-left or cursive): its glyphs in drawing order, each at its offset along the baseline.</summary>
         public List<(OutGlyph Glyph, double Offset, double Rise)>? Cluster;
         public int Level; // bidirectional embedding level (odd: right to left)
-        public PdfPoint Offset; // where the glyph's origin is from the pen, in text space (an upright glyph in a column)
+        public PdfPoint Offset; // where the glyph's origin is from the pen, in the template's text space
+        public PdfPoint UserShift; // and from there, in user space (an old sideways glyph: its baseline from the column's centre line)
+        /// <summary>Turned a quarter clockwise in a column (Latin text, digits): drawn with the template's column frame turned.</summary>
+        public bool Sideways;
     }
 
     public (HashSet<ContentGlyph> Gone, List<OutGlyph> Output) Layout(string newText)
@@ -152,11 +155,13 @@ internal sealed class BlockLayout
                 {
                     var tm = item.Template.Matrix;
                     int after = li < n ? _b.Lines[li].Glyphs.Max(g => g.Op) : -1;
-                    var shift = new PdfPoint(item.Offset.X * tm.A + item.Offset.Y * tm.C, item.Offset.X * tm.B + item.Offset.Y * tm.D);
+                    var shift = new PdfPoint(item.Offset.X * tm.A + item.Offset.Y * tm.C + item.UserShift.X, item.Offset.X * tm.B + item.Offset.Y * tm.D + item.UserShift.Y);
+                    // A sideways glyph's text space: x down the column (the column's -y), y across it (its x).
+                    var (la, lb, lc, ld) = item.Sideways ? (-tm.C, -tm.D, tm.A, tm.B) : (tm.A, tm.B, tm.C, tm.D);
                     void Place(OutGlyph glyph, double at, double rise = 0)
                     {
                         var o = new PdfPoint(_b.Origin.X + at * _b.U.X + (t + rise) * _b.V.X + shift.X, _b.Origin.Y + at * _b.U.Y + (t + rise) * _b.V.Y + shift.Y);
-                        glyph.Matrix = new PdfMatrix(tm.A, tm.B, tm.C, tm.D, o.X, o.Y);
+                        glyph.Matrix = new PdfMatrix(la, lb, lc, ld, o.X, o.Y);
                         glyph.Line = li;
                         glyph.After = after;
                         output.Add(glyph);
@@ -258,6 +263,7 @@ internal sealed class BlockLayout
                     Glyph = OutGlyph.From(reuse.Glyph), Template = reuse.Glyph, Width = UserAdvance(reuse.Glyph), UserScale = Math.Sqrt(m.A * m.A + m.B * m.B),
                     Space = reuse.Glyph.Text.Trim().Length == 0, BreakAfter = reuse.Glyph.Text.EndsWith('-'), End = j + reuse.Length,
                     OldLine = _b.Chars[n2o[j]].Line, OldIndex = _b.Chars[n2o[j]].Glyph, Level = levels[j - from],
+                    UserShift = new PdfPoint(-reuse.Glyph.Anchor.X, -reuse.Glyph.Anchor.Y),
                 };
                 if (reuse.Glyph.Joined is { Count: > 0 } joined) JoinedCluster(reused, reuse.Glyph, joined);
                 items.Add(reused);
@@ -265,17 +271,35 @@ internal sealed class BlockLayout
                 continue;
             }
             var tmpl = template[j];
-            var style = tmpl.Style;
-            bool vertical = style.Vertical;
-            // Text space to user space along the line: the x axis, or down the column.
-            double userScale = vertical ? Math.Sqrt(tmpl.Matrix.C * tmpl.Matrix.C + tmpl.Matrix.D * tmpl.Matrix.D) : Math.Sqrt(tmpl.Matrix.A * tmpl.Matrix.A + tmpl.Matrix.B * tmpl.Matrix.B);
             int length = text[j] == ' ' ? 1 : StringInfo.GetNextTextElementLength(text, j);
             string element = text.Substring(j, length);
             // Right to left, a bracket is drawn (and reads) as its mirror image.
             if ((levels[j - from] & 1) != 0 && length == 1 && Bidi.Mirror(element[0]) is int mirrored) element = ((char)mirrored).ToString();
             bool space = element == " ";
+            if (_b.Vertical)
+            {
+                // In a column, each character is upright or turned sideways as UAX #50 has it.
+                bool sideways = SetSideways(element, tmpl);
+                if (!sideways && tmpl.Sideways) tmpl = ColumnTemplate(tmpl);
+                else if (sideways && !tmpl.Sideways && SidewaysItem(element, tmpl, installedWord, j + length) is { } turned)
+                {
+                    turned.Level = levels[j - from];
+                    items.Add(turned);
+                    j += length;
+                    continue;
+                }
+            }
+            var style = tmpl.Style;
+            bool vertical = style.Vertical;
+            // Text space to user space along the line: the x axis, or down the column.
+            double userScale = vertical ? Math.Sqrt(tmpl.Matrix.C * tmpl.Matrix.C + tmpl.Matrix.D * tmpl.Matrix.D) : Math.Sqrt(tmpl.Matrix.A * tmpl.Matrix.A + tmpl.Matrix.B * tmpl.Matrix.B);
             bool bold = style.Font?.IsBold ?? false, italic = style.Font?.IsItalic ?? false;
-            var item = new Item { Template = tmpl, Space = space, BreakAfter = element is "-" or "‐" or "–", End = j + length, UserScale = userScale };
+            var item = new Item
+            {
+                Template = tmpl, Space = space, BreakAfter = element is "-" or "‐" or "–", End = j + length, UserScale = userScale,
+                // Next to an old sideways glyph, on its baseline.
+                UserShift = new PdfPoint(-tmpl.Anchor.X, -tmpl.Anchor.Y),
+            };
             var wordInstalled = installedWord && !space ? _session.EncodeWithInstalled(element, style, bold, italic, vertical) : null;
             if (wordInstalled is { } inWord)
             {
@@ -333,14 +357,81 @@ internal sealed class BlockLayout
         return items;
     }
 
-    // A glyph of a horizontal installed font set upright in a column: centred across it, its em box
-    // hanging from the pen (as a vertical font's default metrics place it), advancing one em down.
+    // A glyph of an installed font, embedded for vertical writing (Identity-V with the default
+    // vertical metrics), upright in a column: centred across it, its em box hanging from the pen,
+    // advancing one em down.
     private static void Upright(Item item, (byte[] Code, double Width0, GlyphStyle Style) encoded, GlyphStyle column, double userScale, string element)
     {
-        double fs = column.FontSize;
-        item.Glyph = new OutGlyph { Code = encoded.Code, Style = encoded.Style, Advance = encoded.Width0 / 1000.0 * fs, Text = element };
-        item.Offset = new PdfPoint(-encoded.Width0 / 2000.0 * fs, -0.88 * fs);
-        item.Width = (fs + column.CharSpacing) * userScale;
+        double advance = -column.FontSize + column.CharSpacing;
+        item.Glyph = new OutGlyph { Code = encoded.Code, Style = encoded.Style, Advance = advance, Text = element };
+        item.Width = -advance * userScale;
+    }
+
+    /// <summary>
+    /// Whether a character is set turned sideways in a column: R characters (Latin, digits, Greek,
+    /// Cyrillic, spaces) are, and Tr ones the fonts have no vertical form for (UAX #50). A letter
+    /// or digit that replaces one the document set upright (Latin letters in a vertical font) stays
+    /// upright like it.
+    /// </summary>
+    private bool SetSideways(string element, ContentGlyph template)
+    {
+        var orientation = VerticalOrientation.Of(element);
+        if (orientation is VerticalOrientationClass.U or VerticalOrientationClass.Tu) return false;
+        if (template.Style.Vertical && template.Text.Length > 0 && char.IsLetterOrDigit(template.Text, 0) && VerticalOrientation.Of(template.Text) == VerticalOrientationClass.R) return false;
+        if (orientation == VerticalOrientationClass.Tr)
+        {
+            var column = template.Sideways ? ColumnTemplate(template) : template;
+            var style = column.Style;
+            bool encodes = _session.Encoder(style.Font) is { } enc && enc.TryEncode(element, out _, out _);
+            return !encodes && !_session.HasVerticalForm(element, style, style.Font?.IsBold ?? false, style.Font?.IsItalic ?? false);
+        }
+        return true;
+    }
+
+    /// <summary>The upright glyph of the column a sideways glyph is in, nearest to it: the look of upright characters typed next to it.</summary>
+    private ContentGlyph ColumnTemplate(ContentGlyph sideways)
+    {
+        foreach (var line in _b.Lines.OrderBy(l => l.Glyphs.Contains(sideways) ? 0 : 1))
+        {
+            int at = line.Glyphs.IndexOf(sideways);
+            var best = line.Glyphs.Select((g, i) => (g, i)).Where(x => x.g.Style.Vertical).OrderBy(x => at < 0 ? x.i : Math.Abs(x.i - at)).Select(x => x.g).FirstOrDefault();
+            if (best != null) return best;
+        }
+        return sideways;
+    }
+
+    /// <summary>
+    /// A character turned sideways in the column of <paramref name="column"/>: in the horizontal form
+    /// of the column's own font (its horizontal advances), else an installed font, drawn with the
+    /// column's frame turned a quarter clockwise, its baseline set so it is centred across the column,
+    /// and advancing down the column by its horizontal advance.
+    /// </summary>
+    private Item? SidewaysItem(string element, ContentGlyph column, bool installedWord, int end)
+    {
+        var style = column.Style;
+        double fs = style.FontSize, centre;
+        byte[] code;
+        double w0;
+        GlyphStyle turned;
+        if (!installedWord && _session.Encoder(style.Font) is { } encoder && encoder.TryEncode(element, out var own, out double ownWidth) && _session.HorizontalForm(style) is { } horizontal)
+        {
+            (code, w0, turned, centre) = (own, ownWidth, horizontal, SidewaysCentre(style.Font));
+        }
+        else if (element != " " && _session.EncodeWithInstalled(element, style, style.Font?.IsBold ?? false, style.Font?.IsItalic ?? false) is { } installed)
+        {
+            (code, w0, turned, centre) = (installed.Code, installed.Width0, installed.Style, _session.SidewaysCentre(installed.Style.FontResource));
+        }
+        else return null;
+        var m = column.Matrix;
+        double userScale = Math.Sqrt(m.C * m.C + m.D * m.D);
+        double advance = (w0 / 1000.0 * fs + style.CharSpacing) * style.Scaling / 100.0;
+        return new Item
+        {
+            Template = column, Sideways = true, Space = element == " ", BreakAfter = element is "-" or "‐" or "–", End = end,
+            Glyph = new OutGlyph { Code = code, Style = turned, Advance = advance, Text = element },
+            Width = advance * userScale, UserScale = userScale,
+            Offset = new PdfPoint(-centre * fs, 0), // across the column, from its centre line to the baseline
+        };
     }
 
     // The glyphs of an /ActualText span (an Indic syllable) move as one, keeping where each sits in it.

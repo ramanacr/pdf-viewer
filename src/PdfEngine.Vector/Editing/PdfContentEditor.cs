@@ -362,7 +362,10 @@ internal sealed class PageSession
     private readonly Dictionary<int, PdfObject> _objects;
     private readonly List<string> _warnings;
     private readonly Dictionary<PdfFont, FontEncoder> _encoders = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<(string, int), EmbeddedFontBuilder?> _builders = new();
+    private readonly Dictionary<(string, int, bool), EmbeddedFontBuilder?> _builders = new();
+    // Horizontal forms of the document's vertical fonts (for text turned sideways in a column), by resource name.
+    private readonly Dictionary<string, PdfObject> _horizontalForms = new(StringComparer.Ordinal);
+    private readonly Dictionary<object, string?> _horizontalFormOf = new();
     private readonly Dictionary<string, PdfObject> _newXObjects = new();
     private readonly HashSet<string> _fontNames, _xobjectNames;
     private Dictionary<string, PdfObject>? _writtenFonts;
@@ -398,29 +401,78 @@ internal sealed class PageSession
         return encoder;
     }
 
-    private EmbeddedFontBuilder? Builder(SystemFontFace face)
+    private EmbeddedFontBuilder? Builder(SystemFontFace face, bool vertical = false)
     {
-        if (_builders.TryGetValue((face.Path, face.Index), out var existing)) return existing;
+        if (_builders.TryGetValue((face.Path, face.Index, vertical), out var existing)) return existing;
         EmbeddedFontBuilder? builder = null;
         if (_catalog.Load(face) is { } file)
         {
             string name = Unique("FEd", _fontNames);
-            builder = new EmbeddedFontBuilder(file, name);
+            builder = new EmbeddedFontBuilder(file, name) { Vertical = vertical };
             _byResource[name] = builder;
         }
-        _builders[(face.Path, face.Index)] = builder;
+        _builders[(face.Path, face.Index, vertical)] = builder;
         return builder;
     }
 
     /// <summary>Installed fonts for characters a style's own font lacks: the one that matches it first.</summary>
-    public IEnumerable<EmbeddedFontBuilder> Chain(PdfFont? font, bool bold, bool italic)
+    /// <param name="vertical">Embedded for vertical writing (upright characters in a column).</param>
+    public IEnumerable<EmbeddedFontBuilder> Chain(PdfFont? font, bool bold, bool italic, bool vertical = false)
     {
         string? name = font != null ? SystemFontCatalog.StripSubset(font.PostScriptName ?? font.BaseFont) : null;
         bold |= font?.IsBold ?? false;
         italic |= font?.IsItalic ?? false;
-        if (_catalog.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false) is { } match && Builder(match) is { } b) yield return b;
+        if (_catalog.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false) is { } match && Builder(match, vertical) is { } b) yield return b;
         foreach (var face in _catalog.Fallbacks(bold, italic))
-            if (Builder(face) is { } fb) yield return fb;
+            if (Builder(face, vertical) is { } fb) yield return fb;
+    }
+
+    /// <summary>
+    /// A document's vertical composite font in its horizontal form, for characters turned sideways in
+    /// its column: a Type0 font over the same descendant font and ToUnicode map, under the horizontal
+    /// CMap (Identity-H for Identity-V, a predefined CMap's -H for its -V), so the codes stay the same
+    /// and the glyphs advance by their horizontal widths. Null for a font whose CMap is embedded.
+    /// </summary>
+    public GlyphStyle? HorizontalForm(GlyphStyle column)
+    {
+        if (column.Font is not { IsComposite: true, IsVertical: true } || column.FontEntry == null) return null;
+        object key = column.FontEntry is PdfIndirectRef reference ? reference.ObjectNumber : column.FontEntry;
+        if (!_horizontalFormOf.TryGetValue(key, out string? name))
+        {
+            name = null;
+            if (_r.Resolve(column.FontEntry) is PdfDictionary dict && dict.GetName("Subtype") == "Type0" && dict.GetName("Encoding") is { } encoding
+                && (encoding == "V" || encoding.EndsWith("-V", StringComparison.Ordinal)))
+            {
+                var entries = new Dictionary<string, PdfObject>(dict.Entries) { ["Encoding"] = new PdfName(encoding[..^1] + "H") };
+                int number = _allocate();
+                _objects[number] = new PdfDictionary(entries);
+                name = Unique("FEdH", _fontNames);
+                _horizontalForms[name] = new PdfIndirectRef(number);
+            }
+            _horizontalFormOf[key] = name;
+        }
+        return name == null ? null : column with { FontResource = name, Font = null, FontEntry = null, VerticalWriting = false };
+    }
+
+    /// <summary>Where a font the edit embeds has its centre line when turned sideways, from its baseline in em (TextBlocks.SidewaysCentre).</summary>
+    public double SidewaysCentre(string resource) => _byResource.TryGetValue(resource, out var builder)
+        ? TextBlocks.SidewaysCentre(builder.Font.Ascender / (double)builder.Font.UnitsPerEm, builder.Font.Descender / (double)builder.Font.UnitsPerEm)
+        : TextBlocks.SidewaysCentre(null);
+
+    /// <summary>Whether the first installed font with a character has a vertical form of it (GSUB vert/vrt2).</summary>
+    public bool HasVerticalForm(string element, GlyphStyle style, bool bold, bool italic)
+    {
+        int cp = char.ConvertToUtf32(element, 0);
+        foreach (var builder in Chain(style.Font, bold, italic, vertical: true))
+        {
+            int gid = builder.Font.GlyphFor(cp);
+            if (gid <= 0) continue;
+            if (builder.Font.Substitution is not { } gsub) return false;
+            var run = new List<ShapingGlyph> { new() { Gid = gid, Text = element } };
+            gsub.Apply(run, "hani", VerticalFeatures);
+            return run.Count == 1 && run[0].Gid > 0 && run[0].Gid != gid;
+        }
+        return false;
     }
 
     private static readonly string[] VerticalFeatures = { "vert", "vrt2" };
@@ -475,7 +527,7 @@ internal sealed class PageSession
     public (byte[] Code, double Width0, GlyphStyle Style)? EncodeWithInstalled(string element, GlyphStyle style, bool bold, bool italic, bool vertical = false)
     {
         int cp = char.ConvertToUtf32(element, 0);
-        foreach (var builder in Chain(style.Font, bold, italic))
+        foreach (var builder in Chain(style.Font, bold, italic, vertical))
         {
             int gid = builder.Font.GlyphFor(cp);
             if (gid <= 0) continue;
@@ -485,7 +537,8 @@ internal sealed class PageSession
                 gsub.Apply(run, "hani", VerticalFeatures);
                 if (run.Count == 1 && run[0].Gid > 0) gid = run[0].Gid;
             }
-            return (builder.Encode(gid, element), builder.Font.Advance(gid), style with { FontResource = builder.ResourceName, Font = null, WordSpacing = 0 });
+            return (builder.Encode(gid, element), builder.Font.Advance(gid),
+                style with { FontResource = builder.ResourceName, Font = null, FontEntry = null, WordSpacing = 0, VerticalWriting = vertical });
         }
         return null;
     }
@@ -600,6 +653,7 @@ internal sealed class PageSession
             _writtenFonts[builder.ResourceName] = new PdfIndirectRef(builder.Write(_allocate, _objects));
             embedded.Add(builder.Font.FamilyName + (builder.Font.SubfamilyName is "Regular" ? string.Empty : " " + builder.Font.SubfamilyName));
         }
+        foreach (var (name, font) in _horizontalForms) _writtenFonts[name] = font;
         return _writtenFonts;
     }
 

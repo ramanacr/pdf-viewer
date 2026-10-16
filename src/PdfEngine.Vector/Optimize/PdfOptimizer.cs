@@ -5,11 +5,13 @@ using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
 using PdfEngine.Vector.PdfA.Xmp;
+using PdfEngine.Vector.Security;
 using PdfEngine.Vector.Streams;
 
 namespace PdfEngine.Vector.Optimize;
@@ -39,6 +41,11 @@ public sealed class PdfOptimizeOptions
     /// <summary>For downsampled JPEG images; without it, JPEG images keep their resolution.</summary>
     public IPdfJpegCodec? JpegCodec { get; init; }
     public int JpegQuality { get; init; } = 80;
+    /// <summary>
+    /// For an encrypted document opened with its open password whose permissions forbid changing
+    /// it: the permissions password, which allows the rewrite. Only checked, never stored or written.
+    /// </summary>
+    public string? OwnerPassword { get; init; }
 }
 
 public sealed class PdfOptimizeResult
@@ -51,6 +58,8 @@ public sealed class PdfOptimizeResult
     public int ImagesDownsampled { get; init; }
     /// <summary>The document was signed: a rewrite breaks its signatures.</summary>
     public bool SignaturesInvalidated { get; init; }
+    /// <summary>The document was encrypted, and the copy is encrypted the same way (same dictionary, file key and passwords).</summary>
+    public bool Encrypted { get; init; }
     public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
 }
 
@@ -60,6 +69,12 @@ public sealed class PdfOptimizeResult
 /// recompressed, objects packed into object streams, page thumbnails and private application data
 /// dropped, and, when asked, images shown above a resolution downsampled to it. The document's
 /// text, structure, forms, annotations, metadata and PDF/A claim are kept.
+/// An encrypted document is read through its security handler, and the copy is encrypted again
+/// with the same file key and the original encryption dictionary carried over unchanged: the same
+/// revision and cipher (RC4, AES-128 or AES-256), permissions, metadata flag and /O, /U, /OE, /UE
+/// and /Perms entries. Both the open and the permissions password keep working, even when only
+/// one of them was given. The first /ID string, which the key of revisions 2 to 4 derives from,
+/// is kept as well.
 /// </summary>
 public static class PdfOptimizer
 {
@@ -68,8 +83,15 @@ public static class PdfOptimizer
         options ??= new PdfOptimizeOptions();
         var r = document.Resolver;
         var trailer = document.XrefTable.Trailer ?? throw new InvalidOperationException("The document has no trailer.");
+        PdfSecurityHandler? security = null;
+        PdfDictionary? encrypt = null;
         if (trailer["Encrypt"] != null)
-            throw new InvalidOperationException("The document is encrypted. Remove its security first, then reduce its size, and protect it again.");
+        {
+            security = document.Security ?? throw new PdfEncryptedDocumentException("The document's security handler is not available.");
+            RequireChangeAllowed(document, security, options.OwnerPassword);
+            encrypt = Inline(r, r.Resolve(trailer["Encrypt"]), 0) as PdfDictionary
+                      ?? throw new PdfEncryptedDocumentException("The document's encryption dictionary is missing.");
+        }
         if (trailer["Root"] is not PdfIndirectRef root || r.Resolve(root) is not PdfDictionary catalog)
             throw new InvalidOperationException("The document has no catalog.");
         var notes = new List<string>();
@@ -99,16 +121,43 @@ public static class PdfOptimizer
                 }
 
         int merged = options.MergeDuplicates ? MergeDuplicates(objects, root.ObjectNumber) : 0;
-        byte[] bytes = Write(objects, trailer, root.ObjectNumber, objectStreams, pdfaPart == 1 ? "1.4" : objectStreams ? "1.7" : Header(original));
+        byte[] bytes = Write(objects, trailer, root.ObjectNumber, objectStreams, pdfaPart == 1 ? "1.4" : objectStreams ? "1.7" : Header(original), security, encrypt);
         if (bytes.Length >= original.Length && downsampled == 0)
             notes.Add("The document was already compact: the rewrite is not smaller.");
         return new PdfOptimizeResult
         {
             Bytes = bytes, OriginalSize = original.Length, ObjectsRemoved = Math.Max(0, before - objects.Count - merged),
             DuplicatesMerged = merged, StreamsRecompressed = recompressed, ImagesDownsampled = downsampled,
-            SignaturesInvalidated = signed, Notes = notes,
+            SignaturesInvalidated = signed, Encrypted = security != null, Notes = notes,
         };
     }
+
+    /// <summary>
+    /// A rewrite changes the document: it is allowed with full rights (the permissions password, or
+    /// a certificate with every permission), when the permissions allow changing the document (/P
+    /// bit 4), or when <paramref name="ownerPassword"/> proves the permissions password now.
+    /// </summary>
+    private static void RequireChangeAllowed(PdfVectorDocument document, PdfSecurityHandler security, string? ownerPassword)
+    {
+        const int changeDocument = 1 << 3;
+        if (security.IsOwner || (security.Permissions & changeDocument) != 0)
+            return;
+        if (security is not PdfStandardSecurityHandler)
+            throw new PdfEncryptedDocumentException("This document is encrypted for specific recipients and your certificate does not allow changing it, so its size cannot be reduced.");
+        if (string.IsNullOrEmpty(ownerPassword))
+            throw new PdfEncryptedDocumentException("This document's permissions do not allow changing it. Its permissions password is needed to reduce its size.", passwordRequired: true);
+        if (!PdfEncryptor.IsOwnerKnown(document, ownerPassword))
+            throw new PdfEncryptedDocumentException("The permissions password is incorrect.", passwordRequired: true);
+    }
+
+    /// <summary>The encryption dictionary with any indirect parts written in place: it is copied as it is, outside the renumbered objects.</summary>
+    private static PdfObject? Inline(PdfObjectResolver r, PdfObject? o, int depth) => depth > 16 ? o : o switch
+    {
+        PdfIndirectRef ir => Inline(r, r.Resolve(ir), depth + 1),
+        PdfArray a => new PdfArray(a.Items.Select(i => Inline(r, i, depth + 1) ?? PdfNull.Instance).ToList()),
+        PdfDictionary d => new PdfDictionary(d.Entries.ToDictionary(e => e.Key, e => Inline(r, e.Value, depth + 1) ?? PdfNull.Instance)),
+        _ => o,
+    };
 
     private static string Header(byte[] original)
     {
@@ -378,8 +427,12 @@ public static class PdfOptimizer
     /// A complete rewrite: objects renumbered densely; with <paramref name="objectStreams"/>, every
     /// object that may be (not streams) packed a hundred to a compressed object stream, and a
     /// cross-reference stream; otherwise a classic table. A new file identifier keeps the first half.
+    /// With <paramref name="security"/>, loose objects and object streams are encrypted with the
+    /// document's file key (objects inside an object stream are covered by it, 7.6.2), and
+    /// <paramref name="encrypt"/> is written in clear, never inside an object stream.
     /// </summary>
-    private static byte[] Write(Dictionary<int, PdfObject> objects, PdfDictionary trailer, int root, bool objectStreams, string version)
+    private static byte[] Write(Dictionary<int, PdfObject> objects, PdfDictionary trailer, int root, bool objectStreams, string version,
+        PdfSecurityHandler? security, PdfDictionary? encrypt)
     {
         var renumber = new Dictionary<int, int>();
         foreach (int n in objects.Keys.OrderBy(k => k == root ? -1 : k)) renumber[n] = renumber.Count + 1;
@@ -404,15 +457,33 @@ public static class PdfOptimizer
         foreach (var (old, n) in renumber.OrderBy(x => x.Value))
             (objectStreams && objects[old] is not PdfStream ? packed : loose).Add((old, n));
 
+        PdfObject Sealed(PdfObject o, int number)
+        {
+            if (security == null) return o;
+            // Whatever /Crypt said applied to the old layout; the default stream filter applies now.
+            if (o is PdfStream st) o = st with { Dictionary = PdfObjectWriter.WithoutCryptFilter(st.Dictionary, st.Decrypted) };
+            return security.EncryptObject(o, number, 0);
+        }
+
         foreach (var (old, n) in loose)
         {
             offsets[n] = ms.Position;
             W($"{n} 0 obj\n");
-            PdfObjectWriter.Write(ms, Renumbered(objects[old]), stripCrypt: true);
+            PdfObjectWriter.Write(ms, Sealed(Renumbered(objects[old]), n), stripCrypt: true);
             W("\nendobj\n");
         }
 
         int next = total + 1;
+        int encryptNumber = 0;
+        if (encrypt != null)
+        {
+            encryptNumber = next++;
+            Array.Resize(ref offsets, next);
+            offsets[encryptNumber] = ms.Position;
+            W($"{encryptNumber} 0 obj\n");
+            PdfObjectWriter.Write(ms, encrypt); // the encryption dictionary itself is never encrypted
+            W("\nendobj\n");
+        }
         var streamNumbers = new List<int>();
         for (int start = 0; start < packed.Count; start += 100)
         {
@@ -433,29 +504,32 @@ public static class PdfOptimizer
             Array.Resize(ref offsets, next);
             offsets[number] = ms.Position;
             W($"{number} 0 obj\n");
-            PdfObjectWriter.Write(ms, PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
+            PdfObjectWriter.Write(ms, Sealed(PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
             {
                 ["Type"] = new PdfName("ObjStm"), ["N"] = new PdfInteger(group.Count), ["First"] = new PdfInteger(first.Length), ["Filter"] = new PdfName("FlateDecode"),
-            }, data));
+            }, data), number));
             W("\nendobj\n");
         }
 
         var r = trailer;
         byte[] fresh = MD5.HashData(ms.ToArray());
         PdfObject firstId = r["ID"] is PdfArray { Count: 2 } ids && ids[0] is PdfString s0 && s0.RawBytes.Length > 0 ? s0 : new PdfString(fresh);
+        // The file key of revisions 2 to 4 derives from the first /ID string: it stays exactly as it was, even when empty.
+        if (encrypt != null) firstId = r["ID"] is PdfArray { Count: > 0 } kept && kept[0] is PdfString k0 ? k0 : new PdfString(Array.Empty<byte>());
         var entries = new Dictionary<string, PdfObject>
         {
             ["Root"] = new PdfIndirectRef(renumber[root]),
             ["ID"] = new PdfArray(new PdfObject[] { firstId, new PdfString(fresh) }),
         };
         if (r["Info"] is PdfIndirectRef info && renumber.TryGetValue(info.ObjectNumber, out int infoNumber)) entries["Info"] = new PdfIndirectRef(infoNumber);
+        if (encrypt != null) entries["Encrypt"] = new PdfIndirectRef(encryptNumber);
 
         if (!objectStreams)
         {
             long xref = ms.Position;
-            W($"xref\n0 {total + 1}\n0000000000 65535 f \n");
-            for (int n = 1; n <= total; n++) W($"{offsets[n]:D10} 00000 n \n");
-            entries["Size"] = new PdfInteger(total + 1);
+            W($"xref\n0 {next}\n0000000000 65535 f \n");
+            for (int n = 1; n < next; n++) W($"{offsets[n]:D10} 00000 n \n");
+            entries["Size"] = new PdfInteger(next);
             W("trailer\n");
             PdfObjectWriter.Write(ms, new PdfDictionary(entries));
             W($"\nstartxref\n{xref}\n%%EOF\n");
