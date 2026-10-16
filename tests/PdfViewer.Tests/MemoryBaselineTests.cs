@@ -132,8 +132,14 @@ public class MemoryBaselineTests : IDisposable
         await Cycle(15); // warm up: caches, JIT, first allocations
         long warm = PrivateBytes();
         await Cycle(60);
-        long after = PrivateBytes();
-        _output.WriteLine($"private MB after 15 open/close cycles {Mb(warm):F0}, after 60 more {Mb(after):F0}");
-        Assert.True(after - warm < 24L * 1024 * 1024, $"60 open/render/close cycles kept {Mb(after - warm):F0} MB");
+        long first = PrivateBytes();
+        await Cycle(60);
+        long second = PrivateBytes();
+        _output.WriteLine($"private MB after 15 open/close cycles {Mb(warm):F0}, after 60 more {Mb(first):F0}, after 60 more {Mb(second):F0}");
+
+        // A leak keeps memory in every round of 60 cycles. One round alone can grow by tens of MB
+        // while other tests in the same process allocate, so the smaller round's growth is the signal.
+        long growth = Math.Min(first - warm, second - first);
+        Assert.True(growth < 24L * 1024 * 1024, $"60 open/render/close cycles kept {Mb(first - warm):F0} MB, then {Mb(second - first):F0} MB");
     }
 }
