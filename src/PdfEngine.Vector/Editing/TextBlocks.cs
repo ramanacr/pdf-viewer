@@ -23,8 +23,10 @@ internal sealed class TextLine
     /// <summary>For every character of <see cref="Text"/>: its glyph (index into Glyphs), or -1 for a space between words.</summary>
     public List<int> CharGlyph = new();
     public bool HardBreakAfter;
-    /// <summary>Written top to bottom (U runs down the column, V across it).</summary>
-    public bool Vertical => Glyphs.Count > 0 && Glyphs[0].Style.Vertical;
+    /// <summary>Written top to bottom (U runs down the column, V across it); sideways glyphs in it included.</summary>
+    public bool Vertical => Glyphs.Count > 0 && InColumn(Glyphs[0]);
+
+    internal static bool InColumn(ContentGlyph g) => g.Style.Vertical || g.Sideways;
 }
 
 /// <summary>A paragraph (or a single line) of text the page shows, as one editable unit.</summary>
@@ -55,6 +57,7 @@ internal static class TextBlocks
 {
     public static List<TextBlock> Build(IReadOnlyList<ContentGlyph> glyphs)
     {
+        MarkSideways(glyphs);
         var lines = BuildLines(glyphs);
         var blocks = Group(lines);
         for (int i = 0; i < blocks.Count; i++) blocks[i].Id = i;
@@ -99,6 +102,46 @@ internal static class TextBlocks
         return (u, v);
     }
 
+    /// <summary>
+    /// Where a horizontal glyph turned sideways in a column has its centre line, from its baseline,
+    /// in em: half way between its font's ascent and descent (it reads top to bottom, its top to the
+    /// column's right, centred across the column).
+    /// </summary>
+    internal static double SidewaysCentre(double ascent, double descent) =>
+        (Math.Clamp(ascent, 0.5, 1.2) + Math.Clamp(descent, -0.5, 0)) / 2;
+
+    internal static double SidewaysCentre(Fonts.PdfFont? font) => font != null ? SidewaysCentre(font.Ascent, font.Descent) : SidewaysCentre(0.8, -0.2);
+
+    /// <summary>
+    /// Marks horizontal glyphs drawn turned a quarter clockwise, the way vertical writing sets Latin
+    /// text, digits and the like (a rotated text matrix, in the same font's horizontal form or
+    /// another font), as candidates for the columns around them: they are in the frame of a column
+    /// in the same drawing, and are given where they would sit on its centre line. Lines that turn
+    /// out to have no upright glyph of a column are horizontal text after all (BuildLines).
+    /// </summary>
+    private static void MarkSideways(IReadOnlyList<ContentGlyph> glyphs)
+    {
+        var frames = new List<(int Context, PdfPoint U, PdfPoint V)>();
+        foreach (var g in glyphs)
+        {
+            g.Sideways = false;
+            g.Anchor = default;
+            if (!g.Style.Vertical) continue;
+            var (u, v) = VerticalFrame(g.Matrix);
+            if (frames.Count < 64 && !frames.Any(f => f.Context == g.Context && Dot(f.U, u) > 0.999 && Dot(f.V, v) > 0.999)) frames.Add((g.Context, u, v));
+        }
+        if (frames.Count == 0) return;
+        foreach (var g in glyphs)
+        {
+            if (g.Style.Vertical) continue;
+            var (u, v) = Frame(g.Matrix);
+            if (!frames.Any(f => f.Context == g.Context && Dot(f.U, u) > 0.999 && Dot(f.V, v) > 0.999)) continue;
+            double centre = SidewaysCentre(g.Style.Font) * g.Style.FontSize;
+            g.Sideways = true;
+            g.Anchor = new PdfPoint(g.Matrix.C * centre, g.Matrix.D * centre);
+        }
+    }
+
     internal static (PdfPoint U, PdfPoint V) FrameOf(ContentGlyph g) => g.Style.Vertical ? VerticalFrame(g.Matrix) : Frame(g.Matrix);
 
     /// <summary>A glyph's advance along its line, and its size across it, in user units.</summary>
@@ -130,7 +173,7 @@ internal static class TextBlocks
         PdfPoint origin = default;
         foreach (var g in glyphs)
         {
-            // Invisible text (a scan's recognized layer) and vertical writing are not edited here.
+            // Invisible text (a scan's recognized layer) is not edited here.
             if (g.Style.RenderMode == 3 || g.Style.FontResource.Length == 0) continue;
             double size = EmHeight(g);
             if (size < 0.5) continue;
@@ -141,7 +184,7 @@ internal static class TextBlocks
                 double s = Dot(d, current.U), t = Dot(d, current.V);
                 bool sameDirection = Dot(u, current.U) > 0.999;
                 double tol = Math.Max(size, current.Size);
-                if (sameDirection && g.Context == current.Glyphs[0].Context && g.Style.Vertical == current.Glyphs[0].Style.Vertical && Math.Abs(t - current.Baseline) < 0.25 * tol && s >= current.End - 0.5 * tol && s <= current.End + 1.5 * tol)
+                if (sameDirection && g.Context == current.Glyphs[0].Context && TextLine.InColumn(g) == TextLine.InColumn(current.Glyphs[0]) && Math.Abs(t - current.Baseline) < 0.25 * tol && s >= current.End - 0.5 * tol && s <= current.End + 1.5 * tol)
                 {
                     current.Glyphs.Add(g);
                     current.End = Math.Max(current.End, s + UserAdvance(g));
@@ -158,7 +201,47 @@ internal static class TextBlocks
         // Every line measured in its own frame, starting at its first glyph.
         foreach (var line in lines) Measure(line);
 
-        // Pieces of one line shown separately (a word at a time, or out of order) become one line.
+        MergePieces(lines);
+        if (SettleSideways(lines)) MergePieces(lines);
+        JoinSpans(glyphs, lines);
+        return lines;
+    }
+
+    /// <summary>
+    /// Sideways glyphs in a column line sit exactly on its centre line (where its upright glyphs
+    /// are), whatever their font's metrics, so the column is laid out again from one line. A line
+    /// of sideways glyphs alone is horizontal text turned, not part of a column: it is that again.
+    /// Returns whether any line was.
+    /// </summary>
+    private static bool SettleSideways(List<TextLine> lines)
+    {
+        bool reverted = false;
+        foreach (var line in lines)
+        {
+            if (!line.Glyphs.Any(g => g.Sideways)) continue;
+            var upright = line.Glyphs.FirstOrDefault(g => g.Style.Vertical);
+            if (upright == null)
+            {
+                foreach (var g in line.Glyphs) { g.Sideways = false; g.Anchor = default; }
+                reverted = true;
+            }
+            else
+            {
+                double centre = Dot(upright.Origin, line.V);
+                foreach (var g in line.Glyphs.Where(g => g.Sideways))
+                {
+                    double off = centre - Dot(g.Origin, line.V);
+                    g.Anchor = new PdfPoint(g.Anchor.X + off * line.V.X, g.Anchor.Y + off * line.V.Y);
+                }
+            }
+            Measure(line);
+        }
+        return reverted;
+    }
+
+    /// <summary>Pieces of one line shown separately (a word at a time, or out of order) become one line.</summary>
+    private static void MergePieces(List<TextLine> lines)
+    {
         // Candidates are near each other in (direction, baseline) order, so only neighbours are compared.
         bool merged = true;
         while (merged)
@@ -185,8 +268,6 @@ internal static class TextBlocks
                     merged = true;
                 }
         }
-        JoinSpans(glyphs, lines);
-        return lines;
     }
 
     /// <summary>
