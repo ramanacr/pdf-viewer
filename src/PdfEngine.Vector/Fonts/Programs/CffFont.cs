@@ -18,6 +18,16 @@ internal sealed class CffFont
     public int GlyphCount { get; private init; }
     public bool IsCidKeyed { get; private init; }
     public double[] FontMatrix { get; private init; } = { 0.001, 0, 0, 0.001, 0, 0 };
+
+    /// <summary>True when the Top DICT has a FontMatrix entry (<see cref="FontMatrix"/> is otherwise the default).</summary>
+    public bool HasTopFontMatrix { get; private init; }
+
+    /// <summary>
+    /// CID-keyed fonts: the FontMatrix of each FDArray Font DICT (null where a DICT has none);
+    /// empty for name-keyed fonts or when the FDArray cannot be read.
+    /// </summary>
+    public IReadOnlyList<double[]?> FontDictMatrices { get; private set; } = Array.Empty<double[]?>();
+
     public double[] FontBBox { get; private init; } = { 0, -200, 1000, 800 };
 
     /// <summary>Glyph index → glyph name (name-keyed) or CID (CID-keyed, as a number string).</summary>
@@ -28,6 +38,12 @@ internal sealed class CffFont
 
     /// <summary>Built-in encoding: code → glyph index (from a custom encoding, or StandardEncoding by name).</summary>
     private int[]? _encoding;
+
+    /// <summary>FDSelect: glyph index → Font DICT (CID-keyed fonts with a readable FDArray).</summary>
+    private byte[]? _fdSelect;
+
+    private List<IndexEntry> _charStrings = new();
+    private double _defaultWidthX, _nominalWidthX;
 
     private CffFont(byte[] data) => Data = data;
 
@@ -77,6 +93,7 @@ internal sealed class CffFont
             GlyphCount = nGlyphs,
             IsCidKeyed = cid,
             FontMatrix = top.TryGetValue(1207, out var fm) && fm.Length >= 6 ? fm[..6] : new[] { 0.001, 0, 0, 0.001, 0, 0 },
+            HasTopFontMatrix = fm is { Length: >= 6 },
             FontBBox = top.TryGetValue(5, out var bb) && bb.Length >= 4 ? bb[..4] : new double[] { 0, -200, 1000, 800 },
             _strings = stringTable,
             TopDictOffset = topDict.Offset,
@@ -91,6 +108,15 @@ internal sealed class CffFont
             int encOffset = top.TryGetValue(16, out var eo) && eo.Length > 0 ? (int)eo[0] : 0;
             font._encoding = font.ReadEncoding(d, encOffset);
         }
+        font._charStrings = charStrings;
+        if (top.TryGetValue(18, out var pv) && pv.Length >= 2 && pv[0] > 0 && pv[1] >= 0 && pv[1] + pv[0] <= d.Length)
+        {
+            var priv = ParseDict(d, (int)pv[1], (int)pv[0]);
+            font._defaultWidthX = priv.TryGetValue(20, out var dw) && dw.Length > 0 ? dw[0] : 0;
+            font._nominalWidthX = priv.TryGetValue(21, out var nw) && nw.Length > 0 ? nw[0] : 0;
+        }
+        if (cid)
+            font.ReadFontDicts(d, top);
         return font;
     }
 
@@ -137,6 +163,128 @@ internal sealed class CffFont
     /// <summary>Glyph index through the font's built-in encoding; -1 when the code is unmapped.</summary>
     public int GidForBuiltInCode(int code) =>
         _encoding != null && code >= 0 && code < _encoding.Length && _encoding[code] > 0 ? _encoding[code] : -1;
+
+    /// <summary>
+    /// The matrix that maps a glyph's outline to text space. Name-keyed fonts: the Top DICT
+    /// FontMatrix. CID-keyed fonts: the glyph's Font DICT matrix concatenated with the Top DICT's
+    /// (FD × Top, as FreeType does: the FD matrix alone when the Top DICT has none, the Top DICT
+    /// matrix alone when the FD has none).
+    /// </summary>
+    public double[] OutlineMatrix(int gid)
+    {
+        if (_fdSelect == null || FontDictMatrices.Count == 0)
+            return FontMatrix;
+        int fd = gid >= 0 && gid < _fdSelect.Length ? _fdSelect[gid] : 0;
+        if (fd >= FontDictMatrices.Count || FontDictMatrices[fd] is not { } m)
+            return FontMatrix;
+        if (!HasTopFontMatrix)
+            return m;
+        var t = FontMatrix;
+        return new[]
+        {
+            m[0] * t[0] + m[1] * t[2], m[0] * t[1] + m[1] * t[3],
+            m[2] * t[0] + m[3] * t[2], m[2] * t[1] + m[3] * t[3],
+            m[4] * t[0] + m[5] * t[2] + t[4], m[4] * t[1] + m[5] * t[3] + t[5],
+        };
+    }
+
+    /// <summary>True when some Font DICT of a CID-keyed font carries its own FontMatrix.</summary>
+    public bool HasFontDictMatrices
+    {
+        get
+        {
+            foreach (var m in FontDictMatrices)
+                if (m != null) return true;
+            return false;
+        }
+    }
+
+    private void ReadFontDicts(byte[] d, Dictionary<int, double[]> top)
+    {
+        // A broken FDArray or FDSelect leaves the font as it was read before: Top DICT matrix only.
+        try
+        {
+            if (!top.TryGetValue(1236, out var fa) || fa.Length < 1 || !top.TryGetValue(1237, out var fs) || fs.Length < 1)
+                return;
+            int p = (int)fa[0];
+            var dicts = ReadIndex(d, ref p);
+            if (dicts.Count is 0 or > 256)
+                return;
+            var matrices = new double[]?[dicts.Count];
+            for (int i = 0; i < dicts.Count; i++)
+            {
+                var fd = ParseDict(d, dicts[i].Offset, dicts[i].Length);
+                matrices[i] = fd.TryGetValue(1207, out var m) && m.Length >= 6 ? m[..6] : null;
+            }
+            var select = new byte[GlyphCount];
+            int q = (int)fs[0];
+            int format = d[q++];
+            if (format == 0)
+            {
+                for (int g = 0; g < GlyphCount; g++) select[g] = d[q + g];
+            }
+            else if (format == 3)
+            {
+                int nRanges = BigEndian.U16(d, q);
+                q += 2;
+                for (int r = 0; r < nRanges; r++, q += 3)
+                {
+                    int first = BigEndian.U16(d, q), next = BigEndian.U16(d, q + 3);
+                    for (int g = first; g < next && g < GlyphCount; g++) select[g] = d[q + 2];
+                }
+            }
+            else
+            {
+                return;
+            }
+            foreach (byte b in select)
+                if (b >= dicts.Count) return;
+            _fdSelect = select;
+            FontDictMatrices = matrices;
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or InvalidDataException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A glyph's advance in glyph units, from its charstring (the optional width operand before
+    /// the first stack-clearing operator, plus nominalWidthX; defaultWidthX without it). Only for
+    /// name-keyed fonts, whose single Private DICT holds both; -1 when unknown.
+    /// </summary>
+    public double GlyphAdvance(int gid)
+    {
+        if (IsCidKeyed || gid < 0 || gid >= _charStrings.Count)
+            return -1;
+        var cs = _charStrings[gid];
+        int p = cs.Offset, end = cs.Offset + cs.Length, count = 0;
+        double first = 0;
+        while (p < end)
+        {
+            int b0 = Data[p];
+            if (b0 is >= 32 or 28)
+            {
+                double v;
+                if (b0 == 28) { v = (short)((Data[p + 1] << 8) | Data[p + 2]); p += 3; }
+                else if (b0 == 255) { v = ((Data[p + 1] << 24) | (Data[p + 2] << 16) | (Data[p + 3] << 8) | Data[p + 4]) / 65536.0; p += 5; }
+                else if (b0 <= 246) { v = b0 - 139; p++; }
+                else if (b0 <= 250) { v = (b0 - 247) * 256 + Data[p + 1] + 108; p += 2; }
+                else { v = -(b0 - 251) * 256 - Data[p + 1] - 108; p += 2; }
+                if (count++ == 0) first = v;
+                continue;
+            }
+            bool hasWidth = b0 switch
+            {
+                1 or 3 or 18 or 23 or 19 or 20 => count % 2 == 1, // stems and hint masks
+                21 => count == 3,                                 // rmoveto
+                4 or 22 => count == 2,                            // vmoveto, hmoveto
+                14 => count is 1 or 5,                            // endchar
+                _ => false,                                       // a subroutine call or path operator: no width before it
+            };
+            return hasWidth ? _nominalWidthX + first : _defaultWidthX;
+        }
+        return _defaultWidthX;
+    }
 
     // ------------------------------------------------------------------ structures
 

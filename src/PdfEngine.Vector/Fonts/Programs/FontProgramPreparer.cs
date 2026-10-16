@@ -174,6 +174,36 @@ public static class FontProgramPreparer
     }
 
     /// <summary>
+    /// Advances of a name-keyed CFF program for codes 0-255, in 1/1000 text space: each glyph's
+    /// charstring width mapped through the FontMatrix (the x of (w, 0) x M). For simple fonts with
+    /// no /Widths; null when the program cannot be read. Glyphs are chosen as for drawing.
+    /// </summary>
+    internal static List<double>? CffWidths(byte[] data, string?[] glyphNames, bool symbolic, double missingWidth)
+    {
+        if (data.Length > MaxProgramBytes || CffFont.TryParse(data) is not { IsCidKeyed: false } cff)
+            return null;
+        try
+        {
+            double a = cff.FontMatrix[0];
+            var widths = new List<double>(256);
+            for (int code = 0; code < 256; code++)
+            {
+                int gid = -1;
+                if (symbolic) gid = cff.GidForBuiltInCode(code);
+                if (gid <= 0 && code < glyphNames.Length && glyphNames[code] is { } name) gid = cff.GidForName(name);
+                if (gid <= 0) gid = cff.GidForBuiltInCode(code);
+                double w = gid > 0 ? cff.GlyphAdvance(gid) : -1;
+                widths.Add(w >= 0 && double.IsFinite(w * a) ? w * a * 1000.0 : missingWidth);
+            }
+            return widths;
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Code/CID → glyph index for CFF outlines. Composite: CID via the charset (CID-keyed) or as
     /// the index. Simple: the PDF encoding's glyph name through the charset; symbolic fonts prefer
     /// the program's built-in encoding (ISO 32000-2 9.6.5.2).
@@ -204,33 +234,51 @@ public static class FontProgramPreparer
     private static (byte[]? Sfnt, PdfMatrix? GlyphMatrix) WrapCff(PdfFont font, byte[] cffData, CffFont cff, Dictionary<string, byte[]>? existing)
     {
         // OpenType requires the CFF FontMatrix to be a uniform 1/unitsPerEm scale. Producers write
-        // 1/2048 rounded (0.00048829999), narrow faces scale x (0.00082 0 0 0.001) and obliques
-        // skew (0.001 0 0.000212 0.001): the matrix is rewritten to the standard scale and the rest
-        // becomes the face's glyph matrix, applied by the renderer.
+        // 1/2048 rounded (0.00048829999), narrow faces scale x (0.00082 0 0 0.001), obliques skew
+        // (0.001 0 0.000212 0.001), and some rotate or mirror: the matrix is rewritten to the
+        // standard scale and the rest becomes the face's glyph matrix, applied by the renderer.
         var fm = cff.FontMatrix;
-        if (fm.Length < 6 || fm[3] <= 0)
+        if (fm.Length < 6 || !Invertible(fm))
             return (null, null);
-        int unitsPerEm = (int)Math.Round(1.0 / fm[3]);
-        if (unitsPerEm is < 16 or > 16384)
-            return (null, null);
-        bool standard = fm[0] == 1.0 / unitsPerEm && fm[3] == 1.0 / unitsPerEm && fm[1] == 0 && fm[2] == 0 && fm[4] == 0 && fm[5] == 0;
+        int unitsPerEm;
         PdfMatrix? glyphMatrix = null;
-        if (!standard)
+        if (cff.HasFontDictMatrices)
         {
-            // The exact 1/unitsPerEm may not fit where the producer's shorter number was
-            // (0.000488281 for 1/2048): then declare 1000 units per em, whose 0.001 always fits,
-            // and let the glyph matrix carry the rest of the scale.
-            byte[]? rewritten = cff.WithStandardFontMatrix(unitsPerEm);
-            if (rewritten == null && unitsPerEm != 1000 && (rewritten = cff.WithStandardFontMatrix(1000)) != null)
-                unitsPerEm = 1000;
-            if (rewritten == null)
+            // CID-keyed with a FontMatrix in the FDArray: each glyph's outline is mapped by its Font
+            // DICT's matrix concatenated with the Top DICT's (FD x Top). DirectWrite concatenates
+            // them the same way, FreeType's way (scale, skew and rotation alike; both backends are
+            // compared with PDFium in CffFontMatrixTests), and one glyph matrix per face could not
+            // carry a different matrix per Font DICT, so the program is kept as it is. The em
+            // declared in head follows the matrix of the first real glyph.
+            var outline = cff.OutlineMatrix(Math.Min(1, cff.GlyphCount - 1));
+            if (!Invertible(outline))
                 return (null, null);
-            cffData = rewritten;
-            var residual = new PdfMatrix(fm[0] * unitsPerEm, fm[1] * unitsPerEm, fm[2] * unitsPerEm, fm[3] * unitsPerEm, fm[4], fm[5]);
-            const double eps = 1e-4;
-            bool identity = Math.Abs(residual.A - 1) < eps && Math.Abs(residual.B) < eps && Math.Abs(residual.C) < eps &&
-                            Math.Abs(residual.D - 1) < eps && Math.Abs(residual.E) < eps && Math.Abs(residual.F) < eps;
-            glyphMatrix = identity ? null : residual;
+            unitsPerEm = UnitsPerEm(outline);
+        }
+        else
+        {
+            unitsPerEm = UnitsPerEm(fm);
+            bool standard = fm[0] == 1.0 / unitsPerEm && fm[3] == 1.0 / unitsPerEm && fm[1] == 0 && fm[2] == 0 && fm[4] == 0 && fm[5] == 0;
+            if (!standard)
+            {
+                // The exact 1/unitsPerEm may not fit where the producer's shorter number was
+                // (0.000488281 for 1/2048): then declare 1000 units per em, whose 0.001 fits any
+                // entry that holds two reals, and let the glyph matrix carry the rest of the scale.
+                byte[]? rewritten = cff.WithStandardFontMatrix(unitsPerEm);
+                if (rewritten == null && unitsPerEm != 1000 && (rewritten = cff.WithStandardFontMatrix(1000)) != null)
+                    unitsPerEm = 1000;
+                if (rewritten != null)
+                {
+                    cffData = rewritten;
+                    var residual = new PdfMatrix(fm[0] * unitsPerEm, fm[1] * unitsPerEm, fm[2] * unitsPerEm, fm[3] * unitsPerEm, fm[4], fm[5]);
+                    const double eps = 1e-4;
+                    bool identity = Math.Abs(residual.A - 1) < eps && Math.Abs(residual.B) < eps && Math.Abs(residual.C) < eps &&
+                                    Math.Abs(residual.D - 1) < eps && Math.Abs(residual.E) < eps && Math.Abs(residual.F) < eps;
+                    glyphMatrix = identity ? null : residual;
+                }
+                // Otherwise the entry is too short for any standard scale (small integers, such as
+                // [1 0 0 1 0 0]): the program keeps its own matrix, which DirectWrite applies.
+            }
         }
 
         var bb = cff.FontBBox;
@@ -258,6 +306,26 @@ public static class FontProgramPreparer
         }
         AddBookkeeping(font, tables, unitsPerEm, yMax, yMin, n);
         return (Sfnt.Write(Sfnt.OpenTypeCffVersion, tables), glyphMatrix);
+    }
+
+    private static bool Invertible(double[] m)
+    {
+        double det = m[0] * m[3] - m[1] * m[2];
+        return double.IsFinite(det) && Math.Abs(det) > 1e-14 && double.IsFinite(m[4]) && double.IsFinite(m[5]);
+    }
+
+    /// <summary>
+    /// The em a FontMatrix implies: 1/d for an upright matrix (as before: a narrow face keeps its
+    /// 1000 units), else the inverse of its mean scale (a rotated or mirrored one); 1000 when that
+    /// is outside what head can declare.
+    /// </summary>
+    private static int UnitsPerEm(double[] m)
+    {
+        if (m[1] == 0 && m[3] > 0 && Math.Round(1.0 / m[3]) is >= 16 and <= 16384)
+            return (int)Math.Round(1.0 / m[3]);
+        double scale = Math.Sqrt(Math.Abs(m[0] * m[3] - m[1] * m[2]));
+        double units = Math.Round(1.0 / scale);
+        return units is >= 16 and <= 16384 ? (int)units : 1000;
     }
 
     private static short Clamp16(double v) => (short)Math.Clamp(Math.Round(v), short.MinValue, short.MaxValue);
