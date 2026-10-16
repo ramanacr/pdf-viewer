@@ -87,6 +87,9 @@ internal sealed partial class Replayer : IDisposable
 
     public void Analyze()
     {
+        MatchGroups();
+        foreach (int i in _knockoutOverLimit!)
+            Report(_list.Commands[i], PdfFallbackReason.TransparencyGroup, "Knockout group has too many elements for the native compositor");
         foreach (var cmd in _list.Commands)
         {
             _ct.ThrowIfCancellationRequested();
@@ -161,8 +164,6 @@ internal sealed partial class Replayer : IDisposable
         public ID2D1Bitmap1? Target { get; init; }
         public int Width { get; init; }
         public int Height { get; init; }
-        /// <summary>Every pixel is opaque (the page, or a group initialised with an opaque backdrop).</summary>
-        public bool Opaque { get; init; }
         /// <summary>
         /// Clip and opacity layers in push order. <c>Rect</c> is set for rectangular clips (user
         /// space); under an axis-preserving transform they become an axis-aligned clip instead of a
@@ -173,32 +174,61 @@ internal sealed partial class Replayer : IDisposable
         public readonly List<bool> AxisAligned = new();
     }
 
-    // Matching End index for each group Begin, and whether a Normal transparency group contains a
-    // blend group (then it is composited offscreen, because an opacity layer cannot be split).
+    // Matching End index for each group Begin, and whether a group contains something that reads
+    // its backdrop: a blend group or a non-isolated knockout group. Such a Normal transparency
+    // group is composited offscreen, because an opacity layer cannot be split, and its content
+    // must see the group's own pixels as the backdrop rather than the page under the layer.
     private int[]? _groupEnd;
     private bool[]? _containsBlend;
+    // Knockout groups with more than MaxKnockoutElements elements: PDFium draws them.
+    private HashSet<int>? _knockoutOverLimit;
+
+    /// <summary>
+    /// Most elements a knockout group may have to be composited natively. Each element costs two
+    /// offscreen renders of the group's rectangle (the element and its shape); above the limit
+    /// the group becomes a fallback region.
+    /// </summary>
+    internal const int MaxKnockoutElements = 256;
 
     private void MatchGroups()
     {
         var cmds = _list.Commands;
         _groupEnd = new int[cmds.Count];
         _containsBlend = new bool[cmds.Count];
+        _knockoutOverLimit = new HashSet<int>();
         var open = new Stack<int>();
+        // Per open group: its top-level element count (knockout groups only count).
+        var elements = new Stack<int>();
         for (int i = 0; i < cmds.Count; i++)
         {
             _groupEnd[i] = -1;
-            switch (cmds[i])
+            var cmd = cmds[i];
+            if (open.Count > 0 && cmds[open.Peek()] is BeginCompositingGroup { Knockout: true }
+                && cmd is FillPath or StrokePath or DrawGlyphRun or DrawImage or DrawShading or DrawTilingPattern
+                    or BeginCompositingGroup or BeginTransparencyGroup)
+            {
+                int n = elements.Pop() + 1;
+                elements.Push(n);
+                if (n > MaxKnockoutElements) _knockoutOverLimit.Add(open.Peek());
+            }
+            switch (cmd)
             {
                 case BeginCompositingGroup g:
-                    if (g.Blend != PdfBlendMode.Normal)
+                    if (g.Blend != PdfBlendMode.Normal || g.Knockout && !g.Isolated)
                         foreach (int o in open) _containsBlend[o] = true;
                     open.Push(i);
+                    elements.Push(0);
                     break;
                 case BeginTransparencyGroup:
                     open.Push(i);
+                    elements.Push(0);
                     break;
                 case EndCompositingGroup or EndTransparencyGroup:
-                    if (open.Count > 0) _groupEnd[open.Pop()] = i;
+                    if (open.Count > 0)
+                    {
+                        _groupEnd[open.Pop()] = i;
+                        elements.Pop();
+                    }
                     break;
             }
         }
@@ -238,7 +268,7 @@ internal sealed partial class Replayer : IDisposable
         if (recording is { } recorded) _recordingSize = recorded;
         _describeText = recording != null;
         var size = recording ?? target!.PixelSize;
-        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height, Opaque = recording == null };
+        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height };
         try
         {
             DrawRange(surface, 0, _list.Commands.Count, pageToDevice, Matrix3x2.Identity, visiblePage);
@@ -359,6 +389,11 @@ internal sealed partial class Replayer : IDisposable
                 case BeginCompositingGroup cg:
                 {
                     int groupEnd = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
+                    if (_knockoutOverLimit!.Contains(i))
+                    {
+                        i = groupEnd; // a fallback region (Analyze) covers it
+                        break;
+                    }
                     DrawGroup(surface, cg.Bounds, cg.Alpha, cg.Blend, cg.SoftMask, cg.Isolated, cg.Knockout, _containsBlend![i],
                         i + 1, groupEnd, pageToDevice, ctm, visiblePage);
                     i = groupEnd;
@@ -394,8 +429,10 @@ internal sealed partial class Replayer : IDisposable
     /// <summary>
     /// Renders a group's content into an offscreen bitmap, applies the soft mask and group alpha,
     /// and composites it onto <paramref name="surface"/> with the blend mode (ISO 32000-2 11.3–11.6).
-    /// Groups are composited as isolated; a non-Normal blend reads the backdrop from the surface
-    /// after popping its layers, so every enclosing clip has been applied to it.
+    /// A non-isolated group whose content reads the backdrop starts from a copy of it, which is
+    /// removed again afterwards; other groups are composited as isolated, which is then the same.
+    /// A non-Normal blend reads the backdrop from the surface after popping its layers, so every
+    /// enclosing clip has been applied to it.
     /// </summary>
     private void DrawGroup(Surface surface, PdfRect? bounds, double alpha, PdfBlendMode blend, PdfSoftMask? mask,
         bool isolated, bool knockout, bool containsBlend,
@@ -434,8 +471,10 @@ internal sealed partial class Replayer : IDisposable
         bool blends = blend != PdfBlendMode.Normal;
 
         // A non-isolated group sees the backdrop: inner blend modes and knockout elements composite
-        // against it (11.4.7). Exact on an opaque backdrop; on a transparent one the group is isolated.
-        bool nonIsolated = !isolated && (containsBlend || knockout) && surface.Opaque && !_shapeMode;
+        // against it (11.4.7). The backdrop is whatever the surface holds under the group, opaque
+        // (the page) or not (inside an isolated group, a soft mask or a knockout element). Only a
+        // command list (printing) has no pixels to start from; such pages print as images.
+        bool nonIsolated = !isolated && (containsBlend || knockout) && surface.Target != null && !_shapeMode;
         ID2D1Bitmap1? initialBackdrop = nonIsolated ? CopyBackdrop(surface, x0, y0, w, h) : null;
 
         ID2D1Bitmap1 RenderContent(bool fromBackdrop)
@@ -451,7 +490,7 @@ internal sealed partial class Replayer : IDisposable
             if (fromBackdrop)
                 gctx.DrawImage(initialBackdrop!, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
             using var gctx1 = surface.Ctx1 != null ? gctx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
-            var sub = new Surface { Ctx = gctx, Ctx1 = gctx1, Target = bmp, Width = w, Height = h, Opaque = fromBackdrop };
+            var sub = new Surface { Ctx = gctx, Ctx1 = gctx1, Target = bmp, Width = w, Height = h };
             try
             {
                 // A blended group replaces its rectangle on the surface, so its content must carry
@@ -484,8 +523,10 @@ internal sealed partial class Replayer : IDisposable
 
             if (nonIsolated)
             {
-                // Group result with the backdrop removed (11.4.8, α0 = 1): R = Cn − C0 · (1 − αg), where
-                // Cn was rendered over the backdrop and αg is the group's own alpha (isolated render).
+                // Group result with the backdrop removed (11.4.8): C = Cn + (Cn − C0)·(α0/αg − α0).
+                // Premultiplied by αg that is R = Cn − C0·(1 − αg) for any backdrop alpha α0, where
+                // Cn (premultiplied, alpha α0 ∪ αg) was rendered over the backdrop C0 (premultiplied)
+                // and αg is the group's own alpha (an isolated render of the same content).
                 var alphaRgb = new Vortice.Direct2D1.Effects.ColorMatrix(ctx)
                 {
                     Matrix = new Matrix5x4(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0),
@@ -623,9 +664,12 @@ internal sealed partial class Replayer : IDisposable
     }
 
     /// <summary>
-    /// One element of a knockout group: G = G·(1 − f) + E + (f − αE)·C0, where E is the element
-    /// rendered alone (with the current clips), f its shape and C0 the group's initial backdrop
-    /// (absent for isolated groups).
+    /// One element of a knockout group (11.4.6.2, 11.4.8): it composites with the group's initial
+    /// backdrop C0 instead of what earlier elements left, and replaces them by its shape f. With E
+    /// the element rendered over C0 with its own blend mode and opacity (over nothing in an
+    /// isolated group), the group becomes G·(1 − f) + E − C0·(1 − f). For a Normal element that
+    /// is G·(1 − f) + E' + (f − αE')·C0 with E' the element alone; a blending element blends with
+    /// C0 itself, and a non-isolated group inside sees C0 as its backdrop.
     /// </summary>
     private void DrawKnockoutElement(Surface surface, Knockout knockout, int start, int end, Matrix3x2 pageToDevice, Matrix3x2 ctm, PdfRect visiblePage)
     {
@@ -641,6 +685,8 @@ internal sealed partial class Replayer : IDisposable
             ectx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
             if (_res.DocumentTextParams != null) ectx.TextRenderingParams = _res.DocumentTextParams;
             ectx.Clear(new Color4(0, 0, 0, 0));
+            if (!shape && knockout.Backdrop is { } initial)
+                ectx.DrawImage(initial, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
             using var ectx1 = surface.Ctx1 != null ? ectx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
             var sub = new Surface { Ctx = ectx, Ctx1 = ectx1, Target = bmp, Width = surface.Width, Height = surface.Height };
             bool savedShape = _shapeMode;
@@ -673,12 +719,10 @@ internal sealed partial class Replayer : IDisposable
             ID2D1Image add = element;
             if (knockout.Backdrop is { } c0)
             {
-                // (f − αE) broadcast to all channels, times C0, plus E.
+                // E − C0·(1 − f): f broadcast to all channels; outside the shape E is C0, so this is 0.
                 var fRgb = AlphaToRgb(ctx, shapeBmp, disposables);
-                var eRgb = AlphaToRgb(ctx, element, disposables);
-                var diff = Arithmetic(ctx, fRgb, eRgb, new Vector4(0, 1, -1, 0), disposables);   // f − αE
-                var times = Arithmetic(ctx, c0, diff, new Vector4(1, 0, 0, 0), disposables);    // · C0
-                add = Arithmetic(ctx, element, times, new Vector4(0, 1, 1, 0), disposables);   // + E
+                var uncovered = Arithmetic(ctx, c0, fRgb, new Vector4(-1, 1, 0, 0), disposables); // C0 − C0·f
+                add = Arithmetic(ctx, element, uncovered, new Vector4(0, 1, -1, 0), disposables);  // E − that
             }
             ctx.Transform = Matrix3x2.Identity;
             ctx.DrawImage(shapeBmp, Vector2.Zero, null, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOut);
