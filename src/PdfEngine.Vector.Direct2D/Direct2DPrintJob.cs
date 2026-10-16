@@ -9,8 +9,13 @@ public enum PrintedPageKind
 {
     /// <summary>Paths, text and images as themselves; only effects are rasterized.</summary>
     Vector,
-    /// <summary>One image of the page (blend modes read back pixels a print recording does not have).</summary>
+    /// <summary>
+    /// One image of the page: what reads back the page under it (blend modes, non-isolated
+    /// knockout groups) covers most of it, and a print recording has no pixels to read.
+    /// </summary>
     Raster,
+    /// <summary>Vectors, with only the areas that read back the page under them as images.</summary>
+    Mixed,
 }
 
 /// <summary>
@@ -109,17 +114,17 @@ public sealed class Direct2DPrintJob : IDisposable
         var request = new RenderRequest { PageNumber = list.PageNumber, Dpi = RecordingDpi(list, rotation), Rotation = rotation };
         ID2D1CommandList sheet;
         PrintedPageKind kind;
-        if (Replayer.NeedsBackdrop(list))
+        if (await _renderer.RecordPrintPageWithRegionsAsync(list, request, provider, destination, ct).ConfigureAwait(false) is { } recorded)
+        {
+            sheet = recorded.Sheet;
+            kind = recorded.Regions.Count == 0 ? PrintedPageKind.Vector : PrintedPageKind.Mixed;
+        }
+        else
         {
             var result = await _renderer.RenderAsync(list, request, provider, ct).ConfigureAwait(false);
             using var page = result.Page;
             sheet = _renderer.RecordPrintImage(page, destination);
             kind = PrintedPageKind.Raster;
-        }
-        else
-        {
-            sheet = await _renderer.RecordPrintPageAsync(list, request, provider, destination, ct).ConfigureAwait(false);
-            kind = PrintedPageKind.Vector;
         }
         using (sheet)
         {

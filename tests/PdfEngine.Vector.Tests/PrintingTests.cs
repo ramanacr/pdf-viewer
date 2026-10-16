@@ -306,7 +306,7 @@ public class PrintingTests
     }
 
     [Fact]
-    public async Task BlendModePage_IsPrintedAsOneImageBesideVectorPages()
+    public async Task BlendModePages_PrintAsImageAreasOrWholeImagesBesideVectorPages()
     {
         if (!PrinterInstalled(XpsPrinter))
         {
@@ -314,19 +314,128 @@ public class PrintingTests
             return;
         }
         var b = new VectorPdfBuilder();
+        // A blend over a quarter of the page: only that area is an image.
         b.AddPage("0.2 0.6 0.9 rg 20 20 160 160 re f /G1 gs 0.9 0.5 0.2 rg 60 60 100 100 re f", "<< /ExtGState << /G1 << /BM /Multiply >> >> >>");
         b.AddPage("0 0 1 rg 20 20 100 100 re f");
+        // A blend over almost all of it: the page is one image.
+        b.AddPage("0.2 0.6 0.9 rg 0 0 200 200 re f /G1 gs 0.9 0.5 0.2 rg 5 5 190 190 re f", "<< /ExtGState << /G1 << /BM /Multiply >> >> >>");
         string path = Path.Combine(Path.GetTempPath(), $"vector-print-{Guid.NewGuid():N}.xps");
         try
         {
-            var kinds = await PrintAsync(XpsPrinter, b.Build(), new[] { 1, 2 }, path);
-            Assert.Equal(new[] { PrintedPageKind.Raster, PrintedPageKind.Vector }, kinds);
-            Assert.Equal(2, CountXpsPages(path));
+            var kinds = await PrintAsync(XpsPrinter, b.Build(), new[] { 1, 2, 3 }, path);
+            Assert.Equal(new[] { PrintedPageKind.Mixed, PrintedPageKind.Vector, PrintedPageKind.Raster }, kinds);
+            Assert.Equal(3, CountXpsPages(path));
         }
         finally
         {
             try { File.Delete(path); } catch (IOException) { }
         }
+    }
+
+    // A blend and a non-isolated knockout group each print as an image of their area only: the
+    // text before, over and away from them stays glyphs, and the output looks like the source.
+    [Fact]
+    public async Task BackdropGroupPages_KeepTheirTextAsGlyphsInXps()
+    {
+        if (!PrinterInstalled(XpsPrinter))
+        {
+            _output.WriteLine($"{XpsPrinter} is not installed: skipped.");
+            return;
+        }
+        string path = Path.Combine(Path.GetTempPath(), $"vector-print-{Guid.NewGuid():N}.xps");
+        try
+        {
+            var kinds = await PrintAsync(XpsPrinter, PrintBackdropTests.MultiplyPage(), new[] { 1 }, path);
+            Assert.Equal(new[] { PrintedPageKind.Mixed }, kinds);
+            var pages = ReadXpsPages(path);
+            string page = Assert.Single(pages);
+            // The writer keeps glyph indices without the text: one Glyphs element per run, a glyph per letter.
+            var runs = System.Text.RegularExpressions.Regex.Matches(page, "<Glyphs [^>]*Indices=\"([^\"]*)\"")
+                .Select(m => m.Groups[1].Value.Split(';').Length).ToArray();
+            _output.WriteLine($"glyph runs: {string.Join(", ", runs)}");
+            foreach (var text in new[] { "Before the blend", "After the blend", "Far away text" })
+                Assert.Contains(text.Replace(" ", "").Length, runs); // spaces are advances, not glyphs
+            Assert.Contains("ImageBrush", page); // the blended area
+        }
+        finally
+        {
+            try { File.Delete(path); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task BackdropGroupPages_PrintToPdfWithTextAndTheSourceLook()
+    {
+        if (!PrinterInstalled(PdfPrinter))
+        {
+            _output.WriteLine($"{PdfPrinter} is not installed: skipped.");
+            return;
+        }
+        var cases = new (byte[] Pdf, string[] Texts)[]
+        {
+            (PrintBackdropTests.MultiplyPage(), new[] { "Before the blend", "After the blend", "Far away text" }),
+            (PrintBackdropTests.KnockoutPage(), new[] { "Knockout page", "Drawn after", "Far away text" }),
+        };
+        foreach (var (source, texts) in cases)
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"vector-print-{Guid.NewGuid():N}.pdf");
+            try
+            {
+                Assert.Equal(new[] { PrintedPageKind.Mixed }, await PrintAsync(PdfPrinter, source, new[] { 1 }, path));
+                byte[] printed = WaitForOutput(path, bytes => bytes.AsSpan(Math.Max(0, bytes.Length - 32)).IndexOf("%%EOF"u8) >= 0, TimeSpan.FromSeconds(90));
+                using var engine = new PdfiumEngine();
+                await using var output = await engine.OpenDocumentAsync(printed);
+                await using var original = await engine.OpenDocumentAsync(source);
+                string text = await engine.TextService.ExtractPageTextAsync(output, 1);
+                _output.WriteLine($"{texts[0]}: {text.Replace('\n', ' ').Replace('\r', ' ')}");
+                foreach (var t in texts)
+                    Assert.Equal(1, CountOf(text, t)); // once: nothing under the image is drawn again
+
+                using var printedPixels = await engine.Renderer.RenderPageAsync(output, new RenderRequest { PageNumber = 1, Dpi = 72 });
+                using var sourcePixels = await engine.Renderer.RenderPageAsync(original, new RenderRequest { PageNumber = 1, Dpi = 72 });
+                var (mean, bad) = DifferentialRenderingTests.Compare(printedPixels, sourcePixels);
+                _output.WriteLine($"{texts[0]}: mean={mean:F2} bad={bad:P2}");
+                Assert.True(mean <= 4.0, $"{texts[0]}: mean {mean:F2}");
+                Assert.True(bad <= 0.03, $"{texts[0]}: {bad:P2} pixels off");
+            }
+            finally
+            {
+                try { File.Delete(path); } catch (IOException) { }
+            }
+        }
+    }
+
+    private static int CountOf(string text, string value)
+    {
+        int count = 0;
+        for (int i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    /// <summary>The markup of each fixed page in the XPS package the writer produced, once it is complete.</summary>
+    private static List<string> ReadXpsPages(string path)
+    {
+        var pages = new List<string>();
+        WaitForOutput(path, bytes =>
+        {
+            try
+            {
+                using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+                pages.Clear();
+                foreach (var entry in zip.Entries.Where(e => e.FullName.EndsWith(".fpage", StringComparison.OrdinalIgnoreCase)))
+                {
+                    using var reader = new StreamReader(entry.Open());
+                    pages.Add(reader.ReadToEnd());
+                }
+                return true;
+            }
+            catch (InvalidDataException)
+            {
+                return false; // central directory not written yet
+            }
+        }, TimeSpan.FromSeconds(90));
+        return pages;
     }
 
     /// <summary>Fixed pages in the XPS package the writer produced, once it is complete.</summary>

@@ -238,19 +238,24 @@ internal sealed partial class Replayer : IDisposable
     public void Draw(ID2D1DeviceContext ctx, Matrix3x2 pageToDevice, PdfRect visiblePage) => Draw(ctx, pageToDevice, visiblePage, null);
 
     /// <param name="recording">Device size when <paramref name="ctx"/> records a command list (Replayer.Printing.cs).</param>
+    private void Prepare()
+    {
+        if (_prepared)
+            return;
+        // Backend-unsupported content is drawn by the overlay; skip it here.
+        foreach (var cmd in _list.Commands)
+        {
+            if (cmd is DrawGlyphRun r && !r.Run.IsInvisible && ResolveText(r, out _) == null) _unsupportedRuns.Add(r);
+            if (cmd is DrawImage im && !TryDecode(im.Image, out _, out _, out _, out _)) _unsupportedImages.Add(im);
+        }
+        MatchGroups();
+        MatchUnits();
+        _prepared = true;
+    }
+
     private void Draw(ID2D1DeviceContext ctx, Matrix3x2 pageToDevice, PdfRect visiblePage, SizeI? recording)
     {
-        if (!_prepared)
-        {
-            // Backend-unsupported content is drawn by the overlay; skip it here.
-            foreach (var cmd in _list.Commands)
-            {
-                if (cmd is DrawGlyphRun r && !r.Run.IsInvisible && ResolveText(r, out _) == null) _unsupportedRuns.Add(r);
-                if (cmd is DrawImage im && !TryDecode(im.Image, out _, out _, out _, out _)) _unsupportedImages.Add(im);
-            }
-            MatchGroups();
-            _prepared = true;
-        }
+        Prepare();
 
         var ctx1 = UseRealizations ? ctx.QueryInterfaceOrNull<ID2D1DeviceContext1>() : null;
         float renderScale = D2D1.D2D1ComputeMaximumScaleFactor(ref pageToDevice);
@@ -269,12 +274,15 @@ internal sealed partial class Replayer : IDisposable
         _describeText = recording != null;
         var size = recording ?? target!.PixelSize;
         var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height };
+        _root = surface;
         try
         {
-            DrawRange(surface, 0, _list.Commands.Count, pageToDevice, Matrix3x2.Identity, visiblePage);
+            int count = _list.Commands.Count;
+            DrawRange(surface, 0, _drawEnd < 0 ? count : Math.Min(count, _drawEnd), pageToDevice, Matrix3x2.Identity, visiblePage);
         }
         finally
         {
+            _root = null;
             while (surface.Layers.Count > 0) PopLayer(surface);
             ctx.Transform = Matrix3x2.Identity;
             ctx1?.Dispose();
@@ -311,6 +319,18 @@ internal sealed partial class Replayer : IDisposable
                     i = _groupEnd[i];
                     continue;
                 }
+            }
+
+            if (_passSkip != null && ReferenceEquals(surface, _root) && !InPass(i))
+            {
+                // Printing in passes: this page-level unit belongs to another pass or to an image.
+                if (cmd is BeginCompositingGroup || cmd is BeginTransparencyGroup && _containsBlend![i])
+                {
+                    i = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
+                    continue;
+                }
+                if (cmd is FillPath or StrokePath or DrawGlyphRun or DrawImage or DrawShading or DrawTilingPattern)
+                    continue;
             }
 
             var full = ctm * pageToDevice;
@@ -473,7 +493,8 @@ internal sealed partial class Replayer : IDisposable
         // A non-isolated group sees the backdrop: inner blend modes and knockout elements composite
         // against it (11.4.7). The backdrop is whatever the surface holds under the group, opaque
         // (the page) or not (inside an isolated group, a soft mask or a knockout element). Only a
-        // command list (printing) has no pixels to start from; such pages print as images.
+        // command list (printing) has no pixels to start from: printing draws such page-level
+        // groups as images of the composited page instead (Replayer.Printing.cs).
         bool nonIsolated = !isolated && (containsBlend || knockout) && surface.Target != null && !_shapeMode;
         ID2D1Bitmap1? initialBackdrop = nonIsolated ? CopyBackdrop(surface, x0, y0, w, h) : null;
 
