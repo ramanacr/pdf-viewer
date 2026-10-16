@@ -227,7 +227,9 @@ public class SignatureValidationTests
     {
         using var cert = Certificate("Signer");
         using var tsaCert = Certificate("Test TSA", eku: "1.3.6.1.5.5.7.3.8");
-        var vouched = new DateTimeOffset(2026, 9, 27, 8, 0, 0, TimeSpan.Zero);
+        // A time within the certificates' validity (they start two days ago), in whole seconds as tokens carry it.
+        var now = DateTimeOffset.UtcNow.AddHours(-1);
+        var vouched = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, now.Second, TimeSpan.Zero);
         Task<byte[]> Tsa(byte[] request, CancellationToken ct) => Task.FromResult(TimestampResponse(request, tsaCert, vouched));
         byte[] signed = await Sign(FormPdfFixture.Build(), cert, new PdfSignatureRequest { SignerName = "Signer", ContentsSize = 32768 }, Tsa);
         var check = Assert.Single(await PdfSignatureValidator.ValidateAsync(signed));
