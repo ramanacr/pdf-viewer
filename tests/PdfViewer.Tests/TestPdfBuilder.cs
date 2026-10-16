@@ -557,7 +557,7 @@ public static class TestPdfBuilder
         // 14. Info
         WriteObj(infoObj, "<< /Title (PDF Engine Showcase) /Author (Antigravity) /Subject (Vector and Hybrid Fallback Demonstration) >>");
 
-        // 15. Knockout transparency group with a translucent element: still outside the native compositor, so PDFium supplies it.
+        // 15. Knockout transparency group with a translucent element, composited natively by the vector engine.
         string knockout =
             "0.2 0.55 0.35 rg\n50 420 220 110 re\nf\n" +
             "BT\n/F1 14 Tf\n1 1 1 rg\n70 485 Td\n(Rendered via PDFium) Tj\n0 -22 Td\n(100% Visual Fidelity) Tj\nET\n" +
