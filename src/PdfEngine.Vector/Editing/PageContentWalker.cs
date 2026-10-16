@@ -54,8 +54,19 @@ internal sealed class ContentGlyph
     public bool Sideways;
     /// <summary>For a sideways glyph: from where it is drawn (its baseline) to the column's centre line, in user space.</summary>
     public PdfPoint Anchor;
-    /// <summary>Where the glyph sits on its line: its origin, or for a sideways glyph the point on the column's centre line level with it.</summary>
-    public PdfPoint Origin => new(Matrix.E + Anchor.X, Matrix.F + Anchor.Y);
+    /// <summary>
+    /// A horizontal glyph set upright in one slot of a vertical column with the glyphs next to it
+    /// (tate-chu-yoko, as "12" in 平成12年; TextBlocks): the unit's first glyph (itself for the first).
+    /// </summary>
+    public ContentGlyph? TateChuYoko;
+    /// <summary>For a tate-chu-yoko glyph: its advance down the column in user units (the slot's em on the unit's last glyph, 0 on the others).</summary>
+    public double SlotAdvance;
+    /// <summary>
+    /// Where the glyph sits on its line: its origin; for a sideways glyph the point on the column's
+    /// centre line level with it; for a tate-chu-yoko glyph the top of its slot on the centre line
+    /// (the same point for all the unit's glyphs).
+    /// </summary>
+    public PdfPoint Origin => TateChuYoko is { } head && !ReferenceEquals(head, this) ? head.Origin : new(Matrix.E + Anchor.X, Matrix.F + Anchor.Y);
 }
 
 /// <summary>A marked-content sequence with /ActualText: the text its glyphs read as, together.</summary>
