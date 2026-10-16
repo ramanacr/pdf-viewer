@@ -79,6 +79,9 @@ internal sealed class BlockLayout
             template[j] = n2o[j] >= 0 ? TemplateOfOld(n2o[j]) : j > 0 ? template[j - 1] : null;
         var firstTemplate = template.FirstOrDefault(t => t != null) ?? _b.Lines[f].Glyphs[0];
         for (int j = 0; j < text.Length && template[j] == null; j++) template[j] = firstTemplate;
+        // Characters typed after a tate-chu-yoko unit, other than more of it, look like the column.
+        for (int j = 0; j < text.Length; j++)
+            if (n2o[j] < 0 && template[j]!.TateChuYoko != null && !IsUnitChar(text[j])) template[j] = ColumnTemplate(template[j]!);
 
         double size = _b.Lines.Max(l => l.Size);
         double pitch = n >= 2 ? _b.Pitch : 1.2 * size;
@@ -244,10 +247,25 @@ internal sealed class BlockLayout
         // bidirectional algorithm's order, the paragraph's direction being that of the old text.
         var levels = Bidi.Levels(text[from..to], Bidi.ParagraphLevel(_b.Text));
         bool reorder = true;
+        // In a column: short digit runs to set as tate-chu-yoko (start to end), and how far an old
+        // unit drawn again as it was reaches (its glyphs are drawn again only as a whole).
+        var units = _b.Vertical ? TateChuYokoRuns(text, from, to) : null;
+        int intactUntil = from;
         int j = from;
         while (j < to)
         {
             bool installedWord = installedWords[j - from];
+            if (_b.Vertical)
+            {
+                if (j >= intactUntil && IntactUnit(text, j, from, to, n2o) is int unitEnd) intactUntil = unitEnd;
+                if (j >= intactUntil && units!.TryGetValue(j, out int runEnd) && TateChuYokoItem(text[j..runEnd], template[j], installedWord, runEnd) is { } unit)
+                {
+                    unit.Level = levels[j - from];
+                    items.Add(unit);
+                    j = runEnd;
+                    continue;
+                }
+            }
             if (installedWord && reorder && text[j] != ' ' && ShapedWord(text, j, to, template[j], levels[j - from]) is { } shaped)
             {
                 items.Add(shaped);
@@ -255,7 +273,7 @@ internal sealed class BlockLayout
                 continue;
             }
             // An old glyph, all of whose characters are still there in order: drawn as it was.
-            if (!installedWord && n2o[j] >= 0 && Reusable(n2o[j], j, to, n2o) is { } reuse)
+            if (!installedWord && n2o[j] >= 0 && Reusable(n2o[j], j, to, n2o) is { } reuse && (reuse.Glyph.TateChuYoko == null || j < intactUntil))
             {
                 var m = reuse.Glyph.Matrix;
                 var reused = new Item
@@ -279,6 +297,7 @@ internal sealed class BlockLayout
             if (_b.Vertical)
             {
                 // In a column, each character is upright or turned sideways as UAX #50 has it.
+                if (tmpl.TateChuYoko != null) tmpl = ColumnTemplate(tmpl);
                 bool sideways = SetSideways(element, tmpl);
                 if (!sideways && tmpl.Sideways) tmpl = ColumnTemplate(tmpl);
                 else if (sideways && !tmpl.Sideways && SidewaysItem(element, tmpl, installedWord, j + length) is { } turned)
@@ -386,6 +405,138 @@ internal sealed class BlockLayout
             return !encodes && !_session.HasVerticalForm(element, style, style.Font?.IsBold ?? false, style.Font?.IsItalic ?? false);
         }
         return true;
+    }
+
+    private static bool IsUnitChar(char c) => char.IsAsciiDigit(c) || c is '!' or '?';
+
+    /// <summary>
+    /// The runs of new text to set as tate-chu-yoko under the editing options, by start: runs of
+    /// half-width digits short enough (one or two, or up to three), and "!!", "!?", "?!", "??", with
+    /// no Latin letter, digit or space next to them (at least one neighbour, an ideograph or kana).
+    /// </summary>
+    private Dictionary<int, int> TateChuYokoRuns(string text, int from, int to)
+    {
+        var runs = new Dictionary<int, int>();
+        int max = _session.TateChuYoko switch { PdfTateChuYoko.TwoDigits => 2, PdfTateChuYoko.UpToThree => 3, _ => 0 };
+        if (max == 0) return runs;
+        for (int i = from; i < to;)
+        {
+            if (!IsUnitChar(text[i])) { i++; continue; }
+            int e = i;
+            while (e < to && IsUnitChar(text[e])) e++;
+            string run = text[i..e];
+            bool digits = run.All(char.IsAsciiDigit), marks = run.Length == 2 && run.All(c => c is '!' or '?');
+            bool before = i > from, after = e < to;
+            if ((digits && run.Length <= max || marks) && (before || after) && (!before || Upright(text, i - 1, true)) && (!after || Upright(text, e, false)))
+                runs[i] = e;
+            i = e;
+        }
+        return runs;
+
+        static bool Upright(string text, int k, bool backwards)
+        {
+            int cp = backwards && char.IsLowSurrogate(text[k]) && k > 0 && char.IsHighSurrogate(text[k - 1]) ? char.ConvertToUtf32(text[k - 1], text[k])
+                : !backwards && char.IsHighSurrogate(text[k]) && k + 1 < text.Length && char.IsLowSurrogate(text[k + 1]) ? char.ConvertToUtf32(text[k], text[k + 1]) : text[k];
+            return VerticalOrientation.Of(cp) != VerticalOrientationClass.R;
+        }
+    }
+
+    /// <summary>
+    /// Where an old tate-chu-yoko unit that starts at new position <paramref name="j"/> ends, when
+    /// all its characters are still there in order with nothing added to its run: it is drawn again
+    /// as it was. Null otherwise (its characters are then set again like typed ones).
+    /// </summary>
+    private int? IntactUnit(string text, int j, int from, int to, int[] n2o)
+    {
+        if (n2o[j] < 0) return null;
+        var (line, glyph, _) = _b.Chars[n2o[j]];
+        if (glyph < 0 || _b.Lines[line].Glyphs[glyph] is not { TateChuYoko: { } head }) return null;
+        int k0 = n2o[j];
+        if (k0 > 0 && OldUnitOf(k0 - 1) == head) return null; // not its first character
+        int length = 0;
+        while (k0 + length < _b.Chars.Count && OldUnitOf(k0 + length) == head) length++;
+        if (j + length > to) return null;
+        for (int i = 0; i < length; i++)
+            if (n2o[j + i] != k0 + i) return null;
+        bool Extends(int i) => i >= from && i < to && (IsUnitChar(text[i]) || char.IsAsciiLetter(text[i]));
+        return Extends(j - 1) || Extends(j + length) ? null : j + length;
+    }
+
+    private ContentGlyph? OldUnitOf(int k)
+    {
+        var (line, glyph, sep) = _b.Chars[k];
+        return sep || glyph < 0 ? null : _b.Lines[line].Glyphs[glyph].TateChuYoko;
+    }
+
+    /// <summary>
+    /// A run of digits set as tate-chu-yoko in a column: its glyphs upright and side by side,
+    /// horizontally (the horizontal form of the column's font, the font of the old unit it replaces,
+    /// or an installed font), centred across the column on one baseline that centres them in an em,
+    /// compressed with Tz to an em wide when they are wider, and taking one em down the column.
+    /// A single digit takes the column font's full-width digit instead when it has one (reading as
+    /// the digit typed). Null when no font has the run.
+    /// </summary>
+    private Item? TateChuYokoItem(string run, ContentGlyph template, bool installedWord, int end)
+    {
+        var column = template.Style.Vertical ? template : ColumnTemplate(template);
+        if (!column.Style.Vertical) return null;
+        var cs = column.Style;
+        double fs = cs.FontSize;
+        var m = column.Matrix;
+        double userScale = Math.Sqrt(m.C * m.C + m.D * m.D), across = Math.Sqrt(m.A * m.A + m.B * m.B);
+        bool bold = cs.Font?.IsBold ?? false, italic = cs.Font?.IsItalic ?? false;
+        if (run.Length == 1 && char.IsAsciiDigit(run[0]) && !installedWord && cs.Font is { } vfont && _session.Encoder(vfont) is { } own
+            && own.TryEncode(((char)(run[0] - '0' + 0xFF10)).ToString(), out var full, out _))
+        {
+            vfont.ReadCode(full, 0, out _, out int cid);
+            double advance = vfont.GetVerticalMetrics(cid).W1y / 1000.0 * fs + cs.CharSpacing;
+            return new Item
+            {
+                Template = column, UserScale = userScale, End = end, Width = -advance * userScale,
+                Glyph = new OutGlyph { Code = full, Style = cs, Advance = advance, Text = run, Actual = new ActualTextSpan(run) },
+            };
+        }
+
+        List<(byte[] Code, double Width0)>? Encode(Fonts.PdfFont? font)
+        {
+            if (_session.Encoder(font) is not { } encoder) return null;
+            var codes = new List<(byte[], double)>();
+            foreach (char c in run)
+            {
+                if (!encoder.TryEncode(c.ToString(), out var code, out double w0)) return null;
+                codes.Add((code, w0));
+            }
+            return codes;
+        }
+        List<(byte[] Code, double Width0)> glyphs;
+        GlyphStyle style;
+        double centre;
+        if (!installedWord && template.TateChuYoko != null && Encode(template.Style.Font) is { } again)
+            (glyphs, style, centre) = (again, template.Style with { Scaling = cs.Scaling }, SidewaysCentre(template.Style.Font));
+        else if (!installedWord && Encode(cs.Font) is { } own2 && _session.HorizontalForm(cs) is { } horizontal)
+            (glyphs, style, centre) = (own2, horizontal, SidewaysCentre(cs.Font));
+        else if (_session.EncodeUnitWithInstalled(run, cs, bold, italic) is { } installed)
+            (glyphs, style, centre) = (installed.Glyphs, installed.Style, _session.SidewaysCentre(installed.Style.FontResource));
+        else return null;
+
+        double size = style.FontSize, width = glyphs.Sum(g => (g.Width0 / 1000.0 * size + style.CharSpacing) * style.Scaling / 100.0);
+        if (width <= 0) return null;
+        if (width > fs) style = style with { Scaling = style.Scaling * fs / width };
+        var cluster = new List<(OutGlyph, double, double)>();
+        double x = -Math.Min(width, fs) / 2;
+        for (int i = 0; i < glyphs.Count; i++)
+        {
+            double advance = (glyphs[i].Width0 / 1000.0 * size + style.CharSpacing) * style.Scaling / 100.0;
+            // Along the column at the pen; across it (the item's rise) from the centre line.
+            cluster.Add((new OutGlyph { Code = glyphs[i].Code, Style = style, Advance = advance, Text = run[i].ToString() }, 0, x * across));
+            x += advance;
+        }
+        return new Item
+        {
+            Template = column, Cluster = cluster, UserScale = userScale, End = end, Width = (fs - cs.CharSpacing) * userScale,
+            // The baseline from the pen (the slot's top), in the column's text space: the glyphs' middle at the slot's.
+            Offset = new PdfPoint(0, -fs / 2 - centre * size),
+        };
     }
 
     /// <summary>The upright glyph of the column a sideways glyph is in, nearest to it: the look of upright characters typed next to it.</summary>
