@@ -6,12 +6,14 @@ namespace PdfEngine.Vector.Editing;
 
 /// <summary>
 /// Mark positioning (GPOS mark-to-base, mark-to-ligature and mark-to-mark attachment, also through
-/// extension lookups) for shaping new text: each mark is placed on the anchor of the glyph it sits
-/// on, and does not advance. Offsets are in font units, from where the glyph would otherwise be drawn.
+/// extension lookups) and cursive attachment for shaping new text: each mark is placed on the anchor
+/// of the glyph it sits on, and does not advance; each cursive glyph's entry anchor is put on the exit
+/// anchor of the glyph before it. Offsets are in font units, from where the glyph would otherwise be drawn.
 /// </summary>
 internal sealed class OpenTypePositioning
 {
     private static readonly string[] MarkFeatures = { "mark", "mkmk" };
+    private static readonly string[] CursiveFeatures = { "curs" };
     private readonly byte[] _gpos;
     private readonly byte[]? _gdef;
 
@@ -33,16 +35,37 @@ internal sealed class OpenTypePositioning
     }
 
     /// <summary>
-    /// Places the marks of a run in logical order. <paramref name="advances"/> are the glyphs' advances
-    /// (font units); a mark attached to a glyph gets its advance set to 0 and its offset set so it
-    /// lands on the anchor.
+    /// Joins the cursive glyphs of a run and places its marks, in logical order. <paramref name="advances"/>
+    /// are the glyphs' advances (font units); a mark attached to a glyph gets its advance set to 0 and its
+    /// offset set so it lands on the anchor. <paramref name="rightToLeft"/>: the run is drawn right to left
+    /// (once it is reversed), which decides which advances of two joined glyphs the join changes.
     /// </summary>
-    public void Apply(IReadOnlyList<int> gids, string script, double[] advances, double[] dx, double[] dy)
+    public void Apply(IReadOnlyList<int> gids, string script, double[] advances, double[] dx, double[] dy, bool rightToLeft = false)
     {
         try
         {
             // Marks do not advance (GDEF says which glyphs are marks), attached or not.
             for (int i = 0; i < gids.Count; i++) if (GlyphClass(gids[i]) == 3) advances[i] = 0;
+            // Cursive joins first, so a mark follows its letter up or down the joined chain.
+            var run = NewRun(gids, advances, dx, dy, rightToLeft);
+            try
+            {
+                foreach (var (index, _) in OpenTypeLayout.Lookups(_gpos, script, CursiveFeatures))
+                {
+                    if (Lookup(index) is not { } lookup) continue;
+                    for (int i = 0; i < gids.Count; i++)
+                    {
+                        if (OpenTypeLayout.Ignored(_gdef, gids[i], lookup.Flag, lookup.MarkSet)) continue;
+                        foreach (var (type, sub) in lookup.Subtables)
+                            if (type == 3 && BigEndian.U16(_gpos, sub) == 1 && Cursive(run, i, sub, lookup.Flag, lookup.MarkSet)) break;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException)
+            {
+                // A damaged cursive lookup: the joins made so far stand, and the marks are still placed.
+            }
+            ResolveCursive(run);
             var t = _gpos;
             int lookupList = BigEndian.U16(t, 8), lookupCount = BigEndian.U16(t, lookupList);
             foreach (var (index, _) in OpenTypeLayout.Lookups(t, script, MarkFeatures))
@@ -131,11 +154,10 @@ internal sealed class OpenTypePositioning
     /// marks keep their own advances (fonts for these scripts give them none), and a mark follows its
     /// glyph when a later lookup moves or widens that glyph.
     /// </summary>
-    public void Apply(IReadOnlyList<int> gids, string script, IReadOnlyCollection<string> features, double[] advances, double[] dx, double[] dy)
+    public void Apply(IReadOnlyList<int> gids, string script, IReadOnlyCollection<string> features, double[] advances, double[] dx, double[] dy, bool rightToLeft = false)
     {
         int n = gids.Count;
-        var run = new Run(gids, advances, dx, dy, new int[n], new double[n], new double[n]);
-        Array.Fill(run.AttachedTo, -1);
+        var run = NewRun(gids, advances, dx, dy, rightToLeft);
         try
         {
             foreach (var (index, _) in OpenTypeLayout.Lookups(_gpos, script, features))
@@ -153,7 +175,9 @@ internal sealed class OpenTypePositioning
         {
             // A damaged table: what was positioned so far stands.
         }
-        // A mark sits where its anchor put it from the glyph it is on, wherever that glyph ended up.
+        // Cursive glyphs hang off the glyphs they join, and a mark sits where its anchor put it from
+        // the glyph it is on, wherever that glyph ended up.
+        ResolveCursive(run);
         for (int i = 0; i < n; i++)
         {
             int b = run.AttachedTo[i];
@@ -165,7 +189,19 @@ internal sealed class OpenTypePositioning
         }
     }
 
-    private sealed record Run(IReadOnlyList<int> Gids, double[] Advances, double[] Dx, double[] Dy, int[] AttachedTo, double[] AnchorX, double[] AnchorY);
+    // AttachedTo: the glyph a mark sits on (-1: none). CursiveTo: the glyph a cursive glyph hangs off,
+    // its parent in the joined chain (-1: none), and CursiveY how far above that glyph it is.
+    private sealed record Run(IReadOnlyList<int> Gids, double[] Advances, double[] Dx, double[] Dy, int[] AttachedTo, double[] AnchorX, double[] AnchorY,
+        int[] CursiveTo, double[] CursiveY, bool RightToLeft);
+
+    private static Run NewRun(IReadOnlyList<int> gids, double[] advances, double[] dx, double[] dy, bool rightToLeft)
+    {
+        int n = gids.Count;
+        var run = new Run(gids, advances, dx, dy, new int[n], new double[n], new double[n], new int[n], new double[n], rightToLeft);
+        Array.Fill(run.AttachedTo, -1);
+        Array.Fill(run.CursiveTo, -1);
+        return run;
+    }
 
     private (int Flag, int MarkSet, List<(int Type, int Offset)> Subtables)? Lookup(int index)
     {
@@ -240,6 +276,8 @@ internal sealed class OpenTypePositioning
                 Adjust(run, j, values + size1, vf2);
                 return true;
             }
+            case 3 when format == 1:
+                return Cursive(run, i, sub, flag, markSet);
             case 4 or 5 or 6 when format == 1:
                 return AttachAt(run, i, type, sub, flag, markSet);
             case 7 or 8 when depth < 4:
@@ -301,6 +339,97 @@ internal sealed class OpenTypePositioning
         run.AnchorX[i] = bx - mx;
         run.AnchorY[i] = by - my;
         return true;
+    }
+
+    // Cursive attachment (type 3): glyph j's entry anchor goes on the exit anchor of the glyph before
+    // it (the lookup's flag says which glyphs are skipped). Along the line, the earlier glyph's advance
+    // ends at its exit and the later one starts at its entry (in drawing order: right-to-left text draws
+    // the later glyph first). Across it, one of the two hangs off the other: with the RightToLeft flag
+    // the later glyph stays where it is (the last letter of a word sits on the baseline, as in
+    // Nastaliq), else the earlier one does. Anchors of formats 2 and 3 are read as format 1.
+    private bool Cursive(Run run, int j, int sub, int flag, int markSet)
+    {
+        var t = _gpos;
+        int coverage = sub + BigEndian.U16(t, sub + 2), count = BigEndian.U16(t, sub + 4);
+        int index = OpenTypeLayout.Coverage(t, coverage, run.Gids[j]);
+        if (index < 0 || index >= count) return false;
+        int entry = BigEndian.U16(t, sub + 6 + index * 4);
+        if (entry == 0) return false;
+        int i = Next(run, j, -1, flag, markSet);
+        if (i < 0) return false;
+        int previous = OpenTypeLayout.Coverage(t, coverage, run.Gids[i]);
+        if (previous < 0 || previous >= count) return false;
+        int exit = BigEndian.U16(t, sub + 6 + previous * 4 + 2);
+        if (exit == 0) return false;
+        var (entryX, entryY) = Anchor(sub + entry);
+        var (exitX, exitY) = Anchor(sub + exit);
+        if (run.RightToLeft)
+        {
+            // Drawn j, then i: i starts at its exit, and j's advance ends at its entry.
+            double d = exitX + run.Dx[i];
+            run.Advances[i] -= d;
+            run.Dx[i] -= d;
+            run.Advances[j] = entryX + run.Dx[j];
+        }
+        else
+        {
+            run.Advances[i] = exitX + run.Dx[i];
+            double d = entryX + run.Dx[j];
+            run.Advances[j] -= d;
+            run.Dx[j] -= d;
+        }
+        int child = i, parent = j;
+        double y = entryY - exitY;
+        if ((flag & 0x1) == 0) (child, parent, y) = (j, i, -y);
+        // A glyph hangs off one other: when the child already hangs off another, that chain is turned
+        // round to hang off the child; a parent that hung off the child no longer does.
+        ReverseCursive(run, child, parent);
+        if (run.CursiveTo[parent] == child)
+        {
+            run.CursiveTo[parent] = -1;
+            run.CursiveY[parent] = 0;
+        }
+        run.CursiveTo[child] = parent;
+        run.CursiveY[child] = y;
+        return true;
+    }
+
+    private static void ReverseCursive(Run run, int i, int newParent)
+    {
+        if (run.CursiveTo[i] < 0) return;
+        // The chain from i up to its root, or up to the new parent (where it is cut).
+        var chain = new List<int> { i };
+        for (int k = run.CursiveTo[i]; k >= 0 && k != newParent && chain.Count <= run.Gids.Count && !chain.Contains(k); k = run.CursiveTo[k]) chain.Add(k);
+        var ys = chain.ConvertAll(k => run.CursiveY[k]);
+        run.CursiveTo[i] = -1;
+        for (int m = chain.Count - 2; m >= 0; m--)
+        {
+            run.CursiveTo[chain[m + 1]] = chain[m];
+            run.CursiveY[chain[m + 1]] = -ys[m];
+        }
+    }
+
+    // Each cursive glyph moves by its offset from its parent and by all that its parent moved.
+    private static void ResolveCursive(Run run)
+    {
+        int n = run.Gids.Count;
+        var state = new byte[n]; // 0 not yet, 1 on the path being resolved, 2 done
+        var path = new List<int>();
+        for (int i = 0; i < n; i++)
+        {
+            path.Clear();
+            for (int k = i; k >= 0 && state[k] == 0 && run.CursiveTo[k] >= 0; k = run.CursiveTo[k])
+            {
+                state[k] = 1;
+                path.Add(k);
+            }
+            for (int m = path.Count - 1; m >= 0; m--)
+            {
+                int c = path[m], p = run.CursiveTo[c];
+                if (state[p] != 1) run.Dy[c] += run.CursiveY[c] + run.Dy[p]; // a loop (a damaged font) is cut where it closes
+                state[c] = 2;
+            }
+        }
     }
 
     // Contextual (7) and chained contextual (8) positioning: the rule that matches at glyph i applies

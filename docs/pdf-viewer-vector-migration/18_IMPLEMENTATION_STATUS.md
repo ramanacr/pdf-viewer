@@ -180,6 +180,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Right-to-left and cursive scripts:
   - text is shaped before it is drawn: bidirectional levels and reordering (UAX #9, without explicit embeddings), mirrored brackets, Arabic joining forms, and the font's substitutions (GSUB single, multiple and ligature lookups, and contextual and chained contextual lookups in all three formats, including extension lookups, for ccmp, isol/init/medi/fina, rlig, calt and liga);
   - marks are placed on their letters' anchors and do not advance (GPOS mark-to-base, mark-to-ligature and mark-to-mark), so vowel marks sit over and under the letters they belong to;
+  - cursive attachment (GPOS 3, also through extension lookups, honouring the lookup flags such as IgnoreMarks): each letter's entry anchor is put on the exit anchor of the letter before it, along the line (advances and x offsets, for left-to-right and right-to-left runs) and across it (y offsets down the joined chain; with the RightToLeft flag the last letter of a word sits on the baseline and the earlier ones hang off it, as in Nastaliq). Marks follow their letters up and down the chain, and raised glyphs are drawn at their own height. Anchors of formats 2 and 3 are read as format 1 (contour points and device tables are not used);
   - a line of right-to-left text read from a page is put in reading order, glyph by glyph, so Arabic and Hebrew paragraphs are edited as they are read and drawn again in drawing order;
   - a cursive word that changed is shaped again as a whole in an installed font, because the document's glyphs for its letters are in the forms their old neighbours needed;
   - Indic scripts in new text (`Editing/IndicShaper`: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), as the OpenType Indic specification and HarfBuzz shape them:
@@ -188,7 +189,7 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
     - v2 script tags fall back to v1 tags.
     - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
     - Reordered syllables carry /ActualText, so they extract as typed.
-  - not yet: Indic shaping when typing into an existing paragraph, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
+  - not yet: Indic shaping when typing into an existing paragraph.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -366,7 +367,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
+10. **Editing remainder:** Indic shaping inside existing paragraphs; sideways Latin text in vertical columns.
 
 ---
 
