@@ -15,13 +15,16 @@ namespace PdfEngine.Vector.PdfA;
 public interface IPdfPageRasterizer
 {
     /// <summary>
-    /// The page drawn over white, unrotated, its crop box filling exactly
-    /// <paramref name="widthPixels"/> × <paramref name="heightPixels"/>, without annotations; or
-    /// null when it cannot be drawn faithfully.
+    /// The pixels of <paramref name="window"/> of the page drawn over white, unrotated, its crop
+    /// box filling exactly <paramref name="pageWidthPixels"/> × <paramref name="pageHeightPixels"/>,
+    /// without annotations; or null when it cannot be drawn faithfully.
     /// </summary>
     /// <param name="bytes">The file <paramref name="document"/> was opened from (for a renderer that reads it itself).</param>
-    PdfRasterImage? Render(PdfVectorDocument document, byte[] bytes, int pageNumber, int widthPixels, int heightPixels);
+    PdfRasterImage? Render(PdfVectorDocument document, byte[] bytes, int pageNumber, int pageWidthPixels, int pageHeightPixels, PdfPixelWindow window);
 }
+
+/// <summary>A rectangle of a page's pixels, from its top-left corner.</summary>
+public readonly record struct PdfPixelWindow(int X, int Y, int Width, int Height);
 
 /// <summary>Pixels as 8-bit BGRA rows (stride = width × 4), and which renderer drew them.</summary>
 public sealed record PdfRasterImage(int Width, int Height, byte[] Bgra, string Renderer);

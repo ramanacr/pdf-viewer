@@ -16,8 +16,8 @@ internal static class FlatteningRasterizer
 {
     public static Direct2DPageRasterizer Create() => new(PdfiumPage);
 
-    /// <summary>A page drawn by PDFium at exactly width × height pixels, without annotations.</summary>
-    private static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height) => Task.Run(async () =>
+    /// <summary>A window of a page drawn by PDFium at exactly width × height pixels, without annotations.</summary>
+    private static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height, PdfPixelWindow window) => Task.Run(async () =>
     {
         using var engine = new PdfiumEngine();
         await using var doc = await engine.OpenDocumentAsync(bytes, null);
@@ -26,9 +26,6 @@ internal static class FlatteningRasterizer
             PageNumber = page, TargetWidthPixels = width, TargetHeightPixels = height, RenderAnnotations = false, RenderForms = false,
         });
         if (rendered.WidthPixels != width || rendered.HeightPixels != height) return null;
-        var bgra = new byte[width * height * 4];
-        for (int y = 0; y < height; y++)
-            rendered.Pixels.Span.Slice(y * rendered.Stride, width * 4).CopyTo(bgra.AsSpan(y * width * 4));
-        return new PdfRasterImage(width, height, bgra, "PDFium");
+        return new PdfRasterImage(window.Width, window.Height, PdfEngine.Vector.Direct2D.Direct2DPageRasterizer.Crop(rendered, window.X, window.Y, window.Width, window.Height), "PDFium");
     }).GetAwaiter().GetResult();
 }

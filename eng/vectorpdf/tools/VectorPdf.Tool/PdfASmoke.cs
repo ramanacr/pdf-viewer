@@ -127,7 +127,7 @@ public static class PdfASmoke
                     if (doc.PageCount == 0) { skipped++; continue; }
                     PdfAConversionResult result;
                     try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = flavour, Rasterizer = rasterizer }); }
-                    catch (PdfAConversionRefusedException) { refused++; continue; }
+                    catch (PdfAConversionRefusedException ex) { refused++; Console.WriteLine($"refused  {name}: {ex.Message}"); continue; }
                     if (result.Flattening is { Pages.Count: > 0 } flat)
                     {
                         flattened++;
@@ -162,8 +162,8 @@ public static class PdfASmoke
         return failed > 0 ? 1 : 0;
     }
 
-    /// <summary>A page drawn by PDFium at exactly width × height pixels, for pages the engine cannot draw by itself.</summary>
-    private static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height) => Task.Run(async () =>
+    /// <summary>A window of a page drawn by PDFium at exactly width × height pixels, for pages the engine cannot draw by itself.</summary>
+    private static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height, PdfPixelWindow window) => Task.Run(async () =>
     {
         using var engine = new PdfEngine.Pdfium.PdfiumEngine();
         await using var doc = await engine.OpenDocumentAsync(bytes, null);
@@ -171,10 +171,7 @@ public static class PdfASmoke
         {
             PageNumber = page, TargetWidthPixels = width, TargetHeightPixels = height, RenderAnnotations = false, RenderForms = false,
         });
-        var bgra = new byte[width * height * 4];
-        for (int y = 0; y < height; y++)
-            rendered.Pixels.Span.Slice(y * rendered.Stride, width * 4).CopyTo(bgra.AsSpan(y * width * 4));
-        return new PdfRasterImage(width, height, bgra, "PDFium");
+        return new PdfRasterImage(window.Width, window.Height, PdfEngine.Vector.Direct2D.Direct2DPageRasterizer.Crop(rendered, window.X, window.Y, window.Width, window.Height), "PDFium");
     }).GetAwaiter().GetResult();
 
     private static async Task<double> PdfiumDifference(byte[] before, byte[] after)

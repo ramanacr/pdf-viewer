@@ -82,9 +82,13 @@ internal sealed class TransparencyFlattener
         public PdfRect Bounds;
         public double Dpi;
         public int Width, Height;
+        /// <summary>Where it starts on its pixel grid, from the crop box's lower-left corner.</summary>
+        public int GridX, GridY, GridWidth, GridHeight;
+        public bool Whole;
         public bool Text;
         public string ImageName = string.Empty;
-        public PdfRasterImage? Pixels;
+        /// <summary>The drawn region as an image XObject (compressed as soon as it is drawn, so pages of pixels are never held together).</summary>
+        public PdfStream? Image;
     }
 
     private sealed class PagePlan
@@ -137,11 +141,10 @@ internal sealed class TransparencyFlattener
             sb.Append("q\n").Append(under.Run(plan.Content, plan.Node.Resources, use)).Append("Q\n");
             foreach (var region in plan.Regions)
             {
-                var image = ImageObject(region.Pixels!);
                 int number = Allocate();
-                overrides[number] = image;
+                overrides[number] = region.Image!;
                 region.ImageName = use.AddXObject("FlIm", new PdfIndirectRef(number));
-                region.Pixels = null;
+                region.Image = null;
                 var b = region.Bounds;
                 sb.Append("q ").Append(F(b.X)).Append(' ').Append(F(b.Y)).Append(' ').Append(F(b.Width)).Append(' ').Append(F(b.Height))
                   .Append(" re W n ").Append(F(b.Width)).Append(" 0 0 ").Append(F(b.Height)).Append(' ').Append(F(b.X)).Append(' ').Append(F(b.Y))
@@ -242,33 +245,31 @@ internal sealed class TransparencyFlattener
     }
 
     /// <summary>
-    /// The region on the pixel grid of <paramref name="dpi"/> anchored at the crop box's corner, so
-    /// its image maps pixel for pixel; it may reach past the crop box by less than a pixel.
+    /// The region on the page's pixel grid at <paramref name="dpi"/>: the crop box drawn at a whole
+    /// number of pixels (so the scale is the resolution to within a pixel over the page), the
+    /// region widened to whole pixels of it, so its image maps pixel for pixel.
     /// </summary>
     private static Region Snap(PdfRect rect, PdfRect crop, double dpi, bool whole)
     {
-        double s = dpi / 72.0;
-        if (whole)
-        {
-            // The whole page: exactly the crop box, at the nearest whole number of pixels.
-            int w = Math.Max(1, (int)Math.Round(crop.Width * s)), h = Math.Max(1, (int)Math.Round(crop.Height * s));
-            return new Region { Bounds = crop, Dpi = dpi, Width = w, Height = h };
-        }
-        var r = Intersect(rect, crop);
-        if (r.IsEmpty) r = rect;
-        int px0 = (int)Math.Floor((r.X - crop.X) * s + 1e-6), px1 = (int)Math.Ceiling((r.Right - crop.X) * s - 1e-6);
-        int py0 = (int)Math.Floor((r.Y - crop.Y) * s + 1e-6), py1 = (int)Math.Ceiling((r.Bottom - crop.Y) * s - 1e-6);
-        px1 = Math.Max(px1, px0 + 1);
-        py1 = Math.Max(py1, py0 + 1);
+        int gw = Math.Max(1, (int)Math.Round(crop.Width * dpi / 72.0)), gh = Math.Max(1, (int)Math.Round(crop.Height * dpi / 72.0));
+        double sx = gw / crop.Width, sy = gh / crop.Height;
+        var r = whole ? crop : Intersect(rect, crop);
+        if (r.IsEmpty) r = crop;
+        int px0 = Math.Clamp((int)Math.Floor((r.X - crop.X) * sx + 1e-6), 0, gw - 1), px1 = Math.Clamp((int)Math.Ceiling((r.Right - crop.X) * sx - 1e-6), px0 + 1, gw);
+        int py0 = Math.Clamp((int)Math.Floor((r.Y - crop.Y) * sy + 1e-6), 0, gh - 1), py1 = Math.Clamp((int)Math.Ceiling((r.Bottom - crop.Y) * sy - 1e-6), py0 + 1, gh);
         return new Region
         {
-            Bounds = new PdfRect(crop.X + px0 / s, crop.Y + py0 / s, (px1 - px0) / s, (py1 - py0) / s),
+            Bounds = whole ? crop : new PdfRect(crop.X + px0 / sx, crop.Y + py0 / sy, (px1 - px0) / sx, (py1 - py0) / sy),
             Dpi = dpi,
             Width = px1 - px0,
             Height = py1 - py0,
+            GridX = px0,
+            GridY = py0,
+            GridWidth = gw,
+            GridHeight = gh,
+            Whole = whole,
         };
     }
-
     /// <summary>Overlapping or touching rectangles become their common bounding box, until none overlap.</summary>
     private static List<PdfRect> Merge(List<PdfRect> rects)
     {
@@ -329,9 +330,9 @@ internal sealed class TransparencyFlattener
     private readonly Dictionary<int, string> _renderers = new();
 
     /// <summary>
-    /// Draws every region: a temporary document whose pages are the regions (each a copy of its page
-    /// cropped to the region, without annotations, with the content up to the split), drawn by the
-    /// rasterizer at the region's pixel size.
+    /// Draws every region: a temporary document with a copy of each page (without annotations, with
+    /// the content up to the split, and its own crop box, so what depends on it is drawn exactly as on
+    /// the page), of which the rasterizer draws each region's window of pixels.
     /// </summary>
     private void RenderRegions(List<PagePlan> plans, IPdfPageRasterizer rasterizer)
     {
@@ -340,7 +341,7 @@ internal sealed class TransparencyFlattener
         var store = new FormStore(this, overrides);
         int pagesNode = Allocate();
         var kids = new List<PdfObject>();
-        var order = new List<(PagePlan Plan, Region Region)>();
+        var order = new List<(PagePlan Plan, Region Region, int Page, int PageWidth, int PageHeight, PdfPixelWindow Window)>();
         foreach (var plan in plans)
         {
             PdfDictionary resources = plan.Node.Resources;
@@ -354,26 +355,25 @@ internal sealed class TransparencyFlattener
             }
             int contentNumber = Allocate();
             overrides[contentNumber] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject> { ["Filter"] = new PdfName("FlateDecode") }, ContentRedactor.Deflate(content));
-            foreach (var region in plan.Regions)
+            // The page's own crop box (and media box), so everything is drawn where the page draws it.
+            var box = RectArray(plan.Crop);
+            var page = new Dictionary<string, PdfObject>
             {
-                var box = RectArray(region.Bounds);
-                var page = new Dictionary<string, PdfObject>
-                {
-                    ["Type"] = new PdfName("Page"),
-                    ["Parent"] = new PdfIndirectRef(pagesNode),
-                    ["MediaBox"] = box,
-                    ["CropBox"] = box,
-                    ["Resources"] = resources,
-                    ["Contents"] = new PdfIndirectRef(contentNumber),
-                };
-                if (plan.Node.Dictionary["Group"] is { } group) page["Group"] = group;
-                int pageNumber = Allocate();
-                overrides[pageNumber] = new PdfDictionary(page);
-                kids.Add(new PdfIndirectRef(pageNumber));
-                order.Add((plan, region));
-            }
-        }
-        overrides[pagesNode] = new PdfDictionary(new Dictionary<string, PdfObject>
+                ["Type"] = new PdfName("Page"),
+                ["Parent"] = new PdfIndirectRef(pagesNode),
+                ["MediaBox"] = box,
+                ["CropBox"] = box,
+                ["Resources"] = resources,
+                ["Contents"] = new PdfIndirectRef(contentNumber),
+            };
+            if (plan.Node.Dictionary["Group"] is { } group) page["Group"] = group;
+            int pageNumber = Allocate();
+            overrides[pageNumber] = new PdfDictionary(page);
+            kids.Add(new PdfIndirectRef(pageNumber));
+            foreach (var region in plan.Regions)
+                order.Add((plan, region, kids.Count, region.GridWidth, region.GridHeight,
+                    new PdfPixelWindow(region.GridX, region.GridHeight - region.GridY - region.Height, region.Width, region.Height)));
+        }        overrides[pagesNode] = new PdfDictionary(new Dictionary<string, PdfObject>
         {
             ["Type"] = new PdfName("Pages"), ["Kids"] = new PdfArray(kids), ["Count"] = new PdfInteger(kids.Count),
         });
@@ -387,15 +387,15 @@ internal sealed class TransparencyFlattener
         using var temp = PdfVectorDocument.Open(new MemoryByteSource(bytes), _doc.FilePath);
         for (int i = 0; i < order.Count; i++)
         {
-            var (plan, region) = order[i];
+            var (plan, region, tempPage, pageWidth, pageHeight, window) = order[i];
             PdfRasterImage? pixels;
-            try { pixels = rasterizer.Render(temp, bytes, i + 1, region.Width, region.Height); }
+            try { pixels = rasterizer.Render(temp, bytes, tempPage, pageWidth, pageHeight, window); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { pixels = null; }
             if (pixels == null || pixels.Width != region.Width || pixels.Height != region.Height || pixels.Bgra.Length < region.Width * region.Height * 4)
                 throw new PdfAConversionRefusedException(
                     $"PDF/A-1b does not allow transparency, and page {plan.Index + 1} could not be drawn to flatten it. Convert to PDF/A-2b instead.");
-            region.Pixels = pixels;
-            _renderers[plan.Index] = _renderers.TryGetValue(plan.Index, out var before) && before != pixels.Renderer ? before + ", " + pixels.Renderer : pixels.Renderer;
+            region.Image = ImageObject(pixels);
+            _renderers[plan.Index] = _renderers.TryGetValue(plan.Index, out var before) && !before.Split(", ").Contains(pixels.Renderer) ? before + ", " + pixels.Renderer : before ?? pixels.Renderer;
         }
     }
 
@@ -1133,7 +1133,7 @@ internal sealed class TransparencyFlattener
             tm = PdfMatrix.CreateTranslation(x, y) * tm;
             double scale = vertical ? fs : fs * th;
             string? advanceOnly = font == null || Math.Abs(scale) < 1e-9 ? null
-                : $"{prefix}[{F(-(vertical ? y : x) * 1000.0 / scale)}] TJ";
+                : $"{prefix}[{Adjustments(-(vertical ? y : x) * 1000.0 / scale)}] TJ";
             var bounds = minX <= maxX ? new PdfRect(minX, minY, maxX - minX, maxY - minY) : (PdfRect?)null;
             return (bounds, advanceOnly);
         }
@@ -1275,6 +1275,23 @@ internal sealed class TransparencyFlattener
         for (int i = 0; i < n; i++)
             if (!operands[operands.Count - n + i].TryGetNumber(out v[i]) || !double.IsFinite(v[i])) return null;
         return v;
+    }
+
+    /// <summary>
+    /// A TJ adjustment as one number or several that add up to it, each within the ±32767 PDF/A-1
+    /// allows (ISO 19005-1 6.1.12): a long line of small text moves by more than that.
+    /// </summary>
+    internal static string Adjustments(double total)
+    {
+        const double Step = 30000;
+        var parts = new List<string>();
+        while (Math.Abs(total) > Step)
+        {
+            parts.Add(F(Math.Sign(total) * Step));
+            total -= Math.Sign(total) * Step;
+        }
+        parts.Add(F(total));
+        return string.Join(" ", parts);
     }
 
     private static PdfRect RectOf(double x0, double y0, double x1, double y1) =>

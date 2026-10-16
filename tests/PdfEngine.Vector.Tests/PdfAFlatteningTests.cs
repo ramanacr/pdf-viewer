@@ -32,7 +32,7 @@ public class PdfAFlatteningTests
     public PdfAFlatteningTests(ITestOutputHelper output) => _output = output;
 
     /// <summary>PDFium for pages the vector engine cannot draw by itself (as the viewer does).</summary>
-    internal static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height) => Task.Run(async () =>
+    internal static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height, PdfPixelWindow window) => Task.Run(async () =>
     {
         using var engine = new PdfiumEngine();
         await using var doc = await engine.OpenDocumentAsync(bytes, null);
@@ -40,10 +40,7 @@ public class PdfAFlatteningTests
         {
             PageNumber = page, TargetWidthPixels = width, TargetHeightPixels = height, RenderAnnotations = false, RenderForms = false,
         });
-        var bgra = new byte[width * height * 4];
-        for (int y = 0; y < height; y++)
-            rendered.Pixels.Span.Slice(y * rendered.Stride, width * 4).CopyTo(bgra.AsSpan(y * width * 4));
-        return new PdfRasterImage(width, height, bgra, "PDFium");
+        return new PdfRasterImage(window.Width, window.Height, PdfEngine.Vector.Direct2D.Direct2DPageRasterizer.Crop(rendered, window.X, window.Y, window.Width, window.Height), "PDFium");
     }).GetAwaiter().GetResult();
 
     private static async Task<PdfAConversionResult> Convert(byte[] pdf, PdfFlatteningOptions? flattening = null)
@@ -225,6 +222,28 @@ public class PdfAFlatteningTests
     }
 
     [Fact]
+    public async Task ALuminositySoftMask_InAGraphicsState_IsFlattened_AndLooksTheSame()
+    {
+        var b = new VectorPdfBuilder();
+        // A mask that fades from left to right (a shading in the mask group), over a red square
+        // drawn on a grey background; the region is away from the page's corner.
+        int mask = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Group << /S /Transparency /CS /DeviceGray >>" +
+            " /Resources << /Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceGray /Coords [60 0 160 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> /Extend [true true] >> >> >>",
+            "/Sh1 sh");
+        int gs = b.Add($"<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G {mask} 0 R >> >>");
+        b.AddPage("0.6 g 0 0 200 200 re f q /GS1 gs 1 0 0 rg 60 60 100 100 re f Q 0 0 1 rg 10 10 20 20 re f",
+            $"<< /ExtGState << /GS1 {gs} 0 R >> >>");
+        byte[] pdf = b.Build();
+
+        var result = await Convert(pdf);
+        await AssertValidPdfA1b(result);
+        var region = Assert.Single(Assert.Single(result.Flattening!.Pages).Regions);
+        Assert.InRange(region.Bounds.X, 57, 60);
+        Assert.InRange(region.Bounds.Y, 57, 60);
+        await AssertLooksTheSame("luminosity mask", pdf, (await Flatten(pdf)).Bytes);
+    }
+
+    [Fact]
     public async Task AMultiplyBlend_IsFlattened_AndLooksTheSame()
     {
         var b = new VectorPdfBuilder();
@@ -348,6 +367,24 @@ public class PdfAFlatteningTests
         Assert.True(page.WholePage);
         Assert.Equal(new PdfRect(0, 0, 200, 200), Assert.Single(page.Regions).Bounds);
         Assert.Equal("0 0.5 0 rg 50 50 100 100 re f", (await PageContent(result.Bytes, 2)).Trim());
+    }
+
+    [Fact]
+    public async Task ALongLineOfSmallText_KeepsItsAdvance_WithinPdfA1sNumberLimits()
+    {
+        var b = new VectorPdfBuilder();
+        int font = b.Add(Helv);
+        int gs = b.Add("<< /Type /ExtGState /ca 0.5 >>");
+        // 4-point text 190 points long: skipped in the copy over the image, its advance is 47 500 thousandths.
+        string line = new string('m', 57);
+        b.AddPage($"BT /F1 4 Tf 5 100 Td ({line}) Tj ET q /GS1 gs 1 0 0 rg 20 90 50 30 re f Q 0 0 1 rg 150 150 20 20 re f",
+            $"<< /Font << /F1 {font} 0 R >> /ExtGState << /GS1 {gs} 0 R >> >>");
+        byte[] pdf = b.Build();
+        var result = await Convert(pdf);
+        await AssertValidPdfA1b(result);
+        Assert.Equal("-30000 -17500", TransparencyFlattener.Adjustments(-47500));
+        Assert.Contains("[-30000 -", await PageContent((await Flatten(pdf)).Bytes));
+        Assert.Contains(line, await Text(result.Bytes));
     }
 
     [Fact]
