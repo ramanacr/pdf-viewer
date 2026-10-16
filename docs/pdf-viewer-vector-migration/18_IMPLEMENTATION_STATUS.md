@@ -228,6 +228,15 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Each mark is a pagination artifact in its own marked content, and each design is stored once as a form XObject with Acrobat's PieceInfo. Update and Remove find our marks and Acrobat's own and leave everything else as it was. The document's own content streams are never rewritten unless they hold an Acrobat mark, and then only that sequence goes.
 - The viewer's Edit > Page Marks dialogs preview the current page, and the result is a new revision with undo.
 
+### Export to Word
+- `Export/DocxExporter.ExportAsync` writes a .docx package by hand (System.IO.Compression and XmlWriter, no new packages); a file export goes through a `.partial` file, so a cancelled or failed export leaves nothing.
+  - Text: paragraphs from `TextBlocks`, column by column, with each run's font, size, colour, bold and italic; subset names map to the Word family, and missing fonts get an `altName` so Word substitutes a similar face.
+  - Layout: alignment, indents, exact line spacing and space before from page positions; underline, strike and superscript from the rules and offsets around the text; headings 1-3 from tags or from larger bold lines; bullets and numbers as real Word numbering.
+  - Tables from tags (with spans), from ruling lines (merged cells, borders, shading) and from text aligned in columns; images inline or anchored at their page position; repeated headers and footers with PAGE and NUMPAGES fields; hyperlinks, section columns, right-to-left paragraphs and East Asian font slots.
+- Viewer: File > Export > Word Document (.docx), with per-page progress and cancel. Tool: `vectorpdf docx` (counts and coverage only, no document text).
+- GovDocs (284 files): 274 exported with 0 errors (10 encrypted or empty), and Word opens all 274 without repair; exact-word coverage against PDFium 98.21 % overall, in-order coverage median 99.97 %.
+- Not yet: Word documents run about 1.4 times as many pages as the PDFs (font substitution and side-by-side text that is not a detected table); vector graphics are not carried over; Type 3 fonts without Unicode export no text; rotated text becomes a normal paragraph.
+
 ### Reduce File Size
 - `Optimize/PdfOptimizer` saves a smaller copy that looks the same:
   - a complete rewrite of what the catalog reaches, so unused objects go;
