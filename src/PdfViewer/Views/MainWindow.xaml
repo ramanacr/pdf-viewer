@@ -308,6 +308,8 @@
                           Command="{Binding ShowPdfACommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Checks the document against PDF/A (ISO 19005) and saves an archival PDF/A copy." />
+                <MenuItem Header="Accessi_bility Check..." Command="{Binding ShowAccessibilityCheckCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Checks the document against PDF/UA (ISO 14289) and the Matterhorn Protocol, and says how to fix each issue." />
                 <MenuItem Header="Reduce File _Size..."
                           Command="{Binding ShowReduceSizeCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
@@ -1877,6 +1879,14 @@
                    BorderThickness="0,1,0,0">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusText}" />
+            </StatusBarItem>
+
+            <!-- A print job being sent in the background can be stopped here. -->
+            <StatusBarItem Visibility="{Binding IsPrinting, Converter={StaticResource BoolToVis}}">
+                <Button Content="Cancel printing"
+                        Command="{Binding CancelPrintCommand}"
+                        Padding="8,0"
+                        ToolTip="Stop sending this document to the printer" />
             </StatusBarItem>
 
             <!--

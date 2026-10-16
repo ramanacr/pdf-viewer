@@ -144,6 +144,21 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Remove Security writes an unencrypted copy, but only when the owner password is known or proven. Signed documents are changed only after confirmation, because their signatures break.
 - Viewer: Tools > Protect with Password... and Remove Security..., each saving a copy. Document Properties shows the security method and permissions.
 
+### Accessibility check (PDF/UA-1)
+- `Accessibility/PdfUaValidator` checks a document against PDF/UA-1 (ISO 14289-1), reporting each issue with its Matterhorn checkpoint, ISO clause, category, severity, how to fix it, and where (page, object, structure path such as `Document > Table > TR[2] > TD`, and bounds).
+  - Checks: tagging and the structure tree, title, the PDF/UA identifier, language, untagged content and artifacts, role maps, alternate text for figures and formulas, tables, lists, headings, fonts (the PDF/A-2u font rules under PDF/UA's clauses, plus Type 1 CharSets), annotations, links, form fields, tab order, optional content, embedded files, deprecated structure types, encryption permissions and XFA.
+  - Messages never quote document text.
+- `vectorpdf pdfua` over veraPDF's PDF/UA-1 files: 141/141 valid files accepted, 156/156 invalid files rejected, each in the clause its name gives. The PDF/A scores are unchanged.
+- Viewer: Tools > Accessibility Check lists issues by category. Selecting an issue goes to its page and highlights the element. The window is itself accessible: automation names, keyboard use and a live summary.
+- Not checked: what needs a person (reading order, contrast, whether alternate text is meaningful), annotation appearance streams, and tagging inside patterns and Type 3 glyphs.
+
+### Printing
+- Pages print through Direct2D's print control, drawn by the same renderer as the screen, as vectors: text stays text in the spool and in Print to PDF output.
+  - Each page is replayed into a command list at 300 dpi. What Direct2D must rasterise (transparency groups, soft masks, pattern cells) comes out at print resolution, and fallback regions are PDFium pixels at 300 dpi.
+  - Pages that need to read back pixels (blend modes, non-isolated knockout groups) print as one 300 dpi image. Pages PDFium draws on screen print as PDFium images in the same job.
+- The image path stays for documents that allow only low-quality printing (150 dpi), for "Print as image" (Advanced, in the print preview), and when the print control cannot be created or a vector job fails.
+- Print jobs run off the UI thread, with progress and cancellation in the status bar. The preview offers fit, actual size or a custom scale, page lists (1-5, 8, 11-13), and says whether the job prints as vectors or images, and why.
+
 ### Redaction
 - `Redaction/PdfRedactor` removes content rather than covering it:
   - text: glyphs under a mark go, and the rest keep their exact positions through `TJ` adjustments; invisible text goes too;
@@ -181,7 +196,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
     - v2 script tags fall back to v1 tags.
     - About 150 words across the nine scripts match Windows' own shaping in glyph ids, and in positions to within 1.5/1000 em (Nirmala UI).
     - Reordered syllables carry /ActualText, so they extract as typed.
-  - not yet: Indic shaping when typing into an existing paragraph, and cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
+  - Indic text in existing paragraphs: a changed Indic word is shaped again as a whole in an installed font, and glyphs drawn in a short /ActualText span (a syllable or ligature, within one line) read as that text and move together when their line is laid out again, so Hindi on a page is edited in reading order.
+  - not yet: cursive attachment (GPOS 3) for fonts that join letters by anchors rather than by their outlines.
 - Moved, edited and redrawn text is drawn right after the text-showing operator it replaces, even inside a text object (the text object is split, and the text position and line start restored), so stacking and clipping stay as they were.
 - Text and images inside form XObjects (to any depth up to 8) are found where each drawing of the form puts them, and edited like the page's own. The drawing that has an edit gets its own copy of the form (a new object, with the names it inherits from where it is drawn, the fonts and images the edit added, and copies of the forms it draws), so other drawings of a shared form stay as they are. Paragraphs never span two drawings, since each uses its own resources. Content moved outside the form's bounding box is clipped by it, as the form's own content would be.
 - Images are deleted, moved, resized, turned or replaced where they are drawn. A replacement keeps its own proportions within the old box. New text and new images (JPEG embedded unchanged; other formats lossless, with transparency) are added over the page. Results are written as an incremental update.
@@ -359,7 +375,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** Indic shaping inside existing paragraphs; GPOS cursive attachment; sideways Latin text in vertical columns.
+10. **Editing remainder:** GPOS cursive attachment; sideways Latin text in vertical columns; word gaps narrower than 0.2 em are read without a space (001150, 001695, 001854), where PDFium inserts one.
 
 ---
 

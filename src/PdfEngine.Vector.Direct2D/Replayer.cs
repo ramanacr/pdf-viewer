@@ -157,7 +157,8 @@ internal sealed partial class Replayer : IDisposable
     {
         public required ID2D1DeviceContext Ctx { get; init; }
         public ID2D1DeviceContext1? Ctx1 { get; init; }
-        public required ID2D1Bitmap1 Target { get; init; }
+        /// <summary>Null while recording a command list (printing), which has no pixels to read back.</summary>
+        public ID2D1Bitmap1? Target { get; init; }
         public int Width { get; init; }
         public int Height { get; init; }
         /// <summary>Every pixel is opaque (the page, or a group initialised with an opaque backdrop).</summary>
@@ -204,7 +205,10 @@ internal sealed partial class Replayer : IDisposable
         while (open.Count > 0) _groupEnd[open.Pop()] = cmds.Count; // unterminated: runs to the end
     }
 
-    public void Draw(ID2D1DeviceContext ctx, Matrix3x2 pageToDevice, PdfRect visiblePage)
+    public void Draw(ID2D1DeviceContext ctx, Matrix3x2 pageToDevice, PdfRect visiblePage) => Draw(ctx, pageToDevice, visiblePage, null);
+
+    /// <param name="recording">Device size when <paramref name="ctx"/> records a command list (Replayer.Printing.cs).</param>
+    private void Draw(ID2D1DeviceContext ctx, Matrix3x2 pageToDevice, PdfRect visiblePage, SizeI? recording)
     {
         if (!_prepared)
         {
@@ -230,9 +234,11 @@ internal sealed partial class Replayer : IDisposable
         // ctx.Target hands back a new reference to the target (GetTarget AddRefs it): released
         // here, or every render leaked its page-sized target bitmap (about 8 MB a page at 150 dpi).
         using var targetImage = ctx.Target;
-        using var target = targetImage.QueryInterface<ID2D1Bitmap1>();
-        var size = target.PixelSize;
-        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height, Opaque = true };
+        using var target = recording == null ? targetImage.QueryInterface<ID2D1Bitmap1>() : null;
+        if (recording is { } recorded) _recordingSize = recorded;
+        _describeText = recording != null;
+        var size = recording ?? target!.PixelSize;
+        var surface = new Surface { Ctx = ctx, Ctx1 = ctx1, Target = target, Width = size.Width, Height = size.Height, Opaque = recording == null };
         try
         {
             DrawRange(surface, 0, _list.Commands.Count, pageToDevice, Matrix3x2.Identity, visiblePage);
@@ -568,7 +574,7 @@ internal sealed partial class Replayer : IDisposable
             var backdrop = ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0,
                 new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
             disposables.Add(backdrop);
-            backdrop.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target, new System.Drawing.Rectangle(x0, y0, w, h));
+            backdrop.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target!, new System.Drawing.Rectangle(x0, y0, w, h));
 
             ID2D1Image dest = backdrop, src = image;
             if (InvertColors)
@@ -610,7 +616,7 @@ internal sealed partial class Replayer : IDisposable
         surface.Ctx.Flush(out _, out _);
         var copy = surface.Ctx.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0,
             new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
-        copy.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target, new System.Drawing.Rectangle(x0, y0, w, h));
+        copy.CopyFromBitmap(new System.Drawing.Point(0, 0), surface.Target!, new System.Drawing.Rectangle(x0, y0, w, h));
         foreach (var layer in layers)
             PushLayer(surface, layer.Mask, layer.Full, layer.Opacity, layer.Rect);
         return copy;
@@ -1398,6 +1404,7 @@ internal sealed partial class Replayer : IDisposable
 
         int mode = run.RenderingMode;
         bool fill = mode is 0 or 2 or 4 or 6, stroke = mode is 1 or 2 or 5 or 6;
+        int first = 0;
         foreach (var (indices, offsets, scale) in ScaledPieces(r.Indices, glyphOffsets, r.Scales))
         {
             var glyphRun = new GlyphRun
@@ -1414,7 +1421,11 @@ internal sealed partial class Replayer : IDisposable
             if (fill)
             {
                 using var brush = ctx.CreateSolidColorBrush(Color(cmd.Paint.Color, cmd.Paint.Alpha));
-                ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural);
+                using var description = _describeText ? Describe(run, r.Indices.Length, first, indices.Length) : null;
+                if (description != null)
+                    ctx.DrawGlyphRun(Vector2.Zero, glyphRun, description.Value, brush, MeasuringMode.Natural);
+                else
+                    ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural);
             }
             if (stroke && run.StrokePaint is PdfPaint sp && run.Stroke is PdfStroke st)
             {
@@ -1429,6 +1440,7 @@ internal sealed partial class Replayer : IDisposable
                 float textScale = MathF.Sqrt(MathF.Abs((pieceToText * M(run.TextMatrix)).GetDeterminant()));
                 Stroke(ctx, outline, brush, st with { Width = st.Width / Math.Max(textScale, 1e-6), DashArray = null }, pieceTransform);
             }
+            first += indices.Length;
         }
     }
 
@@ -1644,9 +1656,7 @@ internal sealed partial class Replayer : IDisposable
     /// </summary>
     private void PaintGeneralRadial(ID2D1DeviceContext ctx, PdfRadialShading sh, PdfRect area, Matrix3x2 userToDevice, Matrix3x2 pageToDevice)
     {
-        using var targetImage = ctx.Target; // a new reference: released with it
-        using var target = targetImage.QueryInterface<ID2D1Bitmap1>();
-        var size = target.PixelSize;
+        var size = TargetSize(ctx);
         var corners = new[]
         {
             Vector2.Transform(new Vector2((float)area.X, (float)area.Y), pageToDevice),
@@ -1747,11 +1757,9 @@ internal sealed partial class Replayer : IDisposable
     }
 
     /// <summary>Device rectangle of a page-space area, clamped to the current target.</summary>
-    private static bool DeviceRect(ID2D1DeviceContext ctx, PdfRect area, Matrix3x2 pageToDevice, out int x0, out int y0, out int w, out int h)
+    private bool DeviceRect(ID2D1DeviceContext ctx, PdfRect area, Matrix3x2 pageToDevice, out int x0, out int y0, out int w, out int h)
     {
-        using var targetImage = ctx.Target; // a new reference: released with it
-        using var target = targetImage.QueryInterface<ID2D1Bitmap1>();
-        var size = target.PixelSize;
+        var size = TargetSize(ctx);
         var c = new[]
         {
             Vector2.Transform(new Vector2((float)area.X, (float)area.Y), pageToDevice),

@@ -116,8 +116,17 @@ internal sealed partial class PdfAChecker
                 else CheckGroupColourSpace(group, where);
             }
             var usage = new Usage();
-            foreach (var content in page.Contents)
-                if (Decode(content) is { } data) CheckContent(data, page.Resources, usage, where, 0);
+            if (_joinContents)
+            {
+                // The page's streams are one content stream: the graphics state carries across them.
+                var joined = new List<byte>();
+                foreach (var content in page.Contents)
+                    if (Decode(content) is { } data) { joined.AddRange(data); joined.Add((byte)'\n'); }
+                CheckContent(joined.ToArray(), page.Resources, usage, where, 0);
+            }
+            else
+                foreach (var content in page.Contents)
+                    if (Decode(content) is { } data) CheckContent(data, page.Resources, usage, where, 0);
             if (_part >= 2 && usage.Transparency && _intentSpace == null && group?["CS"] == null)
                 Fail(null, "6.2.10", 1, "A page uses transparency but has neither a PDF/A output intent nor a group colour space.", where);
         }

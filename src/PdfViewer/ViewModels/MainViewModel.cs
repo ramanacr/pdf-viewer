@@ -3162,8 +3162,21 @@ public partial class MainViewModel : ObservableObject
         if (!Permit(DocumentPermissions.CanPrint, "printing")) return;
         if (!IsDocumentLoaded) return;
 
+        if (IsPrinting)
+        {
+            StatusText = "A print job is still being sent.";
+            return;
+        }
+
         try
         {
+            if (ShowPrintSetupFunc != null)
+            {
+                if (ShowPrintSetupFunc(_docService, CurrentPageNumber) is { } request)
+                    _ = PrintAsync(request);
+                return;
+            }
+
             if (ShowPrintDialogFunc != null)
             {
                 bool printed = ShowPrintDialogFunc(_docService, CurrentPageNumber);
@@ -3183,18 +3196,23 @@ public partial class MainViewModel : ObservableObject
 
             if (printDialog.ShowDialog() == true)
             {
-                StatusText = "Printing document...";
                 int start = 1;
                 int end = PageCount;
 
                 if (printDialog.PageRangeSelection == PageRangeSelection.UserPages)
                 {
-                    start = printDialog.PageRange.PageFrom;
-                    end = printDialog.PageRange.PageTo;
+                    start = Math.Max(1, printDialog.PageRange.PageFrom);
+                    end = Math.Min(PageCount, printDialog.PageRange.PageTo);
                 }
 
-                _docService.PrintDocument(printDialog, start, end, RotationAngle);
-                StatusText = "Print job sent to printer.";
+                _ = PrintAsync(new PrintRequest
+                {
+                    Queue = printDialog.PrintQueue,
+                    Ticket = printDialog.PrintTicket,
+                    Pages = Enumerable.Range(start, Math.Max(0, end - start + 1)).ToArray(),
+                    Rotation = RotationAngle,
+                    JobName = $"PDF Viewer - {Path.GetFileName(_docService.CurrentFilePath)}",
+                });
             }
         }
         catch (Exception ex)

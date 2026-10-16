@@ -42,6 +42,7 @@ public static class Program
             "optimize" => await OptimizeSmoke.RunAsync(args),
             "pdfa" => await PdfASmoke.RunAsync(args),
             "pdfa-convert" => await PdfASmoke.ConvertAsync(args),
+            "pdfua" => await PdfUaSmoke.RunAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),
             _ => 2,
         };
