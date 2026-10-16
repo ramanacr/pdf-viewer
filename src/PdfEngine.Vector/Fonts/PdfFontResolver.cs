@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
+using PdfEngine.Vector.Fonts.Programs;
 using PdfEngine.Vector.Parsing;
 using PdfEngine.Vector.Streams;
 
@@ -125,6 +126,18 @@ public sealed class PdfFontResolver
 
         Dictionary<int, string>? toUnicode = ReadToUnicode(fontObj);
         string?[] glyphNames = BuildSimpleEncoding(fontObj, baseFont, isType3, info.IsSymbolic, programKind);
+
+        // Widths come from /Widths, in 1/1000 text space whatever the program's FontMatrix. Without
+        // them, an embedded CFF program that is not a standard 14 font gives its own advances,
+        // mapped through its FontMatrix (as PDFium reads them); the standard 14 keep their metrics.
+        if (widths == null && programKind == PdfFontProgramKind.Type1C && programData != null &&
+            Standard14Fonts.NormalizeName(baseFont) == null &&
+            FontProgramPreparer.CffWidths(programData, glyphNames, info.IsSymbolic, info.MissingWidth) is { } programWidths)
+        {
+            widths = programWidths;
+            firstChar = 0;
+            lastChar = 255;
+        }
 
         PdfMatrix fontMatrix = isType3 ? ReadMatrix(fontObj["FontMatrix"]) : new PdfMatrix(0.001, 0, 0, 0.001, 0, 0);
         PdfRect? bbox = isType3 ? ReadRect(fontObj["FontBBox"]) ?? info.BBox : info.BBox;
