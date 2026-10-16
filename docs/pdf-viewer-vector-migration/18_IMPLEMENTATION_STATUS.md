@@ -144,6 +144,13 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Remove Security writes an unencrypted copy, but only when the owner password is known or proven. Signed documents are changed only after confirmation, because their signatures break.
 - Viewer: Tools > Protect with Password... and Remove Security..., each saving a copy. Document Properties shows the security method and permissions.
 
+### Printing
+- Pages print through Direct2D's print control, drawn by the same renderer as the screen, as vectors: text stays text in the spool and in Print to PDF output.
+  - Each page is replayed into a command list at 300 dpi. What Direct2D must rasterise (transparency groups, soft masks, pattern cells) comes out at print resolution, and fallback regions are PDFium pixels at 300 dpi.
+  - Pages that need to read back pixels (blend modes, non-isolated knockout groups) print as one 300 dpi image. Pages PDFium draws on screen print as PDFium images in the same job.
+- The image path stays for documents that allow only low-quality printing (150 dpi), for "Print as image" (Advanced, in the print preview), and when the print control cannot be created or a vector job fails.
+- Print jobs run off the UI thread, with progress and cancellation in the status bar. The preview offers fit, actual size or a custom scale, page lists (1-5, 8, 11-13), and says whether the job prints as vectors or images, and why.
+
 ### Redaction
 - `Redaction/PdfRedactor` removes content rather than covering it:
   - text: glyphs under a mark go, and the rest keep their exact positions through `TJ` adjustments; invisible text goes too;

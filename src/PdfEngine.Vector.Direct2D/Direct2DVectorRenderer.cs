@@ -33,7 +33,7 @@ public sealed record D2DRenderResult(
 /// files), tiled rendering for outputs beyond the device's bitmap limit, and recovery from
 /// device loss without reparsing.
 /// </summary>
-public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
+public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
 {
     /// <summary>
     /// GPU tile side. Every tile replays the whole display list, so a viewer's detail tile
@@ -573,7 +573,9 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
         return composited;
     }
 
-    private int DrawOverlays(ID2D1DeviceContext ctx, IPdfDisplayList list, Matrix3x2 pointsToDevice, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert)
+    /// <param name="markMissing">Outline regions without pixels (on screen); printing leaves them blank.</param>
+    private static int DrawOverlays(ID2D1DeviceContext ctx, IPdfDisplayList list, Matrix3x2 pointsToDevice, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert,
+        bool markMissing = true)
     {
         var crop = list.CropBox.IsEmpty ? new PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
         int composited = 0;
@@ -614,7 +616,7 @@ public sealed class Direct2DVectorRenderer : IPdfVectorRenderer
                     handle.Free();
                 }
             }
-            else
+            else if (markMissing)
             {
                 ctx.FillRectangle(rect, fill);
                 ctx.DrawRectangle(rect, outline, 0.75f);
