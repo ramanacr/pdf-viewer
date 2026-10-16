@@ -103,7 +103,9 @@ public static class PrivacySettings
     public const string PrivacyStatement =
         "This application does not collect analytics or telemetry, has no account, and never " +
         "uploads your documents. Everything happens on this machine.\n\n" +
-        "It can make exactly two network requests, both to this project's public GitHub page " +
-        "and neither of them sending anything about you or your documents: the update check " +
-        "you allow below, and downloading an optional component if you ask for one.";
+        "It connects to the network only when you ask it to: the update check you allow below and " +
+        "downloading an optional component if you ask for one (both to this project's public GitHub " +
+        "page, sending nothing about you or your documents), and, when you sign a document or check " +
+        "signatures online, the timestamp server or certificate authorities you choose (sending only " +
+        "a fingerprint of the document or certificate identifiers, never the document).";
 }
