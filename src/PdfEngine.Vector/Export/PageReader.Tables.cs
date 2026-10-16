@@ -585,18 +585,4 @@ internal sealed partial class PageReader
         }
         return gaps;
     }
-
-    /// <summary>Stretches of [from, to] no extent covers, at least <paramref name="min"/> wide.</summary>
-    internal static List<(double From, double To)> Gaps(IEnumerable<(double L, double R)> extents, double from, double to, double min)
-    {
-        var sorted = extents.OrderBy(e => e.L).ToList();
-        var gaps = new List<(double, double)>();
-        double reach = from;
-        foreach (var (l, r) in sorted)
-        {
-            if (l - reach >= min && reach > from) gaps.Add((reach, l));
-            reach = Math.Max(reach, r);
-        }
-        return gaps;
-    }
 }
