@@ -17,6 +17,10 @@ internal sealed partial class Replayer
     /// <summary>Off: every realization covers its whole geometry.</summary>
     public bool WindowedRealizations { get; set; } = true;
 
+    /// <summary>Draw geometries smaller than <see cref="DirectDrawPixels"/> on the device without a realization.</summary>
+    public bool DrawSmallGeometriesDirectly { get; set; } = true;
+    private const float DirectDrawPixels = 1024f;
+
     /// <summary>Realizations built so far, how many of them windowed, and how many rebuilt for a region beyond their window.</summary>
     public int RealizationsBuilt { get; private set; }
     public int WindowedRealizationsBuilt { get; private set; }
@@ -105,6 +109,11 @@ internal sealed partial class Replayer
         }
         _ct.ThrowIfCancellationRequested(); // tessellation is the cost: stop between geometries
 
+        // A geometry that covers little of the device is drawn directly: it shows in a tile or two,
+        // so a realization is rarely drawn twice, and building thousands of them (a map with 9,000
+        // small symbols) cost seconds for the first tile at a new zoom where drawing them costs milliseconds.
+        if (DrawSmallGeometriesDirectly && cmd.Bounds is PdfRect sb && Math.Max(sb.Width, sb.Height) * D2D1.D2D1ComputeMaximumScaleFactor(ref _drawPageToDevice) < DirectDrawPixels)
+            return null;
         float scale = D2D1.D2D1ComputeMaximumScaleFactor(ref full);
         // Default tolerance (0.25 device px) expressed in user space for this transform.
         float tolerance = 0.25f / Math.Max(scale, 1e-6f);

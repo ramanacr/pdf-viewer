@@ -82,7 +82,8 @@ public class Direct2DRealizationTests
         // Four shapes, one per quadrant of a 200 pt page.
         var list = await ListAsync("1 0 0 RG 4 w 10 10 m 40 90 60 10 90 90 c S 0 0 1 rg 110 10 m 190 10 l 150 90 l h f " +
                                    "0 1 0 RG 3 w 10 110 m 90 190 l S 0 g 110 110 m 190 110 190 190 110 190 c h f", "[0 0 200 200]");
-        using var renderer = new Direct2DVectorRenderer();
+        // Realizations for every shape (these are below the size drawn directly), to check they are culled.
+        using var renderer = new Direct2DVectorRenderer { DrawSmallGeometriesDirectly = false };
         var request = new RenderRequest { PageNumber = 1, Dpi = 8 * 72 }; // 1600 × 1600 px
         using (await Tile(renderer, list, request, new PixelRegion(0, 0, 700, 700)))
             Assert.Equal(1, renderer.RealizationCounts.Built);   // top left on screen: the green line only

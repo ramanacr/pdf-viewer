@@ -29,6 +29,30 @@ verifies each file: the signature must be intact and made by the expected certif
 CI creates a throwaway certificate on every run (`Create a throwaway signing certificate` in
 `.github/workflows/ci.yml`), so the signing and verification path is tested on every build.
 
+## GitHub releases
+
+`.github/workflows/release.yml` builds, signs and publishes a release when a version tag is pushed
+(`git tag v3.5.0; git push origin v3.5.0`), or on demand for an existing tag (Actions > Release >
+Run workflow). It signs with the project's release certificate, which lives only in two
+repository secrets, `PDFVIEWER_RELEASE_PFX` (base64 of the PFX) and `PDFVIEWER_RELEASE_PFX_PASSWORD`.
+Without them the workflow stops: a release is never published unsigned.
+
+Set them up once with:
+
+```powershell
+./scripts/set_release_signing_secret.ps1
+```
+
+It creates a self-signed release certificate (three years), keeps it in
+`%LOCALAPPDATA%\PdfViewer\release-signing` with its password DPAPI-encrypted for your Windows user,
+and stores it as the two secrets with the GitHub CLI. Keep that folder backed up: the secrets
+cannot be read back, and a new certificate gives releases a new thumbprint.
+
+Every release carries `PdfViewer-codesign.cer` (the public part) and its notes state the signer's
+thumbprint, so a download can be checked with
+`(Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint`. To timestamp release
+signatures, set the repository variable `PDFVIEWER_SIGN_TIMESTAMP_URL`.
+
 ## Moving to a trusted certificate
 
 Nothing in the build has to change except where the key comes from:

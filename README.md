@@ -36,6 +36,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
   - [Handling Password-Protected PDFs](#handling-password-protected-pdfs)
 - [Comprehensive Keyboard Shortcuts](#comprehensive-keyboard-shortcuts)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
+- [Code signing policy](#code-signing-policy)
 - [License & Third-Party Notices](#license--third-party-notices)
 
 ---
@@ -486,7 +487,13 @@ Yes. Open `PdfViewer.slnx` in **Visual Studio 2022 (v17.12 or newer)**. Visual S
 
 ---
 
+## Code signing policy
+
+Release binaries are Authenticode-signed, built only by this repository's release workflow from tagged source. Who commits, reviews and approves releases, how to check a download's signature, and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
+
+---
+
 ## License & Third-Party Notices
 
-- **PDF Viewer Application**: Licensed under the MIT License.
+- **PDF Viewer Application**: Licensed under the [MIT License](LICENSE).
 - **PDF Engine**: Google PDFium (BSD 3-Clause / Apache 2.0); vector renderer via Vortice.Windows (MIT); predefined CJK CMaps from Adobe cmap-resources (BSD 3-Clause); JPEG 2000 via CoreJ2K (BSD 3-Clause). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license texts.
