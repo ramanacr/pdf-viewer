@@ -19,7 +19,12 @@ internal sealed record GlyphStyle(
     string FontResource, PdfFont? Font, double FontSize, double CharSpacing, double WordSpacing, double Scaling,
     double Rise, int RenderMode, string StateOps, double[] FillRgb, string ColorOps = "")
 {
-    public bool Vertical => Font?.IsVertical ?? false;
+    /// <summary>Written down a column: the document font's writing mode, or that of a font the edit embeds.</summary>
+    public bool Vertical => Font?.IsVertical ?? VerticalWriting;
+    /// <summary>For a font the edit embeds (no <see cref="Font"/>): embedded for vertical writing (Identity-V).</summary>
+    public bool VerticalWriting { get; init; }
+    /// <summary>The font's entry in the resources it was named in (a reference or the dictionary itself).</summary>
+    public PdfObject? FontEntry { get; init; }
 }
 
 /// <summary>A glyph shown by the page's content.</summary>
@@ -43,7 +48,12 @@ internal sealed class ContentGlyph
     public ContentSpan? Span;
     /// <summary>On a span's first glyph: the span's other glyphs, which read as nothing on their own (TextBlocks).</summary>
     public List<ContentGlyph>? Joined;
-    public PdfPoint Origin => new(Matrix.E, Matrix.F);
+    /// <summary>A horizontal glyph turned sideways in a vertical column (TextBlocks): read as part of the column.</summary>
+    public bool Sideways;
+    /// <summary>For a sideways glyph: from where it is drawn (its baseline) to the column's centre line, in user space.</summary>
+    public PdfPoint Anchor;
+    /// <summary>Where the glyph sits on its line: its origin, or for a sideways glyph the point on the column's centre line level with it.</summary>
+    public PdfPoint Origin => new(Matrix.E + Anchor.X, Matrix.F + Anchor.Y);
 }
 
 /// <summary>A marked-content sequence with /ActualText: the text its glyphs read as, together.</summary>
@@ -569,7 +579,10 @@ internal sealed class PageContentWalker
         }
         double fs = gs.FontSize, th = gs.Th / 100.0;
         bool vertical = font?.IsVertical ?? false;
-        var style = new GlyphStyle(gs.FontName ?? string.Empty, font, fs, gs.Tc, gs.Tw, gs.Th, gs.Rise, gs.Tr, gs.StateOps(), gs.FillRgb, gs.ColorOps());
+        var style = new GlyphStyle(gs.FontName ?? string.Empty, font, fs, gs.Tc, gs.Tw, gs.Th, gs.Rise, gs.Tr, gs.StateOps(), gs.FillRgb, gs.ColorOps())
+        {
+            FontEntry = gs.FontName != null ? (_r.Resolve(resources["Font"]) as PdfDictionary)?[gs.FontName] : null,
+        };
 
         var pieces = new List<object>(); // byte[] kept codes, or double adjustments (thousandths)
         var kept = new List<byte>();
