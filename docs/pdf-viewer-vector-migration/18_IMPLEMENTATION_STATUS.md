@@ -144,6 +144,14 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - Remove Security writes an unencrypted copy, but only when the owner password is known or proven. Signed documents are changed only after confirmation, because their signatures break.
 - Viewer: Tools > Protect with Password... and Remove Security..., each saving a copy. Document Properties shows the security method and permissions.
 
+### Accessibility check (PDF/UA-1)
+- `Accessibility/PdfUaValidator` checks a document against PDF/UA-1 (ISO 14289-1), reporting each issue with its Matterhorn checkpoint, ISO clause, category, severity, how to fix it, and where (page, object, structure path such as `Document > Table > TR[2] > TD`, and bounds).
+  - Checks: tagging and the structure tree, title, the PDF/UA identifier, language, untagged content and artifacts, role maps, alternate text for figures and formulas, tables, lists, headings, fonts (the PDF/A-2u font rules under PDF/UA's clauses, plus Type 1 CharSets), annotations, links, form fields, tab order, optional content, embedded files, deprecated structure types, encryption permissions and XFA.
+  - Messages never quote document text.
+- `vectorpdf pdfua` over veraPDF's PDF/UA-1 files: 141/141 valid files accepted, 156/156 invalid files rejected, each in the clause its name gives. The PDF/A scores are unchanged.
+- Viewer: Tools > Accessibility Check lists issues by category. Selecting an issue goes to its page and highlights the element. The window is itself accessible: automation names, keyboard use and a live summary.
+- Not checked: what needs a person (reading order, contrast, whether alternate text is meaningful), annotation appearance streams, and tagging inside patterns and Type 3 glyphs.
+
 ### Printing
 - Pages print through Direct2D's print control, drawn by the same renderer as the screen, as vectors: text stays text in the spool and in Print to PDF output.
   - Each page is replayed into a command list at 300 dpi. What Direct2D must rasterise (transparency groups, soft masks, pattern cells) comes out at print resolution, and fallback regions are PDFium pixels at 300 dpi.
