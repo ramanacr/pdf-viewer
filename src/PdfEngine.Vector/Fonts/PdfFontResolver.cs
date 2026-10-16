@@ -128,11 +128,20 @@ public sealed class PdfFontResolver
         string?[] glyphNames = BuildSimpleEncoding(fontObj, baseFont, isType3, info.IsSymbolic, programKind);
 
         // Widths come from /Widths, in 1/1000 text space whatever the program's FontMatrix. Without
-        // them, an embedded CFF program that is not a standard 14 font gives its own advances,
-        // mapped through its FontMatrix (as PDFium reads them); the standard 14 keep their metrics.
-        if (widths == null && programKind == PdfFontProgramKind.Type1C && programData != null &&
-            Standard14Fonts.NormalizeName(baseFont) == null &&
-            FontProgramPreparer.CffWidths(programData, glyphNames, info.IsSymbolic, info.MissingWidth) is { } programWidths)
+        // them, an embedded CFF or Type 1 program that is not a standard 14 font gives its own
+        // advances, mapped through its FontMatrix (as PDFium reads them); the standard 14 keep
+        // their metrics. Codes past a short /Widths get /MissingWidth (else 0), as in PDFium.
+        List<double>? programWidths = null;
+        if (widths == null && programData != null && Standard14Fonts.NormalizeName(baseFont) == null)
+        {
+            programWidths = programKind switch
+            {
+                PdfFontProgramKind.Type1C => FontProgramPreparer.CffWidths(programData, glyphNames, info.IsSymbolic, info.MissingWidth),
+                PdfFontProgramKind.Type1 => FontProgramPreparer.Type1Widths(programData, glyphNames, info.IsSymbolic, info.MissingWidth),
+                _ => null,
+            };
+        }
+        if (programWidths != null)
         {
             widths = programWidths;
             firstChar = 0;

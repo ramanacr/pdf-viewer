@@ -20,7 +20,11 @@ namespace PdfEngine.Vector.Fonts.Programs;
 /// </remarks>
 internal static class Type1Converter
 {
-    public sealed record Result(byte[] Cff, Dictionary<string, int> NameToGid, string?[] BuiltInEncoding);
+    /// <param name="Advances">
+    /// Each glyph's hsbw/sbw width (seac composites keep their own) mapped through the FontMatrix,
+    /// in 1/1000 text space, by glyph index; negative when the glyph has none.
+    /// </param>
+    public sealed record Result(byte[] Cff, Dictionary<string, int> NameToGid, string?[] BuiltInEncoding, double[] Advances);
 
     private const int MaxGlyphs = 65000;
     private const int MaxOpsPerGlyph = 20000;
@@ -72,15 +76,21 @@ internal static class Type1Converter
         bool identity = Math.Abs(norm[0] - 1) < 1e-9 && Math.Abs(norm[1]) < 1e-9 && Math.Abs(norm[2]) < 1e-9 &&
                         Math.Abs(norm[3] - 1) < 1e-9 && Math.Abs(norm[4]) < 1e-9 && Math.Abs(norm[5]) < 1e-9;
 
+        // Advances as FreeType (and so PDFium) reports them: the horizontal width times the
+        // matrix's x scale, whatever the skew or the vertical part of an sbw.
         var converted = new List<byte[]>(names.Count);
-        foreach (var name in names)
+        var advances = new double[names.Count];
+        for (int g = 0; g < names.Count; g++)
         {
             byte[] type2;
-            if (charStrings.TryGetValue(name, out var cs))
+            advances[g] = -1;
+            if (charStrings.TryGetValue(names[g], out var cs))
             {
                 var interp = new Interpreter(subrs, charStrings);
                 interp.Run(cs, 0, 0, depth: 0);
                 type2 = interp.EmitType2(identity ? null : norm);
+                if (interp.AdvanceX is double wx && double.IsFinite(wx * norm[0]))
+                    advances[g] = wx * norm[0];
             }
             else
             {
@@ -105,7 +115,7 @@ internal static class Type1Converter
             fontBBox = new[] { xs.Min(), ys.Min(), xs.Max(), ys.Max() };
         }
         byte[] cff = CffWriter.Write(fontName, names, converted, new[] { 0.001, 0, 0, 0.001, 0, 0 }, fontBBox);
-        return new Result(cff, nameToGid, encoding);
+        return new Result(cff, nameToGid, encoding, advances);
     }
 
     // ------------------------------------------------------------------ program structure
@@ -357,6 +367,9 @@ internal static class Type1Converter
         private double _offsetX, _offsetY;
         private int _ops;
 
+        /// <summary>The glyph's width from hsbw or sbw, in character space; null before either runs.</summary>
+        public double? AdvanceX { get; private set; }
+
         public Interpreter(List<byte[]> subrs, Dictionary<string, byte[]> charStrings)
         {
             _subrs = subrs;
@@ -437,6 +450,7 @@ internal static class Type1Converter
                     case 11: return false; // return
                     case 13: // hsbw sbx wx
                         _x = Arg(0); _y = 0;
+                        AdvanceX ??= Arg(1);
                         _stack.Clear();
                         break;
                     case 14: return true;   // endchar
@@ -472,6 +486,7 @@ internal static class Type1Converter
                             }
                             case 7: // sbw sbx sby wx wy
                                 _x = Arg(0); _y = Arg(1);
+                                AdvanceX ??= Arg(2);
                                 _stack.Clear();
                                 break;
                             case 12: // div

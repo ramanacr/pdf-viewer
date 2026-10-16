@@ -59,7 +59,7 @@ public class FontProgramTests
     [Fact]
     public void Type1_ConvertsSubrsSeacAndSkewedMatrix()
     {
-        byte[] program = SyntheticType1(fontMatrix: "0.001 0 0.0002 0.001 0 0");
+        byte[] program = SyntheticType1.Default(fontMatrix: "0.001 0 0.0002 0.001 0 0").Data;
         var result = Type1Converter.TryConvert(program);
         Assert.NotNull(result);
         var cff = CffFont.TryParse(result!.Cff);
@@ -73,8 +73,8 @@ public class FontProgramTests
     [Fact]
     public async Task Type1Font_RendersLikePdfium()
     {
-        byte[] program = SyntheticType1(fontMatrix: "0.001 0 0 0.001 0 0");
-        var pdf = FontPdf(program, "FontFile", extraStreamDict: $"/Length1 {Type1ClearLength} /Length2 {program.Length - Type1ClearLength} /Length3 0",
+        var (program, clearLength) = SyntheticType1.Default(fontMatrix: "0.001 0 0 0.001 0 0");
+        var pdf = FontPdf(program, "FontFile", extraStreamDict: $"/Length1 {clearLength} /Length2 {program.Length - clearLength} /Length3 0",
             subtype: "Type1", baseFont: "TestType1", text: "(AB)");
         await AssertRendersLikePdfium(pdf, "type1");
     }
@@ -82,7 +82,7 @@ public class FontProgramTests
     [Fact]
     public async Task BareCffFont_RendersLikePdfium()
     {
-        byte[] cff = Type1Converter.TryConvert(SyntheticType1(fontMatrix: "0.001 0 0 0.001 0 0"))!.Cff;
+        byte[] cff = Type1Converter.TryConvert(SyntheticType1.Default(fontMatrix: "0.001 0 0 0.001 0 0").Data)!.Cff;
         var pdf = FontPdf(cff, "FontFile3", extraStreamDict: "/Subtype /Type1C", subtype: "Type1", baseFont: "TestType1", text: "(AB)");
         await AssertRendersLikePdfium(pdf, "type1c");
     }
@@ -256,83 +256,5 @@ public class FontProgramTests
         {
             return false;
         }
-    }
-
-    // ---- synthetic Type 1 font: "A" is a square built with a subroutine; "Aacute" is a seac of A + acute.
-
-    private static int Type1ClearLength;
-
-    private static byte[] SyntheticType1(string fontMatrix)
-    {
-        byte[] Cs(params object[] ops) => EncryptCharString(Type1Ops(ops));
-        var notdef = Cs(0, 500, "hsbw", "endchar");
-        var subr0 = Cs(800, 0, "rlineto", "return");
-        var glyphA = Cs(0, 1000, "hsbw", 100, 100, "rmoveto", 0, "callsubr", 0, 700, "rlineto", -800, 0, "rlineto", "closepath", "endchar");
-        var acute = Cs(0, 1000, "hsbw", 400, 850, "rmoveto", 200, 0, "rlineto", 0, 100, "rlineto", -200, 0, "rlineto", "closepath", "endchar");
-        var aacute = Cs(0, 1000, "hsbw", 0, 0, 0, 65, 194, "seac");
-
-        var priv = new MemoryStream();
-        void W(string s) => priv.Write(Encoding.Latin1.GetBytes(s));
-        W("dup /Private 8 dict dup begin\n/RD{string currentfile exch readstring pop}executeonly def\n");
-        W("/ND{noaccess def}executeonly def\n/NP{noaccess put}executeonly def\n/lenIV 4 def\n");
-        W("/Subrs 1 array\n");
-        W($"dup 0 {subr0.Length} RD "); priv.Write(subr0); W(" NP\n");
-        W("ND\n2 index /CharStrings 4 dict dup begin\n");
-        foreach (var (name, cs) in new[] { (".notdef", notdef), ("A", glyphA), ("acute", acute), ("Aacute", aacute) })
-        {
-            W($"/{name} {cs.Length} RD "); priv.Write(cs); W(" ND\n");
-        }
-        W("end\nend\nreadonly put\nnoaccess put\ndup /FontName get exch definefont pop\nmark currentfile closefile\n");
-
-        byte[] encrypted = Encrypt(priv.ToArray(), 55665);
-        string clear = "%!PS-AdobeFont-1.0: TestType1 001.000\n12 dict begin\n/FontInfo 2 dict dup begin /FullName (Test Type 1) def end readonly def\n" +
-                       "/FontName /TestType1 def\n/PaintType 0 def\n/FontType 1 def\n" +
-                       $"/FontMatrix [{fontMatrix}] readonly def\n/FontBBox {{0 -200 1000 1000}} readonly def\n" +
-                       "/Encoding StandardEncoding def\ncurrentdict end\ncurrentfile eexec\n";
-        byte[] clearBytes = Encoding.Latin1.GetBytes(clear);
-        Type1ClearLength = clearBytes.Length;
-        return clearBytes.Concat(encrypted).ToArray();
-    }
-
-    private static readonly Dictionary<string, byte[]> Ops = new()
-    {
-        ["rlineto"] = new byte[] { 5 }, ["closepath"] = new byte[] { 9 }, ["callsubr"] = new byte[] { 10 },
-        ["return"] = new byte[] { 11 }, ["hsbw"] = new byte[] { 13 }, ["endchar"] = new byte[] { 14 },
-        ["rmoveto"] = new byte[] { 21 }, ["seac"] = new byte[] { 12, 6 },
-    };
-
-    /// <summary>Type 1 charstring from ints (operands) and names (operators).</summary>
-    private static byte[] Type1Ops(object[] ops)
-    {
-        var ms = new MemoryStream();
-        foreach (var o in ops)
-            ms.Write(o is string name ? Ops[name] : Number((int)o));
-        return ms.ToArray();
-    }
-
-    private static byte[] Number(int v)
-    {
-        if (v is >= -107 and <= 107) return new[] { (byte)(v + 139) };
-        if (v is >= 108 and <= 1131) { v -= 108; return new[] { (byte)((v >> 8) + 247), (byte)v }; }
-        if (v is >= -1131 and <= -108) { v = -v - 108; return new[] { (byte)((v >> 8) + 251), (byte)v }; }
-        return new byte[] { 255, (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
-    }
-
-    private static byte[] EncryptCharString(byte[] plain) => Encrypt(plain, 4330);
-
-    /// <summary>Type 1 encryption with four leading random-ish bytes (lenIV 4 / eexec prefix).</summary>
-    private static byte[] Encrypt(byte[] plain, ushort key)
-    {
-        const ushort c1 = 52845, c2 = 22719;
-        ushort r = key;
-        var input = new byte[] { 0x11, 0x22, 0x33, 0x44 }.Concat(plain).ToArray();
-        var output = new byte[input.Length];
-        for (int i = 0; i < input.Length; i++)
-        {
-            byte cipher = (byte)(input[i] ^ (r >> 8));
-            r = (ushort)((cipher + r) * c1 + c2);
-            output[i] = cipher;
-        }
-        return output;
     }
 }

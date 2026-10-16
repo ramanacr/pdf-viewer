@@ -185,22 +185,46 @@ public static class FontProgramPreparer
         try
         {
             double a = cff.FontMatrix[0];
-            var widths = new List<double>(256);
-            for (int code = 0; code < 256; code++)
-            {
-                int gid = -1;
-                if (symbolic) gid = cff.GidForBuiltInCode(code);
-                if (gid <= 0 && code < glyphNames.Length && glyphNames[code] is { } name) gid = cff.GidForName(name);
-                if (gid <= 0) gid = cff.GidForBuiltInCode(code);
-                double w = gid > 0 ? cff.GlyphAdvance(gid) : -1;
-                widths.Add(w >= 0 && double.IsFinite(w * a) ? w * a * 1000.0 : missingWidth);
-            }
-            return widths;
+            return CodeWidths(SimpleGlyphMap(cff, glyphNames, symbolic, builtIn: null), gid => cff.GlyphAdvance(gid) * a * 1000.0, missingWidth);
         }
         catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Advances of a Type 1 (FontFile) program for codes 0-255, in 1/1000 text space: each glyph's
+    /// hsbw/sbw width mapped through the FontMatrix, glyphs chosen as for drawing (the PDF encoding,
+    /// the program's built-in encoding for symbolic fonts). Null when the program cannot be read.
+    /// </summary>
+    internal static List<double>? Type1Widths(byte[] data, string?[] glyphNames, bool symbolic, double missingWidth)
+    {
+        if (data.Length > MaxProgramBytes || Type1Converter.TryConvert(data) is not { } converted ||
+            CffFont.TryParse(converted.Cff) is not { } cff)
+            return null;
+        try
+        {
+            var advances = converted.Advances;
+            return CodeWidths(SimpleGlyphMap(cff, glyphNames, symbolic, converted.BuiltInEncoding),
+                gid => gid < advances.Length ? advances[gid] : -1, missingWidth);
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static List<double> CodeWidths(Func<int, int> gidForCode, Func<int, double> advance, double missingWidth)
+    {
+        var widths = new List<double>(256);
+        for (int code = 0; code < 256; code++)
+        {
+            int gid = gidForCode(code);
+            double w = gid > 0 ? advance(gid) : -1;
+            widths.Add(w >= 0 && double.IsFinite(w) ? w : missingWidth);
+        }
+        return widths;
     }
 
     /// <summary>
@@ -210,11 +234,17 @@ public static class FontProgramPreparer
     /// </summary>
     private static Func<int, int, int> CffGlyphMap(PdfFont font, CffFont cff, string?[]? builtIn)
     {
-        return (code, cid) =>
-        {
-            if (font.IsComposite)
-                return cff.GidForCid(cid);
+        if (font.IsComposite)
+            return (_, cid) => cff.GidForCid(cid);
+        var simple = SimpleGlyphMap(cff, font.GlyphNames ?? Array.Empty<string?>(), font.IsSymbolic, builtIn);
+        return (code, _) => Math.Max(0, simple(code));
+    }
 
+    /// <summary>Simple-font code → glyph index (0 or less when none) shared by drawing and widths.</summary>
+    private static Func<int, int> SimpleGlyphMap(CffFont cff, string?[] glyphNames, bool symbolic, string?[]? builtIn)
+    {
+        return code =>
+        {
             int BuiltIn()
             {
                 if (builtIn != null)
@@ -222,12 +252,11 @@ public static class FontProgramPreparer
                 return cff.GidForBuiltInCode(code);
             }
 
-            if (font.IsSymbolic && BuiltIn() is int b and > 0)
+            if (symbolic && BuiltIn() is int b and > 0)
                 return b;
-            if (font.GetGlyphName(code) is { } name && cff.GidForName(name) is int g and > 0)
+            if (code >= 0 && code < glyphNames.Length && glyphNames[code] is { } name && cff.GidForName(name) is int g and > 0)
                 return g;
-            int fallback = BuiltIn();
-            return fallback > 0 ? fallback : 0;
+            return BuiltIn();
         };
     }
 
