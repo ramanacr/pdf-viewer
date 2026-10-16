@@ -21,8 +21,15 @@ namespace PdfEngine.Vector.PdfA;
 
 public sealed class PdfAConversionOptions
 {
-    /// <summary>PDF/A-2b (default), PDF/A-3b or PDF/A-1b. PDF/A-1b is refused for a document that uses transparency, which cannot be removed without changing the page.</summary>
+    /// <summary>
+    /// PDF/A-2b (default), PDF/A-3b or PDF/A-1b. PDF/A-1b does not allow transparency: with a
+    /// <see cref="Rasterizer"/> it is flattened, otherwise such a document is refused.
+    /// </summary>
     public PdfAFlavour Flavour { get; init; } = PdfAFlavour.A2b;
+    /// <summary>Draws pages for flattening transparency (PDF/A-1b); null refuses documents with transparency instead.</summary>
+    public IPdfPageRasterizer? Rasterizer { get; init; }
+    /// <summary>Resolutions and limits for flattening.</summary>
+    public PdfFlatteningOptions Flattening { get; init; } = new();
     /// <summary>Where fonts for embedding come from (the installed fonts by default).</summary>
     public SystemFontCatalog? Fonts { get; init; }
     /// <summary>A CMYK ICC profile for DeviceCMYK content (by default the one Windows installs, when present).</summary>
@@ -38,6 +45,8 @@ public sealed class PdfAConversionResult
     public required IReadOnlyList<string> Changes { get; init; }
     /// <summary>The result checked against the target: its remaining issues, if any, could not be fixed automatically.</summary>
     public required PdfAReport Report { get; init; }
+    /// <summary>What was flattened for PDF/A-1b (pages, areas, resolutions), or null when nothing was.</summary>
+    public PdfFlatteningReport? Flattening { get; init; }
 }
 
 /// <summary>A conversion the target part cannot take without changing how the document looks (PDF/A-1b of a document with transparency).</summary>
@@ -54,7 +63,8 @@ public sealed class PdfAConversionRefusedException : InvalidOperationException
 /// the document information; scripts, forbidden actions, external content, transfer functions and
 /// similar are removed; annotations are made printable and get appearances; text codes whose
 /// glyph the font program lacks are taken out; the result is then validated, and whatever could
-/// not be fixed is reported. PDF/A-1b is refused for a document that uses transparency.
+/// not be fixed is reported. For PDF/A-1b, transparency is flattened (<see cref="TransparencyFlattener"/>)
+/// when a rasterizer is given; otherwise a document that uses it is refused.
 /// </summary>
 public static class PdfAConverter
 {
@@ -67,7 +77,8 @@ public static class PdfAConverter
         var changes = new Dictionary<string, int>(StringComparer.Ordinal);
         byte[] bytes = original;
         var doc = document;
-        PdfVectorDocument? regenerated = null;
+        PdfVectorDocument? regenerated = null, flattened = null;
+        PdfFlatteningReport? flattening = null;
         try
         {
             if (RegenerateWidgetAppearances(document, original) is { } withAppearances)
@@ -77,6 +88,17 @@ public static class PdfAConverter
                 changes[$"Generated appearances for {withAppearances.Count} form field widget(s)"] = 1;
             }
             var source = PdfAValidator.Validate(doc, bytes, options.Flavour);
+            // PDF/A-1b: transparency is flattened when the pages can be drawn (and no hidden layer would show).
+            if (options.Flavour.Part == 1 && options.Rasterizer != null && TransparencyKinds(doc, source).Count > 0 && HiddenLayers(doc) == null
+                && TransparencyFlattener.Run(doc, options.Rasterizer, options.Flattening) is { } flat)
+            {
+                bytes = flat.Bytes;
+                flattened = doc = PdfVectorDocument.Open(new MemoryByteSource(bytes), document.FilePath);
+                source = PdfAValidator.Validate(doc, bytes, options.Flavour);
+                flattening = flat.Report;
+                changes[flat.Report.Summary] = 1;
+                if (flat.Report.GroupsRemoved > 0) changes[$"Removed {flat.Report.GroupsRemoved} transparency group(s) (PDF/A-1 does not allow them)"] = 1;
+            }
             if (options.Flavour.Part == 1 && RefusalForPart1(doc, source) is { } reason) throw new PdfAConversionRefusedException(reason);
             var conversion = new Conversion(doc, options, source, changes);
             byte[] output = conversion.Run();
@@ -110,13 +132,18 @@ public static class PdfAConverter
                 Bytes = output,
                 Changes = changes.Select(c => c.Value > 1 ? $"{c.Key} ({c.Value} times)" : c.Key).ToList(),
                 Report = report,
+                Flattening = flattening,
             };
         }
         finally
         {
+            flattened?.Dispose();
             regenerated?.Dispose();
         }
     }
+
+    /// <summary>A complete, decrypted PDF 1.4 rewrite of what the catalog reaches, with <paramref name="overrides"/> applied.</summary>
+    internal static byte[] WriteDecrypted(PdfVectorDocument doc, IReadOnlyDictionary<int, PdfObject> overrides) => Conversion.WriteFile(doc, overrides, 1);
 
     /// <summary>
     /// Why a document cannot become PDF/A-1b without changing how it looks, or null: PDF/A-1
@@ -125,6 +152,15 @@ public static class PdfAConverter
     /// hidden layers would show.
     /// </summary>
     private static string? RefusalForPart1(PdfVectorDocument doc, PdfAReport source)
+    {
+        var kinds = TransparencyKinds(doc, source);
+        if (kinds.Count > 0)
+            return $"PDF/A-1b does not allow transparency, and this document uses it ({string.Join(", ", kinds)}). Removing it would change how the pages look; convert to PDF/A-2b instead.";
+        return HiddenLayers(doc);
+    }
+
+    /// <summary>The kinds of transparency the validation found (and JPEG 2000 images with their opacity in their data).</summary>
+    private static List<string> TransparencyKinds(PdfVectorDocument doc, PdfAReport source)
     {
         var kinds = new List<string>();
         void Kind(bool found, string what) { if (found && !kinds.Contains(what)) kinds.Add(what); }
@@ -140,8 +176,13 @@ public static class PdfAConverter
         foreach (var (number, entry) in doc.XrefTable.Entries)
             if (entry.IsInUse && r.Resolve(number) is PdfStream { Dictionary: var d } && d.GetName("Subtype") == "Image" && (d.GetInteger("SMaskInData") ?? 0) != 0)
                 Kind(true, "soft masks");
-        if (kinds.Count > 0)
-            return $"PDF/A-1b does not allow transparency, and this document uses it ({string.Join(", ", kinds)}). Removing it would change how the pages look; convert to PDF/A-2b instead.";
+        return kinds;
+    }
+
+    /// <summary>Why hidden layers keep a document from PDF/A-1b (which has no optional content, so they would show), or null.</summary>
+    private static string? HiddenLayers(PdfVectorDocument doc)
+    {
+        var r = doc.Resolver;
         if (r.Resolve(r.Resolve(doc.XrefTable.Trailer?["Root"]) is PdfDictionary c ? c["OCProperties"] : null) is PdfDictionary oc
             && r.Resolve(oc["D"]) is PdfDictionary config
             && (config.GetName("BaseState") is "OFF" or "Unchanged" || r.Resolve(config["OFF"]) is PdfArray { Count: > 0 }))

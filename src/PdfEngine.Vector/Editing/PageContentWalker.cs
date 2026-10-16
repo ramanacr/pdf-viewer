@@ -681,7 +681,7 @@ internal sealed class PageContentWalker
 
     // ------------------------------------------------------------------ inline images
 
-    private static (string? Raw, int Width, int Height) InlineImage(MemoryByteSource src, PdfLexer lexer, PdfParser parser)
+    internal static (string? Raw, int Width, int Height) InlineImage(MemoryByteSource src, PdfLexer lexer, PdfParser parser)
     {
         var raw = new StringBuilder("BI ");
         int width = 0, height = 0;
