@@ -375,7 +375,7 @@ Not started by design (M9/M10). PDFium still ships and is required.
 7a. **Encryption remainder:** certificates on smart cards/HSMs that need a PIN prompt are untested (the Windows CNG provider shows its own prompt); re-encrypting a saved copy for the same certificate recipients (password encryption is done).
 8. **Release remainder:** the app and installer are Authenticode-signed with a self-signed certificate, locally and in GitHub releases (`.github/workflows/release.yml`, eng/signing/README.md). A certificate from a trusted CA is future scope. Startup and installer-size gates are in place (eng/releasegate).
 9. Differential fixtures for Type3, stencil/SMask images, rotated crop boxes, and text in embedded TrueType fonts.
-10. **Editing remainder:** GPOS cursive attachment; sideways Latin text in vertical columns; word gaps narrower than 0.2 em are read without a space (001150, 001695, 001854), where PDFium inserts one.
+10. **Editing remainder:** GPOS cursive attachment; sideways Latin text in vertical columns.
 
 ---
 
