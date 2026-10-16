@@ -185,7 +185,40 @@ internal static class TextBlocks
                     merged = true;
                 }
         }
+        JoinSpans(glyphs, lines);
         return lines;
+    }
+
+    /// <summary>
+    /// Glyphs drawn in a marked-content span with /ActualText (an Indic syllable whose matra or reph
+    /// is drawn out of reading order, a ligature) read as that text: the span's first glyph in content
+    /// order carries all of it and the others none, and they move together when the line is laid out
+    /// again. Only short spans that lie within one line are joined; others keep each glyph's own text.
+    /// </summary>
+    private static void JoinSpans(IReadOnlyList<ContentGlyph> glyphs, List<TextLine> lines)
+    {
+        var total = new Dictionary<ContentSpan, int>(ReferenceEqualityComparer.Instance);
+        foreach (var g in glyphs) if (g.Span != null) total[g.Span] = total.GetValueOrDefault(g.Span) + 1;
+        if (total.Count == 0) return;
+        foreach (var line in lines)
+        {
+            bool changed = false;
+            foreach (var group in line.Glyphs.Where(g => g.Span != null).GroupBy(g => g.Span!, ReferenceEqualityComparer.Instance))
+            {
+                var members = group.OrderBy(g => g.Op).ThenBy(g => g.Index).ToList();
+                var span = (ContentSpan)group.Key!;
+                if (members.Count != total[span]) continue; // it reaches beyond this line
+                // Syllables and ligatures only: some producers mark whole words or lines with an
+                // /ActualText that leaves out the spaces the glyphs' positions show.
+                if (members.Count > 8 || span.Text.Length > 8 || span.Text.Any(char.IsWhiteSpace) || members.Any(g => g.IsWordSpace || g.Text == " ")) continue;
+                var head = members[0];
+                head.Text = span.Text;
+                head.Joined = members.Skip(1).ToList();
+                foreach (var m in head.Joined) m.Text = string.Empty;
+                changed = true;
+            }
+            if (changed) Measure(line);
+        }
     }
 
     private static double Angle(TextLine l) => Math.Round(Math.Atan2(l.U.Y, l.U.X), 2);
@@ -203,6 +236,20 @@ internal static class TextBlocks
         line.End = ordered.Max(g => S(g) + UserAdvance(g)) - shift;
         line.Size = ordered.Max(EmHeight);
 
+        // A gap between glyphs is a word break when it is clearly wider than the line's usual gap
+        // between letters: a tenth of an em over it (so letter-spaced text keeps its words), and
+        // never more than a fifth of an em (the narrow word gaps tightly set text has).
+        var letterGaps = new List<double>();
+        for (int i = 1; i < ordered.Count; i++)
+        {
+            var a = ordered[i - 1];
+            if (a.Text.Trim().Length == 0 || ordered[i].Text.Trim().Length == 0) continue;
+            letterGaps.Add((S(ordered[i]) - (S(a) + UserAdvance(a))) / Math.Max(EmHeight(a), 1e-6));
+        }
+        letterGaps.Sort();
+        double usual = letterGaps.Count > 0 ? Math.Max(letterGaps[letterGaps.Count / 2], 0) : 0;
+        double breakEm = Math.Min(usual + 0.1, 0.2);
+
         var text = new StringBuilder();
         line.CharGlyph.Clear();
         double prevEnd = double.NaN;
@@ -212,7 +259,7 @@ internal static class TextBlocks
             double s = S(g) - shift;
             bool prevSpace = text.Length > 0 && text[^1] == ' ';
             bool isSpace = g.Text == " " || g.Text.Trim().Length == 0 && g.Text.Length > 0;
-            if (!double.IsNaN(prevEnd) && !prevSpace && !isSpace && s - prevEnd > 0.2 * EmHeight(g))
+            if (!double.IsNaN(prevEnd) && !prevSpace && !isSpace && s - prevEnd > breakEm * EmHeight(g))
             {
                 text.Append(' ');
                 line.CharGlyph.Add(-1);
