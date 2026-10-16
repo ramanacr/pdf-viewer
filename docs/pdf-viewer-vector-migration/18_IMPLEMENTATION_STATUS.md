@@ -222,12 +222,19 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - objects are packed into object streams with a cross-reference stream. PDF/A-1 documents keep a classic table, a 1.4 header and readable metadata;
   - page thumbnails and applications' private data are dropped;
   - optionally, images shown above a resolution are downsampled to it by averaging, soft masks with them. JPEG images go through the host's codec, and CMYK, indexed and colour-keyed images are left alone.
-- Encrypted documents are refused; signed ones are saved only after confirmation, because their signatures break.
+- Encrypted documents are reduced and stay encrypted the same way:
+  - objects are read through the open document's security handler, and the copy is encrypted again with the same file key. Loose objects and object streams are encrypted; the cross-reference stream and the encryption dictionary are not;
+  - the original encryption dictionary is carried over unchanged: revision (R2 to R6), cipher (RC4 40 and 128-bit, AES-128, AES-256), /P, /EncryptMetadata, and /O, /U, /OE, /UE and /Perms. The first /ID string is kept, because the key of R2 to R4 derives from it;
+  - both passwords therefore keep working, even when the document was opened with the open password only. No password is stored or written, and messages never contain one;
+  - the rewrite is a change: it needs the permissions password (used to open, or given as `PdfOptimizeOptions.OwnerPassword`), or /P bit 4 (changing the document). Otherwise it is refused with a clear message;
+  - certificate-encrypted (public-key) documents are reduced the same way by the engine when the recipient may change them. The viewer only holds a decrypted copy of them, so it does not offer Reduce File Size for them;
+  - tests build R2, R3, R4 (RC4 and AES-128), R5 and R6 documents in-test. The copies are smaller, open with the same passwords, keep the permissions and dictionary entries, and render the same as the original in our engine and in PDFium.
+- Signed documents are saved only after confirmation, because their signatures break.
 - `vectorpdf optimize` over the 3,197-file corpus, lossless settings:
   - 3,176 files are rewritten, and 21 are skipped (encrypted or repaired);
   - 311 MB become 266 MB (86 %), and the GovDocs files lose about a third of their size;
   - PDFium reads the same text on the first pages of every file, and they render as before (checked after the JPEG 2000 fix).
-- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy.
+- Viewer: Tools > Reduce File Size... offers the image presets and saves a copy. An encrypted document is reduced with the password it was opened with. When its permissions forbid changes, the viewer asks for the permissions password.
 
 ### PDF/A
 - **Validator** (`PdfA/PdfAValidator`) for PDF/A-1b, -2b, -2u, -3b and -3u. It checks:
