@@ -236,6 +236,20 @@ internal static class TextBlocks
         line.End = ordered.Max(g => S(g) + UserAdvance(g)) - shift;
         line.Size = ordered.Max(EmHeight);
 
+        // A gap between glyphs is a word break when it is clearly wider than the line's usual gap
+        // between letters: a tenth of an em over it (so letter-spaced text keeps its words), and
+        // never more than a fifth of an em (the narrow word gaps tightly set text has).
+        var letterGaps = new List<double>();
+        for (int i = 1; i < ordered.Count; i++)
+        {
+            var a = ordered[i - 1];
+            if (a.Text.Trim().Length == 0 || ordered[i].Text.Trim().Length == 0) continue;
+            letterGaps.Add((S(ordered[i]) - (S(a) + UserAdvance(a))) / Math.Max(EmHeight(a), 1e-6));
+        }
+        letterGaps.Sort();
+        double usual = letterGaps.Count > 0 ? Math.Max(letterGaps[letterGaps.Count / 2], 0) : 0;
+        double breakEm = Math.Min(usual + 0.1, 0.2);
+
         var text = new StringBuilder();
         line.CharGlyph.Clear();
         double prevEnd = double.NaN;
@@ -245,7 +259,7 @@ internal static class TextBlocks
             double s = S(g) - shift;
             bool prevSpace = text.Length > 0 && text[^1] == ' ';
             bool isSpace = g.Text == " " || g.Text.Trim().Length == 0 && g.Text.Length > 0;
-            if (!double.IsNaN(prevEnd) && !prevSpace && !isSpace && s - prevEnd > 0.2 * EmHeight(g))
+            if (!double.IsNaN(prevEnd) && !prevSpace && !isSpace && s - prevEnd > breakEm * EmHeight(g))
             {
                 text.Append(' ');
                 line.CharGlyph.Add(-1);

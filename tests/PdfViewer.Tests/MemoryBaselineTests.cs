@@ -104,9 +104,11 @@ public class MemoryBaselineTests : IDisposable
         _output.WriteLine($"open {openMs:F0} ms, first page {firstPageMs:F0} ms at 150 dpi");
         _output.WriteLine($"private MB: start {Mb(start):F0}, opened {Mb(opened):F0}, after passes {string.Join(" / ", Array.ConvertAll(afterPass, v => Mb(v).ToString("F0")))}, closed {Mb(closed):F0}");
 
-        // 150 pages rendered twice more after the first pass: a per-page leak of even 0.3 MB would show as 90 MB.
-        long growth = afterPass[2] - afterPass[0];
-        Assert.True(growth < 48L * 1024 * 1024, $"memory kept growing across render passes: +{Mb(growth):F0} MB");
+        // A leak grows memory on every pass: 0.3 MB per page would add 45 MB each time 150 pages are
+        // rendered again. One pass alone can grow by as much while other tests in the same process
+        // allocate, so the plateau is judged by the smaller of the two later passes' growth.
+        long growth = Math.Min(afterPass[1] - afterPass[0], afterPass[2] - afterPass[1]);
+        Assert.True(growth < 24L * 1024 * 1024, $"memory kept growing across render passes: +{Mb(afterPass[1] - afterPass[0]):F0} MB, then +{Mb(afterPass[2] - afterPass[1]):F0} MB");
         Assert.True(Mb(afterPass[0] - start) < 600, $"rendering 150 pages held {Mb(afterPass[0] - start):F0} MB");
     }
 
