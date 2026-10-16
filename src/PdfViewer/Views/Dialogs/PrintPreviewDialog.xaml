@@ -258,6 +258,53 @@
                                          IsChecked="{Binding ColorMode, Converter={StaticResource EnumToBool}, ConverterParameter=Grayscale}" />
                         </StackPanel>
                     </GroupBox>
+
+                    <!-- 6. Page Sizing -->
+                    <GroupBox Header="Page Sizing"
+                              Foreground="{DynamicResource TextPrimaryBrush}"
+                              BorderBrush="{DynamicResource BorderBrush}"
+                              Margin="0,0,0,12"
+                              Padding="10">
+                        <StackPanel>
+                            <RadioButton Content="Fit to printable area"
+                                         IsChecked="{Binding Scaling, Converter={StaticResource EnumToBool}, ConverterParameter=FitToPrintableArea}"
+                                         Margin="0,0,0,6" />
+                            <RadioButton Content="Actual size"
+                                         IsChecked="{Binding Scaling, Converter={StaticResource EnumToBool}, ConverterParameter=ActualSize}"
+                                         Margin="0,0,0,6" />
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton Content="Custom scale:"
+                                             IsChecked="{Binding Scaling, Converter={StaticResource EnumToBool}, ConverterParameter=CustomScale}"
+                                             VerticalAlignment="Center"
+                                             Margin="0,0,8,0" />
+                                <TextBox Text="{Binding CustomScalePercent, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="56"
+                                         Height="24"
+                                         VerticalContentAlignment="Center"
+                                         TextAlignment="Center"
+                                         IsEnabled="{Binding Scaling, Converter={StaticResource EnumToBool}, ConverterParameter=CustomScale}" />
+                                <TextBlock Text="%" VerticalAlignment="Center" Margin="4,0,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- 7. Advanced -->
+                    <GroupBox Header="Advanced"
+                              Foreground="{DynamicResource TextPrimaryBrush}"
+                              BorderBrush="{DynamicResource BorderBrush}"
+                              Margin="0,0,0,12"
+                              Padding="10">
+                        <StackPanel>
+                            <CheckBox Content="Print as image"
+                                      IsChecked="{Binding PrintAsImage}"
+                                      ToolTip="Send each page as a picture. Slower and larger, but works around printer drivers that draw vector content wrongly." />
+                            <TextBlock Text="{Binding PrintMethodDescription}"
+                                       TextWrapping="Wrap"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Margin="0,6,0,0" />
+                        </StackPanel>
+                    </GroupBox>
                 </StackPanel>
             </ScrollViewer>
         </Grid>

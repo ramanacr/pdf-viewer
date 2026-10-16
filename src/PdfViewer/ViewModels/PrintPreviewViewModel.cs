@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Printing;
 using System.Threading;
 using System.Threading.Tasks;
@@ -109,6 +111,14 @@ public partial class PrintPreviewViewModel : ObservableObject
 
     [ObservableProperty]
     private string _statusMessage = string.Empty;
+
+    /// <summary>Acrobat's "Print as image" (Advanced): pages go to the printer as PDFium images.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PrintMethodDescription))]
+    private bool _printAsImage;
+
+    /// <summary>How the pages will reach the printer (vectors, or images and why).</summary>
+    public string PrintMethodDescription => DocumentPrinter.DescribeMethod(_docService, PrintAsImage);
 
     public Action? CloseAction { get; set; }
     public bool DialogResult { get; private set; }
@@ -303,69 +313,16 @@ public partial class PrintPreviewViewModel : ObservableObject
         return grayBitmap;
     }
 
+    /// <summary>What to print, once the user pressed Print; the owner runs the job (with progress and cancel).</summary>
+    public PrintRequest? Request { get; private set; }
+
     [RelayCommand]
     public void ExecutePrint()
     {
         try
         {
             StatusMessage = "Preparing print job...";
-
-            var printDialog = new System.Windows.Controls.PrintDialog();
-            if (SelectedPrinter?.Queue != null)
-            {
-                printDialog.PrintQueue = SelectedPrinter.Queue;
-            }
-
-            var ticket = printDialog.PrintTicket ?? new PrintTicket();
-            ticket.CopyCount = Math.Max(1, Copies);
-            if (CollationSupported(ticket))
-            {
-                ticket.Collation = Collate ? System.Printing.Collation.Collated : System.Printing.Collation.Uncollated;
-            }
-
-            if (Orientation == PrintOrientationMode.Portrait)
-            {
-                ticket.PageOrientation = PageOrientation.Portrait;
-            }
-            else if (Orientation == PrintOrientationMode.Landscape)
-            {
-                ticket.PageOrientation = PageOrientation.Landscape;
-            }
-
-            printDialog.PrintTicket = ticket;
-
-            int startPage = 1;
-            int endPage = _documentPageCount;
-
-            if (RangeMode == PrintRangeMode.CurrentPage)
-            {
-                startPage = PreviewPageNumber;
-                endPage = PreviewPageNumber;
-            }
-            else if (RangeMode == PrintRangeMode.CustomRange)
-            {
-                var (start, end) = ParseCustomRange(CustomPageRange, _documentPageCount);
-                startPage = start;
-                endPage = end;
-            }
-
-            int rotAngle = Orientation switch
-            {
-                PrintOrientationMode.Landscape => 90,
-                _ => 0
-            };
-
-            var paginator = new PdfiumPdfPaginator(
-                _docService,
-                startPage,
-                endPage,
-                printDialog.PrintableAreaWidth > 0 ? printDialog.PrintableAreaWidth : 612,
-                printDialog.PrintableAreaHeight > 0 ? printDialog.PrintableAreaHeight : 792,
-                rotAngle);
-
-            string jobName = $"PDF Viewer - {Path.GetFileName(_documentFilePath)}";
-            printDialog.PrintDocument(paginator, jobName);
-
+            Request = BuildRequest();
             DialogResult = true;
             CloseAction?.Invoke();
         }
@@ -375,6 +332,48 @@ public partial class PrintPreviewViewModel : ObservableObject
         }
     }
 
+    /// <summary>The job the current settings describe: the printer's own ticket with these choices merged in.</summary>
+    internal PrintRequest BuildRequest()
+    {
+        var queue = SelectedPrinter?.Queue ?? LocalPrintServer.GetDefaultPrintQueue()
+            ?? throw new InvalidOperationException("No printer is available.");
+
+        var delta = new PrintTicket { CopyCount = Math.Max(1, Copies) };
+        delta.Collation = Collate ? System.Printing.Collation.Collated : System.Printing.Collation.Uncollated;
+        if (Orientation == PrintOrientationMode.Portrait)
+            delta.PageOrientation = PageOrientation.Portrait;
+        else if (Orientation == PrintOrientationMode.Landscape)
+            delta.PageOrientation = PageOrientation.Landscape;
+        if (ColorMode == PrintColorMode.Grayscale)
+            delta.OutputColor = OutputColor.Grayscale;
+        var baseTicket = queue.UserPrintTicket ?? queue.DefaultPrintTicket ?? new PrintTicket();
+        var ticket = queue.MergeAndValidatePrintTicket(baseTicket, delta).ValidatedPrintTicket;
+
+        IReadOnlyList<int> pages = RangeMode switch
+        {
+            PrintRangeMode.CurrentPage => new[] { PreviewPageNumber },
+            PrintRangeMode.CustomRange => ParsePageList(CustomPageRange, _documentPageCount),
+            _ => Enumerable.Range(1, _documentPageCount).ToArray(),
+        };
+
+        return new PrintRequest
+        {
+            Queue = queue,
+            Ticket = ticket,
+            Pages = pages,
+            Rotation = Orientation == PrintOrientationMode.Landscape ? 90 : 0,
+            Scaling = Scaling switch
+            {
+                PrintScalingMode.ActualSize => PdfEngine.Vector.Direct2D.PrintScaling.ActualSize,
+                PrintScalingMode.CustomScale => PdfEngine.Vector.Direct2D.PrintScaling.Custom,
+                _ => PdfEngine.Vector.Direct2D.PrintScaling.Fit,
+            },
+            ScalePercent = Math.Clamp(CustomScalePercent, 1, 1000),
+            PrintAsImage = PrintAsImage,
+            JobName = $"PDF Viewer - {Path.GetFileName(_documentFilePath)}",
+        };
+    }
+
     [RelayCommand]
     public void Cancel()
     {
@@ -382,32 +381,30 @@ public partial class PrintPreviewViewModel : ObservableObject
         CloseAction?.Invoke();
     }
 
-    private static (int Start, int End) ParseCustomRange(string rangeText, int maxPages)
+    /// <summary>
+    /// Pages named by a range text such as "1-5, 8, 11-13", in the order given, each clamped to
+    /// the document; all pages when nothing usable is given.
+    /// </summary>
+    internal static IReadOnlyList<int> ParsePageList(string rangeText, int maxPages)
     {
-        if (string.IsNullOrWhiteSpace(rangeText)) return (1, maxPages);
-
-        try
+        var pages = new List<int>();
+        foreach (var part in (rangeText ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var parts = rangeText.Split(new[] { '-', ',' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 1 && int.TryParse(parts[0], out int single))
+            var bounds = part.Split('-', StringSplitOptions.TrimEntries);
+            if (bounds.Length == 1 && int.TryParse(bounds[0], out int single))
             {
-                int p = Math.Clamp(single, 1, maxPages);
-                return (p, p);
+                pages.Add(Math.Clamp(single, 1, maxPages));
             }
-            if (parts.Length >= 2 && int.TryParse(parts[0], out int s) && int.TryParse(parts[1], out int e))
+            else if (bounds.Length == 2 && int.TryParse(bounds[0], out int from))
             {
-                int start = Math.Clamp(s, 1, maxPages);
-                int end = Math.Clamp(e, start, maxPages);
-                return (start, end);
+                int to = bounds[1].Length == 0 ? maxPages : int.TryParse(bounds[1], out int t) ? t : from;
+                from = Math.Clamp(from, 1, maxPages);
+                to = Math.Clamp(to, 1, maxPages);
+                int step = to >= from ? 1 : -1;
+                for (int p = from; p != to + step; p += step) pages.Add(p);
             }
         }
-        catch { }
-
-        return (1, maxPages);
-    }
-
-    private static bool CollationSupported(PrintTicket ticket)
-    {
-        return ticket != null;
+        return pages.Count > 0 ? pages : Enumerable.Range(1, maxPages).ToArray();
     }
 }
+

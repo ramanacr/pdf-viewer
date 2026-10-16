@@ -937,6 +937,44 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public void PrintDocument(PrintDialog printDialog, int fromPage = 1, int toPage = -1, int rotationAngle = 0) =>
         _pdfiumService.PrintDocument(printDialog, fromPage, toPage, rotationAngle);
 
+    // ------------------------------------------------------------------ printing (DocumentPrinter)
+
+    /// <summary>Vector engine only: pages are never handed to PDFium, and nothing is recovered by it.</summary>
+    internal bool IsStrictVector => _mode == PdfEngineMode.Vector;
+
+    /// <summary>PDFium pixels for a printed page's fallback regions; none in strict vector mode.</summary>
+    internal IPdfFallbackProvider? PrintFallbackProvider => IsStrictVector ? null : _fallbackProvider;
+
+    /// <summary>
+    /// The display list to print a page from, or null when PDFium should print it: by the same
+    /// rules that give a page to PDFium on screen (engine mode, parse failure, mostly fallback).
+    /// </summary>
+    internal async Task<IPdfDisplayList?> GetPrintableDisplayListAsync(int pageNumber, CancellationToken ct = default)
+    {
+        if (_mode == PdfEngineMode.Pdfium)
+            return null;
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        var doc = _vectorDoc;
+        if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
+            return null;
+        IPdfDisplayList list;
+        try
+        {
+            list = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!IsStrictVector && ex is not OperationCanceledException)
+        {
+            return null;
+        }
+        if (!IsStrictVector && (list.ComputeFallbackAreaRatio() >= FullPageFallbackAreaThreshold || list.Commands.Count == 0 && list.HasFallback))
+            return null;
+        return list;
+    }
+
+    /// <summary>A page rendered by PDFium alone, for printing pages the vector engine does not take.</summary>
+    internal System.Windows.Media.Imaging.BitmapSource? RenderPdfiumPage(int pageNumber, int dpi, int rotationAngle) =>
+        _pdfiumService.RenderPage(pageNumber, dpi, rotationAngle);
+
     public List<AnnotationModel> LoadExistingAnnotations() =>
         _pdfiumService.LoadExistingAnnotations();
 

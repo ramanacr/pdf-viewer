@@ -70,7 +70,7 @@ public partial class MainWindow : Window
         document.ShowFormFieldsFunc = ShowFormFieldsDialog;
         document.ShowExportDialogFunc = ShowExportImagesDialog;
         document.ShowSaveAnnotatedDialogFunc = ShowSaveAnnotatedDialog;
-        document.ShowPrintDialogFunc = ShowPrintPreviewDialog;
+        document.ShowPrintSetupFunc = ShowPrintPreviewDialog;
         document.ShowOrganizePagesFunc = ShowOrganizePagesDialog;
         document.ShowAttachmentsFunc = ShowAttachmentsDialog;
         document.ConfirmFunc = ConfirmDialog;
@@ -353,13 +353,14 @@ public partial class MainWindow : Window
         return (false, string.Empty, string.Empty, 1, 1, "PNG", 300);
     }
 
-    private bool ShowPrintPreviewDialog(IPdfDocumentService docService, int currentPage)
+    private PrintRequest? ShowPrintPreviewDialog(IPdfDocumentService docService, int currentPage)
     {
         var dialog = new PrintPreviewDialog(docService, currentPage)
         {
             Owner = this
         };
-        return dialog.ShowDialog() == true;
+        dialog.ShowDialog();
+        return dialog.ViewModel.DialogResult ? dialog.ViewModel.Request : null;
     }
 
     /// <summary>
