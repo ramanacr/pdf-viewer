@@ -20,6 +20,7 @@ internal sealed class DocxPackage : IDisposable
     internal const string WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
     internal const string A = "http://schemas.openxmlformats.org/drawingml/2006/main";
     internal const string Pic = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+    internal const string Wps = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
     private const string RelBase = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
     private const string ContentBase = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
 

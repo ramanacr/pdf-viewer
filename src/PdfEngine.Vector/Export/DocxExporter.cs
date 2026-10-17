@@ -10,6 +10,19 @@ using PdfEngine.Vector.Redaction;
 
 namespace PdfEngine.Vector.Export;
 
+/// <summary>How an export to Word is made.</summary>
+public sealed class DocxExportOptions
+{
+    /// <summary>
+    /// Draws groups of drawings that are not rectangles or lines (charts, maps, curves) as
+    /// pictures. Without one they are left out (rectangles and lines still come over as shapes).
+    /// </summary>
+    public IPdfVectorRenderer? Renderer { get; init; }
+
+    /// <summary>Resolution of those pictures, in dots per inch (72 to 300).</summary>
+    public double GraphicsDpi { get; init; } = 150;
+}
+
 /// <summary>What an export to Word produced.</summary>
 public sealed class DocxExportResult
 {
@@ -37,7 +50,11 @@ public sealed class DocxExportResult
 public static class DocxExporter
 {
     /// <summary>Writes the .docx to <paramref name="output"/>. Progress reports pages read.</summary>
-    public static async Task<DocxExportResult> ExportAsync(PdfVectorDocument document, Stream output, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public static Task<DocxExportResult> ExportAsync(PdfVectorDocument document, Stream output, IProgress<int>? progress = null, CancellationToken cancellationToken = default) =>
+        ExportAsync(document, output, null, progress, cancellationToken);
+
+    /// <summary>Writes the .docx to <paramref name="output"/> with <paramref name="options"/>. Progress reports pages read.</summary>
+    public static async Task<DocxExportResult> ExportAsync(PdfVectorDocument document, Stream output, DocxExportOptions? options, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(output);
@@ -57,7 +74,7 @@ public static class DocxExporter
         }
 
         using var package = new DocxPackage(output);
-        var reader = new PageReader(document, pageObjects != null ? tags : null, pageObjects, package, hyperlinks);
+        var reader = new PageReader(document, pageObjects != null ? tags : null, pageObjects, package, hyperlinks, options);
         var pages = new List<DocPage>(document.PageCount);
         for (int n = 1; n <= document.PageCount; n++)
         {
@@ -68,7 +85,7 @@ public static class DocxExporter
         warnings.AddRange(reader.Warnings);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var doc = DocumentLayout.Build(pages, hyperlinks, document.Metadata?.Title);
+        var doc = DocumentLayout.Build(pages, hyperlinks, document.Metadata?.Title, reader.FontKinds);
         doc.FontKinds = reader.FontKinds;
         new DocxWriter(package, doc).Write();
         package.Finish(doc.Title);
@@ -84,21 +101,25 @@ public static class DocxExporter
             Lists = doc.Lists.Count,
             Sections = doc.Sections.Count,
             Hyperlinks = hyperlinks.Count,
-            HasHeaderOrFooter = doc.Header.Count + doc.Footer.Count > 0,
+            HasHeaderOrFooter = doc.Headers.Count + doc.Footers.Count > 0,
             UsedTags = pageObjects != null && tags != null,
             Warnings = warnings.Distinct().Take(50).ToList(),
         };
     }
 
     /// <summary>Writes the .docx to a file: complete, or not at all (a cancelled or failed export leaves nothing behind).</summary>
-    public static async Task<DocxExportResult> ExportAsync(PdfVectorDocument document, string path, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    public static Task<DocxExportResult> ExportAsync(PdfVectorDocument document, string path, IProgress<int>? progress = null, CancellationToken cancellationToken = default) =>
+        ExportAsync(document, path, null, progress, cancellationToken);
+
+    /// <summary>Writes the .docx to a file with <paramref name="options"/>: complete, or not at all.</summary>
+    public static async Task<DocxExportResult> ExportAsync(PdfVectorDocument document, string path, DocxExportOptions? options, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
     {
         string temp = path + ".partial";
         try
         {
             DocxExportResult result;
             await using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-                result = await ExportAsync(document, stream, progress, cancellationToken).ConfigureAwait(false);
+                result = await ExportAsync(document, stream, options, progress, cancellationToken).ConfigureAwait(false);
             File.Move(temp, path, overwrite: true);
             return result;
         }

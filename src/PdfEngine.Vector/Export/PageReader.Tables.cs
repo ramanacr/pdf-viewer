@@ -528,7 +528,7 @@ internal sealed partial class PageReader
     }
 
     /// <summary>Each line of a paragraph as a paragraph of its own.</summary>
-    private static IEnumerable<DocParagraph> SplitByLine(DocParagraph p)
+    internal static IEnumerable<DocParagraph> SplitByLine(DocParagraph p)
     {
         for (int li = 0; li < p.Lines.Count; li++)
         {

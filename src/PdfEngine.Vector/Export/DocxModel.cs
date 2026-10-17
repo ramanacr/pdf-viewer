@@ -38,16 +38,18 @@ internal sealed class DocRun
     public int Link = -1;
     /// <summary>A field instead of text: PAGE or NUMPAGES.</summary>
     public string? Field;
+    /// <summary>Space added after each character, in points (negative: condensed, so a line fits as it does on the page).</summary>
+    public double Spacing;
 
     public DocRun Clone(string text) => new()
     {
         Text = text, Font = Font, Size = Size, Bold = Bold, Italic = Italic, Underline = Underline, Strike = Strike, Rtl = Rtl,
-        EastAsian = EastAsian, Color = Color, VertAlign = VertAlign, Scale = Scale, Link = Link, Field = Field,
+        EastAsian = EastAsian, Color = Color, VertAlign = VertAlign, Scale = Scale, Link = Link, Field = Field, Spacing = Spacing,
     };
 
     public bool SameLook(DocRun o) => Font == o.Font && Math.Abs(Size - o.Size) < 0.26 && Bold == o.Bold && Italic == o.Italic && Underline == o.Underline
         && Strike == o.Strike && Rtl == o.Rtl && EastAsian == o.EastAsian && Color == o.Color && VertAlign == o.VertAlign && Scale == o.Scale && Link == o.Link
-        && Field == null && o.Field == null;
+        && Field == null && o.Field == null && Math.Abs(Spacing - o.Spacing) < 0.01;
 }
 
 /// <summary>A line of a paragraph as the page shows it.</summary>
@@ -70,9 +72,11 @@ internal abstract class DocItem
     public double SpaceBefore;
     /// <summary>Distance of its left edge from the left edge of its column, in points.</summary>
     public double Indent;
+    /// <summary>The last thing on its page: it does not keep with the first thing of the next page.</summary>
+    public bool LastOnPage;
 }
 
-internal enum TabKind { Left, Center, Right }
+internal enum TabKind { Left, Center, Right, RightDots }
 
 /// <summary>What makes a paragraph an item of a list.</summary>
 internal sealed class ListMark
@@ -110,6 +114,8 @@ internal sealed class DocParagraph : DocItem
     /// <summary>Alignment worked out from its lines (several lines), not guessed from one.</summary>
     public bool AlignKnown;
     public bool Rtl, Vertical, Rotated;
+    /// <summary>Turned text: the direction it reads in (degrees clockwise on the page) and its length that way.</summary>
+    public double Angle, Along;
     /// <summary>Distance between baselines.</summary>
     public double Pitch;
     public int Heading;
@@ -124,6 +130,9 @@ internal sealed class DocParagraph : DocItem
     public DocImage? Image;
     /// <summary>Images placed on the page at fixed positions, anchored to this paragraph.</summary>
     public List<DocImage> Anchors = new();
+    /// <summary>Text boxes and drawn shapes at fixed positions on the page, anchored to this paragraph.</summary>
+    public List<DocTextBox> TextBoxes = new();
+    public List<DocShape> Shapes = new();
     /// <summary>Its lines break for good (a line of an address or a list) rather than wrap.</summary>
     public bool HardLines;
     /// <summary>In a header or footer: made of what repeats there.</summary>
@@ -131,6 +140,8 @@ internal sealed class DocParagraph : DocItem
 
     // Worked out by the layout.
     public double RightIndent, FirstLine, LineHeight;
+    /// <summary>Width of the column, cell or text box it is laid out in.</summary>
+    public double ColumnWidth;
 
     public string Text => string.Concat(Runs.Select(r => r.Text));
     public double Size => Lines.Count > 0 ? Lines.Max(l => l.Size) : Runs.Count > 0 ? Runs.Max(r => r.Size) : 11;
@@ -155,6 +166,38 @@ internal sealed class DocImage
     public int Id;
 }
 
+/// <summary>A text box at a fixed place on the page: turned text, or a header or footer that must not take room from the body.</summary>
+internal sealed class DocTextBox
+{
+    /// <summary>Where it is on the page as shown (its bounds after turning).</summary>
+    public Box Box;
+    /// <summary>Its own size before it is turned, in points.</summary>
+    public double Width, Height;
+    /// <summary>Degrees clockwise.</summary>
+    public int Rotation;
+    public List<DocParagraph> Paragraphs = new();
+}
+
+internal enum ShapeKind { Rectangle, Line, Picture }
+
+/// <summary>A drawing of the page as a Word shape (a rectangle or a line), or a picture of a group of drawings.</summary>
+internal sealed class DocShape
+{
+    public ShapeKind Kind;
+    /// <summary>Its bounds on the page as shown.</summary>
+    public Box Box;
+    /// <summary>A line from the box's top-right corner (FlipH) or bottom-left corner (FlipV) rather than its top-left.</summary>
+    public bool FlipH, FlipV;
+    public string? Fill, Stroke;
+    public double StrokeWidth;
+    /// <summary>Behind the text.</summary>
+    public bool Behind;
+    /// <summary>A picture: its image part.</summary>
+    public string RelId = string.Empty;
+    /// <summary>Its place in the page's drawing order.</summary>
+    public int Order;
+}
+
 internal sealed record DocBorder(double Width, string Color);
 
 internal sealed class DocCell
@@ -167,6 +210,11 @@ internal sealed class DocCell
     public string VAlign = "top";
     public bool Header;
     public Box Box;
+    /// <summary>A layout cell holding tables (side by side with others), in order; null for a cell of text.</summary>
+    public List<DocItem>? Items;
+
+    public IEnumerable<DocParagraph> AllParagraphs => Items == null ? Paragraphs
+        : Items.SelectMany(i => i is DocTable t ? t.Cells.SelectMany(c => c.AllParagraphs) : i is DocParagraph p ? new[] { p } : Array.Empty<DocParagraph>());
 }
 
 internal sealed class DocTable : DocItem
@@ -185,10 +233,17 @@ internal sealed class DocPage
     public double Width, Height;
     public List<DocItem> Items = new();
     public List<DocImage> Floating = new();
+    public List<DocTextBox> TextBoxes = new();
+    public List<DocShape> Shapes = new();
     /// <summary>Most of its text is written in columns top to bottom (East Asian vertical writing).</summary>
     public bool VerticalWriting;
-    /// <summary>Header and footer paragraphs taken out of the page (they repeat on most pages).</summary>
+    /// <summary>Header and footer paragraphs taken out of the page (they repeat on many pages).</summary>
     public List<DocParagraph> Header = new(), Footer = new();
+    /// <summary>Which of the document's headers and footers the page has (-1: none).</summary>
+    public int HeaderVariant = -1, FooterVariant = -1;
+    /// <summary>The page number its header or footer prints, and the number's format (decimal, lowerRoman, upperRoman).</summary>
+    public int? PageValue;
+    public string NumberFormat = "decimal";
 
     public IEnumerable<DocParagraph> Paragraphs => Items.OfType<DocParagraph>();
 }
@@ -200,13 +255,28 @@ internal sealed class DocSection
     public double MarginL, MarginT, MarginR, MarginB, HeaderDistance = 36, FooterDistance = 36;
     /// <summary>Column widths and the space after each (all but the last); one entry for a single column.</summary>
     public List<(double Width, double Space)> Columns = new();
-    public bool Continuous, TitlePage, VerticalWriting;
+    public bool Continuous, VerticalWriting;
+    public int HeaderVariant = -1, FooterVariant = -1;
+    /// <summary>The number its first page has, when it starts the page numbers again.</summary>
+    public int? PageStart;
+    public string NumberFormat = "decimal";
     public List<DocItem> Items = new();
 
-    public bool SameSetup(DocSection o) => Math.Abs(Width - o.Width) < 1 && Math.Abs(Height - o.Height) < 1 && Math.Abs(MarginL - o.MarginL) < 1
+    public bool SameSetup(DocSection o) => HeaderVariant == o.HeaderVariant && FooterVariant == o.FooterVariant && NumberFormat == o.NumberFormat
+        && Math.Abs(Width - o.Width) < 1 && Math.Abs(Height - o.Height) < 1 && Math.Abs(MarginL - o.MarginL) < 1
         && Math.Abs(MarginR - o.MarginR) < 1 && Math.Abs(MarginT - o.MarginT) < 1 && Math.Abs(MarginB - o.MarginB) < 1
         && VerticalWriting == o.VerticalWriting && Columns.Count == o.Columns.Count
         && Columns.Zip(o.Columns).All(p => Math.Abs(p.First.Width - p.Second.Width) < 4 && Math.Abs(p.First.Space - p.Second.Space) < 4);
+}
+
+/// <summary>A header or footer: its paragraphs, in flow or, where body text runs into its band, in text boxes.</summary>
+internal sealed class DocHeaderFooter
+{
+    public List<DocParagraph> Paragraphs = new();
+    public bool Floating;
+    public List<DocTextBox> Boxes = new();
+    /// <summary>The page the paragraphs were taken from.</summary>
+    public DocPage? Page;
 }
 
 /// <summary>A list (w:num): the marker of each of its levels, from its first item there.</summary>
@@ -221,11 +291,9 @@ internal sealed class DocDocument
 {
     public List<DocSection> Sections = new();
     public List<ListDef> Lists = new();
-    /// <summary>The number the first page has (printed page numbers that do not start at 1).</summary>
-    public int FirstPageNumber = 1;
     public List<string> Hyperlinks = new();
-    public List<DocParagraph> Header = new(), Footer = new();
-    public bool HeaderOnFirstPage = true, FooterOnFirstPage = true;
+    /// <summary>The headers and footers the pages have (they can differ: odd and even pages, front matter, parts).</summary>
+    public List<DocHeaderFooter> Headers = new(), Footers = new();
     public string BodyFont = "Calibri";
     /// <summary>What each font family is like, for Word to stand in a similar one where it is not installed.</summary>
     public Dictionary<string, (bool Serif, bool Fixed)> FontKinds = new(StringComparer.Ordinal);

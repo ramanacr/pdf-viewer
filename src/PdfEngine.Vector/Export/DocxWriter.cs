@@ -17,6 +17,7 @@ internal sealed class DocxWriter
     private readonly HashSet<string> _fonts = new(StringComparer.Ordinal);
     private int _drawingId, _anchorOrder;
     private bool _inHeader;
+    private readonly Dictionary<DocSection, (string Header, string Footer)> _sectionRefs = new(ReferenceEqualityComparer.Instance);
 
     public DocxWriter(DocxPackage package, DocDocument doc)
     {
@@ -36,66 +37,69 @@ internal sealed class DocxWriter
         if (_doc.Lists.Count > 0) _package.NewRelationship("numbering", "numbering.xml");
         for (int i = 0; i < _doc.Hyperlinks.Count; i++) _linkRels[i] = _package.NewRelationship("hyperlink", _doc.Hyperlinks[i], external: true);
 
-        // Headers and footers: the default one, and the first page's when it differs.
-        var refs = new List<(string Kind, string Type, string Id)>();
-        bool titlePage = _doc.Sections.Count > 0 && _doc.Sections[0].TitlePage;
+        // Headers and footers: one part each, and an empty one for pages without (a section without
+        // a reference would show the one before it).
         int parts = 0;
-        void Part(string kind, List<DocParagraph> content, string type)
+        string Part(string kind, DocHeaderFooter? content)
         {
             string name = $"{kind}{++parts}.xml";
-            refs.Add((kind, type, _package.NewRelationship(kind, name)));
+            string id = _package.NewRelationship(kind, name);
             _package.WritePart("word/" + name, DocxPackage.WordType(kind), x =>
             {
                 x.WriteStartElement("w", kind == "header" ? "hdr" : "ftr", W);
-                x.WriteAttributeString("xmlns", "r", null, DocxPackage.R);
+                Namespaces(x);
                 _inHeader = true;
-                foreach (var p in content) Paragraph(x, p, null);
-                if (content.Count == 0) { x.WriteStartElement("w", "p", W); x.WriteEndElement(); }
+                if (content is { Floating: true })
+                    Paragraph(x, new DocParagraph { TextBoxes = content.Boxes }, null);
+                else if (content != null && content.Paragraphs.Count > 0)
+                    foreach (var p in content.Paragraphs) Paragraph(x, p, null);
+                else Paragraph(x, new DocParagraph(), null);
                 _inHeader = false;
                 x.WriteEndElement();
             });
+            return id;
         }
-        if (_doc.Header.Count > 0 || _doc.Footer.Count > 0)
+        if (_doc.Headers.Count + _doc.Footers.Count > 0)
         {
-            Part("header", _doc.Header, "default");
-            Part("footer", _doc.Footer, "default");
-            if (titlePage)
+            // Word takes a header with drawings that several sections share for a damaged file: those get a copy per section.
+            var headerIds = _doc.Headers.Select(h => h.Floating ? null : Part("header", h)).ToList();
+            var footerIds = _doc.Footers.Select(f => f.Floating ? null : Part("footer", f)).ToList();
+            string emptyHeader = Part("header", null), emptyFooter = Part("footer", null);
+            foreach (var s in _doc.Sections)
             {
-                Part("header", _doc.HeaderOnFirstPage ? _doc.Header : new List<DocParagraph>(), "first");
-                Part("footer", _doc.FooterOnFirstPage ? _doc.Footer : new List<DocParagraph>(), "first");
+                _sectionRefs[s] = (
+                    s.HeaderVariant < 0 ? emptyHeader : headerIds[s.HeaderVariant] ?? Part("header", _doc.Headers[s.HeaderVariant]),
+                    s.FooterVariant < 0 ? emptyFooter : footerIds[s.FooterVariant] ?? Part("footer", _doc.Footers[s.FooterVariant]));
             }
         }
 
         _package.WritePart("word/document.xml", DocxPackage.WordType("document.main"), x =>
         {
             x.WriteStartElement("w", "document", W);
-            x.WriteAttributeString("xmlns", "r", null, DocxPackage.R);
-            x.WriteAttributeString("xmlns", "wp", null, DocxPackage.WP);
-            x.WriteAttributeString("xmlns", "a", null, DocxPackage.A);
-            x.WriteAttributeString("xmlns", "pic", null, DocxPackage.Pic);
+            Namespaces(x);
             x.WriteStartElement("w", "body", W);
             for (int s = 0; s < _doc.Sections.Count; s++)
             {
                 var section = _doc.Sections[s];
                 bool last = s == _doc.Sections.Count - 1;
-                var sectionRefs = s == 0 ? refs : new List<(string, string, string)>();
                 for (int i = 0; i < section.Items.Count; i++)
                 {
                     var item = section.Items[i];
                     bool carries = !last && i == section.Items.Count - 1 && item is DocParagraph;
                     switch (item)
                     {
-                        case DocParagraph p: Paragraph(x, p, carries ? (section, sectionRefs) : null); break;
-                        case DocTable t: Table(x, t, section); break;
+                        case DocParagraph p: Paragraph(x, p, carries ? section : null); break;
+                        // Tables one after the other would join into one: a hairline paragraph keeps them apart.
+                        case DocTable t: Table(x, t, i > 0 && section.Items[i - 1] is DocTable); break;
                     }
                 }
                 // A section ending in a table (or holding nothing) ends with a paragraph of its own.
                 if (!last && (section.Items.Count == 0 || section.Items[^1] is not DocParagraph))
-                    Paragraph(x, new DocParagraph(), (section, sectionRefs));
+                    Paragraph(x, new DocParagraph(), section);
                 if (last)
                 {
                     if (section.Items.Count > 0 && section.Items[^1] is DocTable) Paragraph(x, new DocParagraph(), null);
-                    SectionProperties(x, section, sectionRefs);
+                    SectionProperties(x, section);
                 }
             }
             if (_doc.Sections.Count == 0)
@@ -131,15 +135,31 @@ internal sealed class DocxWriter
 
     // ------------------------------------------------------------------ sections
 
-    private void SectionProperties(XmlWriter x, DocSection s, List<(string Kind, string Type, string Id)> refs)
+    private static void Namespaces(XmlWriter x)
+    {
+        x.WriteAttributeString("xmlns", "r", null, DocxPackage.R);
+        x.WriteAttributeString("xmlns", "wp", null, DocxPackage.WP);
+        x.WriteAttributeString("xmlns", "a", null, DocxPackage.A);
+        x.WriteAttributeString("xmlns", "pic", null, DocxPackage.Pic);
+        x.WriteAttributeString("xmlns", "wps", null, DocxPackage.Wps);
+    }
+
+    private void SectionProperties(XmlWriter x, DocSection s)
     {
         x.WriteStartElement("w", "sectPr", W);
-        foreach (var (kind, type, id) in refs.OrderBy(r => r.Kind == "header" ? 0 : 1))
+        bool numbered = false;
+        if (_sectionRefs.TryGetValue(s, out var refs))
         {
-            x.WriteStartElement("w", kind + "Reference", W);
-            x.WriteAttributeString("w", "type", W, type);
-            x.WriteAttributeString("r", "id", DocxPackage.R, id);
-            x.WriteEndElement();
+            void Reference(string kind, string id)
+            {
+                x.WriteStartElement("w", kind + "Reference", W);
+                x.WriteAttributeString("w", "type", W, "default");
+                x.WriteAttributeString("r", "id", DocxPackage.R, id);
+                x.WriteEndElement();
+            }
+            Reference("header", refs.Header);
+            Reference("footer", refs.Footer);
+            numbered = true;
         }
         Element(x, "type", ("val", s.Continuous ? "continuous" : "nextPage"));
         double width = Math.Clamp(s.Width, 7.2, 1584), height = Math.Clamp(s.Height, 7.2, 1584);
@@ -150,7 +170,13 @@ internal sealed class DocxWriter
         x.WriteEndElement();
         Element(x, "pgMar", ("top", Tw(s.MarginT)), ("right", Tw(s.MarginR)), ("bottom", Tw(s.MarginB)), ("left", Tw(s.MarginL)),
             ("header", Tw(s.HeaderDistance)), ("footer", Tw(s.FooterDistance)), ("gutter", "0"));
-        if (refs.Count > 0 && _doc.FirstPageNumber != 1) Element(x, "pgNumType", ("start", I(_doc.FirstPageNumber)));
+        if (numbered && (s.PageStart != null || s.NumberFormat != "decimal"))
+        {
+            x.WriteStartElement("w", "pgNumType", W);
+            if (s.NumberFormat != "decimal") x.WriteAttributeString("w", "fmt", W, s.NumberFormat);
+            if (s.PageStart is int start) x.WriteAttributeString("w", "start", W, I(Math.Max(0, start)));
+            x.WriteEndElement();
+        }
         x.WriteStartElement("w", "cols", W);
         if (s.Columns.Count > 1)
         {
@@ -161,20 +187,20 @@ internal sealed class DocxWriter
         }
         else x.WriteAttributeString("w", "space", W, "720");
         x.WriteEndElement();
-        if (s.TitlePage && refs.Count > 0) Element(x, "titlePg");
         if (s.VerticalWriting) Element(x, "textDirection", ("val", "tbRl"));
         x.WriteEndElement();
     }
 
     // ------------------------------------------------------------------ paragraphs
 
-    private void Paragraph(XmlWriter x, DocParagraph p, (DocSection Section, List<(string, string, string)> Refs)? sectionEnd)
+    private void Paragraph(XmlWriter x, DocParagraph p, DocSection? sectionEnd)
     {
         x.WriteStartElement("w", "p", W);
         x.WriteStartElement("w", "pPr", W);
         if (p.Heading > 0) Element(x, "pStyle", ("val", "Heading" + I(p.Heading)));
         else if (_inHeader) Element(x, "pStyle", ("val", "Header"));
-        if (p.Heading > 0) Element(x, "keepNext");
+        // The heading style keeps with the next paragraph; not across the page break after the last thing of a page.
+        if (p.Heading > 0) Element(x, "keepNext", ("val", p.LastOnPage ? "0" : "1"));
         if (p.PageBreakBefore) Element(x, "pageBreakBefore");
         if (p.List is { NumId: > 0 } list)
         {
@@ -188,7 +214,8 @@ internal sealed class DocxWriter
         {
             x.WriteStartElement("w", "tabs", W);
             foreach (var (pos, kind) in p.Tabs.OrderBy(t => t.X))
-                Element(x, "tab", ("val", kind switch { TabKind.Center => "center", TabKind.Right => "right", _ => "left" }), ("pos", Tw(pos)));
+                if (kind == TabKind.RightDots) Element(x, "tab", ("val", "right"), ("leader", "dot"), ("pos", Tw(pos)));
+                else Element(x, "tab", ("val", kind switch { TabKind.Center => "center", TabKind.Right => "right", _ => "left" }), ("pos", Tw(pos)));
             x.WriteEndElement();
         }
         if (p.Rtl) Element(x, "bidi");
@@ -216,7 +243,7 @@ internal sealed class DocxWriter
         if (p.Runs.Count > 0) RunLook(x, p.Runs[0], mark: true);
         else Element(x, "sz", ("val", "2"));
         x.WriteEndElement();
-        if (sectionEnd is { } se) SectionProperties(x, se.Section, se.Refs);
+        if (sectionEnd != null) SectionProperties(x, sectionEnd);
         x.WriteEndElement(); // pPr
 
         if (p.ColumnBreakBefore)
@@ -226,23 +253,46 @@ internal sealed class DocxWriter
             x.WriteEndElement();
         }
         foreach (var img in p.Anchors) Drawing(x, img, anchored: true);
+        foreach (var shape in p.Shapes) Shape(x, shape);
+        foreach (var box in p.TextBoxes) TextBox(x, box);
         if (p.Image != null) Drawing(x, p.Image, anchored: false);
 
+        var runs = p.HardLines ? WithBreaks(p) : p.Runs;
         int i = 0;
-        while (i < p.Runs.Count)
+        while (i < runs.Count)
         {
-            int link = _inHeader ? -1 : p.Runs[i].Link;
+            int link = _inHeader ? -1 : runs[i].Link;
             if (link >= 0 && _linkRels.TryGetValue(link, out var rel))
             {
                 x.WriteStartElement("w", "hyperlink", W);
                 x.WriteAttributeString("r", "id", DocxPackage.R, rel);
                 x.WriteAttributeString("w", "history", W, "1");
-                while (i < p.Runs.Count && p.Runs[i].Link == link) Run(x, p.Runs[i++]);
+                while (i < runs.Count && runs[i].Link == link) Run(x, runs[i++]);
                 x.WriteEndElement();
             }
-            else Run(x, p.Runs[i++]);
+            else Run(x, runs[i++]);
         }
         x.WriteEndElement();
+    }
+
+    /// <summary>The runs with a line break (\n) where the page's lines end, the space before it kept so words stay apart.</summary>
+    private static List<DocRun> WithBreaks(DocParagraph p)
+    {
+        if (p.CharLine.Count != p.Text.Length) return p.Runs;
+        var result = new List<DocRun>();
+        int k = 0;
+        foreach (var r in p.Runs)
+        {
+            var sb = new System.Text.StringBuilder(r.Text.Length + 2);
+            foreach (char c in r.Text)
+            {
+                if (k > 0 && p.CharLine[k] != p.CharLine[k - 1]) sb.Append('\n');
+                sb.Append(c);
+                k++;
+            }
+            result.Add(r.Clone(sb.ToString()));
+        }
+        return result;
     }
 
     private void Run(XmlWriter x, DocRun r)
@@ -265,15 +315,19 @@ internal sealed class DocxWriter
         x.WriteStartElement("w", "rPr", W);
         RunLook(x, r, mark: false);
         x.WriteEndElement();
-        var parts = r.Text.Split('\t');
-        for (int k = 0; k < parts.Length; k++)
+        int from = 0;
+        for (int k = 0; k <= r.Text.Length; k++)
         {
-            if (k > 0) Element(x, "tab");
-            if (parts[k].Length == 0) continue;
-            x.WriteStartElement("w", "t", W);
-            x.WriteAttributeString("xml", "space", null, "preserve");
-            x.WriteString(parts[k]);
-            x.WriteEndElement();
+            if (k < r.Text.Length && r.Text[k] != '\t' && r.Text[k] != '\n') continue;
+            if (k > from)
+            {
+                x.WriteStartElement("w", "t", W);
+                x.WriteAttributeString("xml", "space", null, "preserve");
+                x.WriteString(r.Text[from..k]);
+                x.WriteEndElement();
+            }
+            if (k < r.Text.Length) Element(x, r.Text[k] == '\t' ? "tab" : "br");
+            from = k + 1;
         }
         x.WriteEndElement();
     }
@@ -294,6 +348,7 @@ internal sealed class DocxWriter
         Element(x, "iCs", ("val", r.Italic ? "1" : "0"));
         if (r.Strike && !mark) Element(x, "strike");
         Element(x, "color", ("val", r.Color));
+        if (Math.Abs(r.Spacing) >= 0.05 && !mark) Element(x, "spacing", ("val", Tw(r.Spacing)));
         if (r.Scale != 100) Element(x, "w", ("val", I(r.Scale)));
         string size = I((long)Math.Max(2, Math.Round(r.Size * 2)));
         Element(x, "sz", ("val", size));
@@ -305,10 +360,10 @@ internal sealed class DocxWriter
 
     // ------------------------------------------------------------------ tables
 
-    private void Table(XmlWriter x, DocTable t, DocSection section)
+    private void Table(XmlWriter x, DocTable t, bool afterTable)
     {
         // A table cannot carry a page or column break: a paragraph before it does.
-        if (t.PageBreakBefore || t.ColumnBreakBefore || t.SpaceBefore > 2)
+        if (t.PageBreakBefore || t.ColumnBreakBefore || t.SpaceBefore > 2 || afterTable)
             Paragraph(x, new DocParagraph
             {
                 PageBreakBefore = t.PageBreakBefore, ColumnBreakBefore = t.ColumnBreakBefore,
@@ -376,11 +431,19 @@ internal sealed class DocxWriter
             x.WriteEndElement();
             if (cell.Shading != null) Element(x, "shd", ("val", "clear"), ("color", "auto"), ("fill", cell.Shading));
             // A cell of one line on the page stays one line.
-            if (cell.Paragraphs.Count > 0 && cell.Paragraphs.All(p => p.Lines.Count <= 1)) Element(x, "noWrap");
+            if (cell.Items == null && cell.Paragraphs.Count > 0 && cell.Paragraphs.All(p => p.Lines.Count <= 1)) Element(x, "noWrap");
             if (cell.VAlign != "top") Element(x, "vAlign", ("val", cell.VAlign));
         }
         x.WriteEndElement();
-        if (cell == null || continues || cell.Paragraphs.Count == 0) Paragraph(x, new DocParagraph(), null);
+        if (cell is { Items: { } items } && !continues)
+        {
+            // A layout cell: its tables (and paragraphs) in order; a cell ends with a paragraph.
+            for (int i = 0; i < items.Count; i++)
+                if (items[i] is DocTable nested) Table(x, nested, i > 0 && items[i - 1] is DocTable);
+                else if (items[i] is DocParagraph para) Paragraph(x, para, null);
+            if (items.Count == 0 || items[^1] is DocTable) Paragraph(x, new DocParagraph(), null);
+        }
+        else if (cell == null || continues || cell.Paragraphs.Count == 0) Paragraph(x, new DocParagraph(), null);
         else foreach (var p in cell.Paragraphs) Paragraph(x, p, null);
         x.WriteEndElement();
     }
@@ -392,6 +455,161 @@ internal sealed class DocxWriter
     }
 
     // ------------------------------------------------------------------ pictures
+
+    /// <summary>The start of a drawing anchored on the page (no text wraps around it), up to its graphic.</summary>
+    private void AnchorStart(XmlWriter x, int id, string name, double left, double top, double width, double height, bool behind)
+    {
+        const string wp = DocxPackage.WP;
+        x.WriteStartElement("w", "r", W);
+        x.WriteStartElement("w", "drawing", W);
+        x.WriteStartElement("wp", "anchor", wp);
+        foreach (var (k, v) in new[] { ("distT", "0"), ("distB", "0"), ("distL", "0"), ("distR", "0"), ("simplePos", "0"),
+                     ("relativeHeight", I(251658240 + ++_anchorOrder)), ("behindDoc", behind ? "1" : "0"), ("locked", "0"), ("layoutInCell", "1"), ("allowOverlap", "1") })
+            x.WriteAttributeString(k, v);
+        x.WriteStartElement("wp", "simplePos", wp);
+        x.WriteAttributeString("x", "0");
+        x.WriteAttributeString("y", "0");
+        x.WriteEndElement();
+        foreach (var (tag, value) in new[] { ("positionH", left), ("positionV", top) })
+        {
+            x.WriteStartElement("wp", tag, wp);
+            x.WriteAttributeString("relativeFrom", "page");
+            x.WriteElementString("wp", "posOffset", wp, Emu(value));
+            x.WriteEndElement();
+        }
+        x.WriteStartElement("wp", "extent", wp);
+        x.WriteAttributeString("cx", Emu(Math.Max(0, width)));
+        x.WriteAttributeString("cy", Emu(Math.Max(0, height)));
+        x.WriteEndElement();
+        x.WriteStartElement("wp", "effectExtent", wp);
+        foreach (var k in new[] { "l", "t", "r", "b" }) x.WriteAttributeString(k, "0");
+        x.WriteEndElement();
+        x.WriteStartElement("wp", "wrapNone", wp);
+        x.WriteEndElement();
+        x.WriteStartElement("wp", "docPr", wp);
+        x.WriteAttributeString("id", I(id));
+        x.WriteAttributeString("name", name + " " + I(id));
+        x.WriteEndElement();
+        x.WriteStartElement("wp", "cNvGraphicFramePr", wp);
+        x.WriteEndElement();
+        x.WriteStartElement("a", "graphic", DocxPackage.A);
+        x.WriteStartElement("a", "graphicData", DocxPackage.A);
+        x.WriteAttributeString("uri", DocxPackage.Wps);
+    }
+
+    private static void AnchorEnd(XmlWriter x)
+    {
+        x.WriteEndElement(); // graphicData
+        x.WriteEndElement(); // graphic
+        x.WriteEndElement(); // anchor
+        x.WriteEndElement(); // drawing
+        x.WriteEndElement(); // r
+    }
+
+    private static void Transform(XmlWriter x, double width, double height, int rotation = 0, bool flipH = false, bool flipV = false)
+    {
+        const string a = DocxPackage.A;
+        x.WriteStartElement("a", "xfrm", a);
+        if (rotation != 0) x.WriteAttributeString("rot", I(rotation * 60000L));
+        if (flipH) x.WriteAttributeString("flipH", "1");
+        if (flipV) x.WriteAttributeString("flipV", "1");
+        x.WriteStartElement("a", "off", a);
+        x.WriteAttributeString("x", "0");
+        x.WriteAttributeString("y", "0");
+        x.WriteEndElement();
+        x.WriteStartElement("a", "ext", a);
+        x.WriteAttributeString("cx", Emu(Math.Max(0, width)));
+        x.WriteAttributeString("cy", Emu(Math.Max(0, height)));
+        x.WriteEndElement();
+        x.WriteEndElement();
+    }
+
+    private static void Geometry(XmlWriter x, string preset)
+    {
+        x.WriteStartElement("a", "prstGeom", DocxPackage.A);
+        x.WriteAttributeString("prst", preset);
+        x.WriteStartElement("a", "avLst", DocxPackage.A);
+        x.WriteEndElement();
+        x.WriteEndElement();
+    }
+
+    private static void Fill(XmlWriter x, string? color)
+    {
+        const string a = DocxPackage.A;
+        if (color == null) { x.WriteStartElement("a", "noFill", a); x.WriteEndElement(); return; }
+        x.WriteStartElement("a", "solidFill", a);
+        x.WriteStartElement("a", "srgbClr", a);
+        x.WriteAttributeString("val", color);
+        x.WriteEndElement();
+        x.WriteEndElement();
+    }
+
+    private static void Outline(XmlWriter x, string? color, double width)
+    {
+        x.WriteStartElement("a", "ln", DocxPackage.A);
+        if (color != null) x.WriteAttributeString("w", Emu(Math.Max(0.25, width)));
+        Fill(x, color);
+        x.WriteEndElement();
+    }
+
+    /// <summary>A text box at its place on the page, turned as the text was; its lines do not wrap.</summary>
+    private void TextBox(XmlWriter x, DocTextBox box)
+    {
+        const string wps = DocxPackage.Wps;
+        int id = ++_drawingId;
+        // The frame before it is turned: centred where the text is.
+        AnchorStart(x, id, "Text Box", box.Box.Cx - box.Width / 2, box.Box.Cy - box.Height / 2, box.Width, box.Height, behind: false);
+        x.WriteStartElement("wps", "wsp", wps);
+        x.WriteStartElement("wps", "cNvSpPr", wps);
+        x.WriteAttributeString("txBox", "1");
+        x.WriteEndElement();
+        x.WriteStartElement("wps", "spPr", wps);
+        Transform(x, box.Width, box.Height, box.Rotation);
+        Geometry(x, "rect");
+        Fill(x, null);
+        Outline(x, null, 0);
+        x.WriteEndElement();
+        x.WriteStartElement("wps", "txbx", wps);
+        x.WriteStartElement("w", "txbxContent", W);
+        foreach (var p in box.Paragraphs) Paragraph(x, p, null);
+        if (box.Paragraphs.Count == 0) Paragraph(x, new DocParagraph(), null);
+        x.WriteEndElement();
+        x.WriteEndElement();
+        x.WriteStartElement("wps", "bodyPr", wps);
+        foreach (var (k, v) in new[] { ("rot", "0"), ("vert", "horz"), ("wrap", "none"), ("lIns", "0"), ("tIns", "0"), ("rIns", "0"), ("bIns", "0"), ("anchor", "t"), ("anchorCtr", "0") })
+            x.WriteAttributeString(k, v);
+        x.WriteStartElement("a", "noAutofit", DocxPackage.A);
+        x.WriteEndElement();
+        x.WriteEndElement();
+        x.WriteEndElement(); // wsp
+        AnchorEnd(x);
+    }
+
+    /// <summary>A rectangle or line the page draws, as a Word shape at its place; a picture of a group of drawings as a picture.</summary>
+    private void Shape(XmlWriter x, DocShape s)
+    {
+        if (s.Kind == ShapeKind.Picture)
+        {
+            Drawing(x, new DocImage { RelId = s.RelId, Box = s.Box, Width = s.Box.W, Height = s.Box.H, Anchored = true, Behind = s.Behind }, anchored: true);
+            return;
+        }
+        const string wps = DocxPackage.Wps;
+        int id = ++_drawingId;
+        AnchorStart(x, id, s.Kind == ShapeKind.Line ? "Line" : "Rectangle", s.Box.L, s.Box.T, s.Box.W, s.Box.H, s.Behind);
+        x.WriteStartElement("wps", "wsp", wps);
+        x.WriteStartElement("wps", "cNvSpPr", wps);
+        x.WriteEndElement();
+        x.WriteStartElement("wps", "spPr", wps);
+        Transform(x, s.Box.W, s.Box.H, 0, s.FlipH, s.FlipV);
+        Geometry(x, s.Kind == ShapeKind.Line ? "line" : "rect");
+        if (s.Kind == ShapeKind.Line) Fill(x, null); else Fill(x, s.Fill);
+        Outline(x, s.Stroke, s.StrokeWidth);
+        x.WriteEndElement();
+        x.WriteStartElement("wps", "bodyPr", wps);
+        x.WriteEndElement();
+        x.WriteEndElement(); // wsp
+        AnchorEnd(x);
+    }
 
     private void Drawing(XmlWriter x, DocImage img, bool anchored)
     {

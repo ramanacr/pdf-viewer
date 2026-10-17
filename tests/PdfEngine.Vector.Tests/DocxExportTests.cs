@@ -100,7 +100,7 @@ public class DocxExportTests
         var orders = new Dictionary<string, string[]>
         {
             ["pPr"] = new[] { "pStyle", "keepNext", "keepLines", "pageBreakBefore", "widowControl", "numPr", "shd", "tabs", "bidi", "spacing", "ind", "jc", "outlineLvl", "rPr", "sectPr" },
-            ["rPr"] = new[] { "rStyle", "rFonts", "b", "bCs", "i", "iCs", "strike", "color", "w", "sz", "szCs", "u", "vertAlign", "rtl" },
+            ["rPr"] = new[] { "rStyle", "rFonts", "b", "bCs", "i", "iCs", "strike", "color", "spacing", "w", "sz", "szCs", "u", "vertAlign", "rtl" },
             ["sectPr"] = new[] { "headerReference", "footerReference", "type", "pgSz", "pgMar", "pgNumType", "cols", "titlePg", "textDirection" },
             ["tcPr"] = new[] { "tcW", "gridSpan", "vMerge", "tcBorders", "shd", "noWrap", "vAlign" },
             ["tblPr"] = new[] { "tblW", "tblInd", "tblLayout", "tblCellMar", "tblLook" },
@@ -483,6 +483,169 @@ public class DocxExportTests
             Assert.Equal(1, result.Pages);
         }
         finally { File.Delete(path); }
+    }
+
+    private static readonly XNamespace Wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+    private static readonly XNamespace A = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    private static readonly XNamespace Wps = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+
+    [Fact]
+    public async Task WiderStandInFont_IsCondensedToTheLine()
+    {
+        // A font that is not installed, with glyphs much narrower than its stand-in (Arial):
+        // lines that fill the column would wrap in Word and run the page over.
+        var b = new VectorPdfBuilder();
+        int f = b.Add("<< /Type /Font /Subtype /TrueType /BaseFont /NarrowSansXyz /FirstChar 32 /LastChar 126 /Widths [" +
+                      string.Join(' ', Enumerable.Repeat("420", 95)) + "] /FontDescriptor << /Type /FontDescriptor /FontName /NarrowSansXyz /Flags 32 >> /Encoding /WinAnsiEncoding >>");
+        const string text = "The committee met on Tuesday to review the budget for the coming year and agreed to fund the new library " +
+            "building, which will open to the public next spring after two years of planning and construction. Members asked " +
+            "the staff to report on the costs of heating, lighting and cleaning the building, and on how many people are " +
+            "expected to visit it each week once it opens, so that the opening hours can be set before the end of the winter.";
+        var lines = new List<string>();
+        var current = new StringBuilder();
+        foreach (var word in text.Split(' '))
+        {
+            if (current.Length + word.Length + 1 > 98) { lines.Add(current.ToString()); current.Clear(); }
+            if (current.Length > 0) current.Append(' ');
+            current.Append(word);
+        }
+        lines.Add(current.ToString());
+        b.AddPage(Lines(72, 700, 11, 13.5, lines), $"<< /Font << /F1 {f} 0 R >> >>", Letter);
+        var (docx, _) = await Export(b.Build());
+        var doc = Document(docx);
+        AssertSchemaOrder(doc);
+        var runs = doc.Descendants(W + "r").Where(r => r.Element(W + "t")?.Value.Contains("committee", StringComparison.Ordinal) == true).ToList();
+        Assert.NotEmpty(runs);
+        foreach (var r in runs)
+        {
+            var rPr = r.Element(W + "rPr")!;
+            int spacing = int.Parse(Val(rPr.Element(W + "spacing")) ?? "0");
+            int scale = int.Parse(Val(rPr.Element(W + "w")) ?? "100");
+            Assert.True(spacing < 0 || scale < 100, "the run is set closer or narrower");
+        }
+    }
+
+    [Fact]
+    public async Task ContentsLines_GetRightTabsWithDotLeaders()
+    {
+        var entries = new[] { ("Introduction", "1"), ("Methods and materials", "4"), ("Results", "12"), ("Discussion", "27") };
+        var content = string.Concat(entries.Select((e, i) =>
+            $"BT /F1 11 Tf 72 {700 - 18 * i} Td ({e.Item1} {new string('.', 60 - e.Item1.Length)} ) Tj ET\n" +
+            $"BT /F1 11 Tf {534 - 6 * e.Item2.Length} {700 - 18 * i} Td ({e.Item2}) Tj ET\n"));
+        var (docx, _) = await Export(OnePage(content));
+        var doc = Document(docx);
+        AssertSchemaOrder(doc);
+        // The text of the runs (the tab stops in the paragraph's properties aside).
+        static string Text(XElement p) => string.Concat(p.Elements(W + "r").SelectMany(r => r.Elements()).Select(e => e.Name == W + "t" ? e.Value : e.Name == W + "tab" ? "\t" : string.Empty));
+        var paragraphs = doc.Descendants(W + "p").Where(p => Text(p).StartsWith("Results", StringComparison.Ordinal)).ToList();
+        var results = Assert.Single(paragraphs);
+        Assert.Equal("Results\t12", Text(results));
+        var tab = Assert.Single(results.Element(W + "pPr")!.Element(W + "tabs")!.Elements(W + "tab"));
+        Assert.Equal("right", Val(tab));
+        Assert.Equal("dot", Val(tab, "leader"));
+        Assert.DoesNotContain(doc.Descendants(W + "t"), t => t.Value.Contains("....", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RectanglesAndLines_BecomeShapes()
+    {
+        var content = Lines(72, 700, 11, 13, new[] { "Text above the drawings." }) +
+                      "0 0.5 1 rg 100 400 200 80 re f\n" +
+                      "1 0 0 RG 2 w 100 300 m 300 200 l S\n" +
+                      Lines(72, 150, 11, 13, new[] { "Text below the drawings." });
+        var (docx, _) = await Export(OnePage(content));
+        var doc = Document(docx);
+        AssertSchemaOrder(doc);
+        var shapes = doc.Descendants(Wps + "wsp").ToList();
+        var rect = Assert.Single(shapes, s => s.Descendants(A + "prstGeom").Single().Attribute("prst")!.Value == "rect" && s.Element(Wps + "txbx") == null);
+        Assert.Equal("0080FF", rect.Element(Wps + "spPr")!.Element(A + "solidFill")!.Element(A + "srgbClr")!.Attribute("val")!.Value);
+        var anchor = rect.Ancestors(Wp + "anchor").Single();
+        Assert.Equal((100 * 12700).ToString(), anchor.Element(Wp + "positionH")!.Element(Wp + "posOffset")!.Value);
+        Assert.Equal(((792 - 480) * 12700).ToString(), anchor.Element(Wp + "positionV")!.Element(Wp + "posOffset")!.Value);
+        Assert.Equal((200 * 12700).ToString(), anchor.Element(Wp + "extent")!.Attribute("cx")!.Value);
+        var line = Assert.Single(shapes, s => s.Descendants(A + "prstGeom").Single().Attribute("prst")!.Value == "line");
+        var ln = line.Element(Wps + "spPr")!.Element(A + "ln")!;
+        Assert.Equal("FF0000", ln.Element(A + "solidFill")!.Element(A + "srgbClr")!.Attribute("val")!.Value);
+        // From its box's top-left corner down to the bottom-right: as a line shape runs, not mirrored.
+        Assert.Null(line.Element(Wps + "spPr")!.Element(A + "xfrm")!.Attribute("flipH"));
+        Assert.Equal((200 * 12700).ToString(), line.Ancestors(Wp + "anchor").Single().Element(Wp + "extent")!.Attribute("cx")!.Value);
+    }
+
+    [Fact]
+    public async Task CurvedDrawing_BecomesAPicture()
+    {
+        // A filled circle (Bézier curves): not a Word shape, so a picture drawn by the renderer.
+        const double k = 0.5523 * 50;
+        string circle = FormattableString.Invariant($"0.2 0.6 0.2 rg 300 450 m 300 {450 + k} {250 + k} 500 250 500 c {250 - k} 500 200 {450 + k} 200 450 c 200 {450 - k} {250 - k} 400 250 400 c {250 + k} 400 300 {450 - k} 300 450 c f\n");
+        var pdf = OnePage(Lines(72, 700, 11, 13, new[] { "A figure follows." }) + circle);
+        using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(forceSoftware: true);
+        using var document = await PdfVectorDocument.OpenAsync(pdf);
+        var output = new MemoryStream();
+        var result = await DocxExporter.ExportAsync(document, output, new DocxExportOptions { Renderer = renderer });
+        var docx = output.ToArray();
+        Assert.Equal(1, result.Images);
+        using var package = Package.Open(new MemoryStream(docx), FileMode.Open, FileAccess.Read);
+        var part = package.GetPart(new Uri("/word/document.xml", UriKind.Relative));
+        var rel = part.GetRelationshipsByType("http://schemas.openxmlformats.org/officeDocument/2006/relationships/image").Single();
+        var media = package.GetPart(PackUriHelper.ResolvePartUri(part.Uri, rel.TargetUri));
+        Assert.Equal("image/png", media.ContentType);
+        XDocument doc;
+        using (var s = part.GetStream()) doc = XDocument.Load(s);
+        var anchor = Assert.Single(doc.Descendants(Wp + "anchor"));
+        Assert.Equal("1", anchor.Attribute("behindDoc")!.Value);
+        // About where the circle is, at about its size (150 dpi, cut a point wider).
+        double x = long.Parse(anchor.Element(Wp + "positionH")!.Element(Wp + "posOffset")!.Value) / 12700.0;
+        double w = long.Parse(anchor.Element(Wp + "extent")!.Attribute("cx")!.Value) / 12700.0;
+        Assert.InRange(x, 196, 200);
+        Assert.InRange(w, 100, 104);
+        // Its pixels: green inside, see-through at the corners.
+        using var s2 = media.GetStream();
+        var png = new MemoryStream();
+        s2.CopyTo(png);
+        Assert.Equal(6, png.ToArray()[25]); // colour type RGBA
+    }
+
+    [Fact]
+    public async Task TurnedText_BecomesATurnedTextBox()
+    {
+        // Reading up the page beside the text, as on a cover's spine.
+        var content = "BT /F1 18 Tf 0 1 -1 0 40 200 Tm (National Institute of Examples) Tj ET\n" + Lines(100, 700, 11, 13, Prose);
+        var (docx, _) = await Export(OnePage(content));
+        var doc = Document(docx);
+        AssertSchemaOrder(doc);
+        var box = Assert.Single(doc.Descendants(Wps + "wsp"), s => s.Element(Wps + "txbx") != null);
+        Assert.Equal("National Institute of Examples", string.Concat(box.Descendants(W + "t").Select(t => t.Value)));
+        Assert.Equal((270 * 60000).ToString(), box.Element(Wps + "spPr")!.Element(A + "xfrm")!.Attribute("rot")!.Value);
+        Assert.Equal("none", box.Element(Wps + "bodyPr")!.Attribute("wrap")!.Value);
+        // Not a line of the body: the body's own text is the prose, which starts the page.
+        var own = doc.Root!.Element(W + "body")!.Elements(W + "p").Select(p => string.Concat(p.Elements(W + "r").Select(r => r.Element(W + "t")?.Value))).Where(t => t.Length > 0).ToList();
+        Assert.StartsWith("The committee met", own[0], StringComparison.Ordinal);
+        Assert.DoesNotContain(own, t => t.Contains("Institute", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OddAndEvenFooters_EachGoOnTheirPages()
+    {
+        var b = new VectorPdfBuilder();
+        int f = b.Add(Helv);
+        for (int page = 1; page <= 6; page++)
+        {
+            string footer = page % 2 == 1 ? Lines(72, 30, 9, 11, new[] { $"Annual Report {page}" }) : Lines(440, 30, 9, 11, new[] { $"{page} Annual Review" });
+            b.AddPage(Lines(72, 700, 11, 13, new[] { $"Body text of page {page} goes here." }) + footer, $"<< /Font << /F1 {f} 0 R >> >>", Letter);
+        }
+        var (docx, _) = await Export(b.Build());
+        var parts = Parts(docx);
+        var doc = parts["/word/document.xml"];
+        AssertSchemaOrder(doc);
+        var footers = parts.Where(p => p.Key.StartsWith("/word/footer", StringComparison.Ordinal)).ToDictionary(p => p.Key, p => p.Value);
+        Assert.Contains(footers.Values, x => x.Descendants(W + "p").Any(p => ParagraphText(p).StartsWith("Annual Report", StringComparison.Ordinal)));
+        Assert.Contains(footers.Values, x => x.Descendants(W + "p").Any(p => ParagraphText(p).EndsWith("Annual Review", StringComparison.Ordinal)));
+        // Each page is a section with its own footer and its page number.
+        var sections = doc.Descendants(W + "sectPr").ToList();
+        Assert.Equal(6, sections.Count);
+        Assert.Equal(new[] { "1", "2", "3", "4", "5", "6" }, sections.Select(s => Val(s.Element(W + "pgNumType"), "start")));
+        Assert.Equal(2, sections.Select(s => Val(s.Element(W + "footerReference"), "id") ?? s.Element(W + "footerReference")!.Attribute(R + "id")!.Value).Distinct().Count());
+        Assert.DoesNotContain(BodyParagraphs(doc), t => t.Contains("Annual", StringComparison.Ordinal));
     }
 
     [Theory]

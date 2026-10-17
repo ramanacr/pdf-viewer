@@ -25,15 +25,29 @@ internal static partial class DocumentLayout
     {
         var margins = Margins(pages, doc);
         DocSection? current = null;
+        int? lastValue = null;
         for (int pi = 0; pi < pages.Count; pi++)
         {
             var page = pages[pi];
+            // Printed page numbers that start again (or skip) start a section with that number.
+            bool restart = page.PageValue is int value && (lastValue is not int last || value != last + 1);
+            lastValue = page.PageValue;
+            // A picture beside other content (a seal beside a letterhead): in the flow it would go
+            // under that content and push the page down; held at its place on the page instead.
+            foreach (var img in page.Items.OfType<DocParagraph>().Where(p => p.Image != null).ToList())
+                if (page.Items.Any(o => !ReferenceEquals(o, img) && o.Box.OverlapY(img.Box) > 0.3 * Math.Min(o.Box.H, img.Box.H)))
+                {
+                    page.Items.Remove(img);
+                    img.Image!.Anchored = true;
+                    page.Floating.Add(img.Image);
+                }
             var (ml, mt, mr, mb) = margins[pi];
             double left = ml, right = page.Width - mr;
             var bands = page.VerticalWriting ? new List<Band> { new() { Items = page.Items.ToList() } } : Bands(page.Items);
             if (bands.Count == 0) bands.Add(new Band());
 
             double cursor = mt;
+            var parts = new List<(int Band, List<DocItem> Items)>();
             bool pageStart = true, pageNewSection = false;
             DocSection? firstSection = null;
             int firstIndex = -1;
@@ -42,7 +56,8 @@ internal static partial class DocumentLayout
                 var section = new DocSection
                 {
                     Width = page.Width, Height = page.Height, MarginL = ml, MarginT = mt, MarginR = mr, MarginB = mb,
-                    VerticalWriting = page.VerticalWriting,
+                    VerticalWriting = page.VerticalWriting, HeaderVariant = page.HeaderVariant, FooterVariant = page.FooterVariant,
+                    NumberFormat = page.PageValue != null ? page.NumberFormat : "decimal",
                 };
                 var columns = ColumnBounds(band, left, right);
                 if (columns.Count > 1)
@@ -50,10 +65,11 @@ internal static partial class DocumentLayout
                         section.Columns.Add((columns[c].R - columns[c].L, c + 1 < columns.Count ? columns[c + 1].L - columns[c].R : 0));
                 else section.Columns.Add((right - left, 0));
 
-                bool newSection = current == null || !current.SameSetup(section);
+                bool newSection = current == null || !current.SameSetup(section) || pageStart && restart;
                 if (newSection)
                 {
                     section.Continuous = !pageStart;
+                    if (pageStart) section.PageStart = page.PageValue;
                     doc.Sections.Add(section);
                     current = section;
                 }
@@ -67,11 +83,13 @@ internal static partial class DocumentLayout
                 {
                     var ordered = Order(band.Items, left, right);
                     cursor = Space(ordered, left, right, cursor);
+                    parts.Add((parts.Count, ordered));
                     current.Items.AddRange(ordered);
                 }
                 else
                 {
                     double bandTop = cursor, bandEnd = cursor;
+                    int bandIndex = parts.Count;
                     for (int c = 0; c < columns.Count; c++)
                     {
                         var col = columns[c];
@@ -80,6 +98,7 @@ internal static partial class DocumentLayout
                         if (c > 0) ordered[0].ColumnBreakBefore = true;
                         bandEnd = Math.Max(bandEnd, Space(ordered, col.L, col.R, bandTop));
                         current.Items.AddRange(ordered);
+                        parts.Add((bandIndex, ordered));
                     }
                     cursor = bandEnd;
                 }
@@ -88,13 +107,19 @@ internal static partial class DocumentLayout
                 pageStart = false;
             }
 
+            // A little room is kept for what the estimate cannot know (how Word rounds, borders, pictures).
+            if (!page.VerticalWriting) Squeeze(parts, 0.95 * (page.Height - mt - mb));
+
             // An empty page is an empty paragraph; pictures at fixed places hang on the page's first paragraph.
             if (firstSection == null)
             {
                 current!.Items.Add(new DocParagraph { Box = new Box(left, mt, left, mt) });
                 (firstSection, firstIndex) = (current, current.Items.Count - 1);
             }
-            if (page.Floating.Count > 0 && firstSection.Items[firstIndex] is not DocParagraph { Image: null })
+            if (current!.Items.Count > 0) current.Items[^1].LastOnPage = true;
+            foreach (var box in page.TextBoxes)
+                foreach (var p in box.Paragraphs) LayoutBoxParagraph(p, box.Width);
+            if (page.Floating.Count + page.TextBoxes.Count + page.Shapes.Count > 0 && firstSection.Items[firstIndex] is not DocParagraph { Image: null })
             {
                 var holder = new DocParagraph { Box = new Box(left, mt, left, mt), ColumnBreakBefore = firstSection.Items[firstIndex].ColumnBreakBefore };
                 firstSection.Items[firstIndex].ColumnBreakBefore = false;
@@ -102,22 +127,100 @@ internal static partial class DocumentLayout
             }
             // A page that goes on in the same section starts with a page break; a new section starts a page itself.
             if (pi > 0 && !pageNewSection) firstSection.Items[firstIndex].PageBreakBefore = true;
-            if (firstSection.Items[firstIndex] is DocParagraph anchor) anchor.Anchors.AddRange(page.Floating);
+            if (firstSection.Items[firstIndex] is DocParagraph anchor)
+            {
+                anchor.Anchors.AddRange(page.Floating);
+                anchor.TextBoxes.AddRange(page.TextBoxes);
+                anchor.Shapes.AddRange(page.Shapes);
+            }
         }
 
-        // Headers and footers: laid out across the first section's text width.
-        if (doc.Sections.Count > 0)
+        // A page without a header or footer still has an empty one: it sits inside the margin, so it pushes nothing.
+        foreach (var s in doc.Sections)
         {
-            var s = doc.Sections[0];
-            double l = s.MarginL, r = s.Width - s.MarginR;
-            var hs = pages.SelectMany(p => p.Header).ToList();
-            var fs = pages.SelectMany(p => p.Footer).ToList();
-            if (hs.Count > 0) foreach (var sec in doc.Sections) sec.HeaderDistance = Math.Max(0, hs.Min(p => p.Box.T) - 2);
-            if (fs.Count > 0) foreach (var sec in doc.Sections) sec.FooterDistance = Math.Max(0, pages.Min(p => p.Height) - fs.Max(p => p.Box.B) - 2);
-            Space(doc.Header, l, r, doc.Header.Count > 0 ? doc.Header[0].Box.T : 0, first: true);
-            Space(doc.Footer, l, r, doc.Footer.Count > 0 ? doc.Footer[0].Box.T : 0, first: true);
-            s.TitlePage = !doc.HeaderOnFirstPage || !doc.FooterOnFirstPage;
+            if (s.HeaderVariant < 0) s.HeaderDistance = Math.Clamp(s.MarginT - 2, 0, 36);
+            if (s.FooterVariant < 0) s.FooterDistance = Math.Clamp(s.MarginB - 2, 0, 36);
         }
+
+        // Headers and footers: across the text width of the first section that has them, or in text boxes where they are.
+        for (int i = 0; i < doc.Headers.Count + doc.Footers.Count; i++)
+        {
+            bool header = i < doc.Headers.Count;
+            var v = header ? doc.Headers[i] : doc.Footers[i - doc.Headers.Count];
+            int index = header ? i : i - doc.Headers.Count;
+            var sections = doc.Sections.Where(s => (header ? s.HeaderVariant : s.FooterVariant) == index).ToList();
+            if (sections.Count == 0 || v.Paragraphs.Count == 0) continue;
+            var s0 = sections[0];
+            if (v.Floating)
+            {
+                v.Boxes = v.Paragraphs.Select(p => FloatingBox(p, s0.Width)).ToList();
+                foreach (var s in sections)
+                    if (header) s.HeaderDistance = Math.Max(0, Math.Min(12, s.MarginT / 2));
+                    else s.FooterDistance = Math.Max(0, Math.Min(12, s.MarginB / 2));
+                continue;
+            }
+            Space(v.Paragraphs, s0.MarginL, s0.Width - s0.MarginR, v.Paragraphs[0].Box.T, first: true);
+            foreach (var s in sections)
+                if (header) s.HeaderDistance = Math.Max(0, v.Paragraphs.Min(p => p.Box.T) - 2);
+                else s.FooterDistance = Math.Max(0, s.Height - v.Paragraphs.Max(p => p.Box.B) - 2);
+        }
+    }
+
+    /// <summary>
+    /// A page whose content Word would set taller than the page's text area (lines that overlap
+    /// on the page, rows that grow): the space between paragraphs is closed up first, then the
+    /// lines are set a little closer, so the page does not run over onto one of its own.
+    /// </summary>
+    private static void Squeeze(List<(int Band, List<DocItem> Items)> parts, double available)
+    {
+        static double Height(DocItem i) => i is DocParagraph p && p.Image == null
+            ? i.SpaceBefore + Math.Max(1, p.Lines.Count) * p.LineHeight
+            : i.SpaceBefore + i.Box.H + ExtraHeight(i);
+        double Total() => parts.GroupBy(p => p.Band).Sum(b => b.Max(c => c.Items.Sum(Height)));
+        double over = Total() - available;
+        if (over <= 0 || available <= 0) return;
+        var items = parts.SelectMany(p => p.Items).ToList();
+        double gaps = items.Sum(i => i.SpaceBefore);
+        if (gaps > 0)
+        {
+            double keep = Math.Max(0, 1 - over / gaps);
+            foreach (var i in items) i.SpaceBefore *= keep;
+            over = Total() - available;
+            if (over <= 0) return;
+        }
+        var paragraphs = items.OfType<DocParagraph>().Where(p => p.Image == null && p.Lines.Count > 0).ToList();
+        double lines = paragraphs.Sum(p => p.Lines.Count * p.LineHeight);
+        if (lines <= 0) return;
+        double factor = Math.Max(0.85, 1 - over / lines);
+        foreach (var p in paragraphs) p.LineHeight = Math.Max(0.8 * p.Size, p.LineHeight * factor);
+    }
+
+    /// <summary>A header or footer paragraph in a text box where it is on the page, so it takes no room from the body.</summary>
+    private static DocTextBox FloatingBox(DocParagraph p, double pageWidth)
+    {
+        double size = p.Size, w = p.Box.W * 1.25 + 2 * size;
+        if (p.Tabs.Count > 0) w = Math.Max(w, pageWidth - p.Box.L);
+        double centre = pageWidth / 2;
+        double left = Math.Abs(p.Box.Cx - centre) < 0.06 * pageWidth && p.Tabs.Count == 0 ? p.Box.Cx - w / 2
+            : p.Box.R > 0.75 * pageWidth && p.Tabs.Count == 0 ? p.Box.R + 1 - w : p.Box.L - 1;
+        left = Math.Clamp(left, 0, Math.Max(0, pageWidth - w));
+        LayoutParagraph(p, left, left + w);
+        p.SpaceBefore = 0;
+        double top = p.FirstBaseline - 0.8 * p.LineHeight;
+        double height = Math.Max(1, p.Lines.Count) * p.LineHeight + 2;
+        var box = new Box(left, top - 1, left + w, top - 1 + height);
+        return new DocTextBox { Box = box, Width = box.W, Height = box.H, Paragraphs = { p } };
+    }
+
+    /// <summary>A paragraph of turned text in its text box: its lines as on the page, from the box's left edge.</summary>
+    private static void LayoutBoxParagraph(DocParagraph p, double width)
+    {
+        p.Indent = p.RightIndent = p.FirstLine = p.SpaceBefore = 0;
+        // Its lines are fitted to the length the page gives them.
+        p.ColumnWidth = p.Along > 0 ? Math.Min(width, p.Along * 1.02 + 1) : width;
+        p.LineHeight = Math.Clamp(p.Lines.Count >= 2 ? p.Pitch : 1.2 * p.Size, p.Size, 3 * p.Size);
+        if (p.Align == PdfTextAlignment.Justified) p.Align = PdfTextAlignment.Left;
+        p.HardLines = true;
     }
 
     // ------------------------------------------------------------------ margins
@@ -128,18 +231,31 @@ internal static partial class DocumentLayout
     /// </summary>
     private static List<(double L, double T, double R, double B)> Margins(List<DocPage> pages, DocDocument doc)
     {
+        static List<Box> Body(DocPage page) => page.Items.Where(it => it is not DocParagraph { Image: null, Runs.Count: 0 }).Select(it => it.Box).ToList();
+        // Body text in a header's or footer's band (a page number beside the running footer, a
+        // footnote low on the page): that one goes in text boxes, so it takes no room from the body.
+        foreach (var page in pages)
+        {
+            var body = Body(page);
+            if (body.Count == 0) continue;
+            if (page.HeaderVariant >= 0 && page.Header.Count > 0 && body.Min(b => b.T) < page.Header.Max(p => p.Box.B) + 1) doc.Headers[page.HeaderVariant].Floating = true;
+            if (page.FooterVariant >= 0 && page.Footer.Count > 0 && body.Max(b => b.B) > page.Footer.Min(p => p.Box.T) - 1) doc.Footers[page.FooterVariant].Floating = true;
+        }
+        bool InFlow(DocPage p, bool header) => header ? p.HeaderVariant >= 0 && !doc.Headers[p.HeaderVariant].Floating : p.FooterVariant >= 0 && !doc.Footers[p.FooterVariant].Floating;
+
         var result = new List<(double, double, double, double)>();
         int i = 0;
         while (i < pages.Count)
         {
             int j = i;
-            while (j + 1 < pages.Count && Math.Abs(pages[j + 1].Width - pages[i].Width) < 1 && Math.Abs(pages[j + 1].Height - pages[i].Height) < 1) j++;
+            while (j + 1 < pages.Count && Math.Abs(pages[j + 1].Width - pages[i].Width) < 1 && Math.Abs(pages[j + 1].Height - pages[i].Height) < 1
+                   && pages[j + 1].HeaderVariant == pages[i].HeaderVariant && pages[j + 1].FooterVariant == pages[i].FooterVariant) j++;
             double w = pages[i].Width, h = pages[i].Height;
             double ml = double.MaxValue, mt = double.MaxValue, mr = double.MaxValue, mb = double.MaxValue;
             double headerBottom = 0, footerTop = h;
             for (int k = i; k <= j; k++)
             {
-                var boxes = pages[k].Items.Where(it => it is not DocParagraph { Image: null, Runs.Count: 0 }).Select(it => it.Box).ToList();
+                var boxes = Body(pages[k]);
                 if (boxes.Count > 0)
                 {
                     ml = Math.Min(ml, boxes.Min(b => b.L));
@@ -147,8 +263,8 @@ internal static partial class DocumentLayout
                     mt = Math.Min(mt, boxes.Min(b => b.T));
                     mb = Math.Min(mb, h - boxes.Max(b => b.B));
                 }
-                if (pages[k].Header.Count > 0) headerBottom = Math.Max(headerBottom, pages[k].Header.Max(p => p.Box.B));
-                if (pages[k].Footer.Count > 0) footerTop = Math.Min(footerTop, pages[k].Footer.Min(p => p.Box.T));
+                if (pages[k].Header.Count > 0 && InFlow(pages[k], true)) headerBottom = Math.Max(headerBottom, pages[k].Header.Max(p => p.Box.B));
+                if (pages[k].Footer.Count > 0 && InFlow(pages[k], false)) footerTop = Math.Min(footerTop, pages[k].Footer.Min(p => p.Box.T));
             }
             if (ml == double.MaxValue) ml = mr = mt = mb = Math.Min(72, Math.Min(w, h) / 8);
             ml = Math.Max(0, ml - 1);
@@ -324,42 +440,145 @@ internal static partial class DocumentLayout
             }
             if (!swapped) break;
         }
+        JoinContentsNumbers(list);
         // Blocks of several lines side by side (a letterhead's address beside its date): one row of
         // a table without borders, so they stay side by side rather than one under the other.
         for (int k = 0; k < list.Count; k++)
         {
-            if (list[k] is not DocParagraph first || !Flowing(first) || first.List != null) continue;
-            var group = new List<DocParagraph> { first };
-            var box = first.Box;
+            // Tables side by side too (a long list printed in two tables): one under the other they take twice the height.
+            static bool SideBySide(DocItem i) => i is DocParagraph p ? Flowing(p) && p.List == null : i is DocTable { Cells.Count: > 0 } t && t.Cells.All(c => c.Items == null);
+            if (!SideBySide(list[k])) continue;
+            var group = new List<DocItem> { list[k] };
+            var box = list[k].Box;
             for (int j = k + 1; j < list.Count && list[j].Box.T < box.B; j++)
-                if (list[j] is DocParagraph b && Flowing(b) && b.List == null && b.Box.OverlapY(box) > 0.3 * Math.Min(b.Box.H, box.H) && group.All(g => g.Box.OverlapX(b.Box) <= 0))
+                if (SideBySide(list[j]) && list[j].Box.OverlapY(box) > 0.3 * Math.Min(list[j].Box.H, box.H) && group.All(g => g.Box.OverlapX(list[j].Box) <= 0))
                 {
-                    group.Add(b);
-                    box = box.Union(b.Box);
+                    group.Add(list[j]);
+                    box = box.Union(list[j].Box);
                 }
-            if (group.Count < 2 || group.All(g => g.Lines.Count == 1)) continue;
+            bool tables = group.Any(g => g is DocTable);
+            if (group.Count < 2 || !tables && group.All(g => g is DocParagraph { Lines.Count: 1 })) continue;
             group = group.OrderBy(g => g.Box.L).ToList();
+            if (ContentsColumns(group) is { } entries)
+            {
+                foreach (var g in group) list.Remove(g);
+                list.InsertRange(k, entries);
+                k += entries.Count - 1;
+                continue;
+            }
+            // Tables are side by side when apart and about as tall as each other; grids that touch are one table drawn in parts.
+            if (tables && (group.Zip(group.Skip(1)).Any(g => g.Second.Box.L - g.First.Box.R < 6 || g.First.Box.OverlapY(g.Second.Box) < 0.5 * Math.Min(g.First.Box.H, g.Second.Box.H))
+                           || group.OfType<DocTable>().Any(t => t.Rows.Length < 4)))
+                continue;
             var cols = new List<double> { group[0].Box.L - 1 };
             for (int c = 1; c < group.Count; c++) cols.Add((group[c - 1].Box.R + group[c].Box.L) / 2);
             cols.Add(group[^1].Box.R + 1);
             var table = new DocTable { Cols = cols.ToArray(), Rows = new[] { box.T - 1, box.B + 1 } };
             table.Box = new Box(cols[0], box.T - 1, cols[^1], box.B + 1);
             for (int c = 0; c < group.Count; c++)
-                table.Cells.Add(new DocCell { Row = 0, Col = c, Box = new Box(cols[c], box.T - 1, cols[c + 1], box.B + 1), Paragraphs = { group[c] } });
+            {
+                var cell = new DocCell { Row = 0, Col = c, Box = new Box(cols[c], box.T - 1, cols[c + 1], box.B + 1) };
+                if (tables) cell.Items = new List<DocItem> { group[c] };
+                else cell.Paragraphs.Add((DocParagraph)group[c]);
+                table.Cells.Add(cell);
+            }
             foreach (var g in group) list.Remove(g);
             list.Insert(k, table);
+        }
+        // A footnote's number (or a mark) on its own just before the first line of the text it
+        // belongs to: it goes at the start of that text.
+        for (int k = 0; k + 1 < list.Count; k++)
+        {
+            if (list[k] is not DocParagraph mark || !OneLine(mark) || mark.Text.Trim().Length is 0 or > 4 || mark.CharX.Count != mark.Text.Length) continue;
+            if (list[k + 1] is not DocParagraph text || !Flowing(text) || text.List != null || text.Lines.Count < 2 || text.CharLine.Count != text.Text.Length) continue;
+            var line = text.Lines[0].Box;
+            if (mark.Box.OverlapY(line) < 0.5 * Math.Min(mark.Box.H, line.H) || line.L < mark.Box.R - 1 || line.L - mark.Box.R > 3 * text.Size) continue;
+            Prepend(text, mark);
+            list.RemoveAt(k);
         }
         for (int k = 0; k < list.Count; k++)
         {
             if (list[k] is not DocParagraph a || !OneLine(a)) continue;
+            // On one line: the same baseline, or most of the height shared (a footnote's raised
+            // number beside its text, pieces of a line drawn over each other). One under the other
+            // in Word they would take a line each.
             while (k + 1 < list.Count && list[k + 1] is DocParagraph b && OneLine(b)
-                   && Math.Abs(b.FirstBaseline - a.FirstBaseline) < 0.3 * Math.Max(a.Size, b.Size) && b.Box.L > a.Box.R - 1)
+                   && (Math.Abs(b.FirstBaseline - a.FirstBaseline) < 0.3 * Math.Max(a.Size, b.Size) || a.Box.OverlapY(b.Box) > 0.6 * Math.Min(a.Box.H, b.Box.H)))
             {
-                AppendWithTab(a, b, right, left);
+                if (b.Box.L > a.Box.R - 1) AppendWithTab(a, b, right, left);
+                else AppendWithSpace(a, b);
                 list.RemoveAt(k + 1);
             }
         }
         return list;
+    }
+
+    /// <summary>
+    /// A contents page read as two columns, titles (often with dot leaders) beside a column of
+    /// page numbers: each title line with its number is one paragraph again, the number at a right
+    /// tab stop. Null when the group is not that.
+    /// </summary>
+    /// <summary>
+    /// Contents lines found as one block of titles that end in dot leaders, with each page number
+    /// a line of its own to the right: each title line with its number becomes one paragraph.
+    /// </summary>
+    private static void JoinContentsNumbers(List<DocItem> list)
+    {
+        var leader = new System.Text.RegularExpressions.Regex(@"(?:[.·…][ \t]?){4,}[ \t]*$");
+        for (int k = 0; k < list.Count; k++)
+        {
+            if (list[k] is not DocParagraph titles || !Flowing(titles) || titles.Lines.Count < 2 || titles.CharLine.Count != titles.Text.Length) continue;
+            var lines = PageReader.SplitByLine(titles).ToList();
+            if (lines.Count != titles.Lines.Count || lines.Count(l => leader.IsMatch(l.Text)) < 2) continue;
+            var numbers = list.OfType<DocParagraph>().Where(n => !ReferenceEquals(n, titles) && OneLine(n) && n.Box.L > titles.Box.R - 2 && n.Box.L - titles.Box.R < 20 * titles.Size
+                && System.Text.RegularExpressions.Regex.IsMatch(n.Text.Trim(), @"^[\p{N}ivxlcdmIVXLCDM][\p{L}\p{N}\-–.]{0,7}$")).ToList();
+            var pairs = new List<(DocParagraph Line, DocParagraph Number)>();
+            foreach (var line in lines)
+                if (numbers.FirstOrDefault(x => Math.Abs(x.FirstBaseline - line.FirstBaseline) < 0.3 * Math.Max(x.Size, line.Size)) is { } n)
+                {
+                    pairs.Add((line, n));
+                    numbers.Remove(n);
+                }
+            if (pairs.Count < 2) continue;
+            foreach (var (line, n) in pairs)
+            {
+                AppendWithTab(line, n, n.Box.R + 0.01, line.Box.L);
+                line.Tabs[^1] = (n.Box.R, TabKind.Right);
+                list.Remove(n);
+            }
+            int at = list.IndexOf(titles);
+            list.RemoveAt(at);
+            list.InsertRange(at, lines);
+            k = at + lines.Count - 1;
+        }
+    }
+
+    private static List<DocItem>? ContentsColumns(List<DocItem> group)
+    {
+        if (group.Count != 2 || group[0] is not DocParagraph titles || group[1] is not DocParagraph numbers) return null;
+        if (numbers.Lines.Count < 2 || titles.Lines.Count < numbers.Lines.Count) return null;
+        if (titles.CharLine.Count != titles.Text.Length || numbers.CharLine.Count != numbers.Text.Length) return null;
+        var numberLines = PageReader.SplitByLine(numbers).ToList();
+        if (numberLines.Count != numbers.Lines.Count || numberLines.Any(n => !System.Text.RegularExpressions.Regex.IsMatch(n.Text.Trim(), @"^[\p{N}ivxlcdmIVXLCDM][\p{L}\p{N}\-–.]{0,7}$"))) return null;
+        var titleLines = PageReader.SplitByLine(titles).ToList();
+        if (titleLines.Count != titles.Lines.Count) return null;
+        // Every number is on a title's line.
+        double right = numbers.Box.R;
+        var result = new List<DocItem>();
+        int matched = 0;
+        foreach (var t in titleLines)
+        {
+            var n = numberLines.FirstOrDefault(x => Math.Abs(x.FirstBaseline - t.FirstBaseline) < 0.3 * Math.Max(x.Size, t.Size));
+            if (n != null)
+            {
+                AppendWithTab(t, n, right + 0.01, t.Box.L);
+                t.Tabs[^1] = (n.Box.R, TabKind.Right);
+                numberLines.Remove(n);
+                matched++;
+            }
+            result.Add(t);
+        }
+        return numberLines.Count == 0 && matched >= 2 ? result : null;
     }
 
     private static bool OneLine(DocParagraph p) => p.Image == null && p.Lines.Count == 1 && !p.Rotated && !p.Vertical && p.List == null && p.Heading == 0 && !p.Rtl;
@@ -371,15 +590,35 @@ internal static partial class DocumentLayout
 
     private static double Space<T>(List<T> items, double left, double right, double cursor, bool first) where T : DocItem
     {
+        // What Word makes taller than the page (a table whose text needs more than its rows) comes
+        // out of the space after it, so what follows stays where the page has it.
+        double carry = 0;
+        foreach (var item in items) LayoutItem(item, left, right);
+        // Lines set closer than their own line height (a dense list of one-line paragraphs): each
+        // takes the distance to the next line, or Word would push every one down a little.
+        for (int i = 0; i + 1 < items.Count; i++)
+            if (items[i] is DocParagraph p && Flowing(p) && items[i + 1] is DocParagraph q && Flowing(q))
+            {
+                double d = q.FirstBaseline - p.LastBaseline;
+                if (d <= 0.75 * p.Size || d >= p.LineHeight) continue;
+                if (p.Lines.Count == 1) p.LineHeight = d;
+                if (q.Lines.Count == 1 && q.LineHeight > d) q.LineHeight = Math.Max(d, 0.75 * q.Size);
+            }
         foreach (var item in items)
         {
-            LayoutItem(item, left, right);
             double top = Top(item);
-            item.SpaceBefore = first ? 0 : Math.Clamp(top - cursor, 0, 1500);
+            double before = first ? 0 : Math.Min(top - cursor, 1500);
+            // Overlapping the one before (side by side, or drawn over it): Word puts it under, so
+            // what follows is that much lower, and the space after gives it back.
+            if (before < 0) { carry -= before; before = 0; }
+            double take = Math.Min(carry, before);
+            item.SpaceBefore = before - take;
+            carry -= take;
             first = false;
-            cursor = Math.Max(Bottom(item), top);
+            cursor = Bottom(item);
+            carry += ExtraHeight(item);
         }
-        return cursor;
+        return cursor + carry;
     }
 
     private static bool Flowing(DocParagraph p) => p.Image == null && !p.Rotated && !p.Vertical && p.Lines.Count > 0;
@@ -398,9 +637,15 @@ internal static partial class DocumentLayout
                 t.Indent = t.Box.L - left;
                 foreach (var cell in t.Cells)
                 {
+                    if (cell.Items != null)
+                    {
+                        Space(cell.Items, cell.Box.L, cell.Box.R, cell.Box.T, false);
+                        continue;
+                    }
                     Space(cell.Paragraphs, cell.Box.L + CellPad, cell.Box.R - CellPad, cell.Box.T + 1, false);
                     if (cell.VAlign != "top" && cell.Paragraphs.Count > 0) cell.Paragraphs[0].SpaceBefore = 0;
                 }
+                TightenCells(t);
                 break;
         }
     }
@@ -409,6 +654,8 @@ internal static partial class DocumentLayout
     internal static void LayoutParagraph(DocParagraph p, double left, double right)
     {
         double width = Math.Max(right - left, 1);
+        p.ColumnWidth = width;
+        Leaders(p);
         if (p.Image != null)
         {
             double gapL = p.Box.L - left, gapR = right - p.Box.R;
@@ -478,6 +725,54 @@ internal static partial class DocumentLayout
             p.FirstLine = m.MarkerX - m.TextX;
         }
         p.Tabs = p.Tabs.Select(t => (t.X - left, t.Kind)).Where(t => t.Item1 > 0).ToList();
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex DotLeader = new(
+        @"[ \t]*(?:[.·…][ \t]?){4,}[ \t]*(?=[\p{L}\p{N}][\p{L}\p{N}\-–.]{0,9}[ ]*$)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A contents line ("Introduction ........ 5"): the dots become a right tab stop with a dot
+    /// leader at the page number's right edge, so the number stays at the margin however wide
+    /// Word sets the title.
+    /// </summary>
+    internal static void Leaders(DocParagraph p)
+    {
+        if (p.Image != null || p.Rotated || p.Vertical || p.Rtl || p.Lines.Count == 0 || p.Lines.Count > 3) return;
+        string text = p.Text;
+        if (p.CharLine.Count != text.Length || p.CharX.Count != text.Length) return;
+        var m = DotLeader.Match(text);
+        if (!m.Success || m.Index == 0) return;
+        int last = text.TrimEnd().Length - 1;
+        double x = p.Lines[Math.Min(p.Lines.Count - 1, p.CharLine[last])].Box.R;
+        // Tab stops the dots were placed by (a leader found as text of its own) go with them.
+        int before = text[..m.Index].Count(c => c == '\t'), inside = m.Value.Count(c => c == '\t');
+        var tabs = p.Tabs.OrderBy(t => t.X).ToList();
+        if (before + inside <= tabs.Count) tabs.RemoveRange(before, inside);
+        tabs.Add((x, TabKind.RightDots));
+        p.Tabs = tabs;
+        ReplaceRange(p, m.Index, m.Length, "\t", p.CharLine[m.Index]);
+        p.Align = PdfTextAlignment.Left;
+        p.AlignKnown = true;
+    }
+
+    /// <summary>Replaces characters of a paragraph's text (across runs), keeping where each character is.</summary>
+    private static void ReplaceRange(DocParagraph p, int start, int length, string with, int line)
+    {
+        int pos = 0;
+        foreach (var r in p.Runs)
+        {
+            int end = pos + r.Text.Length;
+            int a = Math.Clamp(start - pos, 0, r.Text.Length), b = Math.Clamp(start + length - pos, 0, r.Text.Length);
+            // The replacement goes in the run the range starts in.
+            bool first = start >= pos && start < end;
+            if (a < b || first) r.Text = r.Text[..a] + (first ? with : string.Empty) + r.Text[b..];
+            pos = end;
+        }
+        p.Runs.RemoveAll(r => r.Text.Length == 0 && r.Field == null);
+        p.CharX.RemoveRange(start, length);
+        p.CharLine.RemoveRange(start, length);
+        p.CharX.InsertRange(start, Enumerable.Repeat(double.NaN, with.Length));
+        p.CharLine.InsertRange(start, Enumerable.Repeat(line, with.Length));
     }
 
     private static PdfTextAlignment GuessAlign(DocParagraph p, double left, double right)
