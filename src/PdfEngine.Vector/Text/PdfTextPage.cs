@@ -510,7 +510,24 @@ public sealed class PdfTextPage
         double width = obj.GetCharWidth(info.CharCode, info.Cid);
         var o = info.Matrix.Inverse().Transform(info.Origin);
         var loose = new TextRect(o.X, descent * fs / 1000, o.X + width, ascent * fs / 1000).Transform(info.Matrix);
-        loose.Union(info.CharBox); // ink past the advance or the ascent widens it
+        // Ink past the advance or the ascent widens it. A font that is not embedded is measured
+        // on a stand-in face whose ink is not the reader's: only its width is taken, so a line's
+        // characters keep one band.
+        if (font.Font.EmbeddedFontData != null || font.IsType3)
+        {
+            loose.Union(info.CharBox);
+        }
+        else
+        {
+            var ink = info.CharBox;
+            ink.Normalize();
+            loose.Normalize();
+            if (ink.Width > 0 && info.Matrix.B == 0 && info.Matrix.C == 0)
+            {
+                loose.Left = Math.Min(loose.Left, ink.Left);
+                loose.Right = Math.Max(loose.Right, ink.Right);
+            }
+        }
         return loose;
     }
 
