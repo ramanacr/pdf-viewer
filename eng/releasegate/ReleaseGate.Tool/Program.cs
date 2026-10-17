@@ -9,6 +9,7 @@ namespace ReleaseGate.Tool;
 ///                     [--out result.json] [--baseline file [--check] [--write-baseline]] [--from result.json] [--keep] [--work dir]
 /// releasegate payload [--dir publish/app] [--installer PdfViewerSetup.exe] [--out result.json]
 ///                     [--baseline file [--check] [--write-baseline]] [--from result.json]
+/// releasegate pdfium-free [--app publish/app] [--no-launch] [--out result.json] [--timeout s]
 /// releasegate probe-pdf &lt;out.pdf&gt;
 ///
 /// Exit codes: 0 passed (or measured), 1 the gate failed, 2 the measurement itself failed.
@@ -20,6 +21,7 @@ public static class Program
         "usage: releasegate startup [--app dir] [--runs N] [--warmup N] [--cold N] [--pdf file] [--environment name] [--timeout s]\n" +
         "                           [--out file] [--baseline file] [--check] [--write-baseline] [--from result.json] [--keep] [--work dir]\n" +
         "       releasegate payload [--dir dir] [--installer file] [--out file] [--baseline file] [--check] [--write-baseline] [--from result.json]\n" +
+        "       releasegate pdfium-free [--app dir] [--no-launch] [--out file] [--timeout s]\n" +
         "       releasegate probe-pdf <out.pdf>";
 
     public static int Main(string[] args)
@@ -36,6 +38,7 @@ public static class Program
             {
                 "startup" => Startup(args),
                 "payload" => Payload(args),
+                "pdfium-free" => PdfiumFree(args),
                 "probe-pdf" when args.Length >= 2 => ProbePdf(args[1]),
                 _ => UsageError(),
             };
@@ -76,8 +79,9 @@ public static class Program
             try
             {
                 Directory.CreateDirectory(work);
-                string pdf = Option(args, "--pdf") ?? Path.Combine(work, ProbeDocument.FileName);
-                if (Option(args, "--pdf") == null) File.WriteAllBytes(pdf, ProbeDocument.Create());
+                // The probe document: its heading, "Startup probe", is on every page.
+                string pdf = Path.Combine(work, ProbeDocument.FileName);
+                File.WriteAllBytes(pdf, ProbeDocument.Create());
 
                 var harness = new StartupHarness
                 {
@@ -167,6 +171,41 @@ public static class Program
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// The PDFium-free release gate: no PDFium file in the payload, and (unless --no-launch) the
+    /// application opens, draws and searches the probe document with PDF_PDFIUM_DISABLED=1.
+    /// </summary>
+    private static int PdfiumFree(string[] args)
+    {
+        string app = Path.GetFullPath(Option(args, "--app") ?? Path.Combine("publish", "app"));
+        var found = PdfiumFreeGate.FindPdfiumFiles(app);
+        Console.WriteLine($"pdfium-free: {app}: {found.Count} PDFium file(s)");
+
+        string? probeJson = null;
+        if (!args.Contains("--no-launch"))
+        {
+            string work = Path.Combine(Path.GetTempPath(), "releasegate-pdfium-free-" + Guid.NewGuid().ToString("N")[..8]);
+            try
+            {
+                Directory.CreateDirectory(work);
+                // The probe document: its heading, "Startup probe", is on every page.
+                string pdf = Path.Combine(work, ProbeDocument.FileName);
+                File.WriteAllBytes(pdf, ProbeDocument.Create());
+                var timeout = TimeSpan.FromSeconds(IntOption(args, "--timeout", 90, min: 5));
+                probeJson = PdfiumFreeGate.Launch(app, pdf, Path.Combine(work, "run"), timeout, found);
+                if (Option(args, "--out") is { } outPath) File.WriteAllText(outPath, probeJson);
+            }
+            finally
+            {
+                TryDelete(work);
+            }
+        }
+
+        var outcome = PdfiumFreeGate.Evaluate(found, probeJson, ProbeDocument.PageCount);
+        outcome.Report("PDFium-free gate");
+        return outcome.Passed ? 0 : 1;
     }
 
     private static T Read<T>(string path) =>

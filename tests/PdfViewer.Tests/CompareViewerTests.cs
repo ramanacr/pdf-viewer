@@ -93,7 +93,7 @@ public class CompareViewerTests : IDisposable
     [Fact]
     public void Highlights_FollowThePagesRotation()
     {
-        var page = new ComparePageViewModel(new PdfViewer.Services.PdfiumDocumentService(), 1, 792, 612, rotation: 90);
+        var page = new ComparePageViewModel(new PdfViewer.Services.HybridVectorDocumentService(PdfViewer.Core.Security.PdfSecurityPolicy.DefaultStrict), 1, 792, 612, rotation: 90);
         var r = page.ToDisplay(new System.Windows.Rect(0.1, 0.2, 0.3, 0.05)); // unrotated, top-left
         Assert.Equal(new System.Windows.Rect(1 - 0.2 - 0.05, 0.1, 0.05, 0.3), r);
     }

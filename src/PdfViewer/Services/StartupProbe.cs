@@ -33,10 +33,17 @@ namespace PdfViewer.Services;
 ///
 /// windowShown usually lands after documentOpenStart: the document is opened from Loaded,
 /// which runs before the first frame.
+///
+/// <c>--startup-probe &lt;result.json&gt; &lt;document.pdf&gt; --search &lt;text&gt;</c> (the PDFium-free
+/// release gate) also searches the document once page 1 is on screen, through the viewer's own
+/// search, and reports the number of matches. Every result also says whether PDFium was loaded
+/// into the process (its managed adapter or its native library), so the gate can prove the
+/// published app opened, drew and searched the document without it.
 /// </summary>
 internal sealed class StartupProbe
 {
     public const string Switch = "--startup-probe";
+    public const string SearchSwitch = "--search";
 
     /// <summary>A launch that has not drawn page 1 by then is reported as failed rather than hanging the harness.</summary>
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
@@ -46,6 +53,9 @@ internal sealed class StartupProbe
     private readonly Dictionary<string, double> _marks = new();
     private bool _finished;
     private PageViewModel? _watchedPage;
+    private MainViewModel? _document;
+    private readonly string? _searchQuery;
+    private Dictionary<string, object?>? _search;
 
     public string DocumentPath { get; }
 
@@ -55,10 +65,11 @@ internal sealed class StartupProbe
     /// </summary>
     public string SettingsDirectory { get; }
 
-    private StartupProbe(string resultPath, string documentPath)
+    private StartupProbe(string resultPath, string documentPath, string? searchQuery)
     {
         _resultPath = resultPath;
         DocumentPath = documentPath;
+        _searchQuery = string.IsNullOrWhiteSpace(searchQuery) ? null : searchQuery;
         SettingsDirectory = Path.Combine(Path.GetDirectoryName(resultPath) ?? Path.GetTempPath(), "probe-settings");
 
         using var self = Process.GetCurrentProcess();
@@ -69,7 +80,8 @@ internal sealed class StartupProbe
     public static StartupProbe? TryCreate(string[] args)
     {
         if (args.Length < 3 || !string.Equals(args[0], Switch, StringComparison.OrdinalIgnoreCase)) return null;
-        return new StartupProbe(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
+        string? search = args.Length >= 5 && string.Equals(args[3], SearchSwitch, StringComparison.OrdinalIgnoreCase) ? args[4] : null;
+        return new StartupProbe(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]), search);
     }
 
     /// <summary>Records a milestone. Only the first occurrence of each counts.</summary>
@@ -99,6 +111,7 @@ internal sealed class StartupProbe
         void WatchDocument(MainViewModel? document)
         {
             if (document == null) return;
+            _document = document;
             document.Pages.CollectionChanged += OnPagesChanged;
             WatchFirstPage(document.Pages.Count > 0 ? document.Pages[0] : null);
         }
@@ -160,14 +173,73 @@ internal sealed class StartupProbe
         void OnRendering(object? sender, EventArgs e)
         {
             CompositionTarget.Rendering -= OnRendering;
-            (_dispatcher ?? Dispatcher.CurrentDispatcher).BeginInvoke(DispatcherPriority.Loaded, () =>
+            (_dispatcher ?? Dispatcher.CurrentDispatcher).BeginInvoke(DispatcherPriority.Loaded, async () =>
             {
                 Mark("firstPageRendered");
-                Finish(null);
+                Finish(_searchQuery == null ? null : await SearchAsync(_searchQuery));
             });
         }
 
         CompositionTarget.Rendering += OnRendering;
+    }
+
+    /// <summary>Searches the open document as the search box does; returns an error, or null.</summary>
+    private async Task<string?> SearchAsync(string query)
+    {
+        if (_document == null) return "no document to search";
+        try
+        {
+            _document.SearchQuery = query;
+            await _document.ExecuteSearchAsync();
+            Mark("searchDone");
+            _search = new Dictionary<string, object?>
+            {
+                ["query"] = query,
+                ["matches"] = _document.SearchMatches.Count,
+                ["pages"] = _document.SearchMatches.Select(m => m.PageNumber).Distinct().Count(),
+                ["summary"] = _document.SearchSummaryText,
+            };
+            return _document.SearchMatches.Count > 0 ? null : $"searching for \"{query}\" found nothing ({_document.SearchSummaryText})";
+        }
+        catch (Exception ex)
+        {
+            return $"search failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// What of PDFium is in the process: its managed adapter (PdfEngine.Pdfium) among the loaded
+    /// assemblies, and its native library among the loaded modules. Both are empty in the
+    /// published app.
+    /// </summary>
+    internal static Dictionary<string, object?> PdfiumPresence()
+    {
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => a.GetName().Name ?? string.Empty)
+            .Where(n => n.Contains("Pdfium", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var modules = new List<string>();
+        try
+        {
+            using var self = Process.GetCurrentProcess();
+            foreach (ProcessModule module in self.Modules)
+            {
+                if (module.ModuleName.Contains("pdfium", StringComparison.OrdinalIgnoreCase))
+                    modules.Add(module.ModuleName);
+            }
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
+        {
+            modules.Add($"(modules not readable: {ex.Message})");
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["rendererCompiledIn"] = PdfDocumentServiceFactory.IsPdfiumRendererAvailable,
+            ["disabledByEnvironment"] = Environment.GetEnvironmentVariable("PDF_PDFIUM_DISABLED") == "1",
+            ["assemblies"] = assemblies,
+            ["nativeModules"] = modules,
+        };
     }
 
     /// <summary>The result file's content; its shape is what <c>releasegate</c>'s ProbeResult.Parse reads.</summary>
@@ -181,6 +253,8 @@ internal sealed class StartupProbe
             ["engine"] = PdfDocumentServiceFactory.CurrentEngine,
             ["runtime"] = RuntimeInformation.FrameworkDescription,
             ["milestones"] = _marks,
+            ["search"] = _search,
+            ["pdfium"] = PdfiumPresence(),
             ["error"] = error,
         };
 

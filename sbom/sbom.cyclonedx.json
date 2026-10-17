@@ -1,16 +1,16 @@
 ﻿{
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:19007fd1-d980-4eaa-add0-98b05236ff6f",
+  "serialNumber": "urn:uuid:0340c433-f1dd-45a6-a62e-1f95b178b3d2",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-27T06:32:10Z",
+    "timestamp": "2026-10-17T19:56:25Z",
     "tools": {
       "components": [
         {
           "type": "application",
           "name": "PDF Viewer SBOM Generator",
-          "version": "2.0.0"
+          "version": "3.0.0"
         }
       ]
     },
@@ -23,7 +23,7 @@
       "type": "application",
       "name": "PdfViewer",
       "version": "3.4.0",
-      "description": "High-performance native Windows PDF Viewer powered by Google PDFium",
+      "description": "Native Windows PDF Viewer with its own PDF engine (PdfEngine.Vector)",
       "licenses": [
         {
           "license": {
@@ -55,10 +55,10 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Pdfium@3.4.0",
-      "name": "PdfEngine.Pdfium",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@3.4.0",
+      "name": "PdfEngine.Vector",
       "version": "3.4.0",
-      "description": "Native Google PDFium safe interop engine and C ABI adapters",
+      "description": "The PDF engine: parsing, security, fonts, text, forms, annotations, signatures, redaction, saving and the vector display list",
       "scope": "required",
       "licenses": [
         {
@@ -68,7 +68,41 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Pdfium@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@3.4.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@3.4.0",
+      "name": "PdfEngine.Vector.Windows",
+      "version": "3.4.0",
+      "description": "WPF rendering of the engine's display lists",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@3.4.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@3.4.0",
+      "name": "PdfEngine.Vector.Direct2D",
+      "version": "3.4.0",
+      "description": "Direct2D/DirectWrite rendering and printing of the engine's display lists",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@3.4.0"
     },
     {
       "type": "library",
@@ -88,254 +122,24 @@
       "purl": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0"
     },
     {
-      "type": "file",
-      "bom-ref": "pkg:generic/google/pdfium@=x86_64&os=windows",
-      "name": "pdfium.dll",
-      "version": "154.0.8021.0",
-      "description": "Google PDFium standalone native PDF rendering and search engine (pinned binary chromium/8021)",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "2A9031FA88F412147C3BC7115054550048C724DB6EA70298B6C6B0D13E513882"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-3-Clause",
-            "url": "https://pdfium.googlesource.com/pdfium/+/refs/heads/main/LICENSE"
-          }
-        }
-      ],
-      "purl": "pkg:generic/google/pdfium@=x86_64&os=windows",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://pdfium.googlesource.com/pdfium"
-        },
-        {
-          "type": "distribution",
-          "url": "https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8021"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/freetype/freetype",
-      "name": "FreeType",
-      "description": "Font rasterization engine used inside Google PDFium",
+      "type": "data",
+      "bom-ref": "pkg:github/adobe-type-tools/cmap-resources@f5cf3bca7fdfeaceb77aa82847e974f2306c20b4",
+      "name": "cmap-resources",
+      "version": "f5cf3bca7fdfeaceb77aa82847e974f2306c20b4",
+      "description": "Adobe predefined CJK CMaps (PredefinedCMaps.zip, embedded in PdfEngine.Vector)",
       "scope": "required",
       "licenses": [
-        {
-          "license": {
-            "id": "FTL"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://freetype.org/"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/libjpeg-turbo/libjpeg-turbo",
-      "name": "libjpeg-turbo",
-      "description": "High-speed JPEG image codec used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "IJG"
-          }
-        },
         {
           "license": {
             "id": "BSD-3-Clause"
           }
         }
       ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://libjpeg-turbo.org/"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/libpng/libpng",
-      "name": "libpng",
-      "description": "PNG reference library used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "libpng-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "http://www.libpng.org/pub/png/libpng.html"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/zlib/zlib",
-      "name": "zlib",
-      "description": "General purpose data compression library used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Zlib"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://zlib.net/"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/openjpeg/openjpeg",
-      "name": "OpenJPEG",
-      "description": "Open-source JPEG 2000 codec used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-2-Clause"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://www.openjpeg.org/"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/littlecms/lcms",
-      "name": "Little-CMS",
-      "description": "Color management engine used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://www.littlecms.com/"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/unicode/icu",
-      "name": "ICU",
-      "description": "International Components for Unicode used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Unicode-DFS-2016"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://icu.unicode.org/"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/abseil/abseil-cpp",
-      "name": "abseil-cpp",
-      "description": "Abseil C++ common libraries used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
+      "purl": "pkg:github/adobe-type-tools/cmap-resources@f5cf3bca7fdfeaceb77aa82847e974f2306c20b4",
       "externalReferences": [
         {
           "type": "vcs",
-          "url": "https://github.com/abseil/abseil-cpp"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/agg/agg23",
-      "name": "agg23",
-      "description": "Anti-Grain Geometry 2D vector graphics library used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "Anti-Grain Geometry Public License"
-          }
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/fastfloat/fast_float",
-      "name": "fast_float",
-      "description": "Fast float parsing library used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/fastfloat/fast_float"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:generic/simdutf/simdutf",
-      "name": "simdutf",
-      "description": "SIMD-accelerated UTF validation and transcoding used inside Google PDFium",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/simdutf/simdutf"
+          "url": "https://github.com/adobe-type-tools/cmap-resources"
         }
       ]
     },
@@ -355,25 +159,6 @@
         {
           "type": "website",
           "url": "https://github.com/CommunityToolkit/dotnet"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:nuget/System.Speech@9.0.0",
-      "name": "System.Speech",
-      "version": "9.0.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:nuget/System.Speech@9.0.0",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://dot.net/"
         }
       ]
     },
@@ -446,6 +231,25 @@
         }
       ],
       "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://dot.net/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/System.Speech@9.0.0",
+      "name": "System.Speech",
+      "version": "9.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:nuget/System.Speech@9.0.0",
       "externalReferences": [
         {
           "type": "website",
@@ -548,35 +352,24 @@
     {
       "ref": "PdfViewer@3.4.0",
       "dependsOn": [
-        "pkg:generic/google/pdfium@=x86_64&os=windows",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@3.4.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@3.4.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@3.4.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@3.4.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0",
+        "pkg:github/adobe-type-tools/cmap-resources@f5cf3bca7fdfeaceb77aa82847e974f2306c20b4",
         "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
-        "pkg:nuget/System.Speech@9.0.0",
         "pkg:nuget/CoreJ2K@2.4.1.108",
         "pkg:nuget/SharpGen.Runtime@2.4.2-beta",
         "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta",
         "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+        "pkg:nuget/System.Speech@9.0.0",
         "pkg:nuget/System.Text.Json@9.0.1",
         "pkg:nuget/Vortice.Direct2D1@3.8.3",
         "pkg:nuget/Vortice.Direct3D11@3.8.3",
         "pkg:nuget/Vortice.DirectX@3.8.3",
         "pkg:nuget/Vortice.DXGI@3.8.3",
         "pkg:nuget/Vortice.Mathematics@2.1.0"
-      ]
-    },
-    {
-      "ref": "pkg:generic/google/pdfium@=x86_64&os=windows",
-      "dependsOn": [
-        "pkg:generic/freetype/freetype",
-        "pkg:generic/libjpeg-turbo/libjpeg-turbo",
-        "pkg:generic/libpng/libpng",
-        "pkg:generic/zlib/zlib",
-        "pkg:generic/openjpeg/openjpeg",
-        "pkg:generic/littlecms/lcms",
-        "pkg:generic/unicode/icu",
-        "pkg:generic/abseil/abseil-cpp",
-        "pkg:generic/agg/agg23",
-        "pkg:generic/fastfloat/fast_float",
-        "pkg:generic/simdutf/simdutf"
       ]
     }
   ]

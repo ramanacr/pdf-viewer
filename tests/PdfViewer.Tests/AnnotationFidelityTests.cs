@@ -54,7 +54,11 @@ public class AnnotationFidelityTests : IDisposable
 
     private static async Task<List<AnnotationModel>> ReadBack(string path)
     {
+#if PDFIUM_RENDERER
         using var service = new PdfiumDocumentService();
+#else
+        using var service = new HybridVectorDocumentService(PdfViewer.Core.Security.PdfSecurityPolicy.DefaultStrict);
+#endif
         await service.OpenDocumentAsync(path);
         return service.LoadExistingAnnotations();
     }
@@ -205,7 +209,7 @@ public class AnnotationFidelityTests : IDisposable
     [Fact]
     public void TestPdfDatesAreWrittenInTheFormTheSpecRequires()
     {
-        string formatted = PdfiumDocumentService.FormatPdfDate(new DateTime(2026, 9, 6, 14, 30, 0));
+        string formatted = AnnotationExchange.FormatPdfDate(new DateTime(2026, 9, 6, 14, 30, 0));
 
         Assert.StartsWith("D:20260906143000", formatted);
         Assert.Matches(@"^D:\d{14}[+-]\d{2}'\d{2}'$", formatted);

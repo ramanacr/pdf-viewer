@@ -94,7 +94,7 @@
                                    FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Width="120" />
-                        <TextBlock Text="Google PDFium (Native x64)"
+                        <TextBlock Text="PdfEngine.Vector, drawn by Direct2D (x64)"
                                    FontWeight="SemiBold"
                                    FontSize="12"
                                    Foreground="{DynamicResource TextPrimaryBrush}" />
@@ -106,7 +106,7 @@
                                    FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Width="120" />
-                        <TextBlock Text="Chromium 8021 / 154.0"
+                        <TextBlock Text="Built in (the version of this application)"
                                    FontWeight="Bold"
                                    FontSize="12"
                                    Foreground="#0D8A3A" />
@@ -118,7 +118,7 @@
                                    FontSize="12"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    Width="120" />
-                        <TextBlock Text="Open Source (Apache 2.0 / BSD 3-Clause)"
+                        <TextBlock Text="Open Source (MIT); third-party notices included"
                                    FontSize="11"
                                    Foreground="{DynamicResource TextSecondaryBrush}" />
                     </StackPanel>

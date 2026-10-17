@@ -4,7 +4,7 @@
 [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases) are Authenticode-signed
 (SHA-256). Only binaries built by this repository's release workflow
 (`.github/workflows/release.yml`), from the tagged source in this repository, are signed.
-Bundled third-party components (for example PDFium's `pdfium.dll`) are included as their
+Bundled third-party components (for example the Vortice.Windows assemblies) are included as their
 projects publish them and are not signed with this project's certificate.
 
 ## Certificate

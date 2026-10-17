@@ -6,7 +6,9 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using System.Windows;
+#if PDFIUM_RENDERER
 using PdfEngine.Pdfium;
+#endif
 using PdfEngine.Vector;
 using PdfEngine.Vector.Forms;
 using PdfEngine.Vector.Tests.Fixtures;
@@ -19,11 +21,13 @@ using Xunit;
 namespace PdfViewer.Tests;
 
 /// <summary>
-/// The PDFium-free release gate (M10): with PDFium disabled (<see cref="PdfiumGuard"/>, which
-/// every PDFium initialisation, engine and document load passes), the viewer opens, views,
-/// searches, selects, annotates, fills forms, imports and exports form data, signs, validates,
-/// redacts, makes a clean copy and saves in Auto mode. Any PDFium attempt, even one a caller
-/// catches, is recorded by the scope and fails the test.
+/// The PDFium-free release gate (M10): with PDFium disabled, the viewer opens, views, searches,
+/// selects, annotates, fills forms, imports and exports form data, signs, validates, redacts,
+/// makes a clean copy and saves in Auto mode. In a developer build the scope is PdfiumGuard's
+/// (every PDFium initialisation, engine and document load passes it), so any PDFium attempt,
+/// even one a caller catches, is recorded and fails the test. In the PDFium-free build
+/// (PdfiumRenderer=false) there is no PDFium to call; the scope then fails the test if any of
+/// PDFium was loaded into the process.
 /// </summary>
 [Collection(SigningSettingsCollection.Name)]
 public class PdfiumFreeGateTests : IDisposable
@@ -62,6 +66,7 @@ public class PdfiumFreeGateTests : IDisposable
         return vm;
     }
 
+#if PDFIUM_RENDERER
     [Fact]
     public void TheGuard_RefusesAndRecordsPdfium()
     {
@@ -70,12 +75,13 @@ public class PdfiumFreeGateTests : IDisposable
         Assert.Throws<PdfiumDisabledException>(() => new PdfiumDocumentService());
         Assert.Equal(new[] { "PdfiumEngine", "PdfiumDocumentService" }, scope.Attempts);
     }
+#endif
 
     [Fact]
     public async Task ViewingSearchingAnnotatingRedactingAndSaving_NeverReachPdfium()
     {
         string path = TestPdfBuilder.CreateSimplePdf(P("text.pdf"), 3, "GateToken");
-        using var scope = PdfiumGuard.DisableInThisFlow();
+        using var scope = NoPdfium.Scope();
 
         var vm = await Open(path);
         Assert.Equal(3, vm.PageCount);
@@ -120,7 +126,7 @@ public class PdfiumFreeGateTests : IDisposable
     {
         string path = P("form.pdf");
         File.WriteAllBytes(path, FormPdfFixture.Build());
-        using var scope = PdfiumGuard.DisableInThisFlow();
+        using var scope = NoPdfium.Scope();
 
         var vm = await Open(path);
         Assert.True(vm.HasForm);
@@ -159,7 +165,7 @@ public class PdfiumFreeGateTests : IDisposable
         byte[] good = new VectorPdfBuilder().AddPageAndBuild();
         File.WriteAllBytes(damaged, good.Take(good.Length - 40).ToArray()); // the cross-reference table cut off
 
-        using var scope = PdfiumGuard.DisableInThisFlow();
+        using var scope = NoPdfium.Scope();
         using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
         var prompt = await Assert.ThrowsAsync<PdfEngine.Exceptions.PdfPasswordRequiredException>(() => service.OpenDocumentAsync(encrypted));
         Assert.Contains("password", prompt.Message, StringComparison.OrdinalIgnoreCase);
@@ -171,6 +177,48 @@ public class PdfiumFreeGateTests : IDisposable
         Assert.Equal(1, service.PageCount);
         Assert.Empty(scope.Attempts);
     }
+}
+
+/// <summary>The gate's scope for the build under test (see <see cref="PdfiumFreeGateTests"/>).</summary>
+internal static class NoPdfium
+{
+    public interface IScope : IDisposable
+    {
+        /// <summary>What reached PDFium while the scope was active: nothing, if the gate holds.</summary>
+        IReadOnlyList<string> Attempts { get; }
+    }
+
+    public static IScope Scope() => new GateScope();
+
+#if PDFIUM_RENDERER
+    private sealed class GateScope : IScope
+    {
+        private readonly PdfiumGuard.Scope _guard = PdfiumGuard.DisableInThisFlow();
+        public IReadOnlyList<string> Attempts => _guard.Attempts;
+        public void Dispose() => _guard.Dispose();
+    }
+#else
+    private sealed class GateScope : IScope
+    {
+        /// <summary>Any of PDFium in this process: its adapter assembly or its native library.</summary>
+        public IReadOnlyList<string> Attempts
+        {
+            get
+            {
+                var loaded = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetName().Name ?? string.Empty)
+                    .Where(n => n.Contains("Pdfium", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                using var self = System.Diagnostics.Process.GetCurrentProcess();
+                foreach (System.Diagnostics.ProcessModule module in self.Modules)
+                    if (module.ModuleName.Contains("pdfium", StringComparison.OrdinalIgnoreCase)) loaded.Add(module.ModuleName);
+                return loaded;
+            }
+        }
+
+        public void Dispose() { }
+    }
+#endif
 }
 
 internal static class GateBuilderExtensions

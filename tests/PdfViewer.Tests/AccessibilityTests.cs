@@ -61,7 +61,11 @@ public class AccessibilityTests : IDisposable
     [Fact]
     public async Task TaggedPdf_IsReadInStructureOrder_WithRolesAltTextAndActualText()
     {
+#if PDFIUM_RENDERER
         using var service = new PdfiumDocumentService();
+#else
+        using var service = new HybridVectorDocumentService(PdfViewer.Core.Security.PdfSecurityPolicy.DefaultStrict);
+#endif
         await service.OpenDocumentAsync(TaggedPdf());
         var content = await service.ExtractAccessibleContentAsync(1);
         Assert.True(content.FromTags);

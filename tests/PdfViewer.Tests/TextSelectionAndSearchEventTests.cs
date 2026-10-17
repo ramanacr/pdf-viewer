@@ -20,7 +20,9 @@ public class TextSelectionAndSearchEventTests : IDisposable
     {
         _testDir = Path.Combine(Path.GetTempPath(), "PdfViewerSearchTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_testDir);
+#if PDFIUM_RENDERER
         PdfiumNativeBridge.EnsureInitialized();
+#endif
     }
 
     public void Dispose()

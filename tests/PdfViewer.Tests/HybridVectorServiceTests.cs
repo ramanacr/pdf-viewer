@@ -58,6 +58,7 @@ public class HybridVectorServiceTests : IDisposable
         Assert.DoesNotContain(path, json);
     }
 
+#if PDFIUM_RENDERER
     [Theory]
     [InlineData(0)]
     [InlineData(90)]
@@ -103,6 +104,7 @@ public class HybridVectorServiceTests : IDisposable
         Assert.InRange(first.X, word.X - 0.01, word.X + 0.01);
         Assert.True(first.Y + first.Height > word.Y && first.Y < word.Y + word.Height, "character box overlaps the word box vertically");
     }
+#endif
 
     [Theory]
     [InlineData(PdfEngine.Vector.Tests.Fixtures.TestEncryptionKind.Aes128_R4)]
@@ -125,6 +127,8 @@ public class HybridVectorServiceTests : IDisposable
         Assert.Equal(PdfEngineMode.Vector, service.GetPageEngineReport(1)!.Engine);
     }
 
+#if PDFIUM_RENDERER
+    // PDFium mode: developer and test builds only.
     [Fact]
     public async Task SwitchingFromPdfiumToAuto_OpensTheVectorDocumentLazily()
     {
@@ -139,6 +143,7 @@ public class HybridVectorServiceTests : IDisposable
         Assert.True(service.IsVectorDocumentOpen);
         Assert.Equal(PdfEngineMode.Vector, service.GetPageEngineReport(1)!.Engine);
     }
+#endif
 
     private static double MeanDifference(BitmapSource a, BitmapSource b)
     {

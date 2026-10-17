@@ -1969,7 +1969,7 @@
                                    FontSize="11" />
                     </Border>
                     <Border Background="{DynamicResource AccentLightBrush}" CornerRadius="3" Padding="6,1">
-                        <TextBlock Text="{Binding Metadata.LicenseStatus, FallbackValue='Google PDFium'}"
+                        <TextBlock Text="{Binding Metadata.LicenseStatus, FallbackValue='Vector engine'}"
                                    Foreground="{DynamicResource AccentBrush}"
                                    FontWeight="SemiBold"
                                    FontSize="11" />

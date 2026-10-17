@@ -804,6 +804,8 @@ public partial class MainViewModel : ObservableObject
         get => _docService.EngineMode;
         set
         {
+            // PDFium mode exists only where the PDFium renderer is compiled in; elsewhere it is Auto.
+            value = PdfDocumentServiceFactory.Normalize(value);
             if (_docService.EngineMode != value)
             {
                 _docService.EngineMode = value;
@@ -2176,6 +2178,8 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+#if PDFIUM_RENDERER
+        // PDFium mode (developer and test builds).
         StatusText = "Reading form fields...";
         try
         {
@@ -2244,6 +2248,7 @@ public partial class MainViewModel : ObservableObject
             ShowAlert($"Could not edit the form fields:\n\n{ex.Message}", "Form Fields",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
+#endif
     }
 
     /// <summary>
@@ -2300,12 +2305,23 @@ public partial class MainViewModel : ObservableObject
                     password: _docService.IsDecryptedCopy ? null : _openPassword);
                 DocumentSafety = await Task.Run(() => PdfEngine.Vector.Services.PdfNativeSafetyInspector.Inspect(vector));
             }
+#if PDFIUM_RENDERER
             else
             {
                 using var engine = new PdfEngine.Pdfium.PdfiumEngine();
                 await using var doc = await engine.OpenDocumentAsync(filePath);
                 DocumentSafety = await new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector().InspectAsync(doc);
             }
+#else
+            else
+            {
+                DocumentSafety = new PdfEngine.Safety.DocumentSafetyReport
+                {
+                    InspectionWasLimited = true,
+                    LimitationReason = "The document could not be read by the engine, so it was not inspected."
+                };
+            }
+#endif
         }
         catch (Exception ex)
         {
@@ -2463,9 +2479,13 @@ public partial class MainViewModel : ObservableObject
             await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
             return await new PdfEngine.Vector.Services.PdfNativeSanitizer().SanitizeAsync(doc, targetPath);
         }
+#if PDFIUM_RENDERER
         using var engine = new PdfEngine.Pdfium.PdfiumEngine();
         await using var pdfiumDoc = await engine.OpenDocumentAsync(sourcePath);
         return await new PdfEngine.Pdfium.Adapters.PdfiumSanitizer().SanitizeAsync(pdfiumDoc, targetPath);
+#else
+        throw new InvalidOperationException("Only the vector engine can write a clean copy in this build.");
+#endif
     }
 
     #region Read Aloud
@@ -2712,12 +2732,14 @@ public partial class MainViewModel : ObservableObject
                 await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
                 await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().ArrangePagesAsync(doc, arrangement, target.FileName);
             }
+#if PDFIUM_RENDERER
             else
             {
                 using var engine = new PdfEngine.Pdfium.PdfiumEngine();
                 await using var doc = await engine.OpenDocumentAsync(sourcePath);
                 await engine.PageOrganizer.ArrangePagesAsync(doc, arrangement, target.FileName);
             }
+#endif
 
             int removed = PageCount - arrangement.Count;
             string removedNote = removed > 0 ? $"\n{removed} page(s) were left out." : string.Empty;
@@ -2752,19 +2774,22 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            PdfEngine.Pdfium.PdfiumEngine? engine = null;
+            IDisposable? engine = null;
             PdfEngine.Documents.IPdfDocument doc;
             PdfEngine.Safety.IPdfAttachmentService service;
-            if (UseNativeDocumentServices)
+#if PDFIUM_RENDERER
+            if (!UseNativeDocumentServices)
+            {
+                var pdfium = new PdfEngine.Pdfium.PdfiumEngine();
+                engine = pdfium;
+                doc = await pdfium.OpenDocumentAsync(sourcePath);
+                service = new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService();
+            }
+            else
+#endif
             {
                 doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
                 service = new PdfEngine.Vector.Services.PdfNativeAttachmentService();
-            }
-            else
-            {
-                engine = new PdfEngine.Pdfium.PdfiumEngine();
-                doc = await engine.OpenDocumentAsync(sourcePath);
-                service = new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService();
             }
             using var engineScope = engine;
             await using var docScope = doc;
@@ -3026,11 +3051,13 @@ public partial class MainViewModel : ObservableObject
             {
                 await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().MergeDocumentsAsync(picker.FileNames, target.FileName);
             }
+#if PDFIUM_RENDERER
             else
             {
                 using var engine = new PdfEngine.Pdfium.PdfiumEngine();
                 await engine.PageOrganizer.MergeDocumentsAsync(picker.FileNames, target.FileName);
             }
+#endif
 
             StatusText = $"Merged {picker.FileNames.Length} documents into {Path.GetFileName(target.FileName)}.";
             ShowAlert($"Merged {picker.FileNames.Length} documents into:\n{target.FileName}",
@@ -3083,25 +3110,30 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// Page organisation, merging, splitting and embedded files use the vector engine's native
-    /// document services (M9) unless the PDFium engine is selected.
+    /// document services (M9) unless the PDFium engine is selected (developer and test builds;
+    /// the published app has no PDFium, so this is always true there).
     /// </summary>
     private bool UseNativeDocumentServices => _docService.EngineMode != PdfEngineMode.Pdfium;
 
     /// <summary>The page organizer for the selected engine and the document opened in it (the PDFium engine is null for native).</summary>
-    private async Task<(PdfEngine.Pages.IPdfPageOrganizerService Organizer, PdfEngine.Documents.IPdfDocument Document, PdfEngine.Pdfium.PdfiumEngine? Engine)> OpenForOrganizingAsync(string path)
+    private async Task<(PdfEngine.Pages.IPdfPageOrganizerService Organizer, PdfEngine.Documents.IPdfDocument Document, IDisposable? Engine)> OpenForOrganizingAsync(string path)
     {
-        if (UseNativeDocumentServices)
-            return (new PdfEngine.Vector.Services.PdfNativePageOrganizerService(), await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(path, _openPassword), null);
-        var engine = new PdfEngine.Pdfium.PdfiumEngine();
-        try
+#if PDFIUM_RENDERER
+        if (!UseNativeDocumentServices)
         {
-            return (engine.PageOrganizer, await engine.OpenDocumentAsync(path), engine);
+            var engine = new PdfEngine.Pdfium.PdfiumEngine();
+            try
+            {
+                return (engine.PageOrganizer, await engine.OpenDocumentAsync(path), engine);
+            }
+            catch
+            {
+                engine.Dispose();
+                throw;
+            }
         }
-        catch
-        {
-            engine.Dispose();
-            throw;
-        }
+#endif
+        return (new PdfEngine.Vector.Services.PdfNativePageOrganizerService(), await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(path, _openPassword), null);
     }
 
     /// <summary>

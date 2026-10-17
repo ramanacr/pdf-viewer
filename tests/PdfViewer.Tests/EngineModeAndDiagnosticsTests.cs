@@ -12,6 +12,15 @@ namespace PdfViewer.Tests;
 
 public class EngineModeAndDiagnosticsTests
 {
+    /// <summary>samples/EngineShowcase.pdf at the repository root, from whichever output folder the tests run (bin\ or bin\nopdfium\).</summary>
+    private static string ShowcasePath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx"))) dir = dir.Parent;
+        string root = dir?.FullName ?? throw new InvalidOperationException("The repository root was not found.");
+        return Path.Combine(root, "samples", "EngineShowcase.pdf");
+    }
+#if PDFIUM_RENDERER
     [Fact]
     public void PdfiumDocumentService_ReportsPdfiumEngine()
     {
@@ -24,6 +33,7 @@ public class EngineModeAndDiagnosticsTests
         Assert.False(report.IsFallback);
         Assert.Contains("PDFium", report.BadgeText);
     }
+#endif
 
     [Fact]
     public void HybridVectorDocumentService_EngineModeCanBeUpdated()
@@ -35,7 +45,11 @@ public class EngineModeAndDiagnosticsTests
         Assert.Equal(PdfEngineMode.Vector, service.EngineMode);
 
         service.EngineMode = PdfEngineMode.Pdfium;
+#if PDFIUM_RENDERER
         Assert.Equal(PdfEngineMode.Pdfium, service.EngineMode);
+#else
+        Assert.Equal(PdfEngineMode.Auto, service.EngineMode); // no PDFium in this build: PDFium mode is Auto
+#endif
     }
 
     [Fact]
@@ -49,7 +63,12 @@ public class EngineModeAndDiagnosticsTests
         service.EngineMode = PdfEngineMode.Pdfium;
         var reportPdfium = service.GetPageEngineReport(1);
         Assert.NotNull(reportPdfium);
+#if PDFIUM_RENDERER
         Assert.Contains("PDFium", reportPdfium.BadgeText);
+#else
+        Assert.DoesNotContain("PDFium", reportPdfium.BadgeText);
+        Assert.Contains("Vector", reportPdfium.BadgeText);
+#endif
     }
 
     [Fact]
@@ -69,10 +88,18 @@ public class EngineModeAndDiagnosticsTests
         Assert.False(vm.IsPdfiumEngineMode);
 
         vm.SetEngineModePdfiumCommand.Execute(null);
+#if PDFIUM_RENDERER
+        Assert.Equal(System.Windows.Visibility.Visible, vm.PdfiumEngineModeVisibility);
         Assert.Equal(PdfEngineMode.Pdfium, vm.CurrentEngineMode);
         Assert.False(vm.IsAutoEngineMode);
         Assert.False(vm.IsVectorEngineMode);
         Assert.True(vm.IsPdfiumEngineMode);
+#else
+        // The published app: no PDFium menu item, and the mode cannot be selected.
+        Assert.Equal(System.Windows.Visibility.Collapsed, vm.PdfiumEngineModeVisibility);
+        Assert.Equal(PdfEngineMode.Auto, vm.CurrentEngineMode);
+        Assert.False(vm.IsPdfiumEngineMode);
+#endif
 
         vm.SetEngineModeAutoCommand.Execute(null);
         Assert.Equal(PdfEngineMode.Auto, vm.CurrentEngineMode);
@@ -82,11 +109,8 @@ public class EngineModeAndDiagnosticsTests
     [Fact]
     public async Task EngineShowcasePdf_ExhibitsVectorAndFallbackAcrossPages()
     {
-        string samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../samples/EngineShowcase.pdf"));
-        if (!Directory.Exists(Path.GetDirectoryName(samplePath)))
-        {
-            samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../samples/EngineShowcase.pdf"));
-        }
+        string samplePath = ShowcasePath();
+
         TestPdfBuilder.CreateEngineShowcasePdf(samplePath);
 
         Assert.True(File.Exists(samplePath));
@@ -166,11 +190,8 @@ public class EngineModeAndDiagnosticsTests
     [Fact]
     public async Task HybridVectorDocumentService_ExtractPageTextSegments_ReturnsPerCharacterSegmentsInVectorMode()
     {
-        string samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../samples/EngineShowcase.pdf"));
-        if (!Directory.Exists(Path.GetDirectoryName(samplePath)))
-        {
-            samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../samples/EngineShowcase.pdf"));
-        }
+        string samplePath = ShowcasePath();
+
         TestPdfBuilder.CreateEngineShowcasePdf(samplePath);
 
         // --- Vector mode: should produce per-character segments ---
@@ -194,6 +215,7 @@ public class EngineModeAndDiagnosticsTests
         string reconstructed = string.Concat(vectorSegments.Select(s => s.Text));
         Assert.Contains("Vector", reconstructed);
 
+#if PDFIUM_RENDERER
         // --- PDFium mode: word-grouped segments (each segment may contain multiple characters) ---
         using var pdfiumService = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Pdfium);
         await pdfiumService.OpenDocumentAsync(samplePath);
@@ -204,5 +226,6 @@ public class EngineModeAndDiagnosticsTests
         // Vector char segments should be >= PDFium word segments (finer granularity)
         Assert.True(vectorSegments.Count >= pdfiumSegments.Count,
             $"Expected vector char segments ({vectorSegments.Count}) >= PDFium word segments ({pdfiumSegments.Count})");
+#endif
     }
 }
