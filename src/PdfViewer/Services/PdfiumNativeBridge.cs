@@ -306,11 +306,25 @@ public static class PdfiumNativeBridge
     public static extern void FPDF_DestroyLibrary();
 
     // Document Management
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern SafeDocumentHandle FPDF_LoadDocument([MarshalAs(UnmanagedType.LPUTF8Str)] string file_path, [MarshalAs(UnmanagedType.LPUTF8Str)] string? password);
+    // Every PDFium document starts at one of these three calls, so they pass the guard
+    // (PdfiumGuard): with PDFium disabled they throw instead of opening a document.
+    public static SafeDocumentHandle FPDF_LoadDocument(string file_path, string? password)
+    {
+        PdfEngine.Pdfium.PdfiumGuard.Enter(nameof(FPDF_LoadDocument));
+        return FPDF_LoadDocumentNative(file_path, password);
+    }
 
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern SafeDocumentHandle FPDF_LoadMemDocument(IntPtr data_buf, int size, [MarshalAs(UnmanagedType.LPUTF8Str)] string? password);
+    [DllImport(DllName, EntryPoint = "FPDF_LoadDocument", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    private static extern SafeDocumentHandle FPDF_LoadDocumentNative([MarshalAs(UnmanagedType.LPUTF8Str)] string file_path, [MarshalAs(UnmanagedType.LPUTF8Str)] string? password);
+
+    public static SafeDocumentHandle FPDF_LoadMemDocument(IntPtr data_buf, int size, string? password)
+    {
+        PdfEngine.Pdfium.PdfiumGuard.Enter(nameof(FPDF_LoadMemDocument));
+        return FPDF_LoadMemDocumentNative(data_buf, size, password);
+    }
+
+    [DllImport(DllName, EntryPoint = "FPDF_LoadMemDocument", CallingConvention = CallingConvention.Cdecl)]
+    private static extern SafeDocumentHandle FPDF_LoadMemDocumentNative(IntPtr data_buf, int size, [MarshalAs(UnmanagedType.LPUTF8Str)] string? password);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void FPDF_CloseDocument(IntPtr document);
@@ -337,8 +351,14 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern uint FPDF_GetMetaText(SafeDocumentHandle document, [MarshalAs(UnmanagedType.LPStr)] string tag, byte[]? buffer, uint buflen);
 
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern SafeDocumentHandle FPDF_CreateNewDocument();
+    public static SafeDocumentHandle FPDF_CreateNewDocument()
+    {
+        PdfEngine.Pdfium.PdfiumGuard.Enter(nameof(FPDF_CreateNewDocument));
+        return FPDF_CreateNewDocumentNative();
+    }
+
+    [DllImport(DllName, EntryPoint = "FPDF_CreateNewDocument", CallingConvention = CallingConvention.Cdecl)]
+    private static extern SafeDocumentHandle FPDF_CreateNewDocumentNative();
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDF_GetSignatureCount(SafeDocumentHandle document);

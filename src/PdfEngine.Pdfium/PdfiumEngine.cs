@@ -33,6 +33,7 @@ public sealed class PdfiumEngine : IPdfEngine
 
     public PdfiumEngine()
     {
+        PdfiumGuard.Enter(nameof(PdfiumEngine));
         PdfiumNativeBridge.EnsureInitialized();
 
         Renderer = new PdfiumRenderer();

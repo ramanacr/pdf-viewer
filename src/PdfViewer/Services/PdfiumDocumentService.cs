@@ -83,6 +83,7 @@ public class PdfiumDocumentService : IPdfDocumentService
     public PdfiumDocumentService(PdfSecurityPolicy? securityPolicy = null)
     {
         _securityPolicy = securityPolicy ?? PdfSecurityPolicy.DefaultStrict;
+        PdfEngine.Pdfium.PdfiumGuard.Enter(nameof(PdfiumDocumentService));
         PdfiumNativeBridge.EnsureInitialized();
     }
 
@@ -103,6 +104,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             // oversized document is refused rather than allocated twice (managed array
             // plus unmanaged copy) on the way to failing.
             _securityPolicy.EnsureDocumentSizeAllowed(new FileInfo(filePath).Length, filePath);
+            _drawFormFields = true;
             return OpenFromBytes(File.ReadAllBytes(filePath), filePath, password);
         }, ct);
     }
@@ -132,12 +134,32 @@ public class PdfiumDocumentService : IPdfDocumentService
     /// <summary>The password the current document was opened with (null when it needs none).</summary>
     private string? _openPassword;
 
+    /// <summary>
+    /// Opens a revision held in memory, synchronously: the viewer's other engines open the file,
+    /// and PDFium is only opened from their bytes when a service still needs it (text, in Auto and
+    /// Vector modes). <paramref name="drawFormFields"/> false skips the form-fill environment, which
+    /// only PDFium-rendered pages need.
+    /// </summary>
+    public DocumentMetadata OpenFromMemory(byte[] bytes, string filePath, string? password, bool drawFormFields)
+    {
+        _securityPolicy.EnsureDocumentSizeAllowed(bytes.Length, filePath);
+        _drawFormFields = drawFormFields;
+        return OpenFromBytes(bytes, filePath, password);
+    }
+
+    /// <summary>False when the document was opened for text only (no form-fill environment).</summary>
+    private bool _drawFormFields = true;
+
+    /// <summary>The open document has a form-fill environment (PDFium-rendered pages draw their fields).</summary>
+    public bool DrawsFormFields => _drawFormFields;
+
     public async Task<DocumentMetadata> OpenDocumentFromBytesAsync(byte[] bytes, string filePath, CancellationToken ct = default)
     {
         return await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
             _securityPolicy.EnsureDocumentSizeAllowed(bytes.Length, filePath);
+            _drawFormFields = true;
             return OpenFromBytes(bytes, filePath, null);
         }, ct);
     }
@@ -175,7 +197,7 @@ public class PdfiumDocumentService : IPdfDocumentService
 
             _document = doc;
             _openPassword = password;
-            _formEnvironment = PdfiumFormEnvironment.Create(doc);
+            _formEnvironment = _drawFormFields ? PdfiumFormEnvironment.Create(doc) : null;
             _nativeBuffer = nativeBuf;
             _fileBytes = bytes;
             _currentFilePath = filePath;

@@ -26,7 +26,14 @@ public enum SanitizedContentKind
     UnrecognizedAction,
 
     /// <summary>Sound, movie, screen, 3D, rich media or file-attachment annotations.</summary>
-    EmbeddedMedia
+    EmbeddedMedia,
+
+    /// <summary>
+    /// An action wired to a page, form field or annotation event (/AA), or a form field's own
+    /// action (a script, a form submission). The native sanitizer removes these; the PDFium one
+    /// left them inside the copied annotations.
+    /// </summary>
+    TriggeredAction
 }
 
 public record SanitizationChange

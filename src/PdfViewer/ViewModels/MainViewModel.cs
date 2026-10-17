@@ -372,7 +372,6 @@ public partial class MainViewModel : ObservableObject
         // that have none. If the OCR runtime is missing, DefaultOcrEngine reports that
         // honestly instead of returning an empty result that looks like a blank page. The
         // pages OCR reads are drawn by the vector engine, as on screen.
-        var engine = new PdfEngine.Pdfium.PdfiumEngine();
         IOcrEngine? optical = null;
         if (WindowsOcrEngine.IsAvailable)
         {
@@ -2171,6 +2170,12 @@ public partial class MainViewModel : ObservableObject
         if (!Permit(DocumentPermissions.CanFillForms, "filling in forms") || !PermitFileOperation("Form filling")) return;
         if (!IsDocumentLoaded || string.IsNullOrEmpty(_docService.CurrentFilePath)) return;
 
+        if (UseNativeDocumentServices)
+        {
+            await EditFormFieldsNativeAsync();
+            return;
+        }
+
         StatusText = "Reading form fields...";
         try
         {
@@ -2288,11 +2293,19 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(filePath);
-
-            var inspector = new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector();
-            DocumentSafety = await inspector.InspectAsync(doc);
+            if (UseNativeDocumentServices && _docService.CurrentBytes is { } bytes)
+            {
+                // The revision the viewer holds (a decrypted copy for certificate encryption).
+                using var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(bytes, filePath,
+                    password: _docService.IsDecryptedCopy ? null : _openPassword);
+                DocumentSafety = await Task.Run(() => PdfEngine.Vector.Services.PdfNativeSafetyInspector.Inspect(vector));
+            }
+            else
+            {
+                using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+                await using var doc = await engine.OpenDocumentAsync(filePath);
+                DocumentSafety = await new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector().InspectAsync(doc);
+            }
         }
         catch (Exception ex)
         {
@@ -2389,13 +2402,7 @@ public partial class MainViewModel : ObservableObject
         StatusText = "Removing active content...";
         try
         {
-            PdfEngine.Safety.SanitizationResult result;
-            using (var engine = new PdfEngine.Pdfium.PdfiumEngine())
-            await using (var doc = await engine.OpenDocumentAsync(sourcePath))
-            {
-                var sanitizer = new PdfEngine.Pdfium.Adapters.PdfiumSanitizer();
-                result = await sanitizer.SanitizeAsync(doc, target.FileName);
-            }
+            var result = await SaveCleanCopyToAsync(target.FileName);
 
             var summary = new StringBuilder();
             summary.AppendLine(result.RemovedAnything
@@ -2442,6 +2449,23 @@ public partial class MainViewModel : ObservableObject
             ShowAlert($"No clean copy was produced.\n\n{ex.Message}\n\nYour original file is unchanged.",
                 "Save Clean Copy", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    /// <summary>
+    /// The work of <see cref="SaveCleanCopyAsync"/> without the dialog (tests call this): the
+    /// engine's sanitizer in Auto and Vector modes, PDFium's in PDFium mode.
+    /// </summary>
+    public async Task<PdfEngine.Safety.SanitizationResult> SaveCleanCopyToAsync(string targetPath)
+    {
+        string sourcePath = _docService.CurrentFilePath;
+        if (UseNativeDocumentServices)
+        {
+            await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
+            return await new PdfEngine.Vector.Services.PdfNativeSanitizer().SanitizeAsync(doc, targetPath);
+        }
+        using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+        await using var pdfiumDoc = await engine.OpenDocumentAsync(sourcePath);
+        return await new PdfEngine.Pdfium.Adapters.PdfiumSanitizer().SanitizeAsync(pdfiumDoc, targetPath);
     }
 
     #region Read Aloud
@@ -2909,11 +2933,11 @@ public partial class MainViewModel : ObservableObject
         StatusText = "Comparing documents...";
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, TextService);
+            // Pages drawn and text read by the engine; no PDFium.
+            var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(VectorPdfRenderer.Shared, TextService);
 
-            await using var docA = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
-            await using var docB = await engine.OpenDocumentAsync(picker.FileName);
+            using var docA = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(_docService.CurrentFilePath, password: _openPassword);
+            using var docB = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(picker.FileName);
 
             var result = await comparer.CompareDocumentsAsync(docA, docB);
 
@@ -3175,8 +3199,8 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+            // The text layer is read and the page drawn by the engine; no PDFium.
+            using var doc = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(_docService.CurrentFilePath, password: _openPassword);
 
             var result = await OcrEngine.RecognizePageAsync(doc, pageNumber);
 

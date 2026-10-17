@@ -26,14 +26,51 @@ namespace PdfViewer.Services;
 /// The document service the viewer ships with. Every page, tile, print and export image is drawn
 /// by the vector engine (Direct2D, or the WPF renderer when no Direct3D device exists); content
 /// the engine cannot reproduce exactly is drawn by its best effort, never by another renderer
-/// (M9, 06_PDFIUM_FALLBACK "Removal sequence"). PDFium stays open beside it for the services not
-/// yet moved to the engine (text extraction and search, annotations, saving), and in developer
-/// and test builds (<see cref="PdfDocumentServiceFactory.IsPdfiumRendererAvailable"/>) it can
-/// still render whole pages in <see cref="PdfEngineMode.Pdfium"/> mode, as the oracle.
+/// (M9, 06_PDFIUM_FALLBACK "Removal sequence"). In Auto and Vector modes the engine also opens the
+/// document (passwords, repair, permissions, certificate encryption) and serves every document
+/// service (M10); PDFium is only opened, from the revision in memory, when text extraction or
+/// search asks for it. In developer and test builds
+/// (<see cref="PdfDocumentServiceFactory.IsPdfiumRendererAvailable"/>) <see cref="PdfEngineMode.Pdfium"/>
+/// mode still opens and renders whole pages with PDFium, as the oracle.
 /// </summary>
 public sealed class HybridVectorDocumentService : IPdfDocumentService
 {
-    private readonly PdfiumDocumentService _pdfiumService;
+    // PDFium: created and opened on first use, from the current revision (_bytes). In Auto and
+    // Vector modes only the text services reach it; PDFium mode opens it with the document.
+    private PdfiumDocumentService? _pdfium;
+    // _pdfium holds the current revision (cleared by every reload).
+    private bool _pdfiumCurrent;
+    private readonly object _pdfiumGate = new();
+    private string _filePath = string.Empty;
+    // The current revision: the file as read, the latest form fill, or the decrypted copy of a
+    // certificate-encrypted file.
+    private byte[]? _bytes;
+
+    /// <summary>
+    /// PDFium with the current revision open, opened now if it is not: with the form-fill
+    /// environment when it renders pages (PDFium mode), without it for text. Every remaining use
+    /// in Auto and Vector modes is text extraction and search.
+    /// </summary>
+    private PdfiumDocumentService _pdfiumService
+    {
+        get
+        {
+            lock (_pdfiumGate)
+            {
+                _pdfium ??= new PdfiumDocumentService(_securityPolicy);
+                bool forms = UsePdfiumPages;
+                if (_bytes != null && (!_pdfiumCurrent || (forms && !_pdfium.DrawsFormFields)))
+                {
+                    _pdfium.OpenFromMemory(_bytes, _filePath, IsDecryptedCopy ? null : _password, drawFormFields: forms);
+                    _pdfiumCurrent = true;
+                }
+                return _pdfium;
+            }
+        }
+    }
+
+    /// <summary>True when PDFium has a document open (it is only opened when something needs it).</summary>
+    public bool IsPdfiumDocumentOpen => _pdfium?.IsDocumentLoaded == true;
     private readonly PdfSecurityPolicy _securityPolicy;
     private readonly WindowsVectorRenderer _vectorRenderer;
 
@@ -240,16 +277,15 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             Tooltip: "Vector engine (page not rendered yet)");
     }
 
-    public bool IsDocumentLoaded => _vectorDoc != null || _pdfiumService.IsDocumentLoaded;
-    public string CurrentFilePath => _pdfiumService.CurrentFilePath;
-    public int PageCount => _vectorDoc?.PageCount ?? _pdfiumService.PageCount;
+    public bool IsDocumentLoaded => _vectorDoc != null || _bytes != null;
+    public string CurrentFilePath => _filePath;
+    public int PageCount => _vectorDoc?.PageCount ?? (_bytes != null && UsePdfiumPages ? _pdfiumService.PageCount : 0);
 
     public HybridVectorDocumentService(
         PdfSecurityPolicy securityPolicy,
         PdfEngineMode mode = PdfEngineMode.Auto)
     {
         _securityPolicy = securityPolicy ?? PdfSecurityPolicy.DefaultStrict;
-        _pdfiumService = new PdfiumDocumentService(_securityPolicy);
         _vectorRenderer = new WindowsVectorRenderer();
         try
         {
@@ -274,43 +310,137 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         string? password = null,
         CancellationToken ct = default)
     {
-        // PDFium stays open for every non-rendering service (search, annotations, forms, save)
-        // and as the fallback renderer.
-        DocumentMetadata meta;
-        IsDecryptedCopy = false;
-        try
+        if (UsePdfiumPages)
         {
-            meta = await _pdfiumService.OpenDocumentAsync(filePath, password, ct).ConfigureAwait(false);
+            _metrics = new PdfEngineMetrics();
+            ClearSurfaces();
+            _pageEngineReports.Clear();
+            IsDecryptedCopy = false;
+            return await OpenInPdfiumModeAsync(filePath, password, ct).ConfigureAwait(false);
         }
-        catch (PdfUnsupportedSecurityException)
+
+        // Auto and Vector: the engine opens the file; PDFium is not involved (M10).
+        if (!System.IO.File.Exists(filePath))
+            throw new System.IO.FileNotFoundException($"File not found: {filePath}", filePath);
+        _securityPolicy.EnsureDocumentSizeAllowed(new System.IO.FileInfo(filePath).Length, filePath);
+        byte[] bytes = await System.IO.File.ReadAllBytesAsync(filePath, ct).ConfigureAwait(false);
+        var vector = await OpenNativeAsync(bytes, filePath, password, ct).ConfigureAwait(false);
+
+        byte[] revision = bytes;
+        bool decryptedCopy = false;
+        if (vector.Security is PdfEngine.Vector.Security.PdfPublicKeySecurityHandler)
         {
-            // Certificate (public-key) encryption, which PDFium cannot open: the vector core opens
-            // it with the user's certificates, and PDFium works on an in-memory decrypted copy so
-            // search, printing and annotations keep working. The copy never replaces the original.
-            meta = await OpenWithVectorSecurityAsync(filePath, password, ct).ConfigureAwait(false);
-            return meta;
+            // Certificate (public-key) encryption: the engine opened it with the user's
+            // certificates. The services work on an in-memory decrypted copy, which never
+            // replaces the original.
+            revision = PdfDecryptedCopyWriter.Write(vector);
+            decryptedCopy = true;
         }
+
+        // The document that was open stays open until this one has been read.
+        ResetDocument();
         _metrics = new PdfEngineMetrics();
         ClearSurfaces();
         _pageEngineReports.Clear();
-        _vectorOpenAttempted = false;
         _password = password;
+        _filePath = filePath;
+        _bytes = revision;
+        _vectorDoc = vector;
+        _vectorOpenAttempted = true;
+        IsDecryptedCopy = decryptedCopy;
+        if (vector.WasRepaired)
+            _metrics.RecordRecovery();
+        return NativeDocumentServices.Metadata(vector, filePath);
+    }
 
-        if (UsePdfiumPages)
-            return meta; // opened lazily if the user later switches to Auto/Vector
+    /// <summary>
+    /// The engine's parse of a file, with its errors in the viewer's terms: a password prompt for
+    /// a wrong or missing password, the certificate message for a recipient-encrypted file, and a
+    /// damaged-file error for anything that cannot be read (damaged cross-reference data is
+    /// rebuilt first, as PDFium does).
+    /// </summary>
+    private static async Task<PdfVectorDocument> OpenNativeAsync(byte[] bytes, string filePath, string? password, CancellationToken ct)
+    {
+        try
+        {
+            return await PdfVectorDocument.OpenAsync(bytes, filePath, cancellationToken: ct, password: password).ConfigureAwait(false);
+        }
+        catch (PdfEncryptedDocumentException ex) when (ex.PasswordRequired)
+        {
+            throw new PdfEngine.Exceptions.PdfPasswordRequiredException(ex.Message, filePath);
+        }
+        catch (PdfEncryptedDocumentException ex) when (ex.CertificateRequired)
+        {
+            throw new InvalidOperationException(
+                "This document is encrypted for specific recipients, and none of the certificates installed for your account can open it.", ex);
+        }
+        catch (PdfEncryptedDocumentException ex)
+        {
+            throw new InvalidOperationException($"This document's encryption is not supported: {ex.Message}", ex);
+        }
+        catch (Exception ex) when (ex is PdfVectorException or System.IO.InvalidDataException or FormatException)
+        {
+            throw new PdfEngine.Exceptions.PdfCorruptDocumentException($"The file is not a readable PDF document ({ex.Message}).", ex, filePath);
+        }
+    }
 
-        await OpenVectorDocumentAsync(filePath, ct).ConfigureAwait(false);
-        return NativeDocument is { } native ? NativeDocumentServices.Metadata(native, filePath) : meta;
+    /// <summary>
+    /// PDFium mode (developer and test builds): PDFium opens the file and renders the pages; the
+    /// vector document is opened lazily if the engine changes. Certificate-encrypted files, which
+    /// PDFium cannot open, are opened by the engine and given to PDFium as a decrypted copy.
+    /// </summary>
+    private async Task<DocumentMetadata> OpenInPdfiumModeAsync(string filePath, string? password, CancellationToken ct)
+    {
+        ResetDocument();
+        _pdfium ??= new PdfiumDocumentService(_securityPolicy);
+        DocumentMetadata meta;
+        try
+        {
+            meta = await _pdfium.OpenDocumentAsync(filePath, password, ct).ConfigureAwait(false);
+        }
+        catch (PdfUnsupportedSecurityException)
+        {
+            return await OpenWithVectorSecurityAsync(filePath, password, ct).ConfigureAwait(false);
+        }
+        _password = password;
+        _filePath = filePath;
+        _bytes = _pdfium.CurrentBytes;
+        _pdfiumCurrent = true;
+        return meta;
+    }
+
+    /// <summary>Forgets the open document (both engines) before another one is opened.</summary>
+    private void ResetDocument()
+    {
+        var old = _vectorDoc;
+        _vectorDoc = null;
+        old?.Dispose();
+        _vectorOpenAttempted = false;
+        _password = null;
+        _bytes = null;
+        _filePath = string.Empty;
+        lock (_pdfiumGate)
+        {
+            _pdfiumCurrent = false;
+            _pdfium?.CloseDocument();
+        }
     }
 
     public bool IsDecryptedCopy { get; private set; }
 
-    public byte[]? CurrentBytes => _pdfiumService.CurrentBytes;
+    public byte[]? CurrentBytes => _bytes;
 
-    /// <summary>A new revision of the open document (a form fill): both engines re-read it; caches are dropped.</summary>
+    /// <summary>A new revision of the open document (a form fill): the engine re-reads it, PDFium on its next use; caches are dropped.</summary>
     public async Task ReloadFromBytesAsync(byte[] bytes, CancellationToken ct = default)
     {
-        await _pdfiumService.ReloadFromBytesAsync(bytes, ct).ConfigureAwait(false);
+        _securityPolicy.EnsureDocumentSizeAllowed(bytes.Length, _filePath);
+        lock (_pdfiumGate)
+        {
+            _bytes = bytes;
+            _pdfiumCurrent = false;
+        }
+        if (UsePdfiumPages)
+            _ = _pdfiumService; // PDFium renders the pages: it reads the new revision now
         _metrics = new PdfEngineMetrics();
         ClearSurfaces();
         _pageEngineReports.Clear();
@@ -322,7 +452,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         {
             try
             {
-                _vectorDoc = await PdfVectorDocument.OpenAsync(bytes, CurrentFilePath, cancellationToken: ct, password: _password).ConfigureAwait(false);
+                _vectorDoc = await PdfVectorDocument.OpenAsync(bytes, CurrentFilePath, cancellationToken: ct, password: IsDecryptedCopy ? null : _password).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -333,59 +463,54 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         }
     }
 
-    /// <summary>The vector core's security handler when it opened the file, else PDFium's view.</summary>
+    /// <summary>The engine's security handler (the open document's permissions); PDFium's view only in PDFium mode.</summary>
     public PdfEngine.Documents.PdfDocumentPermissions Permissions =>
         _vectorDoc?.Security is { } security
             ? PdfEngine.Documents.PdfDocumentPermissions.FromFlags(security.Permissions, security.Revision, security.IsOwner)
             : IsDecryptedCopy ? PdfEngine.Documents.PdfDocumentPermissions.Owner
             : _vectorDoc != null ? PdfEngine.Documents.PdfDocumentPermissions.Unencrypted
-            : _pdfiumService.Permissions;
+            : IsPdfiumDocumentOpen ? _pdfium!.Permissions
+            : PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
 
     private async Task<DocumentMetadata> OpenWithVectorSecurityAsync(string filePath, string? password, CancellationToken ct)
     {
         _metrics = new PdfEngineMetrics();
         ClearSurfaces();
         _pageEngineReports.Clear();
-        _password = password;
-        PdfVectorDocument vector;
-        try
-        {
-            vector = await PdfVectorDocument.OpenAsync(filePath, cancellationToken: ct, password: password).ConfigureAwait(false);
-        }
-        catch (PdfEncryptedDocumentException ex) when (ex.CertificateRequired)
-        {
-            throw new InvalidOperationException(
-                "This document is encrypted for specific recipients, and none of the certificates installed for your account can open it.", ex);
-        }
+        var vector = await OpenNativeAsync(await System.IO.File.ReadAllBytesAsync(filePath, ct).ConfigureAwait(false), filePath, password, ct).ConfigureAwait(false);
         byte[] copy = PdfEngine.Vector.Document.PdfDecryptedCopyWriter.Write(vector);
         DocumentMetadata meta;
         try
         {
-            meta = await _pdfiumService.OpenDocumentFromBytesAsync(copy, filePath, ct).ConfigureAwait(false);
+            meta = await _pdfium!.OpenDocumentFromBytesAsync(copy, filePath, ct).ConfigureAwait(false);
         }
         catch
         {
             vector.Dispose();
             throw;
         }
+        _password = password;
+        _filePath = filePath;
+        _bytes = copy;
+        _pdfiumCurrent = true;
         _vectorDoc?.Dispose();
         _vectorDoc = vector;
         _vectorOpenAttempted = true;
         IsDecryptedCopy = true;
-        return NativeDocument is { } native ? NativeDocumentServices.Metadata(native, filePath) : meta;
+        return meta;
     }
 
     /// <summary>Opens the vector document lazily when the file was opened in PDFium mode and the engine changed since.</summary>
     private async Task EnsureVectorDocumentAsync(CancellationToken ct)
     {
-        if (UsePdfiumPages || _vectorDoc != null || _vectorOpenAttempted || !_pdfiumService.IsDocumentLoaded)
+        if (UsePdfiumPages || _vectorDoc != null || _vectorOpenAttempted || _bytes == null)
             return;
 
         await _vectorOpenGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (_vectorDoc == null && !_vectorOpenAttempted)
-                await OpenVectorDocumentAsync(_pdfiumService.CurrentFilePath, ct).ConfigureAwait(false);
+                await OpenVectorDocumentAsync(ct).ConfigureAwait(false);
         }
         finally
         {
@@ -393,13 +518,13 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         }
     }
 
-    private async Task OpenVectorDocumentAsync(string filePath, CancellationToken ct)
+    private async Task OpenVectorDocumentAsync(CancellationToken ct)
     {
         _vectorOpenAttempted = true;
         try
         {
-            // Encrypted files open with the same password PDFium accepted (Standard security handler).
-            _vectorDoc = await PdfVectorDocument.OpenAsync(filePath, cancellationToken: ct, password: _password).ConfigureAwait(false);
+            // The revision in memory, with the password it was opened with (a decrypted copy needs none).
+            _vectorDoc = await PdfVectorDocument.OpenAsync(_bytes!, _filePath, cancellationToken: ct, password: IsDecryptedCopy ? null : _password).ConfigureAwait(false);
             if (_vectorDoc.WasRepaired)
                 _metrics.RecordRecovery();
         }
@@ -411,7 +536,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         }
         catch (Exception ex) when (_mode != PdfEngineMode.Vector && ex is not OperationCanceledException)
         {
-            // Document-level parse failure in hybrid/auto: classified; its pages are reported as unreadable.
+            // Document-level parse failure: classified; its pages are reported as unreadable.
             _vectorDoc = null;
             _metrics.DocumentFallbackReason = ex is PdfVectorException pve ? pve.Kind.ToString() : nameof(PdfFallbackReason.MalformedContentRecovery);
         }
@@ -420,17 +545,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public void CloseDocument()
     {
         ClearSurfaces();
-        _vectorOpenAttempted = false;
-        _password = null;
         IsDecryptedCopy = false;
         _pageEngineReports.Clear();
-        _vectorDoc?.Dispose();
-        _vectorDoc = null;
-        _pdfiumService.CloseDocument();
+        ResetDocument();
     }
 
     public DocumentMetadata? GetMetadata() =>
-        NativeDocument is { } native ? NativeDocumentServices.Metadata(native, CurrentFilePath) : _pdfiumService.GetMetadata();
+        NativeDocument is { } native ? NativeDocumentServices.Metadata(native, CurrentFilePath)
+        : _bytes != null && UsePdfiumPages ? _pdfiumService.GetMetadata() : null;
 
     public (double Width, double Height) GetPageDimensions(int pageNumber)
     {
@@ -439,7 +561,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             var pageNode = _vectorDoc.PageTree.Pages[pageNumber - 1];
             return (pageNode.PageSize.Width, pageNode.PageSize.Height);
         }
-        return _pdfiumService.GetPageDimensions(pageNumber);
+        return _bytes != null && UsePdfiumPages ? _pdfiumService.GetPageDimensions(pageNumber) : (0, 0);
     }
 
     public int GetPageIntrinsicRotation(int pageNumber)
@@ -449,7 +571,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             var pageNode = _vectorDoc.PageTree.Pages[pageNumber - 1];
             return pageNode.RotationDegrees;
         }
-        return _pdfiumService.GetPageIntrinsicRotation(pageNumber);
+        return _bytes != null && UsePdfiumPages ? _pdfiumService.GetPageIntrinsicRotation(pageNumber) : 0;
     }
 
     public BitmapSource? RenderPage(int pageNumber, int dpi = 150, int rotationAngle = 0)
@@ -775,10 +897,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             }
             catch (Exception ex) when (ex is PdfVectorException or InvalidOperationException)
             {
-                // A damaged outline: PDFium reads what it can of it.
+                // A damaged outline: no bookmarks rather than an error.
+                return new ObservableCollection<BookmarkItem>();
             }
         }
-        return _pdfiumService.ExtractBookmarks();
+        return _bytes != null && UsePdfiumPages ? _pdfiumService.ExtractBookmarks() : new ObservableCollection<BookmarkItem>();
     }
 
     // ------------------------------------------------------------------ text (native text page, M9)
@@ -1044,7 +1167,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     }
 
     public List<AnnotationModel> LoadExistingAnnotations() =>
-        NativeDocument is { } native ? _native.Load(native) : _pdfiumService.LoadExistingAnnotations();
+        NativeDocument is { } native ? _native.Load(native)
+        : _bytes != null && UsePdfiumPages ? _pdfiumService.LoadExistingAnnotations() : new List<AnnotationModel>();
 
     /// <summary>
     /// Saves with the native annotation services in Auto and Vector modes: the latest revision
@@ -1060,6 +1184,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     {
         if (NativeDocument is not { } native || CurrentBytes is not { } bytes)
         {
+            if (!UsePdfiumPages)
+                throw new InvalidOperationException("The document could not be read by the engine, so it cannot be saved.");
             await _pdfiumService.SaveAnnotatedDocumentAsync(targetPath, mode, annotations, originalPath, ct).ConfigureAwait(false);
             return;
         }
@@ -1099,7 +1225,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             _vectorDoc?.Dispose();
             _vectorRenderer.Dispose();
             _d2d?.Dispose();
-            _pdfiumService.Dispose();
+            _pdfium?.Dispose();
         }
     }
 }
