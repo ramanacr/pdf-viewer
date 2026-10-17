@@ -89,6 +89,10 @@ public sealed class PdfImageSource : IPdfImageSource
                                                       || cmyk
                                                       || space is PdfColorSpace.IccBasedColorSpace { UsesProfile: true }
                                                       || invert);
+            // The JPEG's own colours are a fair rendition when only colour management is missing from
+            // them (device and ICC spaces): exporters without the PDF's colour mapping may embed it as is.
+            bool selfContained = _colorSpace is not { } own
+                                 || (own.Name is "DeviceGray" or "DeviceRGB" or "DeviceCMYK" or "ICCBased" && !(invert && !cmyk));
             Func<byte[], int, int, int, byte[]>? map = mapped
                 ? (samples, components, w, h) =>
                 {
@@ -99,7 +103,7 @@ public sealed class PdfImageSource : IPdfImageSource
                 : null;
             // Adobe CMYK JPEGs store inverted components; a /Decode [1 0 …] flips them back.
             return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, FromStartOfImage(decoded.Data), alpha,
-                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map) { JpegMask = jpegMask };
+                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map) { JpegMask = jpegMask, JpegIsSelfContained = selfContained };
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
             return DecodeJpx(dict, decoded.Data, alpha, ct) with { JpegMask = jpegMask };

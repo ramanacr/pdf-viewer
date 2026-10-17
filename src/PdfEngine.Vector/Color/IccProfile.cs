@@ -545,7 +545,7 @@ internal sealed class IccPipeline
 
 /// <summary>
 /// A colour lookup table with per-dimension grid sizes (the first input varies slowest) and normalised
-/// outputs. Three inputs use tetrahedral interpolation; other counts use multilinear interpolation.
+/// outputs, interpolated as lcms2 does: tetrahedrally over the last three inputs, linearly over the others.
 /// </summary>
 internal sealed class IccClut
 {
@@ -590,50 +590,50 @@ internal sealed class IccClut
         int n = _dims.Length;
         Span<int> index = stackalloc int[n];
         Span<double> frac = stackalloc double[n];
-        int baseOffset = 0;
         for (int i = 0; i < n; i++)
         {
-            double pos = Math.Clamp(input[i], 0, 1) * (_dims[i] - 1);
+            double pos = Math.Clamp(double.IsNaN(input[i]) ? 0 : input[i], 0, 1) * (_dims[i] - 1);
             int k = (int)pos;
             if (k >= _dims[i] - 1) k = _dims[i] - 2;
             index[i] = k;
             frac[i] = pos - k;
-            baseOffset += k * _strides[i];
         }
-
-        if (n == 3)
-        {
-            Tetrahedral(baseOffset, frac[0], frac[1], frac[2], output);
-            return;
-        }
-
-        output[.._outputs].Clear();
-        int corners = 1 << n;
-        for (int corner = 0; corner < corners; corner++)
-        {
-            double weight = 1;
-            int offset = baseOffset;
-            for (int i = 0; i < n; i++)
-            {
-                if ((corner >> (n - 1 - i) & 1) != 0)
-                {
-                    weight *= frac[i];
-                    offset += _strides[i];
-                }
-                else
-                {
-                    weight *= 1 - frac[i];
-                }
-            }
-            if (weight == 0) continue;
-            for (int o = 0; o < _outputs; o++)
-                output[o] += weight * _values[offset + o];
-        }
+        Interpolate(0, 0, index, frac, output);
     }
 
-    private void Tetrahedral(int b, double rx, double ry, double rz, Span<double> output)
+    /// <summary>
+    /// Interpolates dimensions <paramref name="dim"/>.. at <paramref name="offset"/>, the way lcms2 does (and
+    /// so PDFium): the last three inputs tetrahedrally, each earlier input linearly between the results of
+    /// its two neighbouring grid planes.
+    /// </summary>
+    private void Interpolate(int dim, int offset, ReadOnlySpan<int> index, ReadOnlySpan<double> frac, Span<double> output)
     {
-        int x1 = _strides[0], y1 = _strides[1], z1 = _strides[2];
+        int left = _dims.Length - dim;
+        if (left == 3)
+        {
+            Tetrahedral(dim, offset + index[dim] * _strides[dim] + index[dim + 1] * _strides[dim + 1] + index[dim + 2] * _strides[dim + 2],
+                frac[dim], frac[dim + 1], frac[dim + 2], output);
+            return;
+        }
+        int at = offset + index[dim] * _strides[dim];
+        if (left == 1)
+        {
+            double f = frac[dim];
+            for (int o = 0; o < _outputs; o++)
+                output[o] = _values[at + o] + (_values[at + _strides[dim] + o] - _values[at + o]) * f;
+            return;
+        }
+        Span<double> high = stackalloc double[_outputs];
+        Interpolate(dim + 1, at, index, frac, output);
+        if (frac[dim] == 0) return;
+        Interpolate(dim + 1, at + _strides[dim], index, frac, high);
+        for (int o = 0; o < _outputs; o++)
+            output[o] += (high[o] - output[o]) * frac[dim];
+    }
+
+    private void Tetrahedral(int dim, int b, double rx, double ry, double rz, Span<double> output)
+    {
+        int x1 = _strides[dim], y1 = _strides[dim + 1], z1 = _strides[dim + 2];
         var v = _values;
         for (int o = 0; o < _outputs; o++)
         {

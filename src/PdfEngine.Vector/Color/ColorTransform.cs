@@ -20,6 +20,12 @@ internal abstract class ColorTransform
     public abstract void ToSrgb(ReadOnlySpan<double> input, Span<double> rgb);
 
     /// <summary>
+    /// Linear-light sRGB, not clipped to the gamut. Sampled grids interpolate this smooth function and encode
+    /// and clip afterwards, instead of interpolating across the steep transfer curve and the clipping kink.
+    /// </summary>
+    public abstract void ToLinearSrgb(ReadOnlySpan<double> input, Span<double> rgb);
+
+    /// <summary>
     /// A table that converts 8-bit samples to BGRA quickly (for images), or null when the channel count has
     /// no fast path.
     /// </summary>
@@ -69,12 +75,15 @@ internal static class PcsMath
         return m;
     }
 
-    public static void XyzToSrgb(double x, double y, double z, Span<double> rgb)
+    /// <summary>D50 XYZ to sRGB: companded and clipped, or linear and unclipped when <paramref name="linear"/>.</summary>
+    public static void XyzToSrgb(double x, double y, double z, Span<double> rgb, bool linear = false)
     {
         var m = XyzD50ToLinearSrgb;
-        rgb[0] = PdfColorSpace.CieMath.Compand(m[0] * x + m[1] * y + m[2] * z);
-        rgb[1] = PdfColorSpace.CieMath.Compand(m[3] * x + m[4] * y + m[5] * z);
-        rgb[2] = PdfColorSpace.CieMath.Compand(m[6] * x + m[7] * y + m[8] * z);
+        rgb[0] = m[0] * x + m[1] * y + m[2] * z;
+        rgb[1] = m[3] * x + m[4] * y + m[5] * z;
+        rgb[2] = m[6] * x + m[7] * y + m[8] * z;
+        if (linear) return;
+        for (int i = 0; i < 3; i++) rgb[i] = PdfColorSpace.CieMath.Compand(rgb[i]);
     }
 
     public static void LabToXyz(double l, double a, double b, out double x, out double y, out double z)
@@ -87,10 +96,10 @@ internal static class PcsMath
         z = D50[2] * InverseF(fz);
     }
 
-    public static void LabToSrgb(double l, double a, double b, Span<double> rgb)
+    public static void LabToSrgb(double l, double a, double b, Span<double> rgb, bool linear = false)
     {
         LabToXyz(l, a, b, out double x, out double y, out double z);
-        XyzToSrgb(x, y, z, rgb);
+        XyzToSrgb(x, y, z, rgb, linear);
     }
 
     private static double InverseF(double t) => t > 6.0 / 29 ? t * t * t : 108.0 / 841 * (t - 4.0 / 29);
@@ -125,25 +134,29 @@ internal sealed class IccTransform : ColorTransform
         return new IccTransform(profile, pipeline);
     }
 
-    public override void ToSrgb(ReadOnlySpan<double> input, Span<double> rgb)
+    public override void ToSrgb(ReadOnlySpan<double> input, Span<double> rgb) => Convert(input, rgb, linear: false);
+
+    public override void ToLinearSrgb(ReadOnlySpan<double> input, Span<double> rgb) => Convert(input, rgb, linear: true);
+
+    private void Convert(ReadOnlySpan<double> input, Span<double> rgb, bool linear)
     {
         if (_pipeline != null)
         {
             Span<double> pcs = stackalloc double[3];
             _pipeline.Evaluate(input, pcs);
-            if (_profile.IsPcsLab) PcsMath.LabToSrgb(pcs[0], pcs[1], pcs[2], rgb);
-            else PcsMath.XyzToSrgb(pcs[0], pcs[1], pcs[2], rgb);
+            if (_profile.IsPcsLab) PcsMath.LabToSrgb(pcs[0], pcs[1], pcs[2], rgb, linear);
+            else PcsMath.XyzToSrgb(pcs[0], pcs[1], pcs[2], rgb, linear);
             return;
         }
         if (_profile.RgbMatrix is { } m && _profile.RgbTrc is { } trc)
         {
             double r = trc[0].Evaluate(At(input, 0)), g = trc[1].Evaluate(At(input, 1)), b = trc[2].Evaluate(At(input, 2));
-            PcsMath.XyzToSrgb(m[0] * r + m[1] * g + m[2] * b, m[3] * r + m[4] * g + m[5] * b, m[6] * r + m[7] * g + m[8] * b, rgb);
+            PcsMath.XyzToSrgb(m[0] * r + m[1] * g + m[2] * b, m[3] * r + m[4] * g + m[5] * b, m[6] * r + m[7] * g + m[8] * b, rgb, linear);
             return;
         }
         // Gray TRC: the luminance of a D50 neutral, which maps onto the sRGB neutral axis.
         double y = _profile.GrayTrc?.Evaluate(At(input, 0)) ?? At(input, 0);
-        rgb[0] = rgb[1] = rgb[2] = PdfColorSpace.CieMath.Compand(y);
+        rgb[0] = rgb[1] = rgb[2] = linear ? y : PdfColorSpace.CieMath.Compand(y);
     }
 
     private static double At(ReadOnlySpan<double> input, int i) => i < input.Length && !double.IsNaN(input[i]) ? input[i] : 0;
@@ -169,13 +182,16 @@ internal sealed class IccTransform : ColorTransform
 /// Converts packed 8-bit device samples to BGRA through a sampled grid of a <see cref="ColorTransform"/>:
 /// 256 entries for one channel, a 33-point cube with tetrahedral interpolation for three, and 17-point
 /// CMY cubes interpolated tetrahedrally and blended linearly along K for four (the layout lcms uses).
-/// Grid values are 8.8 fixed point so interpolation stays in integers.
+/// The grid holds linear-light sRGB in 8.8 fixed point, so interpolation stays in integers and follows
+/// a smooth function; a table then applies the sRGB curve and clips.
 /// </summary>
 internal sealed class ColorLut8
 {
     private readonly int _channels;
-    private readonly int[] _grid;      // 3 values per node, 0..65280 (8.8 fixed point)
-    private readonly int[] _index;     // per sample value: grid cell, pre-multiplied by the axis stride is done per axis
+    private const int One = 65280;     // 1.0 in the grid's 8.8 fixed point
+    private static readonly byte[] Encode = BuildEncode();
+    private readonly int[] _grid;      // 3 linear-light values per node, unclipped
+    private readonly int[] _index;     // per sample value: grid cell along an axis
     private readonly int[] _fraction;  // per sample value: position inside the cell, 0..256
     private readonly int _points;
     private readonly byte[]? _gray;    // 1 channel: BGR per sample value
@@ -236,15 +252,23 @@ internal sealed class ColorLut8
                 rest /= points;
             }
             for (int i = 0; i < n; i++) input[i] = at[i] / (double)(points - 1);
-            transform.ToSrgb(input, rgb);
-            grid[3 * node] = (int)Math.Round(Math.Clamp(rgb[0], 0, 1) * 65280);
-            grid[3 * node + 1] = (int)Math.Round(Math.Clamp(rgb[1], 0, 1) * 65280);
-            grid[3 * node + 2] = (int)Math.Round(Math.Clamp(rgb[2], 0, 1) * 65280);
+            // Unclipped values (bounded so the integer arithmetic cannot overflow); results clip per pixel.
+            transform.ToLinearSrgb(input, rgb);
+            for (int c = 0; c < 3; c++)
+                grid[3 * node + c] = double.IsNaN(rgb[c]) ? 0 : (int)Math.Round(Math.Clamp(rgb[c], -1, 2) * One);
         }
         return new ColorLut8(n, points, grid, null);
     }
 
     private static byte ToByte(double v) => (byte)Math.Clamp((int)(v * 255 + 0.5), 0, 255);
+
+    private static byte[] BuildEncode()
+    {
+        var table = new byte[One + 1];
+        for (int i = 0; i <= One; i++)
+            table[i] = ToByte(PdfColorSpace.CieMath.Compand(i / (double)One));
+        return table;
+    }
 
     /// <summary>
     /// Converts <paramref name="pixels"/> pixels of <see cref="Channels"/> samples each to opaque BGRA.
@@ -284,59 +308,72 @@ internal sealed class ColorLut8
 
         int pts = _points;
         int sz = 3, sy = 3 * pts, sx = 3 * pts * pts, sk = 3 * pts * pts * pts;
-        Span<int> a = stackalloc int[3];
-        Span<int> b = stackalloc int[3];
-        if (_channels == 3)
+        unsafe
         {
-            for (int p = 0; p < pixels; p++)
+            fixed (int* grid = _grid)
+            fixed (int* index = _index)
+            fixed (int* fraction = _fraction)
+            fixed (byte* encode = Encode)
+            fixed (byte* src = samples)
+            fixed (byte* dst = bgra)
             {
-                int s = p * 3;
-                int x = samples[s], y = samples[s + 1], z = samples[s + 2];
-                int offset = _index[x] * sx + _index[y] * sy + _index[z] * sz;
-                Tetrahedral(offset, _fraction[x], _fraction[y], _fraction[z], sx, sy, sz, a);
-                Store(bgra, p * 4, a);
+                if (_channels == 3)
+                {
+                    for (int p = 0; p < pixels; p++)
+                    {
+                        byte* s = src + p * 3;
+                        int x = s[0], y = s[1], z = s[2];
+                        int* node = grid + index[x] * sx + index[y] * sy + index[z] * sz;
+                        Select(fraction[x], fraction[y], fraction[z], sx, sy, sz, out int o1, out int o2, out int w1, out int w2, out int w3);
+                        int o3 = sx + sy + sz;
+                        Store(dst + p * 4, encode,
+                            Corner(node, o1, o2, o3, w1, w2, w3, 0),
+                            Corner(node, o1, o2, o3, w1, w2, w3, 1),
+                            Corner(node, o1, o2, o3, w1, w2, w3, 2));
+                    }
+                    return;
+                }
+
+                // The K axis varies fastest, so neighbouring K planes are sz apart; the CMY cube of one K plane
+                // uses the strides sk, sx and sy. One tetrahedron serves both planes.
+                int c3 = sk + sx + sy;
+                for (int p = 0; p < pixels; p++)
+                {
+                    byte* s = src + p * 4;
+                    int c = s[0], m = s[1], y = s[2], k = s[3];
+                    int* node = grid + index[c] * sk + index[m] * sx + index[y] * sy + index[k] * sz;
+                    Select(fraction[c], fraction[m], fraction[y], sk, sx, sy, out int o1, out int o2, out int w1, out int w2, out int w3);
+                    int r = Corner(node, o1, o2, c3, w1, w2, w3, 0);
+                    int g = Corner(node, o1, o2, c3, w1, w2, w3, 1);
+                    int b = Corner(node, o1, o2, c3, w1, w2, w3, 2);
+                    int rk = fraction[k];
+                    if (rk != 0)
+                    {
+                        int* next = node + sz;
+                        r += ((Corner(next, o1, o2, c3, w1, w2, w3, 0) - r) * rk) >> 8;
+                        g += ((Corner(next, o1, o2, c3, w1, w2, w3, 1) - g) * rk) >> 8;
+                        b += ((Corner(next, o1, o2, c3, w1, w2, w3, 2) - b) * rk) >> 8;
+                    }
+                    Store(dst + p * 4, encode, r, g, b);
+                }
             }
-            return;
-        }
-
-        for (int p = 0; p < pixels; p++)
-        {
-            int s = p * 4;
-            int c = samples[s], m = samples[s + 1], y = samples[s + 2], k = samples[s + 3];
-            int offset = _index[c] * sk + _index[m] * sx + _index[y] * sy + _index[k] * sz;
-            // The K axis is the fastest-varying one, so neighbouring K planes are sz apart; the CMY cube of
-            // one K plane uses strides sk, sx and sy.
-            int rc = _fraction[c], rm = _fraction[m], ry = _fraction[y], rk = _fraction[k];
-            Tetrahedral(offset, rc, rm, ry, sk, sx, sy, a);
-            if (rk != 0)
-            {
-                Tetrahedral(offset + sz, rc, rm, ry, sk, sx, sy, b);
-                for (int i = 0; i < 3; i++) a[i] += ((b[i] - a[i]) * rk) >> 8;
-            }
-            Store(bgra, p * 4, a);
         }
     }
 
-    private static void Store(Span<byte> bgra, int o, ReadOnlySpan<int> rgb)
+    private static unsafe void Store(byte* o, byte* encode, int r, int g, int b)
     {
-        bgra[o] = Clamp8(rgb[2]);
-        bgra[o + 1] = Clamp8(rgb[1]);
-        bgra[o + 2] = Clamp8(rgb[0]);
-        bgra[o + 3] = 255;
+        o[0] = encode[b < 0 ? 0 : b > One ? One : b];
+        o[1] = encode[g < 0 ? 0 : g > One ? One : g];
+        o[2] = encode[r < 0 ? 0 : r > One ? One : r];
+        o[3] = 255;
     }
 
-    private static byte Clamp8(int v)
+    /// <summary>
+    /// Picks the tetrahedron of a cube cell that contains the point: o1 and o2 are the offsets of its middle
+    /// vertices, and w1..w3 the weights of the edges walked from the origin vertex to the opposite one.
+    /// </summary>
+    private static void Select(int rx, int ry, int rz, int x1, int y1, int z1, out int o1, out int o2, out int w1, out int w2, out int w3)
     {
-        v = (v + 128) >> 8;
-        return (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
-    }
-
-    private void Tetrahedral(int p, int rx, int ry, int rz, int x1, int y1, int z1, Span<int> result)
-    {
-        var v = _grid;
-        int o1, o2, w1, w2, w3;
-        // Pick the tetrahedron containing the point; o1 and o2 are its middle vertices, w the weights of the
-        // edges walked from the origin vertex to the opposite one.
         if (rx >= ry)
         {
             if (ry >= rz) { o1 = x1; o2 = x1 + y1; w1 = rx; w2 = ry; w3 = rz; }
@@ -349,11 +386,11 @@ internal sealed class ColorLut8
             else if (ry >= rz) { o1 = y1; o2 = y1 + z1; w1 = ry; w2 = rz; w3 = rx; }
             else { o1 = z1; o2 = y1 + z1; w1 = rz; w2 = ry; w3 = rx; }
         }
-        int o3 = x1 + y1 + z1;
-        for (int i = 0; i < 3; i++)
-        {
-            int c0 = v[p + i], c1 = v[p + o1 + i], c2 = v[p + o2 + i], c3 = v[p + o3 + i];
-            result[i] = c0 + (((c1 - c0) * w1 + (c2 - c1) * w2 + (c3 - c2) * w3 + 128) >> 8);
-        }
+    }
+
+    private static unsafe int Corner(int* node, int o1, int o2, int o3, int w1, int w2, int w3, int i)
+    {
+        int c0 = node[i], c1 = node[o1 + i], c2 = node[o2 + i], c3 = node[o3 + i];
+        return c0 + (((c1 - c0) * w1 + (c2 - c1) * w2 + (c3 - c2) * w3 + 128) >> 8);
     }
 }
