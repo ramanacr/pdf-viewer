@@ -805,10 +805,10 @@ public class PdfServiceTests : IDisposable
         using var service = new PdfiumDocumentService();
         await service.OpenDocumentAsync(pdfPath);
 
-        var unrotated = new PdfiumPdfPaginator(service, 1, 1, 850, 1100, rotationAngle: 0);
-        var rotated = new PdfiumPdfPaginator(service, 1, 1, 850, 1100, rotationAngle: 90);
+        var unrotated = new PageImagePaginator(service, 1, 1, 850, 1100, rotationAngle: 0);
+        var rotated = new PageImagePaginator(service, 1, 1, 850, 1100, rotationAngle: 90);
 
-        var rotationField = typeof(PdfiumPdfPaginator).GetField("_rotationAngle", BindingFlags.NonPublic | BindingFlags.Instance);
+        var rotationField = typeof(PageImagePaginator).GetField("_rotationAngle", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(rotationField);
         Assert.Equal(0, (int)rotationField!.GetValue(unrotated)!);
         Assert.Equal(90, (int)rotationField.GetValue(rotated)!);

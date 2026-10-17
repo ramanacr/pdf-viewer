@@ -129,7 +129,7 @@ public sealed partial class Direct2DVectorRenderer
                                 from = to;
                             }
                         }
-                        DrawOverlays(ctx, list, geometry.PagePointsToPixels(), overlays, invert: false, markMissing: false);
+                        DrawOverlays(ctx, list, geometry.PagePointsToPixels(), overlays, markMissing: false);
                         ctx.Transform = Matrix3x2.Identity;
                         ctx.PopAxisAlignedClip();
                     });

@@ -108,8 +108,13 @@ public static class PdfASmoke
         var flavour = PdfAFlavour.Parse(Program.Option(args, "--flavour")) ?? PdfAFlavour.A2b;
         var files = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).Take(limit).ToList();
         using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
-        // PDF/A-1b flattens transparency with the engine's renderer (PDFium for pages it cannot draw).
-        using var rasterizer = flavour.Part == 1 && !args.Contains("--no-flatten") ? new PdfEngine.Vector.Direct2D.Direct2DPageRasterizer(PdfiumPage, renderer) : null;
+        // PDF/A-1b flattens transparency with the engine's renderer alone, as the viewer does
+        // (--pdfium-fallback: PDFium draws pages the engine reports fallback regions on).
+        using var rasterizer = flavour.Part == 1 && !args.Contains("--no-flatten")
+            ? args.Contains("--pdfium-fallback")
+                ? new PdfEngine.Vector.Direct2D.Direct2DPageRasterizer(PdfiumPage, renderer)
+                : new PdfEngine.Vector.Direct2D.Direct2DPageRasterizer(null, renderer, bestEffort: true)
+            : null;
         int compliant = 0, remaining = 0, failed = 0, skipped = 0, looksDifferent = 0, refused = 0, flattened = 0, flattenedPages = 0, regions = 0;
         var rules = new Dictionary<string, int>(StringComparer.Ordinal);
         var clock = Stopwatch.StartNew();

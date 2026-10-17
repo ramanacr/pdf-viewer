@@ -1160,7 +1160,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             int start = Math.Max(1, fromPage);
             int end = toPage < 1 ? totalPages : Math.Min(totalPages, toPage);
 
-            var docPaginator = new PdfiumPdfPaginator(this, start, end, printDialog.PrintableAreaWidth, printDialog.PrintableAreaHeight, rotationAngle);
+            var docPaginator = new PageImagePaginator(this, start, end, printDialog.PrintableAreaWidth, printDialog.PrintableAreaHeight, rotationAngle);
             printDialog.PrintDocument(docPaginator, $"Printing {Path.GetFileName(_currentFilePath)}");
         }
     }
@@ -1244,6 +1244,12 @@ public class PdfiumDocumentService : IPdfDocumentService
                         // Straight through, including zero. The old "a > 0" guard turned a
                         // fully transparent annotation opaque, and saving wrote that back.
                         opacity = Math.Clamp(a / 255.0, 0.0, 1.0);
+                    }
+                    else if (PdfiumNativeBridge.FPDFAnnot_GetNumberValue(annot, "CA", out float ca) != 0)
+                    {
+                        // PDFium reports no colour once the annotation has an appearance stream (every
+                        // annotation the native save writes, and every one Acrobat writes); /CA still holds.
+                        opacity = Math.Clamp(ca, 0.0, 1.0);
                     }
 
                     string contents = ReadAnnotString(annot, "Contents");

@@ -155,7 +155,7 @@ public class TilingPatternTests
     }
 
     [Fact]
-    public async Task SelfReferencingPattern_FallsBackInsteadOfRecursing()
+    public async Task SelfReferencingPattern_PaintsNothingInsteadOfRecursing()
     {
         var b = new VectorPdfBuilder();
         // Object 3 is the pattern (catalog 1, pages 2); its cell paints with itself.
@@ -165,6 +165,27 @@ public class TilingPatternTests
         b.AddPage("/Pattern cs /P1 scn 0 0 100 100 re f", $"<< /Pattern << /P1 {pat} 0 R >> >>");
         using var doc = await PdfVectorDocument.OpenAsync(b.Build());
         var list = await doc.GetPageDisplayListAsync(1);
-        Assert.Contains(list.FallbackTokens, t => t.Reason == PdfFallbackReason.Pattern);
+        // The outer pattern paints its cell; the cell's own use of itself paints nothing (PDFium
+        // draws it the same way), and the page is not handed to another renderer.
+        Assert.False(list.HasFallback);
+        Assert.True(list.Features.HasFlag(PdfFeatureSet.Recovered));
+    }
+
+    [Theory]
+    [InlineData("/XStep 15 /YStep -0.00000000000000000000000000000000000001175")]
+    [InlineData("/XStep 0 /YStep 10")]
+    public async Task DegenerateStep_PaintsNothing_AndThePageStaysVector(string steps)
+    {
+        // A zero or near-zero step has no cell layout; PDFium paints nothing for it either.
+        var b = new VectorPdfBuilder();
+        int pat = b.AddStream($"/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 100 100] {steps} /Resources << >>",
+            "0.7 0.9 0.9 rg 5 5 5 5 re f");
+        b.AddPage($"0 0 1 rg 0 0 20 20 re f /Pattern cs /P0 scn 50 50 50 55 re f", $"<< /Pattern << /P0 {pat} 0 R >> >>");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        Assert.False(list.HasFallback);
+        Assert.True(list.Features.HasFlag(PdfFeatureSet.Recovered));
+        Assert.Empty(list.Commands.OfType<DrawTilingPattern>());
+        Assert.Single(list.Commands.OfType<FillPath>());
     }
 }

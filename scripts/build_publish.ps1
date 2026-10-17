@@ -66,9 +66,12 @@ if (Test-Path "$RootDir\assets") {
 }
 
 # 3. Publish the main WPF application
-Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (with Google PDFium native engine and icons)..." -ForegroundColor Yellow
+# PdfiumRenderer=false: pages are drawn by the vector engine only; PDFium is not a renderer in the
+# shipped app (it still serves text, annotations and saving).
+Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (vector renderer only)..." -ForegroundColor Yellow
 dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
     -c Release `
+    -p:PdfiumRenderer=false `
     -r win-x64 `
     --self-contained false `
     -p:PublishSingleFile=true `

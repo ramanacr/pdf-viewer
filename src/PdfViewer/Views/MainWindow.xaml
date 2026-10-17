@@ -6,6 +6,7 @@
         xmlns:vm="clr-namespace:PdfViewer.ViewModels"
         xmlns:views="clr-namespace:PdfViewer.Views"
         xmlns:models="clr-namespace:PdfViewer.Models"
+        xmlns:themes="clr-namespace:PdfViewer.Themes"
         mc:Ignorable="d"
         Title="PDF Viewer"
         Icon="pack://application:,,,/assets/app_icon.png"
@@ -112,8 +113,8 @@
                                        TextTrimming="CharacterEllipsis"
                                        VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <Button Content="&#xE711;"
-                                    FontFamily="Segoe MDL2 Assets"
+                            <Button Content="{x:Static themes:IconGlyphs.Close}"
+                                    FontFamily="{x:Static themes:IconGlyphs.IconFont}"
                                     FontSize="9"
                                     Margin="8,0,0,0"
                                     Padding="3"
@@ -152,9 +153,9 @@
               BorderThickness="0,0,0,1"
               Padding="4,2">
             <MenuItem Header="_File">
-                <MenuItem Header="_Open..." Command="{Binding OpenFileDialogCommand}" InputGestureText="Ctrl+O"><MenuItem.Icon><Path Data="{StaticResource IconOpen}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Open _Sample Demo Document" Command="{Binding OpenSampleDocumentCommand}"><MenuItem.Icon><Path Data="{StaticResource IconSample}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Open _Recent" ItemsSource="{Binding RecentFiles}">
+                <MenuItem Header="_Open..." Command="{Binding OpenFileDialogCommand}" InputGestureText="Ctrl+O"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Open}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Open _Sample Demo Document" Command="{Binding OpenSampleDocumentCommand}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.OpenSample}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Open _Recent" ItemsSource="{Binding RecentFiles}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Recent}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                     <MenuItem.ItemContainerStyle>
                         <Style TargetType="MenuItem">
                             <Setter Property="Header" Value="{Binding}" />
@@ -167,205 +168,206 @@
                 <MenuItem Header="_Close Document"
                           Command="{Binding DataContext.CloseActiveDocumentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                           InputGestureText="Ctrl+W"
-                          IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconClose}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CloseDocument}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Save" Command="{Binding SaveCommand}" InputGestureText="Ctrl+S"
-                          ToolTip="Writes your annotations into this document, keeping them editable."><MenuItem.Icon><Path Data="{StaticResource IconSave}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Save _Annotated As..." Command="{Binding SaveAnnotatedAsCommand}" InputGestureText="Ctrl+Shift+S" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSaveAs}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Export to Images..." Command="{Binding ExportImagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconExport}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Writes your annotations into this document, keeping them editable."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Save}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Save _Annotated As..." Command="{Binding SaveAnnotatedAsCommand}" InputGestureText="Ctrl+Shift+S" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SaveAs}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Export to Images..." Command="{Binding ExportImagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ExportImages}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Export _Text..." Command="{Binding ExportTextCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Writes the document's text layer to a plain text file."><MenuItem.Icon><Path Data="{StaticResource IconExportText}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="E_xport"><MenuItem Header="_Word Document (.docx)..." Command="{Binding ExportWordCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Saves an editable Word document whose text flows, keeping the layout. Choose it again while it runs to stop."><MenuItem.Icon><Path Data="{StaticResource IconExport}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem></MenuItem>
+                          ToolTip="Writes the document's text layer to a plain text file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ExportText}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="E_xport"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Export}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon><MenuItem Header="_Word Document (.docx)..." Command="{Binding ExportWordCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Saves an editable Word document whose text flows, keeping the layout. Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.WordDocument}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem></MenuItem>
                 <MenuItem Header="_Organize Pages..." Command="{Binding OrganizePagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Reorder, rotate or leave out pages and save the result as a new document."><MenuItem.Icon><Path Data="{StaticResource IconOrganizePages}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Reorder, rotate or leave out pages and save the result as a new document."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.OrganizePages}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Embedded _Files..." Command="{Binding ShowAttachmentsCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Lists the files embedded in this document and extracts one if you ask. Nothing is ever run."><MenuItem.Icon><Path Data="{StaticResource IconAttachment}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Print..." Command="{Binding PrintCommand}" InputGestureText="Ctrl+P" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconPrint}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Lists the files embedded in this document and extracts one if you ask. Nothing is ever run."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Attachments}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Print..." Command="{Binding PrintCommand}" InputGestureText="Ctrl+P" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Print}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Document _Properties..." Command="{Binding ShowPropertiesCommand}" InputGestureText="Ctrl+D" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconProperties}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Document _Properties..." Command="{Binding ShowPropertiesCommand}" InputGestureText="Ctrl+D" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Properties}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="E_xit" Click="ExitMenuItem_Click" InputGestureText="Alt+F4"><MenuItem.Icon><Path Data="{StaticResource IconExit}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="E_xit" Click="ExitMenuItem_Click" InputGestureText="Alt+F4"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Exit}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Edit">
-                <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconCopy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconHighlight}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Copy}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Highlight}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSelectAll}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><Path Data="{StaticResource IconDeselect}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SelectAll}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Deselect}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_Redact" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconRedact}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon>
+                <MenuItem Header="_Redact" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Redact}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                     <MenuItem Header="Mark Selected _Text" Command="{Binding MarkSelectionForRedactionCommand}" IsEnabled="{Binding HasTextSelection}"
-                              ToolTip="Marks the selected text for redaction." />
+                              ToolTip="Marks the selected text for redaction."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SelectText}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                     <MenuItem Header="Mark an _Area" Command="{Binding BeginMarkRedactionAreaCommand}"
-                              ToolTip="Drag over any part of a page (text, pictures, drawings) to mark it." />
+                              ToolTip="Drag over any part of a page (text, pictures, drawings) to mark it."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.MarkArea}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                     <MenuItem Header="Mark All _Search Results" Command="{Binding MarkSearchResultsForRedactionCommand}"
-                              ToolTip="Marks every match of the current search, on every page." />
+                              ToolTip="Marks every match of the current search, on every page."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Find}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                     <Separator />
                     <MenuItem Header="_Apply Redactions..." Command="{Binding ApplyRedactionsCommand}"
-                              ToolTip="Removes everything under the marks in a new copy. The original is not changed." />
-                    <MenuItem Header="_Clear Marks" Command="{Binding ClearRedactionMarksCommand}" />
+                              ToolTip="Removes everything under the marks in a new copy. The original is not changed."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ApplyRedactions}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Clear Marks" Command="{Binding ClearRedactionMarksCommand}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ClearMarks}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                     <Separator />
                     <MenuItem Header="_Redact Selected Text Now..." Command="{Binding RedactSelectionCommand}" IsEnabled="{Binding HasTextSelection}"
-                              ToolTip="Marks the selected text and applies it straight away." />
+                              ToolTip="Marks the selected text and applies it straight away."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.RedactNow}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
                 <Separator />
                 <MenuItem Header="Edit _Text &amp; Images" Command="{Binding ToggleContentEditingCommand}" IsCheckable="True" IsChecked="{Binding IsEditingContent, Mode=OneWay}"
                           IsEnabled="{Binding IsDocumentLoaded}" InputGestureText="Ctrl+E"
-                          ToolTip="Select a paragraph or image on the page: double-click text to change it, drag to move, drag an image's corner to resize, Delete to remove." />
+                          ToolTip="Select a paragraph or image on the page: double-click text to change it, drag to move, drag an image's corner to resize, Delete to remove."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EditContent}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Add Te_xt" Command="{Binding BeginAddTextCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Click on the page where the new text should start." />
+                          ToolTip="Click on the page where the new text should start."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.AddText}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Add _Image..." Command="{Binding AddImageCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Places a picture in the middle of the current page; drag it where it belongs." />
-                <MenuItem Header="Page _Marks" IsEnabled="{Binding IsDocumentLoaded}">
-                    <MenuItem Header="_Header &amp; Footer..." Command="{Binding ShowHeaderFooterCommand}" ToolTip="Adds, updates or removes page numbers, dates and text at the top and bottom of the pages." />
-                    <MenuItem Header="_Watermark..." Command="{Binding ShowWatermarkCommand}" ToolTip="Adds, updates or removes text, a picture or a PDF page across the pages." />
-                    <MenuItem Header="_Background..." Command="{Binding ShowBackgroundCommand}" ToolTip="Adds, updates or removes a colour, picture or PDF page behind the pages." />
-                    <MenuItem Header="Bates _Numbering..." Command="{Binding ShowBatesNumberingCommand}" ToolTip="Adds, updates or removes sequence numbers for legal documents." />
+                          ToolTip="Places a picture in the middle of the current page; drag it where it belongs."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.AddImage}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Page _Marks" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.PageMarks}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="_Header &amp; Footer..." Command="{Binding ShowHeaderFooterCommand}" ToolTip="Adds, updates or removes page numbers, dates and text at the top and bottom of the pages."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.HeaderFooter}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Watermark..." Command="{Binding ShowWatermarkCommand}" ToolTip="Adds, updates or removes text, a picture or a PDF page across the pages."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Watermark}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Background..." Command="{Binding ShowBackgroundCommand}" ToolTip="Adds, updates or removes a colour, picture or PDF page behind the pages."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Background}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="Bates _Numbering..." Command="{Binding ShowBatesNumberingCommand}" ToolTip="Adds, updates or removes sequence numbers for legal documents."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.BatesNumbering}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
-                <MenuItem Header="_Undo Edit" Command="{Binding UndoContentEditCommand}" IsEnabled="{Binding CanUndoContentEdit}" InputGestureText="Ctrl+Z" />
-                <MenuItem Header="Red_o Edit" Command="{Binding RedoContentEditCommand}" IsEnabled="{Binding CanRedoContentEdit}" InputGestureText="Ctrl+Y" />
+                <MenuItem Header="_Undo Edit" Command="{Binding UndoContentEditCommand}" IsEnabled="{Binding CanUndoContentEdit}" InputGestureText="Ctrl+Z"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Red_o Edit" Command="{Binding RedoContentEditCommand}" IsEnabled="{Binding CanRedoContentEdit}" InputGestureText="Ctrl+Y"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_View">
                 <MenuItem Header="_Back" Command="{Binding GoBackCommand}" InputGestureText="Alt+Left"
-                          ToolTip="Returns to the page you jumped away from."><MenuItem.Icon><Path Data="{StaticResource IconArrowLeft}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Forward" Command="{Binding GoForwardCommand}" InputGestureText="Alt+Right"><MenuItem.Icon><Path Data="{StaticResource IconArrowRight}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Returns to the page you jumped away from."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Back}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Forward" Command="{Binding GoForwardCommand}" InputGestureText="Alt+Right"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Forward}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_Read Mode" Command="{Binding ShowReadModeCommand}" InputGestureText="Ctrl+4" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="The text reflowed for reading, and for screen readers: headings, paragraphs, lists and figure descriptions." />
+                          ToolTip="The text reflowed for reading, and for screen readers: headings, paragraphs, lists and figure descriptions."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ReadMode}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Highlight Form Fields" IsCheckable="True" IsChecked="{Binding HighlightFormFields}" IsEnabled="{Binding HasForm}"
-                          ToolTip="Tints the document's form fields and outlines the required ones in red." />
-                <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11"><MenuItem.Icon><Path Data="{StaticResource IconFullScreen}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Tints the document's form fields and outlines the required ones in red."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ShowFormFields}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="F_ull Screen" Click="FullScreenMenuItem_Click" InputGestureText="F11"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FullScreen}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Continuous Scrolling" Command="{Binding SetContinuousViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}" />
-                <MenuItem Header="Single Page View" Command="{Binding SetSinglePageViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}" />
+                <MenuItem Header="Continuous Scrolling" Command="{Binding SetContinuousViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Continuous, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Continuous}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Single Page View" Command="{Binding SetSinglePageViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=SinglePage, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SinglePage}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Two Pages (Facing)" Command="{Binding SetFacingViewCommand}" IsCheckable="True" IsChecked="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Facing, Mode=OneWay}"
-                          ToolTip="Shows two pages side by side, the way the document was printed." />
+                          ToolTip="Shows two pages side by side, the way the document was printed."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FacingPages}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Show Co_ver Page Alone" IsCheckable="True" IsChecked="{Binding ShowCoverPageAlone}"
                           IsEnabled="{Binding ViewMode, Converter={StaticResource EnumToBool}, ConverterParameter=Facing, Mode=OneWay}"
-                          ToolTip="A book's cover has no page facing it, so the spreads line up with the printed original." />
+                          ToolTip="A book's cover has no page facing it, so the spreads line up with the printed original."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CoverPage}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="Ctrl++"><MenuItem.Icon><Path Data="{StaticResource IconZoomIn}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="Ctrl+-"><MenuItem.Icon><Path Data="{StaticResource IconZoomOut}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Fit to _Width" Command="{Binding FitWidthCommand}" InputGestureText="Ctrl+1"><MenuItem.Icon><Path Data="{StaticResource IconFitWidth}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Fit to _Page" Command="{Binding FitPageCommand}" InputGestureText="Ctrl+0"><MenuItem.Icon><Path Data="{StaticResource IconFitPage}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Zoom _In" Command="{Binding ZoomInCommand}" InputGestureText="Ctrl++"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ZoomIn}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Zoom _Out" Command="{Binding ZoomOutCommand}" InputGestureText="Ctrl+-"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ZoomOut}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Fit to _Width" Command="{Binding FitWidthCommand}" InputGestureText="Ctrl+1"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FitWidth}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Fit to _Page" Command="{Binding FitPageCommand}" InputGestureText="Ctrl+0"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FitPage}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Rotate _Clockwise" Command="{Binding RotateClockwiseCommand}" InputGestureText="Ctrl+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconRotateCW}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Rotate Counter-Clockwise" Command="{Binding RotateCounterClockwiseCommand}" InputGestureText="Ctrl+Shift+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconRotateCCW}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Rotate _Clockwise" Command="{Binding RotateClockwiseCommand}" InputGestureText="Ctrl+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Rotate Counter-Clockwise" Command="{Binding RotateCounterClockwiseCommand}" InputGestureText="Ctrl+Shift+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MirroredMenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen}" />
-                <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}"><MenuItem.Icon><Path Data="{StaticResource IconTheme}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Sidebar}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Theme}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Night Mode (Invert Pages)" Command="{Binding ToggleNightModeCommand}"
                           IsCheckable="True" IsChecked="{Binding IsNightMode, Mode=OneWay}"
                           InputGestureText="Ctrl+Shift+N"
-                          ToolTip="Inverts the pages themselves for reading in the dark. Separate from the window theme." />
+                          ToolTip="Inverts the pages themselves for reading in the dark. Separate from the window theme."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.NightMode}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Rendering _Engine" ToolTip="Select the active PDF rendering engine">
-                    <MenuItem Header="_Auto (Hybrid Vector + Fallback)"
+                <MenuItem Header="Rendering _Engine" ToolTip="Select the active PDF rendering engine"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.RenderingEngine}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="_Auto (Direct2D, best effort)"
                               Command="{Binding SetEngineModeAutoCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsAutoEngineMode, Mode=OneWay}"
-                              ToolTip="DirectX vector rendering where supported, with seamless PDFium fallback." />
-                    <MenuItem Header="_Vector Only (Native DirectX/WPF)"
+                              ToolTip="Direct2D vector rendering; content the engine cannot reproduce exactly is drawn as well as it can be."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineAuto}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Vector Only (strict)"
                               Command="{Binding SetEngineModeVectorCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsVectorEngineMode, Mode=OneWay}"
-                              ToolTip="Force 100% native vector rendering." />
-                    <MenuItem Header="_PDFium Only (Google PDFium Rasterizer)"
+                              ToolTip="Strict vector rendering: content the engine cannot reproduce exactly is outlined."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineVector}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_PDFium Only (developer build)"
                               Command="{Binding SetEngineModePdfiumCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsPdfiumEngineMode, Mode=OneWay}"
-                              ToolTip="Force Google PDFium rasterizer for all pages." />
+                              Visibility="{Binding PdfiumEngineModeVisibility}"
+                              ToolTip="Renders every page with PDFium, the reference the vector engine is compared with. Not in published builds."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineRaster}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Tools">
-                <MenuItem Header="_Find Text..." Command="{Binding ToggleSearchCommand}" InputGestureText="Ctrl+F" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><Path Data="{StaticResource IconSearch}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Hand / Pan Tool" Command="{Binding TogglePanToolCommand}" IsCheckable="True" IsChecked="{Binding IsPanningEnabled}" IsEnabled="{Binding IsDocumentLoaded}" />
+                <MenuItem Header="_Find Text..." Command="{Binding ToggleSearchCommand}" InputGestureText="Ctrl+F" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Find}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Hand / Pan Tool" Command="{Binding TogglePanToolCommand}" IsCheckable="True" IsChecked="{Binding IsPanningEnabled}" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Pan}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Recognise _Text on Page (OCR)"
                           Command="{Binding RecognizeTextOnPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard."><MenuItem.Icon><Path Data="{StaticResource IconOcr}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Reads the page's text, using optical recognition for scanned pages, and copies it to the clipboard."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Ocr}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Make Scanned Pages _Searchable"
                           Command="{Binding MakeSearchableCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Recognizes the text of every scanned page and adds it invisibly over the page, so the document can be searched, selected and copied. Run again to stop."><MenuItem.Icon><Path Data="{StaticResource IconOcr}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Recognizes the text of every scanned page and adds it invisibly over the page, so the document can be searched, selected and copied. Run again to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.MakeSearchable}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Read Aloud"
                           Command="{Binding ToggleReadAloudCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           IsCheckable="True"
                           IsChecked="{Binding IsReadingAloud, Mode=OneWay}"
-                          ToolTip="Reads the document from the current page. An optional component; you will be asked before anything is downloaded." />
+                          ToolTip="Reads the document from the current page. An optional component; you will be asked before anything is downloaded."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ReadAloud}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Pause / Resume Reading"
                           Command="{Binding PauseOrResumeReadingCommand}"
-                          IsEnabled="{Binding IsReadingAloud}"><MenuItem.Icon><Path Data="{StaticResource IconPauseResume}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          IsEnabled="{Binding IsReadingAloud}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Pause}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_Document Safety..."
                           Command="{Binding ShowDocumentSafetyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Shows what this document carries: script, launch actions, embedded files and external links."><MenuItem.Icon><Path Data="{StaticResource IconShield}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Shows what this document carries: script, launch actions, embedded files and external links."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.DocumentSafety}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="PDF/_A: Check and Convert..."
                           Command="{Binding ShowPdfACommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Checks the document against PDF/A (ISO 19005) and saves an archival PDF/A copy." />
+                          ToolTip="Checks the document against PDF/A (ISO 19005) and saves an archival PDF/A copy."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.PdfA}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Accessi_bility Check..." Command="{Binding ShowAccessibilityCheckCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Checks the document against PDF/UA (ISO 14289) and the Matterhorn Protocol, and says how to fix each issue." />
+                          ToolTip="Checks the document against PDF/UA (ISO 14289) and the Matterhorn Protocol, and says how to fix each issue."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Accessibility}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Reduce File _Size..."
                           Command="{Binding ShowReduceSizeCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Saves a smaller copy: duplicates merged, streams recompressed, objects packed, and images optionally downsampled." />
+                          ToolTip="Saves a smaller copy: duplicates merged, streams recompressed, objects packed, and images optionally downsampled."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ReduceSize}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Save _Clean Copy..."
                           Command="{Binding SaveCleanCopyCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified."><MenuItem.Icon><Path Data="{StaticResource IconCleanCopy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Writes a copy with script, launch actions and embedded files removed. The original is never modified."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CleanCopy}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Protect with _Password..." Command="{Binding ProtectWithPasswordCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Saves an encrypted copy (AES-256) with an open password, restrictions guarded by a permissions password, or both." />
+                          ToolTip="Saves an encrypted copy (AES-256) with an open password, restrictions guarded by a permissions password, or both."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Protect}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Remove Sec_urity..." Command="{Binding RemoveSecurityCommand}" IsEnabled="{Binding CanRemoveSecurity}"
-                          ToolTip="Saves an unencrypted copy. Needs the document's permissions password." />
+                          ToolTip="Saves an unencrypted copy. Needs the document's permissions password."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.RemoveSecurity}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Sign _Document..."
                           Command="{Binding BeginSignatureCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           IsCheckable="False"
-                          ToolTip="Adds your digital signature: drag a box on the page, or click an empty signature field."><MenuItem.Icon><Path Data="{StaticResource IconSignature}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Adds your digital signature: drag a box on the page, or click an empty signature field."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Sign}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Verify Digital _Signatures..."
                           Command="{Binding VerifySignaturesCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Cryptographically verifies every signature in the document."><MenuItem.Icon><Path Data="{StaticResource IconSignature}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Cryptographically verifies every signature in the document."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.VerifySignatures}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_Merge PDFs..."
                           Command="{Binding MergeDocumentsCommand}"
-                          ToolTip="Combines several PDF documents into a single file."><MenuItem.Icon><Path Data="{StaticResource IconMerge}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Combines several PDF documents into a single file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Merge}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Spl_it Into Pages..."
                           Command="{Binding SplitDocumentCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Writes each page of this document to its own PDF file."><MenuItem.Icon><Path Data="{StaticResource IconSplit}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Writes each page of this document to its own PDF file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Split}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="E_xtract Current Page..."
                           Command="{Binding ExtractCurrentPageCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Saves the page you are viewing as its own PDF."><MenuItem.Icon><Path Data="{StaticResource IconExtractPage}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Saves the page you are viewing as its own PDF."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ExtractPage}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Fill _Form Fields..."
                           Command="{Binding EditFormFieldsCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Lists the document's form fields and writes edited values to a new document."><MenuItem.Icon><Path Data="{StaticResource IconForm}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Lists the document's form fields and writes edited values to a new document."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FillForm}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Compare With Document..."
                           Command="{Binding CompareWithDocumentCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Compares this document against another and reports the pages that differ."><MenuItem.Icon><Path Data="{StaticResource IconCompare}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Compares this document against another and reports the pages that differ."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Compare}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_Help">
                 <MenuItem Header="_Privacy &amp; Safety..." Click="PrivacyMenuItem_Click"
-                          ToolTip="What this application does and does not do with your documents, and the one network setting."><MenuItem.Icon><Path Data="{StaticResource IconPrivacy}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="What this application does and does not do with your documents, and the one network setting."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Privacy}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconUpdate}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CheckForUpdates}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconGitHub}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconReleases}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SourceCode}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Releases}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="_About PDF Viewer..." Click="AboutMenuItem_Click"><MenuItem.Icon><Path Data="{StaticResource IconAbout}" Style="{StaticResource MenuIconStyle}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_About PDF Viewer..." Click="AboutMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.About}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
         </Menu>
 
@@ -381,7 +383,7 @@
                 <Button Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding OpenFileDialogCommand}"
                         ToolTip="Open PDF (Ctrl+O)">
-                    <Path Data="{StaticResource IconOpen}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Open}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <!-- Copy Selected Text Button -->
@@ -389,7 +391,7 @@
                         Command="{Binding CopySelectedTextCommand}"
                         IsEnabled="{Binding HasTextSelection}"
                         ToolTip="Copy Selected Text (Ctrl+C)">
-                    <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Copy}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <!-- Print Button -->
@@ -397,7 +399,7 @@
                         Command="{Binding PrintCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Print Document (Ctrl+P)">
-                    <Path Data="{StaticResource IconPrint}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Print}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <!-- Export Images Button -->
@@ -405,7 +407,7 @@
                         Command="{Binding ExportImagesCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Export Pages to Images">
-                    <Path Data="{StaticResource IconExport}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.ExportImages}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -414,7 +416,7 @@
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
                               IsChecked="{Binding IsSidebarOpen}"
                               ToolTip="Toggle Navigation Sidebar (Ctrl+B)">
-                    <Path Data="{StaticResource IconSidebar}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Sidebar}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -424,14 +426,14 @@
                         Command="{Binding FirstPageCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="First Page (Home)">
-                    <TextBlock Text="|&#x25C0;" FontWeight="Bold" FontSize="11" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.FirstPage}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Button Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding PreviousPageCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Previous Page (PageUp)">
-                    <Path Data="{StaticResource IconArrowLeft}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.PreviousPage}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0">
@@ -450,14 +452,14 @@
                         Command="{Binding NextPageCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Next Page (PageDown)">
-                    <Path Data="{StaticResource IconArrowRight}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.NextPage}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Button Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding LastPageCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Last Page (End)">
-                    <TextBlock Text="&#x25B6;|" FontWeight="Bold" FontSize="11" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.LastPage}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -467,7 +469,7 @@
                         Command="{Binding ZoomOutCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Zoom Out (Ctrl+-)">
-                    <Path Data="{StaticResource IconZoomOut}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.ZoomOut}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Slider Width="90"
@@ -484,7 +486,7 @@
                         Command="{Binding ZoomInCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Zoom In (Ctrl++)">
-                    <Path Data="{StaticResource IconZoomIn}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.ZoomIn}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <TextBlock Text="{Binding ZoomPercentageText}"
@@ -500,14 +502,14 @@
                         Command="{Binding FitWidthCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Fit to Width (Ctrl+1)">
-                    <Path Data="{StaticResource IconFitWidth}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.FitWidth}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Button Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding FitPageCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Fit to Page (Ctrl+0)">
-                    <Path Data="{StaticResource IconFitPage}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.FitPage}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -517,14 +519,14 @@
                         Command="{Binding RotateCounterClockwiseCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Rotate Counter-Clockwise (Ctrl+Shift+R)">
-                    <Path Data="{StaticResource IconRotateCCW}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MirroredToolbarGlyph}" />
                 </Button>
 
                 <Button Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding RotateClockwiseCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Rotate Clockwise (Ctrl+R)">
-                    <Path Data="{StaticResource IconRotateCW}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -534,14 +536,14 @@
                         Command="{Binding ToggleViewModeCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Toggle View Mode (Continuous / Single Page)">
-                    <Path Data="{StaticResource IconViewMode}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Continuous}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
                               IsChecked="{Binding IsPanningEnabled}"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Hand / Pan Tool">
-                    <Path Data="{StaticResource IconPan}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Pan}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -553,7 +555,7 @@
                               CommandParameter="Highlight"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Highlight Tool">
-                    <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Highlight}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
@@ -562,7 +564,7 @@
                               CommandParameter="Underline"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Underline Tool">
-                    <Path Data="{StaticResource IconUnderline}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Underline}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
@@ -571,7 +573,7 @@
                               CommandParameter="Note"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Sticky Note / Comment Tool">
-                    <Path Data="{StaticResource IconNote}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Note}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
@@ -580,7 +582,7 @@
                               CommandParameter="FreeText"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="FreeText Box Tool">
-                    <Path Data="{StaticResource IconText}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.TextBox}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
@@ -589,7 +591,7 @@
                               CommandParameter="Ink"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Freehand Ink / Pen Tool">
-                    <Path Data="{StaticResource IconPen}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Ink}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <ToggleButton Style="{StaticResource ToolbarToggleButton}"
@@ -598,7 +600,7 @@
                               CommandParameter="Rectangle"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Rectangle Shape Tool">
-                    <Path Data="{StaticResource IconRectangle}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Shape}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <!-- Annotation Color Selector ComboBox with Color Swatches -->
@@ -638,7 +640,7 @@
                         Command="{Binding SaveAnnotatedAsCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Save Annotated PDF As... (Ctrl+Shift+S)">
-                    <Path Data="{StaticResource IconSaveAs}" Fill="{DynamicResource AccentBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.SaveAs}" Style="{StaticResource ToolbarGlyph}" Foreground="{DynamicResource IconAccentBrush}" />
                 </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -648,14 +650,14 @@
                               IsChecked="{Binding IsSearchOpen}"
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Find Text (Ctrl+F)">
-                    <Path Data="{StaticResource IconSearch}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Find}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <!-- Theme Toggle -->
                 <Button Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding ToggleThemeCommand}"
                         ToolTip="Toggle Light / Dark Mode">
-                    <Path Data="{StaticResource IconTheme}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Theme}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <!-- Document Properties -->
@@ -663,7 +665,7 @@
                         Command="{Binding ShowPropertiesCommand}"
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Document Properties (Ctrl+D)">
-                    <Path Data="{StaticResource IconProperties}" Fill="{DynamicResource TextPrimaryBrush}" Width="16" Height="16" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Properties}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
             </WrapPanel>
         </Border>
@@ -716,12 +718,12 @@
                     <Button Style="{StaticResource ToolbarIconButton}"
                             Command="{Binding PreviousSearchMatchCommand}"
                             ToolTip="Previous Match (Shift+F3)">
-                        <Path Data="{StaticResource IconArrowUp}" Fill="{DynamicResource TextPrimaryBrush}" Width="12" Height="12" Stretch="Uniform" />
+                        <TextBlock Text="{x:Static themes:IconGlyphs.PreviousMatch}" Style="{StaticResource SmallGlyph}" />
                     </Button>
                     <Button Style="{StaticResource ToolbarIconButton}"
                             Command="{Binding NextSearchMatchCommand}"
                             ToolTip="Next Match (F3)">
-                        <Path Data="{StaticResource IconArrowDown}" Fill="{DynamicResource TextPrimaryBrush}" Width="12" Height="12" Stretch="Uniform" />
+                        <TextBlock Text="{x:Static themes:IconGlyphs.NextMatch}" Style="{StaticResource SmallGlyph}" />
                     </Button>
                 </StackPanel>
 
@@ -735,7 +737,7 @@
                         Style="{StaticResource ToolbarIconButton}"
                         Command="{Binding ToggleSearchCommand}"
                         ToolTip="Close Search">
-                    <Path Data="{StaticResource IconClose}" Fill="{DynamicResource TextSecondaryBrush}" Width="12" Height="12" Stretch="Uniform" />
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Close}" Style="{StaticResource SmallGlyph}" Foreground="{DynamicResource TextSecondaryBrush}" />
                 </Button>
             </Grid>
         </Border>
@@ -765,7 +767,7 @@
                             Background="Transparent"
                             BorderThickness="0">
                     <!-- Tab 1: Thumbnails -->
-                    <TabItem Header="Pages" Style="{StaticResource SidebarTabItemStyle}">
+                    <TabItem Header="Pages" AutomationProperties.Name="Pages" themes:IconGlyphs.Glyph="{x:Static themes:IconGlyphs.Pages}" Style="{StaticResource SidebarTabItemStyle}">
                         <ScrollViewer x:Name="ThumbnailsScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8">
                             <ItemsControl ItemsSource="{Binding Thumbnails}">
                                 <ItemsControl.ItemTemplate>
@@ -840,7 +842,7 @@
                     </TabItem>
 
                     <!-- Tab 2: Bookmarks / Outline Tree -->
-                    <TabItem Header="Bookmarks" Style="{StaticResource SidebarTabItemStyle}">
+                    <TabItem Header="Bookmarks" AutomationProperties.Name="Bookmarks" themes:IconGlyphs.Glyph="{x:Static themes:IconGlyphs.Bookmarks}" Style="{StaticResource SidebarTabItemStyle}">
                         <Grid>
                             <TextBlock Text="No bookmarks found in this document."
                                        Foreground="{DynamicResource TextSecondaryBrush}"
@@ -873,7 +875,7 @@
                     </TabItem>
 
                     <!-- Tab 3: Search Results -->
-                    <TabItem Header="Search Results" Style="{StaticResource SidebarTabItemStyle}">
+                    <TabItem Header="Search Results" AutomationProperties.Name="Search Results" themes:IconGlyphs.Glyph="{x:Static themes:IconGlyphs.SearchResults}" Style="{StaticResource SidebarTabItemStyle}">
                         <Grid>
                             <TextBlock Text="Search results will appear here."
                                        Foreground="{DynamicResource TextSecondaryBrush}"
@@ -921,7 +923,7 @@
                     </TabItem>
 
                     <!-- Tab 4: Annotations -->
-                    <TabItem Header="Annotations" Style="{StaticResource SidebarTabItemStyle}">
+                    <TabItem Header="Annotations" AutomationProperties.Name="Annotations" themes:IconGlyphs.Glyph="{x:Static themes:IconGlyphs.Annotations}" Style="{StaticResource SidebarTabItemStyle}">
                         <Grid>
                             <TextBlock Text="No annotations added yet."
                                        Foreground="{DynamicResource TextSecondaryBrush}"
@@ -973,13 +975,13 @@
                                                             Tag="{Binding}"
                                                             ToolTip="Edit Comment"
                                                             Margin="0,0,4,0">
-                                                        <Path Data="{StaticResource IconText}" Fill="{DynamicResource TextSecondaryBrush}" Width="12" Height="12" Stretch="Uniform" />
+                                                        <TextBlock Text="{x:Static themes:IconGlyphs.EditContent}" Style="{StaticResource SmallGlyph}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                                     </Button>
                                                     <Button Style="{StaticResource ToolbarIconButton}"
                                                             Command="{Binding DataContext.DeleteAnnotationCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
                                                             CommandParameter="{Binding}"
                                                             ToolTip="Delete Annotation">
-                                                        <Path Data="{StaticResource IconDelete}" Fill="#D83B01" Width="12" Height="12" Stretch="Uniform" />
+                                                        <TextBlock Text="{x:Static themes:IconGlyphs.Delete}" Style="{StaticResource SmallGlyph}" Foreground="#D83B01" />
                                                     </Button>
                                                 </StackPanel>
                                             </Grid>
@@ -990,7 +992,7 @@
                         </Grid>
                     </TabItem>
 
-                    <TabItem Header="Signatures" Style="{StaticResource SidebarTabItemStyle}">
+                    <TabItem Header="Signatures" AutomationProperties.Name="Signatures" themes:IconGlyphs.Glyph="{x:Static themes:IconGlyphs.Signatures}" Style="{StaticResource SidebarTabItemStyle}">
                         <Grid>
                             <TextBlock Text="This document is not digitally signed."
                                        Foreground="{DynamicResource TextSecondaryBrush}"
@@ -1460,7 +1462,7 @@
                                                                     HorizontalAlignment="Left"
                                                                     VerticalAlignment="Top"
                                                                     Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Note}">
-                                                                <Path Data="{StaticResource IconNote}" Fill="White" Width="14" Height="14" Stretch="Uniform" />
+                                                                <TextBlock Text="{x:Static themes:IconGlyphs.Note}" Style="{StaticResource GlyphBase}" Foreground="White" FontSize="14" />
                                                             </Border>
 
                                                             <!-- FreeText -->
@@ -1516,21 +1518,21 @@
                                                     <ContextMenu>
                                                         <MenuItem Header="_Copy Text" Command="{Binding Owner.CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding Owner.HasTextSelection}">
                                                             <MenuItem.Icon>
-                                                                <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                                <TextBlock Text="{x:Static themes:IconGlyphs.Copy}" Style="{StaticResource MenuGlyph}" />
                                                             </MenuItem.Icon>
                                                         </MenuItem>
                                                         <MenuItem Header="_Highlight Selection" Command="{Binding Owner.HighlightSelectedTextCommand}" IsEnabled="{Binding Owner.HasTextSelection}">
                                                             <MenuItem.Icon>
-                                                                <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                                <TextBlock Text="{x:Static themes:IconGlyphs.Highlight}" Style="{StaticResource MenuGlyph}" />
                                                             </MenuItem.Icon>
                                                         </MenuItem>
                                                         <Separator />
                                                         <MenuItem Header="Select _All Text on Page" Command="{Binding Owner.SelectAllTextCommand}" InputGestureText="Ctrl+A">
                                                             <MenuItem.Icon>
-                                                                <Path Data="{StaticResource IconSelectAll}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                                <TextBlock Text="{x:Static themes:IconGlyphs.SelectAll}" Style="{StaticResource MenuGlyph}" />
                                                             </MenuItem.Icon>
                                                         </MenuItem>
-                                                        <MenuItem Header="_Deselect All" Command="{Binding Owner.ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding Owner.HasTextSelection}" />
+                                                        <MenuItem Header="_Deselect All" Command="{Binding Owner.ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding Owner.HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Deselect}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                                                     </ContextMenu>
                                                 </Canvas.ContextMenu>
                                             </Canvas>
@@ -1788,7 +1790,7 @@
                                                         HorizontalAlignment="Left"
                                                         VerticalAlignment="Top"
                                                         Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Note}">
-                                                    <Path Data="{StaticResource IconNote}" Fill="White" Width="14" Height="14" Stretch="Uniform" />
+                                                    <TextBlock Text="{x:Static themes:IconGlyphs.Note}" Style="{StaticResource GlyphBase}" Foreground="White" FontSize="14" />
                                                 </Border>
 
                                                 <!-- FreeText -->
@@ -1843,21 +1845,21 @@
                                         <ContextMenu>
                                             <MenuItem Header="_Copy Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}">
                                                 <MenuItem.Icon>
-                                                    <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                    <TextBlock Text="{x:Static themes:IconGlyphs.Copy}" Style="{StaticResource MenuGlyph}" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                             <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}">
                                                 <MenuItem.Icon>
-                                                    <Path Data="{StaticResource IconHighlight}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                    <TextBlock Text="{x:Static themes:IconGlyphs.Highlight}" Style="{StaticResource MenuGlyph}" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
                                             <Separator />
                                             <MenuItem Header="Select _All Text on Page" Command="{Binding SelectAllTextCommand}" InputGestureText="Ctrl+A">
                                                 <MenuItem.Icon>
-                                                    <Path Data="{StaticResource IconSelectAll}" Fill="{DynamicResource TextPrimaryBrush}" Width="14" Height="14" Stretch="Uniform" />
+                                                    <TextBlock Text="{x:Static themes:IconGlyphs.SelectAll}" Style="{StaticResource MenuGlyph}" />
                                                 </MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}" />
+                                            <MenuItem Header="_Deselect All" Command="{Binding ClearSelectionCommand}" InputGestureText="Esc" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Deselect}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                                         </ContextMenu>
                                     </Canvas.ContextMenu>
                                 </Canvas>

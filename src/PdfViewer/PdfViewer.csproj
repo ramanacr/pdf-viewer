@@ -23,6 +23,18 @@
     <ApplicationIcon>assets\app_icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!--
+    The vector engine is the only renderer the published app has (M9). PDFium can still render
+    whole pages (the PDFium engine mode, the oracle tests and developers compare with) in builds
+    made with PdfiumRenderer=true, the default for builds and tests; scripts/build_publish.ps1
+    publishes with -p:PdfiumRenderer=false. PDFium stays referenced for the services not yet moved
+    to the engine (text, annotations, saving).
+  -->
+  <PropertyGroup>
+    <PdfiumRenderer Condition="'$(PdfiumRenderer)' == ''">true</PdfiumRenderer>
+    <DefineConstants Condition="'$(PdfiumRenderer)' == 'true'">$(DefineConstants);PDFIUM_RENDERER</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="PdfViewer.Tests" />
   </ItemGroup>

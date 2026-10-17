@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using PdfEngine.Vector.Editing;
+using PdfViewer.Themes;
 using PdfViewer.ViewModels;
 
 namespace PdfViewer.Views;
@@ -167,24 +168,24 @@ public sealed class ContentEditLayer : Canvas
     private ContextMenu MenuFor(ContentEditItem item)
     {
         var menu = new ContextMenu();
-        void Add(string header, Action action)
+        void Add(string header, string glyph, Action action, bool mirrored = false)
         {
-            var mi = new MenuItem { Header = header };
+            var mi = new MenuItem { Header = header, Icon = IconGlyphs.CreateMenuIcon(glyph, mirrored) };
             mi.Click += (_, _) => action();
             menu.Items.Add(mi);
         }
         if (item.Kind == ContentEditKind.Text)
         {
-            Add("_Edit Text", () => BeginEdit(item));
+            Add("_Edit Text", IconGlyphs.EditContent, () => BeginEdit(item));
         }
         else
         {
-            Add("_Replace Image...", () => _ = _owner?.ReplaceImageAsync(item));
-            Add("Rotate _Clockwise", () => _ = _owner?.RotateEditItemAsync(item, 90));
-            Add("Rotate C_ounterclockwise", () => _ = _owner?.RotateEditItemAsync(item, -90));
+            Add("_Replace Image...", IconGlyphs.AddImage, () => _ = _owner?.ReplaceImageAsync(item));
+            Add("Rotate _Clockwise", IconGlyphs.Rotate, () => _ = _owner?.RotateEditItemAsync(item, 90));
+            Add("Rotate C_ounterclockwise", IconGlyphs.Rotate, () => _ = _owner?.RotateEditItemAsync(item, -90), mirrored: true);
         }
         menu.Items.Add(new Separator());
-        Add("_Delete", () => _ = _owner?.DeleteEditItemAsync(item));
+        Add("_Delete", IconGlyphs.Delete, () => _ = _owner?.DeleteEditItemAsync(item));
         menu.Opened += (_, _) => { if (_owner != null) _owner.SelectedEditItem = item; };
         return menu;
     }

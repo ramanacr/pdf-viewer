@@ -47,7 +47,7 @@ public enum PrintMethod
 {
     /// <summary>Direct2D's print control: pages as vectors (some pages may be images).</summary>
     Vector,
-    /// <summary>PDFium page images through WPF's XPS writer.</summary>
+    /// <summary>Page images through WPF's XPS writer.</summary>
     Image,
 }
 
@@ -58,13 +58,13 @@ public readonly record struct PrintProgress(int Done, int Total, PrintMethod Met
 /// <summary>
 /// Prints a document the way the screen draws it: every page the vector engine renders is replayed
 /// by the Direct2D renderer into Direct2D's print control, so text and paths reach the printer as
-/// themselves, with fallback regions as PDFium pixels at print resolution. The pages go out on a
-/// background thread; the caller only waits.
+/// themselves; content the engine cannot reproduce exactly prints as the engine draws it. The pages
+/// go out on a background thread; the caller only waits.
 /// </summary>
 /// <remarks>
-/// PDFium page images remain the path for documents that allow only low-quality printing (150 dpi,
-/// ISO 32000-2 Table 22 bit 12), for "Print as image", for pages the vector engine gives to PDFium
-/// whole, and for printers the print control cannot drive.
+/// Page images, drawn by the same renderer as the screen, remain the path for documents that allow
+/// only low-quality printing (150 dpi, ISO 32000-2 Table 22 bit 12), for "Print as image", for
+/// pages that fail to print as vectors, and for printers the print control cannot drive.
 /// </remarks>
 public static class DocumentPrinter
 {
@@ -157,12 +157,12 @@ public static class DocumentPrinter
         return await PrintImagesAsync(service, request, sheetWidth, sheetHeight, printable, progress, ct);
     }
 
-    /// <summary>PDFium page images through WPF's XPS writer (asynchronous, cancellable).</summary>
+    /// <summary>Page images (the vector engine's raster) through WPF's XPS writer (asynchronous, cancellable).</summary>
     private static Task<PrintOutcome> PrintImagesAsync(IPdfDocumentService service, PrintRequest request,
         double sheetWidth, double sheetHeight, PrintRect printable, IProgress<PrintProgress>? progress, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var paginator = new PdfiumPdfPaginator(service, request.Pages, sheetWidth, sheetHeight, printable, request.Scaling, request.ScalePercent, request.Rotation);
+        var paginator = new PageImagePaginator(service, request.Pages, sheetWidth, sheetHeight, printable, request.Scaling, request.ScalePercent, request.Rotation);
         var writer = PrintQueue.CreateXpsDocumentWriter(request.Queue);
         var done = new TaskCompletionSource<PrintOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         var registration = ct.Register(() => writer.CancelAsync());
@@ -273,7 +273,7 @@ public static class DocumentPrinter
             }
         }
 
-        /// <summary>How the page was added, or null when it must go to PDFium instead.</summary>
+        /// <summary>How the page was added, or null when it is printed as an image instead.</summary>
         private PrintedPageKind? TryAddVectorPage(Direct2DPrintJob job, HybridVectorDocumentService hybrid, PdfEngine.Vector.IPdfDisplayList list,
             PageRotation rotation, CancellationToken ct)
         {
@@ -282,20 +282,19 @@ public static class DocumentPrinter
             var destination = PrintLayout.Place(w, h, _printable, _request.Scaling, _request.ScalePercent);
             try
             {
-                return job.AddPageAsync(list, rotation, destination, _sheetWidth, _sheetHeight, hybrid.PrintFallbackProvider, ct).GetAwaiter().GetResult();
+                // No fallback provider: regions the engine cannot reproduce exactly print as it draws them.
+                return job.AddPageAsync(list, rotation, destination, _sheetWidth, _sheetHeight, null, ct).GetAwaiter().GetResult();
             }
             catch (Exception ex) when (ex is not OperationCanceledException && !hybrid.IsStrictVector)
             {
-                return null; // the page goes to PDFium, as it would on screen
+                return null; // the page prints as an image of the screen rendering
             }
         }
 
-        /// <summary>The page as a PDFium image at print resolution.</summary>
+        /// <summary>The page as an image at print resolution, drawn as on screen (the vector engine; PDFium only in PDFium mode).</summary>
         private void AddImagePage(Direct2DPrintJob job, int page)
         {
-            var bitmap = _service is HybridVectorDocumentService hybrid
-                ? hybrid.RenderPdfiumPage(page, PrintDpi, _request.Rotation)
-                : _service.RenderPage(page, PrintDpi, _request.Rotation);
+            var bitmap = _service.RenderPage(page, PrintDpi, _request.Rotation);
             if (bitmap == null)
                 throw new InvalidOperationException($"Page {page} could not be rendered for printing.");
             using var image = ToRenderedPage(bitmap, page);

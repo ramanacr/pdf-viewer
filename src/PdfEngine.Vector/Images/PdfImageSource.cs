@@ -71,7 +71,10 @@ public sealed class PdfImageSource : IPdfImageSource
             throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "Image dimensions are invalid or exceed the pixel limit.");
 
         bool isMask = _resolver.Resolve(dict["ImageMask"]) is PdfBoolean { Value: true };
-        var decoded = _decoder.DecodeImageStream(_stream);
+        int components = isMask ? 1 : Math.Max(1, _colorSpace?.NumberOfComponents ?? 3);
+        int bits = isMask ? 1 : (int)Math.Clamp(dict.GetInteger("BitsPerComponent") ?? 8, 1, 16);
+        long expected = ((long)width * components * bits + 7) / 8 * height;
+        var decoded = _decoder.DecodeImageStream(_stream, expected);
         ct.ThrowIfCancellationRequested();
 
         byte[]? alpha = BuildAlpha(dict, width, height, ct);
@@ -96,8 +99,10 @@ public sealed class PdfImageSource : IPdfImageSource
             Func<byte[], int, int, int, byte[]>? map = mapped
                 ? (samples, components, w, h) =>
                 {
+                    // A JPEG whose components do not match its colour space (an /Indexed space over
+                    // an RGB JPEG) is shown in its own colours, as PDFium shows it.
                     if (components != Math.Max(1, _colorSpace!.NumberOfComponents))
-                        throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG components do not match the colour space.");
+                        return PdfColorConversion.DeviceSamplesToBgra(samples, components, w * h);
                     return DecodeColor(dict, samples, w, h, CancellationToken.None, bitsPerComponent: 8);
                 }
                 : null;

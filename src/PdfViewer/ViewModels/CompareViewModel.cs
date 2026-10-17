@@ -16,10 +16,10 @@ namespace PdfViewer.ViewModels;
 /// <summary>A highlighted word range on a compared page.</summary>
 public sealed record CompareHighlight(Rect Bounds, ChangeKind Kind, int ChangeIndex);
 
-/// <summary>One page of one side of the comparison: its image (rendered on demand) and its highlights.</summary>
+/// <summary>One page of one side of the comparison: its image (rendered on demand by the vector engine) and its highlights.</summary>
 public sealed partial class ComparePageViewModel : ObservableObject
 {
-    private readonly PdfiumDocumentService _service;
+    private readonly IPdfDocumentService _service;
     private int _rendering;
 
     public int PageNumber { get; }
@@ -43,7 +43,7 @@ public sealed partial class ComparePageViewModel : ObservableObject
     /// <summary>The page's /Rotate: highlights come normalized to the unrotated page and are shown on the displayed one.</summary>
     public int Rotation { get; }
 
-    public ComparePageViewModel(PdfiumDocumentService service, int pageNumber, double widthPoints, double heightPoints, int rotation = 0)
+    public ComparePageViewModel(IPdfDocumentService service, int pageNumber, double widthPoints, double heightPoints, int rotation = 0)
     {
         _service = service;
         Rotation = ((rotation % 360) + 360) % 360;
@@ -58,7 +58,7 @@ public sealed partial class ComparePageViewModel : ObservableObject
         if (Image != null || Interlocked.Exchange(ref _rendering, 1) == 1) return;
         try
         {
-            var bmp = await Task.Run(() => _service.RenderPage(PageNumber, dpi));
+            var bmp = await _service.RenderPageAsync(PageNumber, dpi);
             if (bmp != null && bmp.CanFreeze && !bmp.IsFrozen) bmp.Freeze();
             Image = bmp;
         }
@@ -99,7 +99,8 @@ public sealed record CompareChangeItem(int Index, TextChange Change)
 /// </summary>
 public sealed partial class CompareViewModel : ObservableObject, IDisposable
 {
-    private PdfiumDocumentService? _old, _new;
+    // The pages are drawn by the viewer's own renderer (the vector engine), like the main window's.
+    private IPdfDocumentService? _old, _new;
 
     public string OldName { get; private set; } = string.Empty;
     public string NewName { get; private set; } = string.Empty;
@@ -136,8 +137,8 @@ public sealed partial class CompareViewModel : ObservableObject, IDisposable
         try
         {
             _old?.Dispose(); _new?.Dispose();
-            _old = new PdfiumDocumentService();
-            _new = new PdfiumDocumentService();
+            _old = PdfDocumentServiceFactory.CreateService();
+            _new = PdfDocumentServiceFactory.CreateService();
             await _old.OpenDocumentAsync(oldPath, oldPassword, ct);
             await _new.OpenDocumentAsync(newPath, newPassword, ct);
             await CompareAsync(ct);
@@ -198,7 +199,7 @@ public sealed partial class CompareViewModel : ObservableObject, IDisposable
             : $"{changes.Count} difference(s): {replaced} changed, {added} added, {removed} removed.";
     }
 
-    private static void BuildPages(PdfiumDocumentService service, ObservableCollection<ComparePageViewModel> into)
+    private static void BuildPages(IPdfDocumentService service, ObservableCollection<ComparePageViewModel> into)
     {
         into.Clear();
         for (int p = 1; p <= service.PageCount; p++)

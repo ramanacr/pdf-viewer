@@ -39,6 +39,12 @@ public sealed record PdfVectorSurfaceResult(
 /// </summary>
 public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 {
+    /// <summary>
+    /// Outline fallback regions that no provider drew (strict vector mode). Off, a region shows
+    /// what the engine draws of it by itself, with nothing laid over it.
+    /// </summary>
+    public bool OutlineUnsupportedRegions { get; set; }
+
     private readonly StaRenderThread _sta = new("PdfVectorRender");
     private readonly WpfFontCache _fonts = new();
     private readonly WpfImageCache _images;
@@ -180,7 +186,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
         }
     }
 
-    private static (RenderedPage Page, int Composited) Rasterize(
+    private (RenderedPage Page, int Composited) Rasterize(
         IPdfDisplayList list,
         WpfDisplayListCompiler.CompiledPage compiled,
         RenderGeometry geometry,
@@ -199,7 +205,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             dc.PushTransform(new MatrixTransform(geometry.PageToPixels()));
             dc.DrawDrawing(compiled.Drawing);
 
-            composited = DrawOverlays(dc, crop, overlays);
+            composited = DrawOverlays(dc, crop, overlays, OutlineUnsupportedRegions);
 
             dc.Pop();
         }
@@ -218,7 +224,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
     /// (every object in it), so nothing vector may paint over them. Coordinates are unrotated
     /// top-left page points.
     /// </summary>
-    private static int DrawOverlays(DrawingContext dc, PdfRect crop, IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert = false)
+    private static int DrawOverlays(DrawingContext dc, PdfRect crop, IReadOnlyList<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool outline, bool invert = false)
     {
         int composited = 0;
         foreach (var (token, pixels) in overlays)
@@ -241,7 +247,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                 dc.Pop();
                 composited++;
             }
-            else
+            else if (outline)
             {
                 // Strict vector mode: make the unsupported region visible, never silently wrong.
                 var fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 165, 0));
@@ -301,7 +307,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
                     dc.DrawRectangle(invertColors ? Brushes.Black : Brushes.White, null, new Rect(0, 0, w, h));
                     dc.PushTransform(new MatrixTransform(RotationMatrix(total, crop.Width, crop.Height)));
                     dc.DrawDrawing(compiled.Drawing);
-                    composited = DrawOverlays(dc, crop, overlays, invertColors);
+                    composited = DrawOverlays(dc, crop, overlays, OutlineUnsupportedRegions, invertColors);
                     dc.Pop();
                 }
                 // Pin the bounds: an empty page must still measure as the full page.

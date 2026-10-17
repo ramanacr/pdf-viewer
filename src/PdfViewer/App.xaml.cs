@@ -20,6 +20,7 @@ public partial class App : Application
         Probe?.Mark("appStartup");
 
         base.OnStartup(e);
+        ThemeManager.FollowHighContrast();
 
         if (Probe != null)
         {

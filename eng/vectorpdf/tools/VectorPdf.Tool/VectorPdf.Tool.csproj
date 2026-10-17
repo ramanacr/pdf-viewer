@@ -21,4 +21,9 @@
     <ProjectReference Include="..\..\..\..\src\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The same PDFium oracle the native document service tests use. -->
+    <Compile Include="..\..\..\..\tests\PdfEngine.Vector.Tests\Oracle\PdfiumOracle.cs" Link="Oracle\PdfiumOracle.cs" />
+  </ItemGroup>
+
 </Project>
