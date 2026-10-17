@@ -1,6 +1,7 @@
 <Window x:Class="PdfViewer.Views.Dialogs.PrivacyDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:themes="clr-namespace:PdfViewer.Themes"
         Title="Privacy &amp; Safety"
         Icon="pack://application:,,,/PdfViewer;component/assets/app_icon.png"
         Height="560" Width="600"
@@ -44,8 +45,8 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
-                                           Text="&#xE73E;"
-                                           FontFamily="Segoe MDL2 Assets"
+                                           Text="{x:Static themes:IconGlyphs.Check}"
+                                           FontFamily="{x:Static themes:IconGlyphs.IconFont}"
                                            FontSize="13"
                                            Margin="0,2,10,0"
                                            Foreground="#2E9E5B" />
