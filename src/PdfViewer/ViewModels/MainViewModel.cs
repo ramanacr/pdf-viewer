@@ -2670,9 +2670,15 @@ public partial class MainViewModel : ObservableObject
         StatusText = "Writing organized document...";
         try
         {
-            using (var engine = new PdfEngine.Pdfium.PdfiumEngine())
-            await using (var doc = await engine.OpenDocumentAsync(sourcePath))
+            if (UseNativeDocumentServices)
             {
+                await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
+                await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().ArrangePagesAsync(doc, arrangement, target.FileName);
+            }
+            else
+            {
+                using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+                await using var doc = await engine.OpenDocumentAsync(sourcePath);
                 await engine.PageOrganizer.ArrangePagesAsync(doc, arrangement, target.FileName);
             }
 
@@ -2709,10 +2715,22 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(sourcePath);
-
-            var service = new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService();
+            PdfEngine.Pdfium.PdfiumEngine? engine = null;
+            PdfEngine.Documents.IPdfDocument doc;
+            PdfEngine.Safety.IPdfAttachmentService service;
+            if (UseNativeDocumentServices)
+            {
+                doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
+                service = new PdfEngine.Vector.Services.PdfNativeAttachmentService();
+            }
+            else
+            {
+                engine = new PdfEngine.Pdfium.PdfiumEngine();
+                doc = await engine.OpenDocumentAsync(sourcePath);
+                service = new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService();
+            }
+            using var engineScope = engine;
+            await using var docScope = doc;
             var files = await service.GetAttachmentsAsync(doc);
 
             if (files.Count == 0)
@@ -2968,8 +2986,15 @@ public partial class MainViewModel : ObservableObject
         StatusText = $"Merging {picker.FileNames.Length} documents...";
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await engine.PageOrganizer.MergeDocumentsAsync(picker.FileNames, target.FileName);
+            if (UseNativeDocumentServices)
+            {
+                await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().MergeDocumentsAsync(picker.FileNames, target.FileName);
+            }
+            else
+            {
+                using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+                await engine.PageOrganizer.MergeDocumentsAsync(picker.FileNames, target.FileName);
+            }
 
             StatusText = $"Merged {picker.FileNames.Length} documents into {Path.GetFileName(target.FileName)}.";
             ShowAlert($"Merged {picker.FileNames.Length} documents into:\n{target.FileName}",
@@ -3000,12 +3025,13 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
+            var (organizer, doc, engine) = await OpenForOrganizingAsync(_docService.CurrentFilePath);
+            using var engineScope = engine;
+            await using var docScope = doc;
 
             // One page per output file.
             var perSplit = Enumerable.Repeat(1, doc.PageCount).ToList();
-            await engine.PageOrganizer.SplitDocumentAsync(doc, perSplit, folder.FolderName, prefix);
+            await organizer.SplitDocumentAsync(doc, perSplit, folder.FolderName, prefix);
 
             StatusText = $"Split into {doc.PageCount} files in {folder.FolderName}.";
             ShowAlert($"Split into {doc.PageCount} single-page documents in:\n{folder.FolderName}",
@@ -3016,6 +3042,29 @@ public partial class MainViewModel : ObservableObject
             StatusText = $"Split failed: {ex.Message}";
             ShowAlert($"Could not split the document:\n\n{ex.Message}", "Split PDF",
                 MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>
+    /// Page organisation, merging, splitting and embedded files use the vector engine's native
+    /// document services (M9) unless the PDFium engine is selected.
+    /// </summary>
+    private bool UseNativeDocumentServices => _docService.EngineMode != PdfEngineMode.Pdfium;
+
+    /// <summary>The page organizer for the selected engine and the document opened in it (the PDFium engine is null for native).</summary>
+    private async Task<(PdfEngine.Pages.IPdfPageOrganizerService Organizer, PdfEngine.Documents.IPdfDocument Document, PdfEngine.Pdfium.PdfiumEngine? Engine)> OpenForOrganizingAsync(string path)
+    {
+        if (UseNativeDocumentServices)
+            return (new PdfEngine.Vector.Services.PdfNativePageOrganizerService(), await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(path, _openPassword), null);
+        var engine = new PdfEngine.Pdfium.PdfiumEngine();
+        try
+        {
+            return (engine.PageOrganizer, await engine.OpenDocumentAsync(path), engine);
+        }
+        catch
+        {
+            engine.Dispose();
+            throw;
         }
     }
 
@@ -3040,9 +3089,10 @@ public partial class MainViewModel : ObservableObject
         StatusText = $"Extracting page {pageNumber}...";
         try
         {
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
-            await engine.PageOrganizer.ExtractPagesAsync(doc, new[] { pageNumber }, target.FileName);
+            var (organizer, doc, engine) = await OpenForOrganizingAsync(_docService.CurrentFilePath);
+            using var engineScope = engine;
+            await using var docScope = doc;
+            await organizer.ExtractPagesAsync(doc, new[] { pageNumber }, target.FileName);
 
             StatusText = $"Page {pageNumber} saved to {Path.GetFileName(target.FileName)}.";
             ShowAlert($"Page {pageNumber} saved to:\n{target.FileName}", "Extract Page",

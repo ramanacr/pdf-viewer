@@ -72,6 +72,15 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     private PdfEngineMode _mode;
     private bool _disposed;
 
+    /// <summary>Document information, bookmarks and annotations without PDFium (M9).</summary>
+    private readonly NativeDocumentServices _native = new();
+
+    /// <summary>
+    /// The vector parse that serves the document-level services in Auto and Vector modes; null in
+    /// PDFium mode or when the vector core could not open the file (PDFium then serves them).
+    /// </summary>
+    private PdfVectorDocument? NativeDocument => _mode != PdfEngineMode.Pdfium ? _vectorDoc : null;
+
     public PdfEngineMode EngineMode
     {
         get => _mode;
@@ -306,7 +315,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             return meta; // opened lazily if the user later switches to Auto/Vector
 
         await OpenVectorDocumentAsync(filePath, ct).ConfigureAwait(false);
-        return meta;
+        return NativeDocument is { } native ? NativeDocumentServices.Metadata(native, filePath) : meta;
     }
 
     public bool IsDecryptedCopy { get; private set; }
@@ -343,7 +352,9 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public PdfEngine.Documents.PdfDocumentPermissions Permissions =>
         _vectorDoc?.Security is { } security
             ? PdfEngine.Documents.PdfDocumentPermissions.FromFlags(security.Permissions, security.Revision, security.IsOwner)
-            : IsDecryptedCopy ? PdfEngine.Documents.PdfDocumentPermissions.Owner : _pdfiumService.Permissions;
+            : IsDecryptedCopy ? PdfEngine.Documents.PdfDocumentPermissions.Owner
+            : _vectorDoc != null ? PdfEngine.Documents.PdfDocumentPermissions.Unencrypted
+            : _pdfiumService.Permissions;
 
     private async Task<DocumentMetadata> OpenWithVectorSecurityAsync(string filePath, string? password, CancellationToken ct)
     {
@@ -376,7 +387,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _vectorDoc = vector;
         _vectorOpenAttempted = true;
         IsDecryptedCopy = true;
-        return meta;
+        return NativeDocument is { } native ? NativeDocumentServices.Metadata(native, filePath) : meta;
     }
 
     /// <summary>Opens the vector document lazily when the file was opened in PDFium mode and the engine changed since.</summary>
@@ -434,7 +445,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _pdfiumService.CloseDocument();
     }
 
-    public DocumentMetadata? GetMetadata() => _pdfiumService.GetMetadata();
+    public DocumentMetadata? GetMetadata() =>
+        NativeDocument is { } native ? NativeDocumentServices.Metadata(native, CurrentFilePath) : _pdfiumService.GetMetadata();
 
     public (double Width, double Height) GetPageDimensions(int pageNumber)
     {
@@ -743,41 +755,18 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public ObservableCollection<BookmarkItem> ExtractBookmarks()
     {
-        if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium)
+        if (NativeDocument is { } native)
         {
             try
             {
-                var vectorBookmarks = _vectorDoc.GetBookmarksAsync().GetAwaiter().GetResult();
-                if (vectorBookmarks.Count > 0)
-                {
-                    var col = new ObservableCollection<BookmarkItem>();
-                    foreach (var b in vectorBookmarks)
-                    {
-                        col.Add(ConvertBookmark(b));
-                    }
-                    return col;
-                }
+                return NativeDocumentServices.Bookmarks(native);
             }
-            catch
+            catch (Exception ex) when (ex is PdfVectorException or InvalidOperationException)
             {
-                // Fallback to PDFium
+                // A damaged outline: PDFium reads what it can of it.
             }
         }
         return _pdfiumService.ExtractBookmarks();
-    }
-
-    private static BookmarkItem ConvertBookmark(PdfEngine.Documents.BookmarkItem item)
-    {
-        var model = new BookmarkItem
-        {
-            Title = item.Title,
-            TargetPageNumber = item.TargetPageNumber
-        };
-        foreach (var child in item.Children)
-        {
-            model.Children.Add(ConvertBookmark(child));
-        }
-        return model;
     }
 
     public Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default) =>
@@ -976,15 +965,52 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _pdfiumService.RenderPage(pageNumber, dpi, rotationAngle);
 
     public List<AnnotationModel> LoadExistingAnnotations() =>
-        _pdfiumService.LoadExistingAnnotations();
+        NativeDocument is { } native ? _native.Load(native) : _pdfiumService.LoadExistingAnnotations();
 
-    public Task SaveAnnotatedDocumentAsync(
+    /// <summary>
+    /// Saves with the native annotation services in Auto and Vector modes: the latest revision
+    /// in memory (form fills included) with exactly <paramref name="annotations"/>, written to a
+    /// new file. Never over the original.
+    /// </summary>
+    public async Task SaveAnnotatedDocumentAsync(
         string targetPath,
         AnnotationSaveMode mode,
         IEnumerable<AnnotationModel> annotations,
         string? originalPath = null,
-        CancellationToken ct = default) =>
-        _pdfiumService.SaveAnnotatedDocumentAsync(targetPath, mode, annotations, originalPath, ct);
+        CancellationToken ct = default)
+    {
+        if (NativeDocument is not { } native || CurrentBytes is not { } bytes)
+        {
+            await _pdfiumService.SaveAnnotatedDocumentAsync(targetPath, mode, annotations, originalPath, ct).ConfigureAwait(false);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(targetPath))
+            throw new ArgumentException("Target file path cannot be empty.", nameof(targetPath));
+        if (!string.IsNullOrEmpty(originalPath) &&
+            string.Equals(System.IO.Path.GetFullPath(targetPath), System.IO.Path.GetFullPath(originalPath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Saving directly over the original source file is prohibited. Please specify a new file name or directory.");
+
+        var list = annotations.ToList();
+        if (mode == AnnotationSaveMode.ExportXfdf)
+        {
+            var (sizes, origins) = NativeDocumentServices.PageFrames(native, list.Select(a => a.PageNumber));
+            await Task.Run(() => PdfiumDocumentService.ExportAnnotationsToXfdf(targetPath, list, sizes, origins), ct).ConfigureAwait(false);
+            return;
+        }
+
+        byte[] output = await Task.Run(async () =>
+        {
+            ct.ThrowIfCancellationRequested();
+            // The revision the bytes hold (a decrypted copy has no password); its object numbers are the loaded ones.
+            using var editing = await PdfVectorDocument.OpenAsync(bytes, CurrentFilePath, cancellationToken: ct,
+                password: IsDecryptedCopy ? null : _password).ConfigureAwait(false);
+            return _native.Save(editing, bytes, list, flatten: mode == AnnotationSaveMode.Flattened);
+        }, ct).ConfigureAwait(false);
+
+        string? directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(targetPath));
+        if (!string.IsNullOrEmpty(directory)) System.IO.Directory.CreateDirectory(directory);
+        await System.IO.File.WriteAllBytesAsync(targetPath, output, ct).ConfigureAwait(false);
+    }
 
     public void Dispose()
     {

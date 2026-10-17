@@ -1245,6 +1245,12 @@ public class PdfiumDocumentService : IPdfDocumentService
                         // fully transparent annotation opaque, and saving wrote that back.
                         opacity = Math.Clamp(a / 255.0, 0.0, 1.0);
                     }
+                    else if (PdfiumNativeBridge.FPDFAnnot_GetNumberValue(annot, "CA", out float ca) != 0)
+                    {
+                        // PDFium reports no colour once the annotation has an appearance stream (every
+                        // annotation the native save writes, and every one Acrobat writes); /CA still holds.
+                        opacity = Math.Clamp(ca, 0.0, 1.0);
+                    }
 
                     string contents = ReadAnnotString(annot, "Contents");
                     string author = ReadAnnotString(annot, "T");

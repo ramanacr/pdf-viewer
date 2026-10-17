@@ -337,9 +337,17 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
   - Tools > PDF/A checks against a chosen part and level, listing each rule broken, and saves a converted copy with the changes made and anything left over; the copy can be opened.
   - The status bar shows the PDF/A claim of an opened document.
 
+### Native document services (M9)
+The document-level services no longer need PDFium (`PdfEngine.Vector/Services`). In Auto and Vector modes the viewer uses them for properties, bookmarks, permissions, annotations, page organisation, merging, splitting and embedded files; PDFium mode keeps the PDFium path.
+- **Reading:** document properties as FPDF_GetMetaText gives them (PDFDocEncoding, UTF-16 and UTF-8 text strings, dates), the header version, the security revision and /P as FPDF_GetDocPermissions reports it, and every page box. The outline and links resolve explicit, named (name tree and catalog /Dests) and go-to destinations, URI actions with /URI /Base, and remote and launch file names, with PDFium's rules for malformed entries. Embedded files are listed from the name tree and from file attachment annotations; a file shown both ways is one file.
+- **Annotations:** every type is read with its properties: subtype, rectangle, colours, opacity, contents, author, subject, unique name, dates, flags, border, ink, quadrilaterals, line, vertices, line endings, icon, free text appearance, pop-up, and replies. They are created, changed, deleted (with their pop-ups and, optionally, replies) and flattened (FPDFPage_Flatten: the normal appearance drawn into the page, links and hidden annotations kept) as incremental updates. Encrypted documents get encrypted updates. New and changed annotations get appearance streams from `PdfAnnotationAppearances`.
+- **Viewer saving:** annotations the user did not touch are kept as they are, with their appearance, pop-up, replies and rich text. Changed ones keep what the viewer does not model. A signed document gets an incremental update; any other is written whole, so deleted comments do not stay in an earlier revision. Password-protected documents now save their annotations (the PDFium path reopened the copy without the password). PDFium mode now reads /CA when PDFium reports no colour (any annotation with an appearance stream).
+- **Pages:** rotate, delete and insert blank pages in place as incremental updates; insert pages of another document (FPDF_ImportPages); extract, arrange (reorder, repeat, rotate), split and merge into new files (FPDF_CreateNewDocument). Each page takes its inherited attributes and what it uses, copied once per source. Fonts, images and other resources identical across sources are written once. Links and outline items keep working when their page is in the result: named destinations become explicit there, so no name tree is carried. Those that lead to pages left out are dropped. Merges get one outline item per source. Form fields are kept with only the widgets on the pages taken. The structure tree, document JavaScript, the open action and signature values are not carried.
+- **Save as copy:** incremental (the current revision as it is) or a full rewrite that drops unreachable objects and keeps the document's encryption.
+
 ### Verification & tooling
 - `InterpreterCoverageTests` (fail-first fixtures per gap), `DifferentialRenderingTests` (PDFium oracle, perceptual budget), `FuzzRegressionTests` (mutation fuzzing, typed-errors-only; found and fixed two untyped escapes), `HybridVectorServiceTests`, plus the parallel workstreams' stream/function/colour/font suites.
-- `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report).
+- `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report); `docservices` compares the native document services with PDFium file by file (texts by hash only) and round-trips page edits and annotations. It shares `tests/PdfEngine.Vector.Tests/Oracle/PdfiumOracle.cs` with the tests.
 - CI runs the vector suite (2 000 fuzz iterations per PR, 100 000 nightly), the corpus report and the benchmark.
 
 ---
@@ -364,6 +372,10 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 | Corpus: documents open (2 913 files) | PDFium 2 913; vector **2 913** (the 4 encrypted files now open with the Standard security handler and render fully vector, mean diff ≤ 0.29/255); 0 untyped errors | `eng/vectorpdf/baseline-corpus-summary.json` |
 | Encryption vs PDFium | RC4 40/128, AES-128, AES-256 (R5, R6), user/owner/empty passwords: decrypted renders equal the unencrypted document and match PDFium | `EncryptionTests` (33), `HybridVectorServiceTests` |
 | Certificate encryption and permissions | s4 RC4, s5 AES-128/256, multiple recipients, SKI/OAEP: only recipients open, renders equal the unencrypted document, decrypted copy opens in PDFium; Table 22 rules enforced in the viewer | `EncryptionTests`, `SecuredDocumentTests` (8) |
+| Native document services vs PDFium (3 197 corpus files, all open in both) | page count, sizes and rotation 100 % (21 158 pages); outline 100 % (18 329 items); links 100 % (3 719); annotations 100 % (4 105: subtype, rectangle, contents); metadata 99.97 % (1 file, whose /Title is a stream); embedded files 99.56 % (14 files differ, each where the file's own /CheckSum confirms our decoded data and PDFium reports raw bytes or fails) | `vectorpdf docservices`, `NativeDocumentServicesTests` (25) |
+| Native round trip: rotate + delete + insert (639 sampled files) | 639 / 639 open in both engines with the expected pages; every checked page renders as its source page (PDFium mean diff 0, vector engine ≤ 1/255) | `vectorpdf docservices --roundtrip 5` |
+| Native annotations on corpus files (639 files) | a highlight and a square added to page 1: PDFium lists both with their rectangles and contents after the page's own; after flattening, neither remains an annotation | same |
+| Viewer annotation saves through the native services | every existing annotation round-trip test, now written natively and read back by the PDFium service; PDFium-written annotations load identically; unchanged foreign annotations keep pop-up, unique name and rich text | `AnnotationFidelityTests`, `NativeDocumentServicesViewerTests` (13) |
 | Decrypted-copy writer round trip | 2 913 / 2 913 corpus files: same page count, first page mean diff ≤ 1/255 under PDFium | one-off corpus run |
 | Corpus: pages with a display list or classified fallback | 100 % (3 003 pages sampled, ≤ 50 per file) | same |
 | Corpus: pages fully vector / vector page area | **95.0 % / 98.67 %** (before the font work: 89.2 % / 98.65 %, with embedded fonts silently substituted) | same |
@@ -417,7 +429,8 @@ Every item below has tests in `tests/PdfEngine.Vector.Tests` or `tests/PdfViewer
 - [x] Existing viewer workflows pass.
 
 ### PDFium-free release gate
-Not started by design (M9/M10). PDFium still ships and is required.
+In progress (M9/M10). PDFium still ships and is required.
+- [x] **M9: native document services.** Properties, page geometry, permissions, outline, links, embedded files, annotations (read, create, change, delete, flatten), page organisation (rotate, delete, insert, import, extract, arrange, split, merge) and save as copy run on the vector engine. In Auto and Vector modes the viewer uses them; PDFium mode and the fallback renderer still open the document in PDFium. Agreement with PDFium on the corpus is in §3. Left for M10: the viewer still opens every document in PDFium first (for the rendering, text and printing fallbacks), and Save Clean Copy, Document Safety, forms filling through `PdfiumFormService`, comparison and OCR still use the PDFium engine.
 
 ---
 
