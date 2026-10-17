@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Xml.Linq;
 using PdfEngine.Annotations;
 using PdfEngine.Documents;
@@ -13,7 +13,8 @@ namespace PdfEngine.Vector.Services;
 
 /// <summary>
 /// The document-level services of <see cref="PdfEngine.IPdfEngine"/> without PDFium: opening,
-/// annotations, page organisation, saving and embedded files, all on <see cref="PdfNativeDocument"/>.
+/// annotations, page organisation, saving, embedded files, forms, signatures, redaction, and the
+/// document safety inspector and sanitizer, all on <see cref="PdfNativeDocument"/>.
 /// </summary>
 public sealed class PdfNativeEngine
 {
@@ -23,6 +24,11 @@ public sealed class PdfNativeEngine
         PageOrganizer = new PdfNativePageOrganizerService();
         SaveService = new PdfNativeSaveService(renderer);
         AttachmentService = new PdfNativeAttachmentService();
+        FormService = new PdfNativeFormService();
+        SignatureService = new PdfNativeSignatureService();
+        RedactionService = new PdfNativeRedactionService();
+        SafetyInspector = new PdfNativeSafetyInspector();
+        Sanitizer = new PdfNativeSanitizer(SafetyInspector);
     }
 
     public string EngineName => "Vector engine (native document services)";
@@ -31,6 +37,11 @@ public sealed class PdfNativeEngine
     public PdfNativePageOrganizerService PageOrganizer { get; }
     public PdfNativeSaveService SaveService { get; }
     public PdfNativeAttachmentService AttachmentService { get; }
+    public PdfNativeFormService FormService { get; }
+    public PdfNativeSignatureService SignatureService { get; }
+    public PdfNativeRedactionService RedactionService { get; }
+    public PdfNativeSafetyInspector SafetyInspector { get; }
+    public PdfNativeSanitizer Sanitizer { get; }
 
     public async ValueTask<IPdfDocument> OpenDocumentAsync(string filePath, string? password = null, CancellationToken cancellationToken = default) =>
         await PdfNativeDocument.OpenAsync(filePath, password, cancellationToken).ConfigureAwait(false);

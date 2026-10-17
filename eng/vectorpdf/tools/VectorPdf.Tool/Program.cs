@@ -20,6 +20,7 @@ namespace VectorPdf.Tool;
 /// vectorpdf corpus &lt;dir&gt; [--out file.jsonl] [--diff]   per-file open/fallback/diff report
 /// vectorpdf docx &lt;dir&gt; [--limit N] [--keep dir]   export to Word: package check and text coverage
 /// vectorpdf docservices &lt;dir&gt; [--limit N] [--roundtrip N]   native document services against PDFium
+/// vectorpdf services &lt;dir&gt; [--limit N] [--clean N]   native forms, safety and clean copy against PDFium
 /// </summary>
 public static class Program
 {
@@ -49,6 +50,7 @@ public static class Program
             "fontdebug" => await FontDebug.RunAsync(args),
             "text" => await TextParity.RunAsync(args),
             "docservices" => await DocServicesSmoke.RunAsync(args),
+            "services" => await ServicesSmoke.RunAsync(args),
             _ => 2,
         };
     }

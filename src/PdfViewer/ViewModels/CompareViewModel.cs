@@ -163,20 +163,13 @@ public sealed partial class CompareViewModel : ObservableObject, IDisposable
 
     private async Task CompareAsync(CancellationToken ct)
     {
-        // The text compared is read natively (PdfVectorTextService); no PDFium text call.
-        using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+        // Both documents are opened and their text read by the engine; no PDFium.
         var text = new PdfEngine.Vector.Text.PdfVectorTextService();
-        var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, text);
+        var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(PdfViewer.Services.VectorPdfRenderer.Shared, text);
         IReadOnlyList<TextChange> changes;
-        await using (var a = await engine.OpenDocumentAsync(_oldPath!, _oldPassword, ct))
-        await using (var b = await engine.OpenDocumentAsync(_newPath!, _newPassword, ct))
-        using (var va = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(_oldPath!, cancellationToken: ct, password: _oldPassword))
-        using (var vb = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(_newPath!, cancellationToken: ct, password: _newPassword))
-        {
-            text.Attach(a, va);
-            text.Attach(b, vb);
+        using (var a = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(_oldPath!, cancellationToken: ct, password: _oldPassword))
+        using (var b = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(_newPath!, cancellationToken: ct, password: _newPassword))
             changes = await comparer.CompareTextAsync(a, b, IgnoreCase, ct);
-        }
 
         BuildPages(_old!, OldPages);
         BuildPages(_new!, NewPages);

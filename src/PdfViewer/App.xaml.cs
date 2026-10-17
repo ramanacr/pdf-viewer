@@ -30,8 +30,7 @@ public partial class App : Application
             SigningSettings.SetDirectoryForTests(Probe.SettingsDirectory);
         }
 
-        // Initialize PDFium engine
-        PdfiumNativeBridge.EnsureInitialized();
+        // PDFium is not initialised at startup: only PDFium mode (developer builds) loads it, on first use.
 
         if (Probe != null)
         {

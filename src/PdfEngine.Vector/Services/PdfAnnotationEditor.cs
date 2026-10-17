@@ -224,8 +224,9 @@ public sealed class PdfAnnotationEditor
     /// Draws the visible annotations of a page into its content and removes them (FPDFPage_Flatten
     /// for normal display). Links, hidden and no-view annotations, and annotations with no
     /// appearance the generator can draw stay as they are; pop-ups go with their parents.
+    /// <paramref name="widgetsOnly"/> flattens form field widgets and nothing else (a form flatten).
     /// </summary>
-    public int FlattenPage(int pageNumber)
+    public int FlattenPage(int pageNumber, bool widgetsOnly = false)
     {
         var page = State(pageNumber);
         var resources = _update.Resolve(PageAttribute(page, "Resources")) as PdfDictionary;
@@ -247,6 +248,7 @@ public sealed class PdfAnnotationEditor
             if (all[i] is not { } item || Resolved(item) is not { } d) continue;
             string? subtype = d.GetName("Subtype");
             if (subtype is "Popup" or "Link") continue;
+            if (widgetsOnly && subtype != "Widget") continue;
             long flags = d.GetInteger("F") ?? 0;
             if ((flags & (2 | 32)) != 0) continue; // Hidden, NoView
             if (PdfDocumentInfo.ReadRect(d["Rect"], _update.Resolver) is not { IsEmpty: false } rect) continue;
@@ -332,10 +334,10 @@ public sealed class PdfAnnotationEditor
     }
 
     /// <summary>Flattens every page; returns the number of annotations drawn into content.</summary>
-    public int FlattenAll()
+    public int FlattenAll(bool widgetsOnly = false)
     {
         int total = 0;
-        for (int p = 1; p <= _update.Document.PageCount; p++) total += FlattenPage(p);
+        for (int p = 1; p <= _update.Document.PageCount; p++) total += FlattenPage(p, widgetsOnly);
         return total;
     }
 

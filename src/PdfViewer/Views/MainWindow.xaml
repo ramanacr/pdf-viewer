@@ -351,7 +351,15 @@
                 <MenuItem Header="Fill _Form Fields..."
                           Command="{Binding EditFormFieldsCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Lists the document's form fields and writes edited values to a new document."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FillForm}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                          ToolTip="Lists the document's form fields and fills in the values you edit."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.FillForm}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Import Form Data..." Command="{Binding ImportFormDataCommand}" IsEnabled="{Binding HasForm}"
+                          ToolTip="Fills the form from an XFDF or FDF file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Open}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Export Form _Data..." Command="{Binding ExportFormDataCommand}" IsEnabled="{Binding HasForm}"
+                          ToolTip="Saves the form's values as an XFDF or FDF file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Export}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Reset Form" Command="{Binding ResetFormCommand}" IsEnabled="{Binding HasForm}"
+                          ToolTip="Clears every field back to its default value."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Flatten F_orm..." Command="{Binding FlattenFormCommand}" IsEnabled="{Binding HasForm}"
+                          ToolTip="Saves a copy with the fields drawn into the pages, no longer fillable."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SaveAs}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Compare With Document..."
                           Command="{Binding CompareWithDocumentCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
