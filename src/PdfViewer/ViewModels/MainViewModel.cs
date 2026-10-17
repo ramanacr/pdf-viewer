@@ -339,6 +339,9 @@ public partial class MainViewModel : ObservableObject
     /// <summary>True when genuine optical recognition is available on this machine.</summary>
     public bool IsOpticalRecognitionAvailable { get; }
 
+    /// <summary>Windows OCR over pages the vector engine draws; null when no recognizer is installed.</summary>
+    private readonly IOcrEngine? _opticalEngine;
+
     // Bindable licence state so the UI can disable or badge gated features rather than
     // offering them and failing at execution time.
     public bool IsRedactionAvailable => FeatureGate.IsFeatureEnabled(FeatureId.Redaction);
@@ -364,13 +367,15 @@ public partial class MainViewModel : ObservableObject
 
         // Compose text acquisition: embedded text layer first, real Windows OCR for pages
         // that have none. If the OCR runtime is missing, DefaultOcrEngine reports that
-        // honestly instead of returning an empty result that looks like a blank page.
+        // honestly instead of returning an empty result that looks like a blank page. The
+        // pages OCR reads are drawn by the vector engine, as on screen.
         var engine = new PdfEngine.Pdfium.PdfiumEngine();
         IOcrEngine? optical = null;
         if (WindowsOcrEngine.IsAvailable)
         {
-            optical = new WindowsOcrEngine(engine.Renderer);
+            optical = new WindowsOcrEngine(VectorPdfRenderer.Shared);
         }
+        _opticalEngine = optical;
         IsOpticalRecognitionAvailable = optical != null;
         OcrEngine = new DefaultOcrEngine(engine.TextService, optical);
 
@@ -811,6 +816,10 @@ public partial class MainViewModel : ObservableObject
     public bool IsAutoEngineMode => CurrentEngineMode == PdfEngineMode.Auto;
     public bool IsVectorEngineMode => CurrentEngineMode == PdfEngineMode.Vector;
     public bool IsPdfiumEngineMode => CurrentEngineMode == PdfEngineMode.Pdfium;
+
+    /// <summary>The PDFium engine choice is offered only by builds that have the PDFium renderer (developer and test builds).</summary>
+    public System.Windows.Visibility PdfiumEngineModeVisibility =>
+        PdfDocumentServiceFactory.IsPdfiumRendererAvailable ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
 
     [RelayCommand]
     public void SetEngineModeAuto() => CurrentEngineMode = PdfEngineMode.Auto;

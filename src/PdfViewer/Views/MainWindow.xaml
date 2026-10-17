@@ -262,21 +262,22 @@
                           ToolTip="Inverts the pages themselves for reading in the dark. Separate from the window theme." />
                 <Separator />
                 <MenuItem Header="Rendering _Engine" ToolTip="Select the active PDF rendering engine">
-                    <MenuItem Header="_Auto (Hybrid Vector + Fallback)"
+                    <MenuItem Header="_Auto (Direct2D, best effort)"
                               Command="{Binding SetEngineModeAutoCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsAutoEngineMode, Mode=OneWay}"
-                              ToolTip="DirectX vector rendering where supported, with seamless PDFium fallback." />
-                    <MenuItem Header="_Vector Only (Native DirectX/WPF)"
+                              ToolTip="Direct2D vector rendering; content the engine cannot reproduce exactly is drawn as well as it can be." />
+                    <MenuItem Header="_Vector Only (strict)"
                               Command="{Binding SetEngineModeVectorCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsVectorEngineMode, Mode=OneWay}"
-                              ToolTip="Force 100% native vector rendering." />
-                    <MenuItem Header="_PDFium Only (Google PDFium Rasterizer)"
+                              ToolTip="Strict vector rendering: content the engine cannot reproduce exactly is outlined." />
+                    <MenuItem Header="_PDFium Only (developer build)"
                               Command="{Binding SetEngineModePdfiumCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsPdfiumEngineMode, Mode=OneWay}"
-                              ToolTip="Force Google PDFium rasterizer for all pages." />
+                              Visibility="{Binding PdfiumEngineModeVisibility}"
+                              ToolTip="Renders every page with PDFium, the reference the vector engine is compared with. Not in published builds." />
                 </MenuItem>
             </MenuItem>
 

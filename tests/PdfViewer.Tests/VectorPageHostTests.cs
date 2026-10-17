@@ -120,7 +120,7 @@ public class VectorPageHostTests : IDisposable
     }
 
     [Fact]
-    public async Task RegionFallbackPage_IsStillALiveSurface()
+    public async Task PageWithApproximatedRegions_IsStillALiveSurface_DrawnByTheEngineAlone()
     {
         string path = Path.Combine(_dir, "showcase.pdf");
         TestPdfBuilder.CreateEngineShowcasePdf(path);
@@ -130,9 +130,13 @@ public class VectorPageHostTests : IDisposable
 
         await page.LoadImageAsync(renderer, 150, 0);
         Assert.IsType<DrawingImage>(page.PageSurface);
+        // The WPF drawing host cannot composite knockout groups: the engine draws them by its best
+        // effort; no other renderer is asked.
         var report = service.GetPageEngineReport(2)!;
-        Assert.Equal(PdfEngineMode.Hybrid, report.Engine);
+        Assert.Equal(PdfEngineMode.Vector, report.Engine);
+        Assert.False(report.IsFallback);
         Assert.Contains(report.FallbackReasons, r => r.Contains("TransparencyGroup"));
+        Assert.Contains("approximated", report.BadgeText);
     }
 
     [Fact]
@@ -151,6 +155,7 @@ public class VectorPageHostTests : IDisposable
 
         Assert.Null(page.VectorSurface);
         Assert.NotNull(page.RenderedImage);
+        Assert.Equal(PdfEngineMode.Vector, service.GetPageEngineReport(1)!.Engine); // a native bitmap
     }
 
     [Fact]

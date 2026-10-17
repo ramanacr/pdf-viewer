@@ -46,7 +46,8 @@ public partial class MainViewModel
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        var recognizer = OcrEngineOverride ?? (WindowsOcrEngine.IsAvailable ? OcrEngine : null);
+        // The pages are known to have no text, so they go straight to optical recognition.
+        var recognizer = OcrEngineOverride ?? _opticalEngine;
         if (recognizer == null)
         {
             ShowAlert("Windows text recognition is not installed. Add an OCR language in Windows Settings > Time & language > Language & region, then try again.",
@@ -74,8 +75,8 @@ public partial class MainViewModel
         try
         {
             byte[] bytes = _docService.CurrentBytes!;
-            using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            await using (var pdoc = await engine.OpenDocumentAsync(bytes, _openPassword, ct))
+            // The vector engine draws the pages the recognizer reads (the in-memory revision).
+            using (var pdoc = await PdfVectorDocument.OpenAsync(bytes, _docService.CurrentFilePath, password: _openPassword, cancellationToken: ct))
             {
                 for (int i = 0; i < scanned.Count; i++)
                 {
