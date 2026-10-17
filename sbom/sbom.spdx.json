@@ -3,13 +3,13 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "PdfViewer-3.4.0",
-  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/3.4.0/19007fd1-d980-4eaa-add0-98b05236ff6f",
+  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/3.4.0/0340c433-f1dd-45a6-a62e-1f95b178b3d2",
   "creationInfo": {
     "creators": [
-      "Tool: PDF-Viewer-SBOM-Generator-2.0.0",
+      "Tool: PDF-Viewer-SBOM-Generator-3.0.0",
       "Organization: PDF Viewer Project"
     ],
-    "created": "2026-09-27T06:32:10Z"
+    "created": "2026-10-17T19:56:25Z"
   },
   "packages": [
     {
@@ -21,7 +21,7 @@
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
       "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
-      "description": "Native Windows PDF Viewer powered by Google PDFium",
+      "description": "Native Windows PDF Viewer with its own PDF engine (PdfEngine.Vector)",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -42,15 +42,37 @@
       "description": "UI-neutral domain contracts, geometry, exception hierarchy, and abstractions for PDF processing"
     },
     {
-      "SPDXID": "SPDXRef-Package-PdfEngine-Pdfium",
-      "name": "PdfEngine.Pdfium",
+      "SPDXID": "SPDXRef-Package-PdfEngine-Vector",
+      "name": "PdfEngine.Vector",
       "versionInfo": "3.4.0",
-      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Pdfium",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Vector",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
       "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
-      "description": "Native Google PDFium safe interop engine and C ABI adapters"
+      "description": "The PDF engine: parsing, security, fonts, text, forms, annotations, signatures, redaction, saving and the vector display list"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-PdfEngine-Vector-Windows",
+      "name": "PdfEngine.Vector.Windows",
+      "versionInfo": "3.4.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Vector.Windows",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
+      "description": "WPF rendering of the engine's display lists"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-PdfEngine-Vector-Direct2D",
+      "name": "PdfEngine.Vector.Direct2D",
+      "versionInfo": "3.4.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Vector.Direct2D",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 PDF Viewer Project",
+      "description": "Direct2D/DirectWrite rendering and printing of the engine's display lists"
     },
     {
       "SPDXID": "SPDXRef-Package-PdfViewer-Core",
@@ -64,72 +86,15 @@
       "description": "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure"
     },
     {
-      "SPDXID": "SPDXRef-Package-Google-PDFium",
-      "name": "pdfium.dll",
-      "versionInfo": "154.0.8021.0",
-      "downloadLocation": "https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8021",
+      "SPDXID": "SPDXRef-Package-Adobe-cmap-resources",
+      "name": "cmap-resources",
+      "versionInfo": "f5cf3bca7fdfeaceb77aa82847e974f2306c20b4",
+      "downloadLocation": "https://github.com/adobe-type-tools/cmap-resources",
       "filesAnalyzed": false,
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
-      "copyrightText": "Copyright 2014 PDFium Authors. All rights reserved.",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "2A9031FA88F412147C3BC7115054550048C724DB6EA70298B6C6B0D13E513882"
-        }
-      ],
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:generic/google/pdfium@=x86_64&os=windows"
-        }
-      ]
-    },
-    {
-      "SPDXID": "SPDXRef-Package-FreeType",
-      "name": "FreeType",
-      "downloadLocation": "https://freetype.org/",
-      "filesAnalyzed": false,
-      "licenseConcluded": "FTL",
-      "licenseDeclared": "FTL",
-      "copyrightText": "Copyright 1996-2024 by David Turner, Robert Wilhelm, and Werner Lemberg"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-LibJpegTurbo",
-      "name": "libjpeg-turbo",
-      "downloadLocation": "https://libjpeg-turbo.org/",
-      "filesAnalyzed": false,
-      "licenseConcluded": "IJG AND BSD-3-Clause",
-      "licenseDeclared": "IJG AND BSD-3-Clause",
-      "copyrightText": "Copyright (C) 2009-2024 D. R. Commander. All Rights Reserved."
-    },
-    {
-      "SPDXID": "SPDXRef-Package-LibPng",
-      "name": "libpng",
-      "downloadLocation": "http://www.libpng.org/pub/png/libpng.html",
-      "filesAnalyzed": false,
-      "licenseConcluded": "libpng-2.0",
-      "licenseDeclared": "libpng-2.0",
-      "copyrightText": "Copyright (c) 1995-2024 The PNG Reference Library Authors"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-Zlib",
-      "name": "zlib",
-      "downloadLocation": "https://zlib.net/",
-      "filesAnalyzed": false,
-      "licenseConcluded": "Zlib",
-      "licenseDeclared": "Zlib",
-      "copyrightText": "Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-LittleCMS",
-      "name": "Little-CMS",
-      "downloadLocation": "https://www.littlecms.com/",
-      "filesAnalyzed": false,
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "copyrightText": "Copyright (c) 1998-2024 Marti Maria Saguer"
+      "copyrightText": "Copyright 1990-2023 Adobe. All rights reserved.",
+      "description": "Adobe predefined CJK CMaps (PredefinedCMaps.zip, embedded in PdfEngine.Vector)"
     },
     {
       "SPDXID": "SPDXRef-Package-NuGet-CommunityToolkit.Mvvm",
@@ -145,23 +110,6 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:nuget/CommunityToolkit.Mvvm@8.4.0"
-        }
-      ]
-    },
-    {
-      "SPDXID": "SPDXRef-Package-NuGet-System.Speech",
-      "name": "System.Speech",
-      "versionInfo": "9.0.0",
-      "downloadLocation": "https://www.nuget.org/packages/System.Speech/9.0.0",
-      "filesAnalyzed": false,
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "copyrightText": "© Microsoft Corporation. All rights reserved.",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:nuget/System.Speech@9.0.0"
         }
       ]
     },
@@ -230,6 +178,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-NuGet-System.Speech",
+      "name": "System.Speech",
+      "versionInfo": "9.0.0",
+      "downloadLocation": "https://www.nuget.org/packages/System.Speech/9.0.0",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "© Microsoft Corporation. All rights reserved.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/System.Speech@9.0.0"
         }
       ]
     },
@@ -345,42 +310,37 @@
     {
       "spdxElementId": "SPDXRef-Package-PdfViewer",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-Google-PDFium"
+      "relatedSpdxElement": "SPDXRef-Package-PdfEngine-Abstractions"
     },
     {
-      "spdxElementId": "SPDXRef-Package-Google-PDFium",
-      "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-FreeType"
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-PdfEngine-Vector"
     },
     {
-      "spdxElementId": "SPDXRef-Package-Google-PDFium",
-      "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-LibJpegTurbo"
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-PdfEngine-Vector-Windows"
     },
     {
-      "spdxElementId": "SPDXRef-Package-Google-PDFium",
-      "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-LibPng"
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-PdfEngine-Vector-Direct2D"
     },
     {
-      "spdxElementId": "SPDXRef-Package-Google-PDFium",
-      "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-Zlib"
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-PdfViewer-Core"
     },
     {
-      "spdxElementId": "SPDXRef-Package-Google-PDFium",
+      "spdxElementId": "SPDXRef-Package-PdfEngine-Vector",
       "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-LittleCMS"
+      "relatedSpdxElement": "SPDXRef-Package-Adobe-cmap-resources"
     },
     {
       "spdxElementId": "SPDXRef-Package-PdfViewer",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-NuGet-CommunityToolkit.Mvvm"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-PdfViewer",
-      "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-NuGet-System.Speech"
     },
     {
       "spdxElementId": "SPDXRef-Package-PdfViewer",
@@ -401,6 +361,11 @@
       "spdxElementId": "SPDXRef-Package-PdfViewer",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-NuGet-System.Security.Cryptography.Pkcs"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-PdfViewer",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-NuGet-System.Speech"
     },
     {
       "spdxElementId": "SPDXRef-Package-PdfViewer",

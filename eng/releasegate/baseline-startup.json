@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "metric": "ms from process creation to page 1 rendered (firstPageRendered)",
-  "recordedUtc": "2026-09-27T13:56:12.8257021Z",
+  "recordedUtc": "2026-10-17T19:51:40.3491231Z",
   "environment": "developer workstation",
   "engine": "Auto",
   "machine": {
@@ -15,57 +15,57 @@
   "warm": {
     "runs": 15,
     "discarded": 2,
-    "median": 4587.2,
-    "p95": 6042.3,
-    "min": 3621.9,
-    "max": 6042.3,
-    "mean": 4654.6,
+    "median": 2430.2,
+    "p95": 2592.6,
+    "min": 2275.9,
+    "max": 2592.6,
+    "mean": 2428.5,
     "samples": [
-      6042.3,
-      4550,
-      5147.8,
-      4075.1,
-      3621.9,
-      4587.2,
-      4563.5,
-      4382.9,
-      4872.5,
-      4565,
-      4931,
-      4658.1,
-      4591,
-      4576.2,
-      4654.2
+      2491.2,
+      2592.6,
+      2358.6,
+      2476.2,
+      2566.3,
+      2447.6,
+      2341.1,
+      2411.6,
+      2378,
+      2430.2,
+      2530.2,
+      2430.4,
+      2344.3,
+      2353.5,
+      2275.9
     ],
     "milestoneMedians": {
-      "appStartup": 1279.1,
-      "documentOpenStart": 3619.3,
-      "firstPageRendered": 4587.2,
-      "firstPageSurface": 4546.7,
-      "windowLoaded": 3590.3,
-      "windowShown": 3652.7
+      "appStartup": 506.3,
+      "documentOpenStart": 1505.4,
+      "firstPageRendered": 2430.2,
+      "firstPageSurface": 2427.4,
+      "windowLoaded": 1487.1,
+      "windowShown": 1538.1
     }
   },
   "cold": {
     "runs": 3,
     "discarded": 0,
-    "median": 6732.9,
-    "p95": 11486,
-    "min": 6034.5,
-    "max": 11486,
-    "mean": 8084.5,
+    "median": 3038.4,
+    "p95": 3081.7,
+    "min": 2974.6,
+    "max": 3081.7,
+    "mean": 3031.6,
     "samples": [
-      6034.5,
-      6732.9,
-      11486
+      3081.7,
+      3038.4,
+      2974.6
     ],
     "milestoneMedians": {
-      "appStartup": 3439.9,
-      "documentOpenStart": 5686.5,
-      "firstPageRendered": 6732.9,
-      "firstPageSurface": 6706.4,
-      "windowLoaded": 5656.5,
-      "windowShown": 7670.1
+      "appStartup": 931.5,
+      "documentOpenStart": 1998.7,
+      "firstPageRendered": 3038.4,
+      "firstPageSurface": 3036.8,
+      "windowLoaded": 1980.8,
+      "windowShown": 2031.8
     }
   },
   "tolerance": {

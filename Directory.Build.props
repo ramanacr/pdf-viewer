@@ -6,6 +6,19 @@
   </PropertyGroup>
 
   <!--
+    The PDFium-free build (-p:PdfiumRenderer=false: the published app, and the CI job that tests
+    it) gets its own bin\ and obj\ folders. Built into the default ones it would overwrite the
+    developer build, and the developer build's pdfium.dll and PdfEngine.Pdfium.dll, which an
+    incremental build never deletes, would stay beside it and could hide a missing piece.
+  -->
+  <PropertyGroup Condition="'$(PdfiumRenderer)' == 'false'">
+    <BaseOutputPath>bin\nopdfium\</BaseOutputPath>
+    <BaseIntermediateOutputPath>obj\nopdfium\</BaseIntermediateOutputPath>
+    <!-- The default build's generated sources (obj\Debug, obj\Release) are not this build's. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <!--
     Derive the assembly version from the nearest git release tag (e.g. "v1.2.2" -> 1.2.2),
     NOT from the total commit count. The self-update check (UpdateService.CompareVersions)
     compares this assembly version directly against GitHub release tag names, and a

@@ -66,9 +66,9 @@ if (Test-Path "$RootDir\assets") {
 }
 
 # 3. Publish the main WPF application
-# PdfiumRenderer=false: pages are drawn by the vector engine only; PDFium is not a renderer in the
-# shipped app (it still serves text, annotations and saving).
-Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (vector renderer only)..." -ForegroundColor Yellow
+# PdfiumRenderer=false: the published app has no PDFium (M10). PdfEngine.Pdfium is not referenced
+# and pdfium.dll is not copied; the vector engine opens, draws, searches, edits and saves.
+Write-Host "`n[1/4] Publishing main PDF Viewer application v$AppVersion (no PDFium)..." -ForegroundColor Yellow
 dotnet publish "$RootDir\src\PdfViewer\PdfViewer.csproj" `
     -c Release `
     -p:PdfiumRenderer=false `
@@ -178,6 +178,16 @@ foreach ($required in $AllowedPayload) {
     }
 }
 Write-Host "   - payload verified: $($AllowedPayload.Count) files plus assets" -ForegroundColor Gray
+
+# PDFium-free gate (eng/releasegate/README.md): no pdfium*.dll and no PdfEngine.Pdfium anywhere in
+# the payload, loose or bundled, and the application opens, draws and searches the probe document
+# in a process where PDF_PDFIUM_DISABLED=1.
+Write-Host "`n>> PDFium-free gate..." -ForegroundColor Yellow
+dotnet run --project "$RootDir\eng\releasegate\ReleaseGate.Tool\ReleaseGate.Tool.csproj" -c Release -- `
+    pdfium-free --app "$AppStagingDir" --out "$PublishDir\pdfium-free.json"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "The PDFium-free gate failed (see above): the published application must neither ship nor need PDFium."
+}
 
 if ($DryRun) {
     Write-Host "`nDry run: the payload is verified; no installer is built." -ForegroundColor Green

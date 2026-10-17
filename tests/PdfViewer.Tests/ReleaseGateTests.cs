@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using PdfEngine;
-using PdfEngine.Pdfium;
+using PdfEngine.Vector;
 using PdfViewer.Services;
 using ReleaseGate.Tool;
 using Xunit;
@@ -155,6 +155,107 @@ public class ReleaseGateTests
         Assert.Null(StartupProbe.TryCreate(new[] { "document.pdf" }));
         Assert.Null(StartupProbe.TryCreate(new[] { "--startup-probe", "result.json" })); // no document
         Assert.Null(StartupProbe.TryCreate(new[] { "/p", "a.pdf", "b" }));
+    }
+
+    // ---- PDFium-free gate -------------------------------------------------------------------
+
+    [Fact]
+    public void PdfiumFreeGate_RecognisesPdfiumFiles()
+    {
+        Assert.True(PdfiumFreeGate.IsPdfiumFile("pdfium.dll"));
+        Assert.True(PdfiumFreeGate.IsPdfiumFile(@"runtimes\win-x64\native\PDFIUM.DLL"));
+        Assert.True(PdfiumFreeGate.IsPdfiumFile("PdfEngine.Pdfium.dll"));
+        Assert.True(PdfiumFreeGate.IsPdfiumFile("extracted: abc/pdfium.dll"));
+        Assert.False(PdfiumFreeGate.IsPdfiumFile("PdfEngine.Vector.dll"));
+        Assert.False(PdfiumFreeGate.IsPdfiumFile("pdfium.txt"));
+    }
+
+    [Fact]
+    public void PdfiumFreeGate_FindsPdfiumLooseBundledAndInTheDependencyManifest()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "pdfium-free-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, "sub"));
+        try
+        {
+            File.WriteAllBytes(Path.Combine(dir, "PdfViewer.exe"), FakeBundle(6, ("PdfViewer.dll", 300, 0), ("pdfium.dll", 900, 400)));
+            File.WriteAllText(Path.Combine(dir, "Other.deps.json"), """{ "libraries": { "PdfEngine.Pdfium/1.0.0": {} } }""");
+            File.WriteAllText(Path.Combine(dir, "sub", "pdfium.dll"), "x");
+            File.WriteAllText(Path.Combine(dir, "THIRD_PARTY_NOTICES.md"), "notices");
+
+            var found = PdfiumFreeGate.FindPdfiumFiles(dir);
+            Assert.Equal(new[] { "Other.deps.json (names PdfEngine.Pdfium)", "PdfViewer.exe!pdfium.dll", "sub/pdfium.dll" }, found.Order(StringComparer.Ordinal));
+            Assert.False(PdfiumFreeGate.Evaluate(found, null, 12).Passed);
+
+            foreach (string f in new[] { "Other.deps.json", "sub/pdfium.dll" }) File.Delete(Path.Combine(dir, f));
+            File.WriteAllBytes(Path.Combine(dir, "PdfViewer.exe"), FakeBundle(6, ("PdfViewer.dll", 300, 0), ("PdfEngine.Vector.dll", 900, 400)));
+            Assert.Empty(PdfiumFreeGate.FindPdfiumFiles(dir));
+            Assert.True(PdfiumFreeGate.Evaluate(Array.Empty<string>(), null, 12).Passed);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static string GateProbeJson(int matches, int pages, bool compiledIn, bool disabled, params string[] loaded) => $$"""
+        { "schema": 1, "milestones": { "appStartup": 100, "firstPageSurface": 900, "firstPageRendered": 1000, "searchDone": 1100 },
+          "search": { "query": "Startup probe", "matches": {{matches}}, "pages": {{pages}} },
+          "pdfium": { "rendererCompiledIn": {{(compiledIn ? "true" : "false")}}, "disabledByEnvironment": {{(disabled ? "true" : "false")}},
+                      "assemblies": [ {{string.Join(",", loaded.Select(l => $"\"{l}\""))}} ], "nativeModules": [] },
+          "error": null }
+        """;
+
+    [Fact]
+    public void PdfiumFreeGate_PassesOnlyAPdfiumFreeLaunchThatDrewAndSearchedEveryPage()
+    {
+        Assert.True(PdfiumFreeGate.Evaluate(Array.Empty<string>(), GateProbeJson(12, 12, false, true), 12).Passed);
+
+        Assert.False(PdfiumFreeGate.Evaluate(Array.Empty<string>(), GateProbeJson(3, 3, false, true), 12).Passed);          // search missed pages
+        Assert.False(PdfiumFreeGate.Evaluate(Array.Empty<string>(), GateProbeJson(12, 12, true, true), 12).Passed);         // a developer build
+        Assert.False(PdfiumFreeGate.Evaluate(Array.Empty<string>(), GateProbeJson(12, 12, false, false), 12).Passed);       // PDFium not disabled
+        Assert.False(PdfiumFreeGate.Evaluate(Array.Empty<string>(), GateProbeJson(12, 12, false, true, "PdfEngine.Pdfium"), 12).Passed);
+        Assert.False(PdfiumFreeGate.Evaluate(Array.Empty<string>(), """{ "schema": 1, "milestones": {}, "error": "page 1 was not rendered" }""", 12).Passed);
+        // An application older than the gate reports nothing about PDFium.
+        Assert.False(PdfiumFreeGate.Evaluate(Array.Empty<string>(), """{ "schema": 1, "milestones": { "firstPageRendered": 10 }, "search": { "matches": 12, "pages": 12 } }""", 12).Passed);
+    }
+
+    /// <summary>
+    /// The application's half of the gate, in this process: what the probe says about PDFium.
+    /// The PDFium-free build (PdfiumRenderer=false) passes; the developer build, which has the
+    /// renderer compiled in, must not.
+    /// </summary>
+    [Fact]
+    public void ApplicationProbe_ReportsPdfiumInTheProcess()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "probe-pdfium-" + Guid.NewGuid().ToString("N"));
+        var probe = StartupProbe.TryCreate(new[] { "--startup-probe", Path.Combine(dir, "r.json"), Path.Combine(dir, "d.pdf"), "--search", PdfiumFreeGate.SearchQuery })!;
+        foreach (string m in new[] { "appStartup", "firstPageSurface", "firstPageRendered" }) probe.Mark(m);
+
+        string? previous = Environment.GetEnvironmentVariable("PDF_PDFIUM_DISABLED");
+        string json;
+        try
+        {
+            Environment.SetEnvironmentVariable("PDF_PDFIUM_DISABLED", "1");
+            json = probe.ToJson(null);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PDF_PDFIUM_DISABLED", previous);
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        var pdfium = doc.RootElement.GetProperty("pdfium");
+        Assert.True(pdfium.GetProperty("disabledByEnvironment").GetBoolean());
+        var outcome = PdfiumFreeGate.Evaluate(Array.Empty<string>(), json, expectedPages: 0);
+#if PDFIUM_RENDERER
+        Assert.True(pdfium.GetProperty("rendererCompiledIn").GetBoolean());
+        Assert.False(outcome.Passed);
+#else
+        Assert.False(pdfium.GetProperty("rendererCompiledIn").GetBoolean());
+        Assert.Empty(pdfium.GetProperty("assemblies").EnumerateArray());
+        Assert.Empty(pdfium.GetProperty("nativeModules").EnumerateArray());
+        Assert.True(outcome.Passed, string.Join("; ", outcome.Failures));
+#endif
     }
 
     // ---- startup gate -----------------------------------------------------------------------
@@ -523,14 +624,25 @@ public class ReleaseGateTests
         Assert.Equal(ProbeDocument.Create(), ProbeDocument.Create());
     }
 
+    /// <summary>The probe document as the published app reads it: every page, and the heading the PDFium-free gate searches for on each.</summary>
     [Fact]
     public async Task ProbeDocument_OpensWithEveryPageAndItsText()
     {
-        using IPdfEngine engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(ProbeDocument.Create());
-        Assert.Equal(ProbeDocument.PageCount, doc.PageCount);
-        string text = await engine.TextService.ExtractPageTextAsync(doc, 1);
-        Assert.Contains("Startup probe - page 1 of 12", text);
+        string path = Path.Combine(Path.GetTempPath(), "probe_" + Guid.NewGuid().ToString("N") + ".pdf");
+        File.WriteAllBytes(path, ProbeDocument.Create());
+        try
+        {
+            using var service = new HybridVectorDocumentService(PdfViewer.Core.Security.PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+            await service.OpenDocumentAsync(path);
+            Assert.Equal(ProbeDocument.PageCount, service.PageCount);
+            var matches = await service.SearchTextAsync(PdfiumFreeGate.SearchQuery);
+            Assert.Equal(Enumerable.Range(1, ProbeDocument.PageCount), matches.Select(m => m.PageNumber).Distinct().Order());
+            Assert.Contains(service.ExtractPageTextSegments(1), s => s.Text.Contains("Startup"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     // ---- committed baselines ----------------------------------------------------------------

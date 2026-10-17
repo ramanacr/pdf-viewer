@@ -10,6 +10,45 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
+  <!--
+    Two configurations, like the application's. The default (PdfiumRenderer=true) runs every
+    test, the PDFium oracle tests included. With -p:PdfiumRenderer=false the suite is built
+    against the published app, which has no PDFium: PdfEngine.Pdfium is not referenced, and the
+    test files that need it are left out by name below (each listed, so leaving one out is a
+    reviewed decision, not a silent pass). PdfiumFreeConfigurationTests checks that this list
+    and the build agree.
+  -->
+  <PropertyGroup>
+    <PdfiumRenderer Condition="'$(PdfiumRenderer)' == ''">true</PdfiumRenderer>
+    <DefineConstants Condition="'$(PdfiumRenderer)' == 'true'">$(DefineConstants);PDFIUM_RENDERER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(PdfiumRenderer)' == 'true'">
+    <ProjectReference Include="..\..\src\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PdfiumRenderer)' != 'true'">
+    <!-- Tests that call PDFium (the oracle) or test PDFium mode: developer and test builds only. -->
+    <PdfiumOnlyTest Include="ComparisonAndOcrTests.cs" />
+    <PdfiumOnlyTest Include="ContentEditingViewerTests.cs" />
+    <PdfiumOnlyTest Include="CropBoxCoordinateTests.cs" />
+    <PdfiumOnlyTest Include="FormAndRedactionTests.cs" />
+    <PdfiumOnlyTest Include="NativeDocumentServicesViewerTests.cs" />
+    <PdfiumOnlyTest Include="NativeTextViewerTests.cs" />
+    <PdfiumOnlyTest Include="PageArrangementAndAttachmentTests.cs" />
+    <PdfiumOnlyTest Include="PageMarksViewerTests.cs" />
+    <PdfiumOnlyTest Include="PageOrganizerTests.cs" />
+    <PdfiumOnlyTest Include="PdfEngineCoreTests.cs" />
+    <PdfiumOnlyTest Include="PdfiumFormRenderingTests.cs" />
+    <PdfiumOnlyTest Include="PdfServiceTests.cs" />
+    <PdfiumOnlyTest Include="RedactionViewerTests.cs" />
+    <PdfiumOnlyTest Include="SanitizationTests.cs" />
+    <PdfiumOnlyTest Include="SaveInPlaceTests.cs" />
+    <PdfiumOnlyTest Include="SigningViewerTests.cs" />
+    <PdfiumOnlyTest Include="VectorPrintingViewerTests.cs" />
+    <Compile Remove="@(PdfiumOnlyTest)" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
@@ -25,7 +64,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
-    <ProjectReference Include="..\..\src\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
     <ProjectReference Include="..\..\src\PdfViewer.Core\PdfViewer.Core.csproj" />
     <ProjectReference Include="..\..\src\PdfViewer\PdfViewer.csproj" />
     <Compile Include="..\..\scripts\CreateIcon.cs" Link="CreateIcon.cs" />

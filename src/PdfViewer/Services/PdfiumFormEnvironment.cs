@@ -1,3 +1,5 @@
+#if PDFIUM_RENDERER
+// PDFium is in developer and test builds only (PdfiumRenderer=true); the published app has none.
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -162,3 +164,4 @@ internal sealed unsafe class PdfiumFormEnvironment : IDisposable
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static void DoGoToAction(IntPtr self, int page, int zoomMode, IntPtr position, int count) { }
 }
+#endif

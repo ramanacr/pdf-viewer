@@ -310,7 +310,7 @@ internal sealed class StartupHarness
         return target;
     }
 
-    private static void CopyDirectory(string source, string target)
+    internal static void CopyDirectory(string source, string target)
     {
         foreach (string dir in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
             Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, dir)));

@@ -16,7 +16,9 @@ public class PrintAndShellWorkflowTests : IDisposable
     {
         _testDir = Path.Combine(Path.GetTempPath(), "PdfViewerPrintShellTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_testDir);
+#if PDFIUM_RENDERER
         PdfiumNativeBridge.EnsureInitialized();
+#endif
     }
 
     public void Dispose()
@@ -42,7 +44,11 @@ public class PrintAndShellWorkflowTests : IDisposable
     public async Task TestPrintPreviewViewModelCustomRangeParsing()
     {
         string pdfPath = CreateSamplePdf("print_range.pdf", 10);
+#if PDFIUM_RENDERER
         using var service = new PdfiumDocumentService();
+#else
+        using var service = new HybridVectorDocumentService(PdfViewer.Core.Security.PdfSecurityPolicy.DefaultStrict);
+#endif
         await service.OpenDocumentAsync(pdfPath);
 
         var vm = new PrintPreviewViewModel(service, 1);

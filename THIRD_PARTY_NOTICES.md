@@ -1,23 +1,20 @@
 # Third-Party Software Notices and Licenses
 
-This product includes software developed by Google Inc. (Google PDFium).
+PDF Viewer opens, draws, searches, edits and saves PDF documents with its own engine
+(PdfEngine.Vector, part of this product and under its MIT licence). It contains the third-party
+software listed below and nothing else from outside this project.
 
-## Google PDFium (Chromium) License
-Version: 154.0.8021.0 (chromium/8021)
-Source: https://pdfium.googlesource.com/pdfium/
+## MIT License
+The MIT-licensed components below are distributed under these terms, with the copyright notice
+given in each component's section.
 
 ```
-Copyright 2014-2025 Benoit Blanchon
-
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-This package also includes third-party software. See the licenses/ directory for their respective licenses.
 ```
-
 
 ## Vortice.Windows (Vortice.Direct2D1, Vortice.Direct3D11, Vortice.DXGI, Vortice.DirectX, Vortice.Mathematics) and SharpGen.Runtime (SharpGen.Runtime, SharpGen.Runtime.COM)
 Version: 3.8.3 (Vortice.Mathematics 2.1.0; SharpGen.Runtime 2.4.2-beta) · Source: https://github.com/amerkoleci/Vortice.Windows · License: MIT (Copyright (c) Amer Koleci and contributors; SharpGen.Runtime: Copyright (c) SharpGenTools contributors). The MIT license text is reproduced above.

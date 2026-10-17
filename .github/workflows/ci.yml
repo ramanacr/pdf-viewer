@@ -36,6 +36,23 @@ jobs:
     - name: Run Viewer Regression Suite & Code Coverage
       run: dotnet test tests/PdfViewer.Tests/PdfViewer.Tests.csproj --configuration Release --no-build --verbosity normal --collect:"XPlat Code Coverage"
 
+    # The viewer as it is published (M10): built with -p:PdfiumRenderer=false, so PdfEngine.Pdfium
+    # is not referenced and the PDFium-free gate tests run against the build that ships. It goes to
+    # its own bin\nopdfium and obj\nopdfium folders, so the Release build above is untouched. The
+    # test files that need PDFium (the oracle, PDFium mode) are listed as PdfiumOnlyTest in
+    # tests/PdfViewer.Tests/PdfViewer.Tests.csproj and left out; the list goes to the job summary.
+    - name: Run Viewer Suite Without PDFium (published configuration)
+      shell: pwsh
+      run: |
+        $project = [xml](Get-Content tests/PdfViewer.Tests/PdfViewer.Tests.csproj -Raw)
+        $excluded = @($project.Project.ItemGroup.PdfiumOnlyTest | Where-Object { $_ } | ForEach-Object { $_.Include })
+        if ($env:GITHUB_STEP_SUMMARY) {
+          "### Viewer tests without PDFium: $($excluded.Count) PDFium-only test file(s) left out" >> $env:GITHUB_STEP_SUMMARY
+          $excluded | ForEach-Object { "- $_" } >> $env:GITHUB_STEP_SUMMARY
+        }
+        dotnet test tests/PdfViewer.Tests/PdfViewer.Tests.csproj --configuration Release -p:PdfiumRenderer=false --verbosity normal
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     # Vector engine: unit, fixture, differential (PDFium oracle) and fuzz-regression tests.
     - name: Run Vector Engine Suite
       env:
@@ -81,7 +98,10 @@ jobs:
       run: ./scripts/build_publish.ps1 -DryRun
 
     # Release gates on the payload the step above staged in publish/app (eng/releasegate/README.md).
-    # Both run whenever the publish succeeded, so one failing does not hide the other's numbers.
+    # The PDFium-free gate runs inside the publish step itself (no PDFium file in the payload; the
+    # app opens, draws and searches the probe document with PDF_PDFIUM_DISABLED=1), so a payload
+    # that fails it stops there. The two below run whenever the publish succeeded, so one failing
+    # does not hide the other's numbers.
     - name: Installer Payload Size Gate
       if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
       shell: pwsh
@@ -100,6 +120,7 @@ jobs:
         path: |
           payload-size.json
           startup-timings.json
+          publish/pdfium-free.json
         if-no-files-found: ignore
 
   # Nightly (and on demand): the rights-cleared corpus (eng/vectorpdf/corpus) against the committed

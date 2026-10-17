@@ -24,11 +24,11 @@
   </PropertyGroup>
 
   <!--
-    The vector engine is the only renderer the published app has (M9). PDFium can still render
-    whole pages (the PDFium engine mode, the oracle tests and developers compare with) in builds
-    made with PdfiumRenderer=true, the default for builds and tests; scripts/build_publish.ps1
-    publishes with -p:PdfiumRenderer=false. PDFium stays referenced for the services not yet moved
-    to the engine (text, annotations, saving).
+    The vector engine is the only engine the published app has (M10). PDFium is the oracle of
+    developer and test builds: with PdfiumRenderer=true, the default for builds and tests, the app
+    references PdfEngine.Pdfium, ships pdfium.dll beside itself and offers the PDFium engine mode.
+    scripts/build_publish.ps1 publishes with -p:PdfiumRenderer=false: no PdfEngine.Pdfium, no
+    pdfium.dll, and every code path that uses PDFium is compiled out (#if PDFIUM_RENDERER).
   -->
   <PropertyGroup>
     <PdfiumRenderer Condition="'$(PdfiumRenderer)' == ''">true</PdfiumRenderer>
@@ -54,7 +54,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
-    <ProjectReference Include="..\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
     <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
     <ProjectReference Include="..\PdfEngine.Vector.Windows\PdfEngine.Vector.Windows.csproj" />
     <ProjectReference Include="..\PdfEngine.Vector.Direct2D\PdfEngine.Vector.Direct2D.csproj" />
@@ -79,15 +78,23 @@
   </Target>
 
   <!--
-    One copy of pdfium.dll, beside the application (the resolvers in Services/PdfiumNativeBridge.cs
-    and PdfEngine.Pdfium try that path first; in the single-file publish it is extracted with the
-    other native libraries). Publishing it to runtimes\win-x64\native\ as well bundled it twice.
+    PDFium, in developer and test builds only. One copy of pdfium.dll, beside the application (the
+    resolvers in Services/PdfiumNativeBridge.cs and PdfEngine.Pdfium try that path first).
+    Publishing it to runtimes\win-x64\native\ as well bundled it twice. A PdfiumRenderer=false
+    build neither references PdfEngine.Pdfium nor copies pdfium.dll anywhere.
   -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(PdfiumRenderer)' == 'true'">
+    <ProjectReference Include="..\PdfEngine.Pdfium\PdfEngine.Pdfium.csproj" />
     <None Include="runtimes\win-x64\native\pdfium.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>pdfium.dll</TargetPath>
     </None>
+  </ItemGroup>
+  <ItemGroup Condition="'$(PdfiumRenderer)' != 'true'">
+    <None Remove="runtimes\win-x64\native\pdfium.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\..\THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" Condition="Exists('..\..\THIRD_PARTY_NOTICES.md')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

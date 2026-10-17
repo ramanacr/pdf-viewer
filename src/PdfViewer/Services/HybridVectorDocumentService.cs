@@ -28,23 +28,26 @@ namespace PdfViewer.Services;
 /// the engine cannot reproduce exactly is drawn by its best effort, never by another renderer
 /// (M9, 06_PDFIUM_FALLBACK "Removal sequence"). In Auto and Vector modes the engine also opens the
 /// document (passwords, repair, permissions, certificate encryption) and serves every document
-/// service (M10); PDFium is only opened, from the revision in memory, when text extraction or
-/// search asks for it. In developer and test builds
+/// service (M10). The published app has no PDFium at all. In developer and test builds
 /// (<see cref="PdfDocumentServiceFactory.IsPdfiumRendererAvailable"/>) <see cref="PdfEngineMode.Pdfium"/>
-/// mode still opens and renders whole pages with PDFium, as the oracle.
+/// mode still opens and renders whole pages with PDFium, as the oracle, and Auto mode reads the
+/// text of a document the engine cannot parse with PDFium.
 /// </summary>
 public sealed class HybridVectorDocumentService : IPdfDocumentService
 {
-    // PDFium: created and opened on first use, from the current revision (_bytes). In Auto and
-    // Vector modes only the text services reach it; PDFium mode opens it with the document.
-    private PdfiumDocumentService? _pdfium;
-    // _pdfium holds the current revision (cleared by every reload).
-    private bool _pdfiumCurrent;
     private readonly object _pdfiumGate = new();
     private string _filePath = string.Empty;
     // The current revision: the file as read, the latest form fill, or the decrypted copy of a
     // certificate-encrypted file.
     private byte[]? _bytes;
+
+#if PDFIUM_RENDERER
+    // PDFium (developer and test builds only): created and opened on first use, from the current
+    // revision (_bytes). PDFium mode opens it with the document; in Auto mode only text extraction
+    // reaches it, and only when the engine could not parse the document.
+    private PdfiumDocumentService? _pdfium;
+    // _pdfium holds the current revision (cleared by every reload).
+    private bool _pdfiumCurrent;
 
     /// <summary>
     /// PDFium with the current revision open, opened now if it is not: with the form-fill
@@ -71,6 +74,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     /// <summary>True when PDFium has a document open (it is only opened when something needs it).</summary>
     public bool IsPdfiumDocumentOpen => _pdfium?.IsDocumentLoaded == true;
+#else
+    /// <summary>Always false: this build has no PDFium.</summary>
+    public bool IsPdfiumDocumentOpen => false;
+#endif
     private readonly PdfSecurityPolicy _securityPolicy;
     private readonly WindowsVectorRenderer _vectorRenderer;
 
@@ -133,7 +140,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     }
 
     /// <summary>Whole pages come from PDFium: <see cref="PdfEngineMode.Pdfium"/> in a build that has the PDFium renderer.</summary>
-    private bool UsePdfiumPages => _mode == PdfEngineMode.Pdfium && PdfDocumentServiceFactory.IsPdfiumRendererAvailable;
+#if PDFIUM_RENDERER
+    private bool UsePdfiumPages => _mode == PdfEngineMode.Pdfium;
+#else
+    private const bool UsePdfiumPages = false;
+#endif
 
     /// <summary>Strict vector mode outlines what the engine cannot reproduce; the other modes draw it by best effort.</summary>
     private void ApplyModeToRenderers()
@@ -257,6 +268,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             return report;
         }
 
+#if PDFIUM_RENDERER
         if (UsePdfiumPages)
         {
             return new PageEngineReport(
@@ -267,6 +279,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                 BadgeText: "🖼️ PDFium",
                 Tooltip: "Rendered via Google PDFium software rasterizer [Mode: PDFium, developer build]");
         }
+#endif
 
         return new PageEngineReport(
             pageNumber,
@@ -279,7 +292,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public bool IsDocumentLoaded => _vectorDoc != null || _bytes != null;
     public string CurrentFilePath => _filePath;
+#if PDFIUM_RENDERER
     public int PageCount => _vectorDoc?.PageCount ?? (_bytes != null && UsePdfiumPages ? _pdfiumService.PageCount : 0);
+#else
+    public int PageCount => _vectorDoc?.PageCount ?? 0;
+#endif
 
     public HybridVectorDocumentService(
         PdfSecurityPolicy securityPolicy,
@@ -310,6 +327,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         string? password = null,
         CancellationToken ct = default)
     {
+#if PDFIUM_RENDERER
         if (UsePdfiumPages)
         {
             _metrics = new PdfEngineMetrics();
@@ -318,6 +336,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             IsDecryptedCopy = false;
             return await OpenInPdfiumModeAsync(filePath, password, ct).ConfigureAwait(false);
         }
+#endif
 
         // Auto and Vector: the engine opens the file; PDFium is not involved (M10).
         if (!System.IO.File.Exists(filePath))
@@ -384,6 +403,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         }
     }
 
+#if PDFIUM_RENDERER
     /// <summary>
     /// PDFium mode (developer and test builds): PDFium opens the file and renders the pages; the
     /// vector document is opened lazily if the engine changes. Certificate-encrypted files, which
@@ -408,6 +428,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _pdfiumCurrent = true;
         return meta;
     }
+#endif
 
     /// <summary>Forgets the open document (both engines) before another one is opened.</summary>
     private void ResetDocument()
@@ -419,11 +440,13 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _password = null;
         _bytes = null;
         _filePath = string.Empty;
+#if PDFIUM_RENDERER
         lock (_pdfiumGate)
         {
             _pdfiumCurrent = false;
             _pdfium?.CloseDocument();
         }
+#endif
     }
 
     public bool IsDecryptedCopy { get; private set; }
@@ -437,10 +460,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         lock (_pdfiumGate)
         {
             _bytes = bytes;
+#if PDFIUM_RENDERER
             _pdfiumCurrent = false;
+#endif
         }
+#if PDFIUM_RENDERER
         if (UsePdfiumPages)
             _ = _pdfiumService; // PDFium renders the pages: it reads the new revision now
+#endif
         _metrics = new PdfEngineMetrics();
         ClearSurfaces();
         _pageEngineReports.Clear();
@@ -469,9 +496,12 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             ? PdfEngine.Documents.PdfDocumentPermissions.FromFlags(security.Permissions, security.Revision, security.IsOwner)
             : IsDecryptedCopy ? PdfEngine.Documents.PdfDocumentPermissions.Owner
             : _vectorDoc != null ? PdfEngine.Documents.PdfDocumentPermissions.Unencrypted
+#if PDFIUM_RENDERER
             : IsPdfiumDocumentOpen ? _pdfium!.Permissions
+#endif
             : PdfEngine.Documents.PdfDocumentPermissions.Unencrypted;
 
+#if PDFIUM_RENDERER
     private async Task<DocumentMetadata> OpenWithVectorSecurityAsync(string filePath, string? password, CancellationToken ct)
     {
         _metrics = new PdfEngineMetrics();
@@ -499,6 +529,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         IsDecryptedCopy = true;
         return meta;
     }
+#endif
 
     /// <summary>Opens the vector document lazily when the file was opened in PDFium mode and the engine changed since.</summary>
     private async Task EnsureVectorDocumentAsync(CancellationToken ct)
@@ -552,7 +583,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public DocumentMetadata? GetMetadata() =>
         NativeDocument is { } native ? NativeDocumentServices.Metadata(native, CurrentFilePath)
-        : _bytes != null && UsePdfiumPages ? _pdfiumService.GetMetadata() : null;
+#if PDFIUM_RENDERER
+        : _bytes != null && UsePdfiumPages ? _pdfiumService.GetMetadata()
+#endif
+        : null;
 
     public (double Width, double Height) GetPageDimensions(int pageNumber)
     {
@@ -561,7 +595,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             var pageNode = _vectorDoc.PageTree.Pages[pageNumber - 1];
             return (pageNode.PageSize.Width, pageNode.PageSize.Height);
         }
-        return _bytes != null && UsePdfiumPages ? _pdfiumService.GetPageDimensions(pageNumber) : (0, 0);
+#if PDFIUM_RENDERER
+        if (_bytes != null && UsePdfiumPages)
+            return _pdfiumService.GetPageDimensions(pageNumber);
+#endif
+        return (0, 0);
     }
 
     public int GetPageIntrinsicRotation(int pageNumber)
@@ -571,7 +609,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             var pageNode = _vectorDoc.PageTree.Pages[pageNumber - 1];
             return pageNode.RotationDegrees;
         }
-        return _bytes != null && UsePdfiumPages ? _pdfiumService.GetPageIntrinsicRotation(pageNumber) : 0;
+#if PDFIUM_RENDERER
+        if (_bytes != null && UsePdfiumPages)
+            return _pdfiumService.GetPageIntrinsicRotation(pageNumber);
+#endif
+        return 0;
     }
 
     public BitmapSource? RenderPage(int pageNumber, int dpi = 150, int rotationAngle = 0)
@@ -597,12 +639,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     {
         await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
 
+#if PDFIUM_RENDERER
         if (UsePdfiumPages)
         {
             _pageEngineReports[pageNumber] = PdfiumReport(pageNumber);
             var pdfiumPage = await _pdfiumService.RenderPageAsync(pageNumber, dpi, rotationAngle, ct).ConfigureAwait(false);
             return invert && pdfiumPage != null ? NightModeImage.Invert(pdfiumPage) : pdfiumPage;
         }
+#endif
 
         var doc = _vectorDoc;
         if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
@@ -727,12 +771,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             return null;
 
         await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+#if PDFIUM_RENDERER
         if (UsePdfiumPages)
         {
             // PDFium pages (developer builds) get the same viewport detail from PDFium itself.
             var bmp = await Task.Run(() => _pdfiumService.RenderPageRegion(pageNumber, pixelsPerPoint * 72.0, rotationAngle, x, y, width, height), ct).ConfigureAwait(false);
             return bmp != null && nightMode ? NightModeImage.Invert(bmp) : bmp;
         }
+#endif
         var doc = _vectorDoc;
         if (doc == null || _d2d == null || pageNumber < 1 || pageNumber > doc.PageCount)
             return null; // the page bitmap stays: no detail tiles without Direct2D or a readable page
@@ -828,6 +874,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
               .Select(g => $"• {g.Key} ×{g.Count()}: {g.First().Description}")
               .ToList();
 
+#if PDFIUM_RENDERER
     private static PageEngineReport PdfiumReport(int pageNumber) => new(
         pageNumber,
         PdfEngineMode.Pdfium,
@@ -835,6 +882,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         FallbackReasons: Array.Empty<string>(),
         BadgeText: "🖼️ PDFium",
         Tooltip: "Rendered by PDFium [Mode: PDFium, developer build]");
+#endif
 
     private static PageEngineReport UnreadableReport(int pageNumber, string reason, string why) => new(
         pageNumber,
@@ -901,7 +949,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                 return new ObservableCollection<BookmarkItem>();
             }
         }
-        return _bytes != null && UsePdfiumPages ? _pdfiumService.ExtractBookmarks() : new ObservableCollection<BookmarkItem>();
+#if PDFIUM_RENDERER
+        if (_bytes != null && UsePdfiumPages)
+            return _pdfiumService.ExtractBookmarks();
+#endif
+        return new ObservableCollection<BookmarkItem>();
     }
 
     // ------------------------------------------------------------------ text (native text page, M9)
@@ -909,19 +961,24 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     /// <summary>
     /// The document text comes from: the vector engine's text page in Auto and Vector modes (no
     /// PDFium call), PDFium's in PDFium mode. Null when the vector document could not be opened;
-    /// Auto mode then reads text with PDFium, as it renders with it.
+    /// Auto mode in a developer build then reads text with PDFium, and the published app (no
+    /// PDFium) has no text for that document.
     /// </summary>
     private PdfVectorDocument? TextDocument => _mode == PdfEngineMode.Pdfium ? null : _vectorDoc;
 
+#if PDFIUM_RENDERER
     private bool TextFromPdfium => _mode == PdfEngineMode.Pdfium || (_vectorDoc == null && _mode != PdfEngineMode.Vector);
+#endif
 
     public async Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default)
     {
         await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
         if (TextDocument is { } doc)
             return await Task.Run(() => NativePageText.Search(doc, query, matchCase, ct), ct).ConfigureAwait(false);
+#if PDFIUM_RENDERER
         if (TextFromPdfium)
             return await _pdfiumService.SearchTextAsync(query, matchCase, ct).ConfigureAwait(false);
+#endif
         return new List<SearchMatch>();
     }
 
@@ -933,7 +990,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                 return glyphs;
             return NativePageText.Segments(doc, pageNumber);
         }
-        return TextFromPdfium ? _pdfiumService.ExtractPageTextSegments(pageNumber) : new List<PageTextSegment>();
+#if PDFIUM_RENDERER
+        if (TextFromPdfium)
+            return _pdfiumService.ExtractPageTextSegments(pageNumber);
+#endif
+        return new List<PageTextSegment>();
     }
 
     /// <summary>
@@ -946,8 +1007,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
         if (TextDocument is { } doc)
             return await Task.Run(() => NativePageText.Layout(doc, pageNumber, ct), ct).ConfigureAwait(false);
+#if PDFIUM_RENDERER
         if (TextFromPdfium)
             return await _pdfiumService.ExtractPageTextLayoutAsync(pageNumber, ct).ConfigureAwait(false);
+#endif
         return PdfViewer.Text.PageTextLayout.Empty;
     }
 
@@ -962,8 +1025,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             var layout = await ExtractPageTextLayoutAsync(pageNumber, ct).ConfigureAwait(false);
             return PdfViewer.Text.PageAccessibleContent.FromLayout(pageNumber, layout);
         }
+#if PDFIUM_RENDERER
         if (TextFromPdfium)
             return await _pdfiumService.ExtractAccessibleContentAsync(pageNumber, ct).ConfigureAwait(false);
+#endif
         return PdfViewer.Text.PageAccessibleContent.FromLayout(pageNumber, PdfViewer.Text.PageTextLayout.Empty);
     }
 
@@ -979,7 +1044,11 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
                 return NativePageText.Segments(doc, pageNumber, ct);
             }, ct).ConfigureAwait(false);
         }
-        return TextFromPdfium ? await _pdfiumService.ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false) : new List<PageTextSegment>();
+#if PDFIUM_RENDERER
+        if (TextFromPdfium)
+            return await _pdfiumService.ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false);
+#endif
+        return new List<PageTextSegment>();
     }
 
     /// <summary>Per-glyph segments of a page the vector engine drew (its display list), or null.</summary>
@@ -1147,8 +1216,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     /// </summary>
     internal async Task<IPdfDisplayList?> GetPrintableDisplayListAsync(int pageNumber, CancellationToken ct = default)
     {
+#if PDFIUM_RENDERER
         if (UsePdfiumPages)
             return null;
+#endif
         await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
         var doc = _vectorDoc;
         if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
@@ -1168,7 +1239,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
 
     public List<AnnotationModel> LoadExistingAnnotations() =>
         NativeDocument is { } native ? _native.Load(native)
-        : _bytes != null && UsePdfiumPages ? _pdfiumService.LoadExistingAnnotations() : new List<AnnotationModel>();
+#if PDFIUM_RENDERER
+        : _bytes != null && UsePdfiumPages ? _pdfiumService.LoadExistingAnnotations()
+#endif
+        : new List<AnnotationModel>();
 
     /// <summary>
     /// Saves with the native annotation services in Auto and Vector modes: the latest revision
@@ -1184,10 +1258,14 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     {
         if (NativeDocument is not { } native || CurrentBytes is not { } bytes)
         {
-            if (!UsePdfiumPages)
-                throw new InvalidOperationException("The document could not be read by the engine, so it cannot be saved.");
-            await _pdfiumService.SaveAnnotatedDocumentAsync(targetPath, mode, annotations, originalPath, ct).ConfigureAwait(false);
-            return;
+#if PDFIUM_RENDERER
+            if (UsePdfiumPages)
+            {
+                await _pdfiumService.SaveAnnotatedDocumentAsync(targetPath, mode, annotations, originalPath, ct).ConfigureAwait(false);
+                return;
+            }
+#endif
+            throw new InvalidOperationException("The document could not be read by the engine, so it cannot be saved.");
         }
         if (string.IsNullOrWhiteSpace(targetPath))
             throw new ArgumentException("Target file path cannot be empty.", nameof(targetPath));
@@ -1199,7 +1277,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         if (mode == AnnotationSaveMode.ExportXfdf)
         {
             var (sizes, origins) = NativeDocumentServices.PageFrames(native, list.Select(a => a.PageNumber));
-            await Task.Run(() => PdfiumDocumentService.ExportAnnotationsToXfdf(targetPath, list, sizes, origins), ct).ConfigureAwait(false);
+            await Task.Run(() => AnnotationExchange.ExportAnnotationsToXfdf(targetPath, list, sizes, origins), ct).ConfigureAwait(false);
             return;
         }
 
@@ -1225,7 +1303,9 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             _vectorDoc?.Dispose();
             _vectorRenderer.Dispose();
             _d2d?.Dispose();
+#if PDFIUM_RENDERER
             _pdfium?.Dispose();
+#endif
         }
     }
 }

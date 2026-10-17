@@ -1,3 +1,5 @@
+#if PDFIUM_RENDERER
+// PDFium is in developer and test builds only (PdfiumRenderer=true); the published app has none.
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -683,3 +685,4 @@ public static class PdfiumNativeBridge
 
     #endregion
 }
+#endif

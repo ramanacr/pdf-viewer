@@ -19,7 +19,9 @@ public class AnnotationWorkflowEventTests : IDisposable
     {
         _testDir = Path.Combine(Path.GetTempPath(), "PdfViewerAnnotEventTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_testDir);
+#if PDFIUM_RENDERER
         PdfiumNativeBridge.EnsureInitialized();
+#endif
     }
 
     public void Dispose()

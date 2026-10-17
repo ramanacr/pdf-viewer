@@ -76,7 +76,7 @@ public static class SamplePdfGenerator
             "Features & Navigation",
             "Performance Architecture",
             "Search & Extraction",
-            "Rendering Engine (PDFium)",
+            "Rendering Engine (Vector)",
             "Annotation Support",
             "Printing & Export",
             "Technical Specifications"
@@ -111,7 +111,7 @@ public static class SamplePdfGenerator
                 $"({title}) Tj\n" +
                 "/F1 12 Tf\n" +
                 "0 -30 Td\n" +
-                $"(PDF Viewer Native - Google PDFium Engine) Tj\n" +
+                $"(PDF Viewer Native - Built-in Vector Engine) Tj\n" +
                 "0 -25 Td\n" +
                 $"(Demonstrating high-performance native rendering, search, and navigation for page {i + 1}.) Tj\n" +
                 "0 -25 Td\n" +
@@ -126,7 +126,7 @@ public static class SamplePdfGenerator
         WriteObj(fontObj, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
 
         // Write Info
-        WriteObj(infoObj, "<< /Title (PDF Viewer Native Demo Document) /Author (PDF Viewer Native) /Subject (Demonstration Document) /Keywords (PDF, Viewer, PDFium) /Creator (PDF Viewer Native) /Producer (Google PDFium) >>");
+        WriteObj(infoObj, "<< /Title (PDF Viewer Native Demo Document) /Author (PDF Viewer Native) /Subject (Demonstration Document) /Keywords (PDF, Viewer, Vector) /Creator (PDF Viewer Native) /Producer (PDF Viewer Native) >>");
 
         // Xref & Trailer
         writer.Flush();

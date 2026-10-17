@@ -190,9 +190,15 @@ public class ProtectDocumentViewerTests : IDisposable
         Assert.Contains(_confirmations, c => c.Contains("Remove the password"));
         using var doc = await PdfVectorDocument.OpenAsync(output);
         Assert.False(doc.IsEncrypted);
+#if PDFIUM_RENDERER
         using var engine = new PdfEngine.Pdfium.PdfiumEngine();
         await using var pdoc = await engine.OpenDocumentAsync(output);
         Assert.Contains("Quarterly figures", await engine.TextService.ExtractPageTextAsync(pdoc, 1));
+#else
+        using var check = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict);
+        await check.OpenDocumentAsync(output);
+        Assert.NotEmpty(await check.SearchTextAsync("Quarterly figures"));
+#endif
     }
 
     [Fact]

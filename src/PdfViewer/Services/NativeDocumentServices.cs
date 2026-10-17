@@ -315,8 +315,8 @@ internal sealed class NativeDocumentServices
         a.Contents = string.IsNullOrEmpty(m.Contents) ? null : m.Contents;
         a.Author = string.IsNullOrEmpty(m.Author) ? null : m.Author;
         a.Subject = string.IsNullOrEmpty(m.Title) ? null : m.Title;
-        a.CreationDate = PdfiumDocumentService.FormatPdfDate(m.CreationDate);
-        a.ModifiedDate = PdfiumDocumentService.FormatPdfDate(m.ModifiedDate);
+        a.CreationDate = AnnotationExchange.FormatPdfDate(m.CreationDate);
+        a.ModifiedDate = AnnotationExchange.FormatPdfDate(m.ModifiedDate);
         if (m.StrokeThickness > 0) a.BorderWidth = m.StrokeThickness;
         if (!geometry) return;
 

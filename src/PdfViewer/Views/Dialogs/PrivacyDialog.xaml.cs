@@ -53,9 +53,9 @@ public partial class PrivacyDialog : Window
 
     private static string DescribeScriptEngine()
     {
-        // A JavaScript-enabled PDFium build cannot run without its V8 snapshot and ICU data
-        // files sitting beside the binary. Their absence is a fact about this installation,
-        // not a promise, so it is reported as observed rather than asserted.
+        // The engine has no JavaScript interpreter, and a JavaScript runtime cannot run without
+        // its V8 snapshot and ICU data files sitting beside the binary. Their absence is a fact
+        // about this installation, not a promise, so it is reported as observed rather than asserted.
         try
         {
             var dir = AppContext.BaseDirectory;
@@ -63,14 +63,14 @@ public partial class PrivacyDialog : Window
             var present = jsRuntimeFiles.Where(f => File.Exists(Path.Combine(dir, f))).ToArray();
 
             return present.Length == 0
-                ? "This build links PDFium without V8. None of the JavaScript runtime files a " +
-                  "script-enabled build requires are installed, so document script simply cannot run."
+                ? "The PDF engine has no JavaScript interpreter, and none of the JavaScript runtime " +
+                  "files a script engine would need are installed, so document script simply cannot run."
                 : "Unexpected JavaScript runtime files were found in the installation folder: " +
                   string.Join(", ", present) + ". Reinstall from an official release.";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return "This build links PDFium without V8, so document script cannot run. " +
+            return "The PDF engine has no JavaScript interpreter, so document script cannot run. " +
                    "(The installation folder could not be inspected to confirm.)";
         }
     }
