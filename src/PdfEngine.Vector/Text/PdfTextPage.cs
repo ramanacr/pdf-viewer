@@ -123,8 +123,6 @@ public sealed class PdfTextPage
     public string Text => _text.ToString();
 
     public char GetUnicode(int index) => _chars[index].Unicode;
-
-    internal CharInfo GetInfo(int index) => _chars[index];
     public PdfTextCharType GetCharType(int index) => _chars[index].Type;
     public bool IsGenerated(int index) => _chars[index].Type == PdfTextCharType.Generated;
     public bool IsHyphen(int index) => _chars[index].Type == PdfTextCharType.Hyphen;
@@ -508,9 +506,12 @@ public sealed class PdfTextPage
         }
         int ascent = font.TypeAscent, descent = font.TypeDescent;
         if (ascent == descent) return info.CharBox;
-        double width = info.Matrix.A * obj.GetCharWidth(info.CharCode, info.Cid);
-        double scale = info.Matrix.A * fs / 1000;
-        return new TextRect(info.Origin.X, info.Origin.Y + descent * scale, info.Origin.X + width, info.Origin.Y + ascent * scale);
+        // In text space: the advance wide, descent to ascent tall; then where the text matrix puts it.
+        double width = obj.GetCharWidth(info.CharCode, info.Cid);
+        var o = info.Matrix.Inverse().Transform(info.Origin);
+        var loose = new TextRect(o.X, descent * fs / 1000, o.X + width, ascent * fs / 1000).Transform(info.Matrix);
+        loose.Union(info.CharBox); // ink past the advance or the ascent widens it
+        return loose;
     }
 
     private void ProcessTextObjectItems(TextObject obj, PdfMatrix form, PdfMatrix matrix)

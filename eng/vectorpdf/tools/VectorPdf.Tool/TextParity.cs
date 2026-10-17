@@ -103,7 +103,6 @@ public static class TextParity
                         {
                             badPages.Add(p);
                             Bump(reasons, Classify(oracle.Text, nText));
-                            Debug(name, p, oracle.Text, nText);
                         }
                         if (countEq)
                         {
@@ -202,25 +201,6 @@ public static class TextParity
         while (i < a.Length && i < b.Length && a[i] == b[i]) i++;
         string cat(string s) => i < s.Length ? CharUnicodeInfo.GetUnicodeCategory(s[i]).ToString() : "end";
         return $"characters differ ({(a.Length > b.Length ? "native shorter" : a.Length < b.Length ? "native longer" : "same length")}; {cat(a)} vs {cat(b)})";
-    }
-
-    /// <summary>Local development only: VECTORPDF_TEXT_DEBUG=1 prints the first difference of each page to this console. Never in a report.</summary>
-    private static void Debug(string file, int page, string expected, string actual)
-    {
-        if (Environment.GetEnvironmentVariable("VECTORPDF_TEXT_DEBUG") != "1") return;
-        string a = Collapse(expected), b = Collapse(actual);
-        int i = 0;
-        while (i < a.Length && i < b.Length && a[i] == b[i]) i++;
-        int s = Math.Max(0, i - 40);
-        string Cut(string x) => x.Length <= s ? "" : x.Substring(s, Math.Min(100, x.Length - s)).Replace("\n", "\\n").Replace("\r", "\\r");
-        Console.WriteLine($"--- {file} p{page} at {i} (pdfium {a.Length}, native {b.Length})\n  P: {Esc(Cut(a))}\n  N: {Esc(Cut(b))}");
-    }
-
-    private static string Esc(string s)
-    {
-        var sb = new StringBuilder();
-        foreach (char c in s) sb.Append(c < 32 || c is '\uFFFE' or >= '\u007F' and < '\u00A0' ? $"\\u{(int)c:X4}" : c.ToString());
-        return sb.ToString();
     }
 
     private static IEnumerable<string> SampleWords(string text, int max)

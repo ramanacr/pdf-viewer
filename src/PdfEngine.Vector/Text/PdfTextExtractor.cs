@@ -91,15 +91,7 @@ public static class PdfTextExtractor
         return r > l && t > b ? new PdfRect(l, b, r - l, t - b) : crop;
     }
 
-    /// <summary>The text objects of a page as read (diagnostics).</summary>
-    internal static TextHolder ReadObjects(PdfVectorDocument document, int pageNumber)
-    {
-        TextHolder? holder = null;
-        Build(document, For(document), pageNumber, CancellationToken.None, h => holder = h);
-        return holder!;
-    }
-
-    private static PdfTextPage Build(PdfVectorDocument document, Context ctx, int pageNumber, CancellationToken ct, Action<TextHolder>? inspect = null)
+    private static PdfTextPage Build(PdfVectorDocument document, Context ctx, int pageNumber, CancellationToken ct)
     {
         var node = document.PageTree.Pages[pageNumber - 1];
         var decoder = new PdfStreamDecoder(null, document.Resolver.Resolve);
@@ -135,7 +127,6 @@ public static class PdfTextExtractor
             holder = new TextHolder();
         }
         ct.ThrowIfCancellationRequested();
-        inspect?.Invoke(holder);
         return new PdfTextPage(pageNumber, PageBox(node), node.RotationDegrees, holder);
     }
 }

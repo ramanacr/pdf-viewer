@@ -267,6 +267,14 @@ internal sealed class TextFontInfo
         bool hasDescent = desc?["Descent"] is { } d && d.TryGetNumber(out _);
         int ascent = hasAscent && desc!["Ascent"]!.TryGetNumber(out double av) ? (int)av : R(_font.Ascent * 1000);
         int descent = hasDescent && desc!["Descent"]!.TryGetNumber(out double dv) ? (int)dv : R(_font.Descent * 1000);
+        if (!hasAscent && !hasDescent && _font.IsType3)
+        {
+            // No face to ask: the top of 'A' and the bottom of 'g' (else the font box), as PDFium measures.
+            var capA = GetCharBBox('A', 'A');
+            var g = GetCharBBox('g', 'g');
+            ascent = capA.Bottom != capA.Top ? capA.Top : FontBBox.Top;
+            descent = g.Bottom != g.Top ? g.Bottom : FontBBox.Bottom;
+        }
         if (descent > 10) descent = -descent;
         return (ascent, descent);
     }
