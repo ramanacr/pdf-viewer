@@ -6,21 +6,25 @@ namespace PdfEngine.Vector.Direct2D;
 
 /// <summary>
 /// Draws pages for transparency flattening with the vector engine's Direct2D renderer. A page the
-/// engine cannot draw entirely by itself (it reports fallback regions) is drawn by
-/// <c>fallback</c> instead, when one is given (the viewer and tests pass PDFium, which this
-/// project does not reference); without it such a page is not drawn, so it is never flattened
-/// with placeholders.
+/// engine cannot draw exactly (it reports fallback regions) is drawn by <c>fallback</c> when one
+/// is given (tests pass PDFium, which this project does not reference); otherwise it is drawn by
+/// the engine's best effort when <c>bestEffort</c> is set (the viewer: the same pixels the screen
+/// shows, never placeholders), and refused when it is not.
 /// </summary>
 public sealed class Direct2DPageRasterizer : IPdfPageRasterizer, IDisposable
 {
     private readonly Direct2DVectorRenderer _renderer;
     private readonly bool _ownsRenderer;
     private readonly Func<byte[], int, int, int, PdfPixelWindow, PdfRasterImage?>? _fallback;
+    private readonly bool _bestEffort;
 
     /// <param name="fallback">Draws a window of a page (number) of a file drawn at width × height pixels, for pages with fallback regions.</param>
-    public Direct2DPageRasterizer(Func<byte[], int, int, int, PdfPixelWindow, PdfRasterImage?>? fallback = null, Direct2DVectorRenderer? renderer = null)
+    /// <param name="bestEffort">Without <paramref name="fallback"/>, draw pages with fallback regions as the engine draws them instead of refusing them.</param>
+    public Direct2DPageRasterizer(Func<byte[], int, int, int, PdfPixelWindow, PdfRasterImage?>? fallback = null, Direct2DVectorRenderer? renderer = null,
+        bool bestEffort = false)
     {
         _fallback = fallback;
+        _bestEffort = bestEffort;
         _ownsRenderer = renderer == null;
         _renderer = renderer ?? new Direct2DVectorRenderer();
     }
@@ -32,7 +36,7 @@ public sealed class Direct2DPageRasterizer : IPdfPageRasterizer, IDisposable
         {
             var list = await document.GetPageDisplayListAsync(pageNumber).ConfigureAwait(false);
             var tokens = await _renderer.AnalyzeAsync(list).ConfigureAwait(false);
-            if (tokens.Count > 0)
+            if (tokens.Count > 0 && (_fallback != null || !_bestEffort))
                 return _fallback?.Invoke(bytes, pageNumber, pageWidthPixels, pageHeightPixels, window);
             var crop = list.CropBox.IsEmpty ? new Geometry.PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
             var request = new RenderRequest

@@ -40,12 +40,12 @@ public partial class ThumbnailViewModel : ObservableObject
         try
         {
             // Render at lower DPI for fast thumbnail generation (e.g. 50 DPI)
-            var thumb = await renderer.GetOrRenderPageAsync(PageNumber, 50, rotation, ct);
+            // Thumbnails follow the page. A sidebar of white thumbnails beside an inverted
+            // document is the same mismatch night mode exists to remove.
+            var thumb = await renderer.GetOrRenderPageAsync(PageNumber, 50, rotation, ct, nightMode);
             if (!ct.IsCancellationRequested && thumb != null)
             {
-                // Thumbnails follow the page. A sidebar of white thumbnails beside an inverted
-                // document is the same mismatch night mode exists to remove.
-                ThumbnailImage = nightMode ? NightModeImage.Invert(thumb) : thumb;
+                ThumbnailImage = thumb;
                 _renderedNightMode = nightMode;
             }
         }

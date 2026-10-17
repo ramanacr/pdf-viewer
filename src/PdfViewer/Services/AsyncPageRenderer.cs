@@ -19,17 +19,23 @@ public class AsyncPageRenderer
         _cache = cache;
     }
 
-    public async Task<BitmapSource?> GetOrRenderPageAsync(int pageNumber, int dpi, int rotationAngle, CancellationToken ct = default)
+    /// <param name="nightMode">
+    /// The night-mode page: drawn inverted by the renderer itself (the vector service inverts it on
+    /// the GPU with a Direct2D effect), cached beside the day page.
+    /// </param>
+    public async Task<BitmapSource?> GetOrRenderPageAsync(int pageNumber, int dpi, int rotationAngle, CancellationToken ct = default, bool nightMode = false)
     {
-        if (_cache.TryGet(pageNumber, dpi, rotationAngle, out var cachedImage) && cachedImage != null)
+        if (_cache.TryGet(pageNumber, dpi, rotationAngle, nightMode, out var cachedImage) && cachedImage != null)
         {
             return cachedImage;
         }
 
-        var rendered = await _documentService.RenderPageAsync(pageNumber, dpi, rotationAngle, ct);
+        var rendered = nightMode
+            ? await _documentService.RenderPageInvertedAsync(pageNumber, dpi, rotationAngle, ct)
+            : await _documentService.RenderPageAsync(pageNumber, dpi, rotationAngle, ct);
         if (rendered != null && !ct.IsCancellationRequested)
         {
-            _cache.Add(pageNumber, dpi, rotationAngle, rendered);
+            _cache.Add(pageNumber, dpi, rotationAngle, rendered, nightMode);
         }
 
         return rendered;

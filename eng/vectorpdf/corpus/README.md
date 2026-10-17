@@ -32,6 +32,12 @@ One JSON line per file: `sha256`, `pdfiumPages`/`pdfiumError`, `vectorPages`/`ve
 `repaired`, `fallbackReasons` (counts per `PdfFallbackReason`), `fallbackAreaMean`,
 `meanPixelDiff` (fully-vector pages only, 72 dpi) and `vectorMs`. Nothing leaves the machine.
 
+`--diff-all` also diffs the pages that still have fallback regions, rendered with no fallback
+provider, which is what the viewer shows (the PDFium-free release gate). The summary then adds
+`fallbackPagesDiffed`, `meanPixelDiffFallbackPages` and `worstFallbackPageDiffs`, and both diff
+modes add `meanPixelDiffFullyVector`, `vectorRenderMs` and `pdfiumRenderMs` (72 dpi render time
+of the diffed pages in each engine).
+
 `eng/vectorpdf/baseline-corpus-samples.jsonl` is the report for `samples/`; `eng/vectorpdf/baseline-corpus-summary.json`
 is the gate summary for the fetched corpus (`--summary`). Investigate a page with
 `vectorpdf diffpage <file> <page> <out.png> [--dump] [--content]`.

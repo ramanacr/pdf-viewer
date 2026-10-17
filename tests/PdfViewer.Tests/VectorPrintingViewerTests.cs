@@ -101,7 +101,7 @@ public class VectorPrintingViewerTests : IDisposable
             try
             {
                 var printable = new PrintRect(48, 48, 720, 960);
-                var paginator = new PdfiumPdfPaginator(service, new[] { 2 }, 816, 1056, printable, PrintScaling.Custom, 50, 0);
+                var paginator = new PageImagePaginator(service, new[] { 2 }, 816, 1056, printable, PrintScaling.Custom, 50, 0);
                 Assert.Equal(1, paginator.PageCount);
                 using var page = paginator.GetPage(0);
                 Assert.Equal(new System.Windows.Size(816, 1056), page.Size);

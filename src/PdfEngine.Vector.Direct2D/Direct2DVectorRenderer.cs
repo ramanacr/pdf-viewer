@@ -50,20 +50,21 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     private bool _disposed;
 
     /// <summary>
-    /// Replayers kept across renders, per display list, scale and colour mode. A replayer holds
-    /// the page's geometries and its tessellations (realizations) at one scale, which dominate
-    /// the cost of dense vector pages; a viewer scrolling at a fixed zoom asks for one tile after
-    /// another at the same scale and pays tessellation once. Guarded by <see cref="_gate"/>.
+    /// Replayers kept across renders, per display list and scale. A replayer holds the page's
+    /// geometries and its tessellations (realizations) at one scale, which dominate the cost of
+    /// dense vector pages; a viewer scrolling at a fixed zoom asks for one tile after another at
+    /// the same scale and pays tessellation once. Day and night renders share them: night mode
+    /// inverts the finished tile with a Direct2D effect. Guarded by <see cref="_gate"/>.
     /// </summary>
     private const int ReplayerCacheCapacity = 6;
-    private readonly LinkedList<((IPdfDisplayList List, float Scale, bool Invert) Key, Replayer Replayer)> _replayers = new();
+    private readonly LinkedList<((IPdfDisplayList List, float Scale) Key, Replayer Replayer)> _replayers = new();
 
-    private Replayer AcquireReplayer(IPdfDisplayList list, float scale, bool invert, CancellationToken ct)
+    private Replayer AcquireReplayer(IPdfDisplayList list, float scale, CancellationToken ct)
     {
-        var key = (list, MathF.Round(scale, 4), invert);
+        var key = (list, MathF.Round(scale, 4));
         for (var node = _replayers.First; node != null; node = node.Next)
         {
-            if (ReferenceEquals(node.Value.Key.List, list) && node.Value.Key.Scale == key.Item2 && node.Value.Key.Invert == invert)
+            if (ReferenceEquals(node.Value.Key.List, list) && node.Value.Key.Scale == key.Item2)
             {
                 _replayers.Remove(node);
                 _replayers.AddFirst(node);
@@ -74,7 +75,6 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         var replayer = new Replayer(_res, list, backendFallbacks: null, analyzeOnly: false, ct)
         {
             UseRealizations = true,
-            InvertColors = invert,
             WindowedRealizations = WindowedRealizations,
             DrawSmallGeometriesDirectly = DrawSmallGeometriesDirectly,
         };
@@ -134,6 +134,12 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     /// <summary>True when running on WARP (no hardware device).</summary>
     public bool IsSoftware => _res.IsSoftware;
 
+    /// <summary>
+    /// Outline fallback regions that no provider drew (strict vector mode). Off, a region shows
+    /// what the engine draws of it by itself, with nothing laid over it.
+    /// </summary>
+    public bool OutlineUnsupportedRegions { get; set; }
+
     public long CachedBitmapBytes => _res.CachedBitmapBytes;
 
     /// <summary>Test hook: drops every device-dependent resource as a real device reset would.</summary>
@@ -174,8 +180,9 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     /// <summary>
     /// Renders the page, or only <paramref name="region"/> of it (pixel window of the full output at
     /// the request's resolution) — how a viewer draws the visible part of a zoomed page at exact
-    /// device resolution. <paramref name="invertColors"/> produces the night-mode page (colour
-    /// inversion commutes with source-over compositing, so this equals inverting the pixels).
+    /// device resolution. <paramref name="invertColors"/> produces the night-mode page: the tile is
+    /// drawn as by day and inverted on the GPU by a Direct2D Invert effect, so it is exactly the
+    /// inverted day page (blend modes included) at the cost of one extra pass over the tile.
     /// </summary>
     public async Task<D2DRenderResult> RenderAsync(IPdfDisplayList list, RenderRequest request, IPdfFallbackProvider? provider,
         PixelRegion? region, bool invertColors, CancellationToken ct)
@@ -213,7 +220,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
                 // Tessellation is always worth keeping: a realization is drawn at least once per
                 // tile, and is reused by the next render at this scale (the next viewport tile).
                 var pageToPixels = geometry.PageUserToPixels();
-                var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), invertColors, ct);
+                var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), ct);
                 await Task.Run(() =>
                 {
                     for (int ty = r.Y; ty < r.Y + r.Height; ty += TileSize)
@@ -279,7 +286,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
             try
             {
                 var pageToPixels = geometry.PageUserToPixels();
-                var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), invertColors, ct);
+                var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), ct);
                 return await Task.Run(() =>
                 {
                     for (int attempt = 0; ; attempt++)
@@ -327,7 +334,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         try
         {
             var pageToPixels = geometry.PageUserToPixels();
-            var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), invertColors, ct);
+            var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), ct);
             await Task.Run(() =>
             {
                 for (int attempt = 0; ; attempt++)
@@ -510,6 +517,9 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         _tileStaging?.Dispose();
         _tileTarget = _tileStaging = null;
         _tileContext = null;
+        _nightSource?.Dispose();
+        _nightSource = null;
+        _nightSourceContext = null;
         _probeTarget?.Dispose();
         _probeTarget = null;
         _probeContext = null;
@@ -548,13 +558,15 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         Matrix3x2.Invert(pageToDevice, out var deviceToPage);
         var visible = TransformRect(deviceToPage, new Vector2(0, 0), new Vector2(w, h));
 
-        ctx.Target = target;
+        // Night mode: the day tile goes to an offscreen bitmap first, then through the Invert effect.
+        var dayTarget = invert ? NightSource(w, h) : target;
+        ctx.Target = dayTarget;
         ctx.BeginDraw();
         int composited;
         try
         {
             ctx.Transform = Matrix3x2.Identity;
-            ctx.Clear(invert ? new Color4(0, 0, 0, 1) : new Color4(1, 1, 1, 1));
+            ctx.Clear(new Color4(1, 1, 1, 1));
             ctx.AntialiasMode = AntialiasMode.PerPrimitive;
             ctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
             if (_res.DocumentTextParams != null) ctx.TextRenderingParams = _res.DocumentTextParams;
@@ -562,7 +574,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
             replay.Draw(ctx, pageToDevice, visible);
 
             // Fallback regions last: provider pixels are the full truth for their region.
-            composited = DrawOverlays(ctx, list, g.PagePointsToPixels() * Matrix3x2.CreateTranslation(-tx, -ty), overlays, invert);
+            composited = DrawOverlays(ctx, list, g.PagePointsToPixels() * Matrix3x2.CreateTranslation(-tx, -ty), overlays, OutlineUnsupportedRegions);
         }
         finally
         {
@@ -570,12 +582,51 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
             ctx.Target = null;
             if (hr.Failure) throw new SharpGenException(hr);
         }
+
+        if (invert)
+        {
+            ctx.Target = target;
+            ctx.BeginDraw();
+            try
+            {
+                ctx.Transform = Matrix3x2.Identity;
+                using var effect = new Vortice.Direct2D1.Effects.Invert(ctx);
+                effect.SetInput(0, dayTarget, true);
+                using var output = effect.Output;
+                ctx.DrawImage(output, Vector2.Zero, null, Vortice.Direct2D1.InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+            }
+            finally
+            {
+                var hr = ctx.EndDraw();
+                ctx.Target = null;
+                if (hr.Failure) throw new SharpGenException(hr);
+            }
+        }
         return composited;
     }
 
-    /// <param name="markMissing">Outline regions without pixels (on screen); printing leaves them blank.</param>
-    private static int DrawOverlays(ID2D1DeviceContext ctx, IPdfDisplayList list, Matrix3x2 pointsToDevice, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, bool invert,
-        bool markMissing = true)
+    private ID2D1Bitmap1? _nightSource;
+    private SizeI _nightSourceSize;
+    private ID2D1DeviceContext? _nightSourceContext;
+
+    /// <summary>The offscreen day tile of a night render, kept while the tile size stays the same.</summary>
+    private ID2D1Bitmap1 NightSource(int w, int h)
+    {
+        var ctx = _res.Context!;
+        if (_nightSource == null || !ReferenceEquals(_nightSourceContext, ctx) || _nightSourceSize.Width != w || _nightSourceSize.Height != h)
+        {
+            _nightSource?.Dispose();
+            _nightSourceSize = new SizeI(w, h);
+            _nightSource = ctx.CreateBitmap(_nightSourceSize, IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target));
+            _nightSourceContext = ctx;
+        }
+        return _nightSource;
+    }
+
+    /// <param name="markMissing">Outline regions without pixels (strict vector mode on screen); otherwise nothing is laid over them.</param>
+    private static int DrawOverlays(ID2D1DeviceContext ctx, IPdfDisplayList list, Matrix3x2 pointsToDevice, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays,
+        bool markMissing)
     {
         var crop = list.CropBox.IsEmpty ? new PdfRect(0, 0, list.PageSize.Width, list.PageSize.Height) : list.CropBox;
         int composited = 0;
@@ -592,15 +643,6 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
             if (pixels != null && pixels.WidthPixels > 0 && pixels.HeightPixels > 0)
             {
                 var data = pixels.Pixels.ToArray();
-                if (invert)
-                {
-                    for (int i = 0; i + 3 < data.Length; i += 4)
-                    {
-                        data[i] = (byte)(255 - data[i]);
-                        data[i + 1] = (byte)(255 - data[i + 1]);
-                        data[i + 2] = (byte)(255 - data[i + 2]);
-                    }
-                }
                 var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
                 try
                 {

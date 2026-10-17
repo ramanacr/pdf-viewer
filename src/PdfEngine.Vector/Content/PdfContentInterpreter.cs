@@ -47,6 +47,13 @@ public sealed class PdfContentInterpreter
     /// <summary>Render annotation normal appearances, matching the PDFium path's FPDF_ANNOT flag.</summary>
     public bool RenderAnnotations { get; init; } = true;
 
+    /// <summary>
+    /// The appearance to draw for a form field widget (by object number) instead of its own, or
+    /// null to draw its own: what a reader generates when the form asks for it (/NeedAppearances)
+    /// or the widget has none. The flag says whether the widget has a usable appearance.
+    /// </summary>
+    public Func<int, bool, PdfStream?>? WidgetAppearance { get; init; }
+
     public PdfContentInterpreter(
         PdfObjectResolver resolver,
         PdfFontResolver? fontResolver = null,
@@ -60,10 +67,17 @@ public sealed class PdfContentInterpreter
 
     public IPdfDisplayList BuildDisplayList(PdfPageNode page) => BuildDisplayList(page, CancellationToken.None);
 
-    public IPdfDisplayList BuildDisplayList(PdfPageNode page, CancellationToken cancellationToken)
+    public IPdfDisplayList BuildDisplayList(PdfPageNode page, CancellationToken cancellationToken) =>
+        BuildDisplayList(page, cancellationToken, forPrinting: false);
+
+    /// <param name="forPrinting">
+    /// Annotations as a printer shows them: only those with the Print flag, NoView ones included
+    /// (ISO 32000-2 12.5.3); on screen every annotation without Hidden or NoView is drawn.
+    /// </param>
+    public IPdfDisplayList BuildDisplayList(PdfPageNode page, CancellationToken cancellationToken, bool forPrinting)
     {
         ArgumentNullException.ThrowIfNull(page);
-        return new PageRun(this, page, cancellationToken).Build();
+        return new PageRun(this, page, cancellationToken, forPrinting).Build();
     }
 
     private sealed record PreparedFace(PdfFontFace Face, PreparedFontProgram? Program);
@@ -135,8 +149,11 @@ public sealed class PdfContentInterpreter
         private long _imagePixels;
         private int _imageSerial;
 
-        public PageRun(PdfContentInterpreter owner, PdfPageNode page, CancellationToken ct)
+        private readonly bool _forPrinting;
+
+        public PageRun(PdfContentInterpreter owner, PdfPageNode page, CancellationToken ct, bool forPrinting = false)
         {
+            _forPrinting = forPrinting;
             _owner = owner;
             _page = page;
             _ct = ct;
@@ -168,19 +185,21 @@ public sealed class PdfContentInterpreter
             {
                 throw;
             }
-            catch (PdfResourceLimitException ex)
+            // The page keeps what was drawn before the content became unreadable, as PDFium does: a
+            // damaged or hostile page shows its first part, never a placeholder over the whole page.
+            catch (PdfResourceLimitException)
             {
-                PageFallback(PdfFallbackReason.ResourceLimit, $"Resource limit reached: {ex.LimitName}");
+                Recover();
             }
-            catch (PdfUnsupportedFeatureException ex)
+            catch (PdfUnsupportedFeatureException)
             {
-                PageFallback(ex.Reason, ex.Message);
+                Recover();
             }
             catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
                                            or IndexOutOfRangeException or ArgumentException or OverflowException
                                            or InvalidOperationException)
             {
-                PageFallback(PdfFallbackReason.MalformedContentRecovery, $"Content interpretation failed ({ex.GetType().Name})");
+                Recover();
             }
 
             return new PdfDisplayList(
@@ -578,13 +597,10 @@ public sealed class PdfContentInterpreter
                         break;
 
                     default:
-                        // Unknown operators inside BX/EX must be ignored (7.8.2). Elsewhere they mean
-                        // content we do not understand: classify rather than guess.
+                        // Unknown operators inside BX/EX must be ignored (7.8.2). Outside them they
+                        // are an error, which PDFium also ignores: the rest of the page is drawn.
                         if (compatDepth == 0)
-                        {
-                            AddFallback(PdfFallbackReason.UnknownOperator,
-                                $"Unsupported PDF operator '{Sanitize(op)}'", gs.ClipBoundsPage);
-                        }
+                            Recover();
                         break;
                 }
 
@@ -740,17 +756,42 @@ public sealed class PdfContentInterpreter
             _features |= PdfFeatureSet.Fallback;
         }
 
-        private void PageFallback(PdfFallbackReason reason, string description) =>
-            AddFallback(reason, description, Crop);
+        /// <summary>Damaged or unsupported content was skipped or drawn by best effort (diagnostics only).</summary>
+        private void Recover() => _features |= PdfFeatureSet.Recovered;
 
-        private static PdfFallbackReason? PaintUnsupported(GraphicsState gs, bool stroke)
+        /// <summary>
+        /// A content stream's decoded bytes, or none when its data cannot be decoded (corrupt data,
+        /// an unknown filter): PDFium draws nothing for such a stream and goes on with the page.
+        /// </summary>
+        private byte[] DecodeContent(PdfStream stream)
         {
-            // Blend modes and captured soft masks are composited natively (BeginCompositingGroup);
-            // only a soft mask that could not be captured still falls back.
-            if (gs.SoftMaskActive && gs.SoftMask == null) return PdfFallbackReason.SoftMask;
+            try
+            {
+                return _owner._streamDecoder.DecodeStream(stream);
+            }
+            catch (PdfUnsupportedFeatureException ex) when (ex.Reason == PdfFallbackReason.UnsupportedImageFilter)
+            {
+                Recover();
+                return Array.Empty<byte>();
+            }
+            catch (PdfSyntaxException)
+            {
+                Recover();
+                return Array.Empty<byte>();
+            }
+        }
+
+        /// <summary>
+        /// Paints the engine cannot reproduce exactly are drawn by best effort, as PDFium draws them:
+        /// a soft mask that could not be captured is left out, and a colour space with an unusable
+        /// definition paints through its approximation (its alternate, or the device space with
+        /// its number of components). Blend modes and captured soft masks are composited natively.
+        /// </summary>
+        private void NotePaintApproximation(GraphicsState gs, bool stroke)
+        {
             var cs = stroke ? gs.StrokeColorSpace : gs.FillColorSpace;
-            if (cs.IsPattern) return null; // handled by the pattern paint path
-            return cs.UnsupportedReason;
+            if (gs.SoftMaskActive && gs.SoftMask == null || !cs.IsPattern && cs.UnsupportedReason != null)
+                Recover();
         }
 
         // ------------------------------------------------------------------ paths
@@ -807,12 +848,7 @@ public sealed class PdfContentInterpreter
 
         private void PaintFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfDictionary resources, PdfRect pageBounds)
         {
-            if (PaintUnsupported(gs, stroke: false) is PdfFallbackReason reason)
-            {
-                AddFallback(reason, "Fill uses an unsupported paint", pageBounds);
-                return;
-            }
-
+            NotePaintApproximation(gs, stroke: false);
             bool composite = BeginComposite(gs, pageBounds);
             if (gs.FillColorSpace.IsPattern)
                 PaintPatternFill(pdfPath, rule, gs, pageBounds);
@@ -843,12 +879,7 @@ public sealed class PdfContentInterpreter
 
         private void PaintStroke(PdfPath pdfPath, GraphicsState gs, PdfRect pageBounds)
         {
-            if (PaintUnsupported(gs, stroke: true) is PdfFallbackReason reason)
-            {
-                AddFallback(reason, "Stroke uses an unsupported paint", pageBounds);
-                return;
-            }
-
+            NotePaintApproximation(gs, stroke: true);
             bool composite = BeginComposite(gs, pageBounds);
             if (gs.StrokeColorSpace.IsPattern)
                 PaintPatternFill(pdfPath, PdfFillRule.NonZero, gs, pageBounds, gs.CreateStroke());
@@ -878,8 +909,8 @@ public sealed class PdfContentInterpreter
 
             if (patternDict == null)
             {
-                // Unresolvable pattern: PDF viewers paint nothing; say so instead of guessing a colour.
-                AddFallback(PdfFallbackReason.Pattern, "Unresolvable pattern", pageBounds);
+                // Unresolvable pattern: PDF viewers paint nothing.
+                Recover();
                 return;
             }
 
@@ -891,7 +922,7 @@ public sealed class PdfContentInterpreter
             }
             if (patternType != 2)
             {
-                AddFallback(PdfFallbackReason.Pattern, "Tiling pattern", pageBounds);
+                Recover(); // not a pattern type: nothing is painted
                 return;
             }
 
@@ -904,16 +935,15 @@ public sealed class PdfContentInterpreter
             };
             if (shadingDict == null || BuildShading(shadingDict, out var reason, shadingObj as PdfStream) is not PdfShading shading)
             {
-                AddFallback(PdfFallbackReason.Shading, "Unsupported shading pattern", pageBounds);
+                Recover(); // a shading that cannot be read paints nothing, as in PDFium
                 return;
             }
             _ = reason;
 
+            // A shading pattern's own graphics state (rarely more than an opacity) is not applied;
+            // the shading is painted with the current one.
             if (_resolver.Resolve(patternDict["ExtGState"]) is PdfDictionary)
-            {
-                AddFallback(PdfFallbackReason.Pattern, "Shading pattern with its own graphics state", pageBounds);
-                return;
-            }
+                Recover();
 
             // Pattern space maps to the default space of the pattern's parent stream (8.7.2), not the CTM.
             var patternMatrix = ReadMatrix(patternDict["Matrix"]) ?? PdfMatrix.Identity;
@@ -947,7 +977,9 @@ public sealed class PdfContentInterpreter
             var tiling = CaptureTiling(patternStream, uncolored ? color : null);
             if (tiling == null)
             {
-                AddFallback(PdfFallbackReason.Pattern, "Tiling pattern could not be reproduced", pageBounds);
+                // A pattern with a degenerate cell (a zero or near-zero step, an empty box) or one that
+                // paints itself: nothing is painted, as in PDFium.
+                Recover();
                 return;
             }
 
@@ -968,8 +1000,9 @@ public sealed class PdfContentInterpreter
         }
 
         /// <summary>
-        /// Records one pattern cell in pattern space. Null (fallback) for malformed steps or boxes,
-        /// self-referencing or too deeply nested patterns, and cells whose content needs fallback.
+        /// Records one pattern cell in pattern space. Null for malformed steps or boxes and for
+        /// self-referencing or too deeply nested patterns. A cell whose content has fallback regions
+        /// keeps what the engine draws of it.
         /// </summary>
         private PdfTilingPattern? CaptureTiling(PdfStream patternStream, PdfColor? color)
         {
@@ -1000,19 +1033,18 @@ public sealed class PdfContentInterpreter
                         cellState.StrokeColor = c;
                     }
                     _currentPatternBase = PdfMatrix.Identity; // nested patterns map to this pattern's space
-                    byte[] content = _owner._streamDecoder.DecodeStream(patternStream);
+                    byte[] content = DecodeContent(patternStream);
                     var resources = _resolver.Resolve(d["Resources"]) as PdfDictionary ?? _page.Resources;
                     _commands.Add(new SaveState());
                     _commands.Add(new PushClip(RectPath(bbox), PdfFillRule.NonZero, bbox));
                     Execute(content, resources, cellState, new ContentContext(PdfMatrix.Identity, 0, 0, color != null));
                     _commands.Add(new RestoreState());
 
-                    if (_fallbacks.Count == fallbackMark)
-                    {
-                        var cell = new PdfDisplayList(_page.PageNumber, _page.PageSize, _page.MediaBox, _page.CropBox, _page.RotationDegrees,
-                            _commands.GetRange(mark, _commands.Count - mark), _features & ~PdfFeatureSet.Fallback, Array.Empty<PdfFallbackToken>());
-                        result = new PdfTilingPattern(cell, bbox, Math.Abs(xStep), Math.Abs(yStep));
-                    }
+                    if (_fallbacks.Count != fallbackMark)
+                        Recover();
+                    var cell = new PdfDisplayList(_page.PageNumber, _page.PageSize, _page.MediaBox, _page.CropBox, _page.RotationDegrees,
+                        _commands.GetRange(mark, _commands.Count - mark), _features & ~PdfFeatureSet.Fallback, Array.Empty<PdfFallbackToken>());
+                    result = new PdfTilingPattern(cell, bbox, Math.Abs(xStep), Math.Abs(yStep));
                 }
                 catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
                                                or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
@@ -1108,6 +1140,14 @@ public sealed class PdfContentInterpreter
             PdfColorSpace cs = name == "Pattern"
                 ? PdfColorSpace.Resolve(new PdfName("Pattern"), _resolver, resources)
                 : PdfColorSpace.Resolve(new PdfName(name), _resolver, resources);
+            if (cs is PdfColorSpace.UnsupportedColorSpace)
+            {
+                // A space that is not defined in the resources, or whose definition cannot be read:
+                // PDFium keeps the current colour space, so the colour operators that follow still
+                // paint (a /CS0 missing from a form's resources draws in the default gray).
+                Recover();
+                return;
+            }
             var initial = cs.InitialComponents;
             var color = cs.IsPattern ? PdfColor.Black : WithIntent(cs, gs.RenderingIntent).ToRgbColor(initial, 1f);
             if (stroke)
@@ -1507,13 +1547,21 @@ public sealed class PdfContentInterpreter
             double inflate = strokes ? StrokeExpansion(gs) : 0;
             var pageBounds = Intersect(textToPage.Transform(Inflate(textBox, inflate)), gs.ClipBoundsPage);
 
-            PdfFallbackReason? reason = font.UnsupportedReason;
+            // A font the engine cannot read exactly (an unknown CMap, a broken font dictionary) is
+            // drawn by best effort, as PDFium draws it: codes through the identity or the CMap parts
+            // that were read, glyphs from the backend's substitute for the font's name.
+            PdfFallbackReason? reason = null;
+            if (font.UnsupportedReason is PdfFallbackReason and not PdfFallbackReason.Type3Font)
+                Recover();
+            else
+                reason = font.UnsupportedReason;
             bool paints = mode is not 3 and not 7;
             if (reason == null && paints)
             {
                 bool fills = mode is 0 or 2 or 4 or 6;
-                reason = (fills ? PaintUnsupported(gs, false) : null) ?? (strokes ? PaintUnsupported(gs, true) : null);
-                if (reason == null && ((fills && gs.FillColorSpace.IsPattern) || (strokes && gs.StrokeColorSpace.IsPattern)))
+                if (fills) NotePaintApproximation(gs, false);
+                if (strokes) NotePaintApproximation(gs, true);
+                if ((fills && gs.FillColorSpace.IsPattern) || (strokes && gs.StrokeColorSpace.IsPattern))
                     reason = PdfFallbackReason.Pattern;
             }
 
@@ -1522,7 +1570,7 @@ public sealed class PdfContentInterpreter
                 : face;
 
             // Pattern-filled text: the pattern is painted through the glyph outlines.
-            bool patternText = !hidden && reason == PdfFallbackReason.Pattern && font.UnsupportedReason == null &&
+            bool patternText = !hidden && reason == PdfFallbackReason.Pattern &&
                                mode is 0 or 4 && gs.FillColorSpace.IsPattern;
             if (patternText)
                 reason = null;
@@ -1564,7 +1612,7 @@ public sealed class PdfContentInterpreter
             {
                 _features |= PdfFeatureSet.Clipping;
                 textClip = Union(textClip ?? PdfRect.Empty, pageBounds);
-                if (font.UnsupportedReason != null) _textClipExact = false;
+                if (font.UnsupportedReason == PdfFallbackReason.Type3Font) _textClipExact = false;
                 else _textClipRuns.Add(run with { RenderingMode = 7 });
             }
         }
@@ -1646,7 +1694,7 @@ public sealed class PdfContentInterpreter
                     _commands.Add(new SaveState());
                     _commands.Add(new ConcatTransform(glyphToUser));
                     int before = _commands.Count;
-                    Execute(_owner._streamDecoder.DecodeStream(proc), glyphResources, glyphState,
+                    Execute(DecodeContent(proc), glyphResources, glyphState,
                         ctx with { Type3Depth = ctx.Type3Depth + 1, UncoloredGlyph = false });
                     for (int i = before; i < _commands.Count; i++)
                     {
@@ -1719,15 +1767,11 @@ public sealed class PdfContentInterpreter
             if (bounds.IsEmpty)
                 return;
 
-            if (PaintUnsupported(gs, stroke: false) is PdfFallbackReason paintReason && paintReason != PdfFallbackReason.UnsupportedColorSpace)
-            {
-                AddFallback(paintReason, "Shading painted with unsupported transparency", bounds);
-                return;
-            }
-
+            NotePaintApproximation(gs, stroke: false);
             if (BuildShading(shDict, out var reason, shObj as PdfStream) is not PdfShading shading)
             {
-                AddFallback(reason, "Unsupported shading type", bounds);
+                _ = reason;
+                Recover(); // a shading that cannot be read paints nothing, as in PDFium
                 return;
             }
             if (shading is PdfMeshShading mesh)
@@ -2033,7 +2077,7 @@ public sealed class PdfContentInterpreter
 
             if (ctx.FormDepth >= _limits.MaxFormXObjectDepth)
             {
-                if (!hidden) AddFallback(PdfFallbackReason.ResourceLimit, "Form XObject nesting too deep", formBounds);
+                Recover(); // deeper forms are not drawn (a bounded recursion); the page goes on
                 return;
             }
             if (!_activeForms.Add(form))
@@ -2055,13 +2099,10 @@ public sealed class PdfContentInterpreter
                     _features |= PdfFeatureSet.Transparency;
                     knockout = groupDict!.TryGetValue("K", out var k) && k != null && k.TryGetBoolean(out bool kb) && kb;
                     if (gs.SoftMaskActive && gs.SoftMask == null)
-                    {
-                        AddFallback(PdfFallbackReason.SoftMask, "Transparency group composited with unsupported parameters", formBounds);
-                        return;
-                    }
+                        Recover(); // composited without the soft mask that could not be captured
                 }
 
-                byte[] content = _owner._streamDecoder.DecodeStream(form);
+                byte[] content = DecodeContent(form);
                 var formResources = _resolver.Resolve(dict["Resources"]) as PdfDictionary ?? parentResources;
 
                 var inner = gs.Clone();
@@ -2191,9 +2232,11 @@ public sealed class PdfContentInterpreter
             if (width <= 0 || height <= 0)
                 return;
             long pixels = width * height;
+            // Images PDFium would not draw either are skipped and the page goes on: an image over the
+            // pixel ceiling, one with a filter nobody decodes, one without a usable colour space.
             if (pixels > _limits.MaxImagePixels || (_imagePixels += pixels) > _limits.MaxImagePixelsPerPage)
             {
-                AddFallback(PdfFallbackReason.ResourceLimit, "Image exceeds the pixel budget", pageBounds);
+                Recover();
                 return;
             }
 
@@ -2203,22 +2246,18 @@ public sealed class PdfContentInterpreter
             {
                 if (!NativeImageFilters.Contains(filter))
                 {
-                    AddFallback(PdfFallbackReason.UnsupportedImageFilter, $"Image filter {Sanitize(filter)}", pageBounds,
-                        new Dictionary<string, string> { ["filter"] = filter });
+                    Recover();
                     return;
                 }
             }
 
-            if (PaintUnsupported(gs, stroke: false) is PdfFallbackReason paintReason &&
-                (isMask || paintReason is PdfFallbackReason.SoftMask or PdfFallbackReason.BlendMode))
-            {
-                AddFallback(paintReason, "Image painted with unsupported transparency or paint", pageBounds);
-                return;
-            }
+            if (isMask || gs.SoftMaskActive && gs.SoftMask == null)
+                NotePaintApproximation(gs, stroke: false);
             if (isMask && gs.FillColorSpace.IsPattern)
             {
-                AddFallback(PdfFallbackReason.Pattern, "Stencil mask painted with a pattern", pageBounds);
-                return;
+                // A stencil mask filled with a pattern: painted in the pattern's colour as far as it
+                // has one (the current fill colour), not through the pattern cells.
+                Recover();
             }
 
             PdfColorSpace? cs = null;
@@ -2228,7 +2267,7 @@ public sealed class PdfContentInterpreter
                 bool jpx = FilterNames(dict).Contains("JPXDecode");
                 if (csObj == null && !jpx)
                 {
-                    AddFallback(PdfFallbackReason.UnsupportedColorSpace, "Image without colour space", pageBounds);
+                    Recover();
                     return;
                 }
                 // JPX images may omit /ColorSpace: the codestream's own colour applies (8.9.5).
@@ -2239,7 +2278,7 @@ public sealed class PdfContentInterpreter
                     cs = WithIntent(cs, imageIntent ?? gs.RenderingIntent);
                 if (cs != null && (cs.IsPattern || cs.UnsupportedReason != null))
                 {
-                    AddFallback(cs.UnsupportedReason ?? PdfFallbackReason.UnsupportedColorSpace, "Image colour space unsupported", pageBounds);
+                    Recover();
                     return;
                 }
             }
@@ -2253,7 +2292,7 @@ public sealed class PdfContentInterpreter
                     {
                         if (!NativeImageFilters.Contains(filter))
                         {
-                            AddFallback(PdfFallbackReason.UnsupportedImageFilter, $"Mask filter {Sanitize(filter)}", pageBounds);
+                            Recover();
                             return;
                         }
                     }
@@ -2494,16 +2533,28 @@ public sealed class PdfContentInterpreter
                     continue;
 
                 long flags = annot.GetInteger("F") ?? 0;
-                if ((flags & 2) != 0 || (flags & 32) != 0)
-                    continue; // Hidden / NoView
+                if ((flags & 2) != 0)
+                    continue; // Hidden
+                if (_forPrinting ? (flags & 4) == 0 : (flags & 32) != 0)
+                    continue; // printing: only Print annotations; on screen: not NoView
 
-                if (_resolver.Resolve(annot["AP"]) is not PdfDictionary ap)
-                    continue;
-
-                var normal = _resolver.Resolve(ap["N"]);
-                if (normal is PdfDictionary states && annot.GetName("AS") is string state)
-                    normal = _resolver.Resolve(states[state]);
-                if (normal is not PdfStream appearance)
+                var ap = _resolver.Resolve(annot["AP"]) as PdfDictionary;
+                var normal = _resolver.Resolve(ap?["N"]);
+                if (normal is PdfDictionary states)
+                {
+                    // An appearance per state: /AS picks it. A widget without /AS shows the state
+                    // named by its field's value, else Off (as PDFium does).
+                    string? state = annot.GetName("AS");
+                    if (state == null && subtype == "Widget")
+                        state = FieldValueName(annot) is string v && states.ContainsKey(v) ? v : "Off";
+                    normal = state == null ? null : _resolver.Resolve(states[state]);
+                }
+                var appearance = normal as PdfStream;
+                // Form fields whose appearance a reader must generate (NeedAppearances, or none).
+                if (subtype == "Widget" && annotRef is PdfIndirectRef widgetRef
+                    && _owner.WidgetAppearance?.Invoke(widgetRef.ObjectNumber, appearance != null) is { } generated)
+                    appearance = generated;
+                if (appearance == null)
                     continue;
 
                 if (ReadRect(annot["Rect"]) is not PdfRect rect || rect.IsEmpty)
@@ -2531,19 +2582,32 @@ public sealed class PdfContentInterpreter
 
         // ------------------------------------------------------------------ content streams
 
+        /// <summary>The field value (/V) of a widget as a name, from the widget or the field it belongs to.</summary>
+        private string? FieldValueName(PdfDictionary widget)
+        {
+            var node = widget;
+            for (int depth = 0; node != null && depth < 32; depth++)
+            {
+                if (_resolver.Resolve(node["V"]) is PdfName v)
+                    return v.Value;
+                node = _resolver.Resolve(node["Parent"]) as PdfDictionary;
+            }
+            return null;
+        }
+
         private byte[] ConcatenateContentStreams(IReadOnlyList<PdfStream> streams)
         {
             if (streams.Count == 0)
                 return Array.Empty<byte>();
 
             if (streams.Count == 1)
-                return _owner._streamDecoder.DecodeStream(streams[0]);
+                return DecodeContent(streams[0]);
 
             // Streams are concatenated with whitespace between them; tokens never span streams (7.8.2).
             using var ms = new MemoryStream();
             foreach (var stream in streams)
             {
-                byte[] decoded = _owner._streamDecoder.DecodeStream(stream);
+                byte[] decoded = DecodeContent(stream);
                 if (ms.Length + decoded.Length > _limits.MaxDecodedStreamBytes)
                     throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxDecodedStreamBytes), "Page content exceeds the decoded size limit.");
                 ms.Write(decoded);

@@ -27,7 +27,7 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff] | live <file.pdf> [--frames N] [--pages N] | tiles <dir> [--software] [--top N]");
+            Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff | --diff-all] | live <file.pdf> [--frames N] [--pages N] | tiles <dir> [--software] [--top N]");
             return 2;
         }
 
@@ -186,7 +186,7 @@ internal static class Corpus
         }
 
         string? outPath = Program.Option(args, "--out");
-        bool diff = args.Contains("--diff");
+        bool diff = args.Contains("--diff") || args.Contains("--diff-all");
         using var output = outPath != null ? new StreamWriter(outPath, append: false, Encoding.UTF8) : null;
         using var renderer = Program.CreateRenderer(args);
         int files = 0, vectorOpen = 0, pdfiumOpen = 0, pagesTotal = 0, pagesVector = 0;
@@ -196,6 +196,12 @@ internal static class Corpus
         var reasonDetails = new Dictionary<string, int>(StringComparer.Ordinal);
         var vectorErrors = new Dictionary<string, int>(StringComparer.Ordinal);
         var worstDiffs = new List<(double Diff, string File, int Page)>();
+        // --diff-all also diffs pages with fallback regions, rendered with no fallback provider (what
+        // the engine draws on its own), so the PDFium-free release gate can be measured.
+        bool diffAll = args.Contains("--diff-all");
+        double diffVectorSum = 0, diffFallbackSum = 0, vectorRenderMs = 0, pdfiumRenderMs = 0;
+        int diffVectorPages = 0, diffFallbackPages = 0;
+        var worstFallbackDiffs = new List<(double Diff, string File, int Page)>();
 
         foreach (var file in Directory.EnumerateFiles(args[1], "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
         {
@@ -265,11 +271,24 @@ internal static class Corpus
                     areas.Add(area);
                     areaVectorSum += 1 - area;
 
-                    if (diff && tokens.Count == 0 && pdfiumPages >= page)
+                    if ((diff && tokens.Count == 0 || diffAll) && pdfiumPages >= page)
                     {
-                        double d = await DiffAsync(bytes, list, renderer, page);
-                        diffs.Add(d);
-                        worstDiffs.Add((d, Path.GetRelativePath(args[1], file), page));
+                        var (d, vMs, pMs) = await DiffAsync(bytes, list, renderer, page);
+                        vectorRenderMs += vMs;
+                        pdfiumRenderMs += pMs;
+                        if (tokens.Count == 0)
+                        {
+                            diffs.Add(d);
+                            worstDiffs.Add((d, Path.GetRelativePath(args[1], file), page));
+                            diffVectorSum += d;
+                            diffVectorPages++;
+                        }
+                        else
+                        {
+                            diffFallbackSum += d;
+                            diffFallbackPages++;
+                            worstFallbackDiffs.Add((d, Path.GetRelativePath(args[1], file), page));
+                        }
                     }
                 }
 
@@ -310,6 +329,19 @@ internal static class Corpus
             ["worstPixelDiffs"] = worstDiffs.OrderByDescending(w => w.Diff).Take(15)
                 .Select(w => $"{w.Diff:F1} {w.File} p{w.Page}").ToList(),
         };
+        if (diff || diffAll)
+        {
+            summary["meanPixelDiffFullyVector"] = diffVectorPages > 0 ? Math.Round(diffVectorSum / diffVectorPages, 3) : 0;
+            summary["vectorRenderMs"] = Math.Round(vectorRenderMs);
+            summary["pdfiumRenderMs"] = Math.Round(pdfiumRenderMs);
+        }
+        if (diffAll)
+        {
+            summary["fallbackPagesDiffed"] = diffFallbackPages;
+            summary["meanPixelDiffFallbackPages"] = diffFallbackPages > 0 ? Math.Round(diffFallbackSum / diffFallbackPages, 3) : 0;
+            summary["worstFallbackPageDiffs"] = worstFallbackDiffs.OrderByDescending(w => w.Diff).Take(15)
+                .Select(w => $"{w.Diff:F1} {w.File} p{w.Page}").ToList();
+        }
         string summaryJson = JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true });
         Console.Error.WriteLine(summaryJson);
         if (Program.Option(args, "--summary") is string summaryPath)
@@ -317,14 +349,20 @@ internal static class Corpus
         return 0;
     }
 
-    private static async Task<double> DiffAsync(byte[] bytes, IPdfDisplayList list, IPdfVectorRenderer renderer, int page)
+    /// <summary>Mean absolute channel difference against PDFium at 72 dpi, and both render times.</summary>
+    private static async Task<(double Diff, double VectorMs, double PdfiumMs)> DiffAsync(byte[] bytes, IPdfDisplayList list, IPdfVectorRenderer renderer, int page)
     {
+        var vClock = Stopwatch.StartNew();
         using var v = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = page, Dpi = 72 });
+        vClock.Stop();
         using var engine = new PdfiumEngine();
         await using var pdoc = await engine.OpenDocumentAsync(bytes);
+        var pClock = Stopwatch.StartNew();
         using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = page, Dpi = 72 });
+        pClock.Stop();
+        double vMs = vClock.Elapsed.TotalMilliseconds, pMs = pClock.Elapsed.TotalMilliseconds;
         if (v.WidthPixels != p.WidthPixels || v.HeightPixels != p.HeightPixels)
-            return 255;
+            return (255, vMs, pMs);
         var a = v.Pixels.Span;
         var b = p.Pixels.Span;
         long total = 0;
@@ -336,7 +374,7 @@ internal static class Corpus
                 total += Math.Abs(a[ia] - b[ib]) + Math.Abs(a[ia + 1] - b[ib + 1]) + Math.Abs(a[ia + 2] - b[ib + 2]);
             }
         }
-        return total / (3.0 * v.WidthPixels * v.HeightPixels);
+        return (total / (3.0 * v.WidthPixels * v.HeightPixels), vMs, pMs);
     }
 }
 
@@ -418,6 +456,24 @@ internal static class DiffPage
             foreach (var stream in node.Contents)
                 Console.WriteLine(System.Text.Encoding.Latin1.GetString(dec.DecodeStream(stream)));
             Console.WriteLine("RESOURCES " + node.Resources);
+        }
+        if (args.Contains("--images"))
+        {
+            // How each image of the page decodes in the core (the backend's own decoders aside).
+            foreach (var image in list.Commands.OfType<DrawImage>())
+            {
+                string outcome;
+                try
+                {
+                    var decoded = image.Image.Source?.Decode();
+                    outcome = decoded == null ? "inline" : $"{decoded.Format} {decoded.Width}x{decoded.Height}";
+                }
+                catch (Exception ex)
+                {
+                    outcome = $"{ex.GetType().Name}: {ex.Message}";
+                }
+                Console.WriteLine($"  image {image.Image.Width}x{image.Image.Height} {outcome}");
+            }
         }
         if (args.Contains("--dump"))
         {

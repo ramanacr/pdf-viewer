@@ -88,8 +88,6 @@ internal sealed partial class Replayer : IDisposable
     public void Analyze()
     {
         MatchGroups();
-        foreach (int i in _knockoutOverLimit!)
-            Report(_list.Commands[i], PdfFallbackReason.TransparencyGroup, "Knockout group has too many elements for the native compositor");
         foreach (var cmd in _list.Commands)
         {
             _ct.ThrowIfCancellationRequested();
@@ -180,13 +178,13 @@ internal sealed partial class Replayer : IDisposable
     // must see the group's own pixels as the backdrop rather than the page under the layer.
     private int[]? _groupEnd;
     private bool[]? _containsBlend;
-    // Knockout groups with more than MaxKnockoutElements elements: PDFium draws them.
+    // Knockout groups with more than MaxKnockoutElements elements: drawn as ordinary groups.
     private HashSet<int>? _knockoutOverLimit;
 
     /// <summary>
     /// Most elements a knockout group may have to be composited natively. Each element costs two
     /// offscreen renders of the group's rectangle (the element and its shape); above the limit
-    /// the group becomes a fallback region.
+    /// the group is drawn without knockout.
     /// </summary>
     internal const int MaxKnockoutElements = 256;
 
@@ -409,12 +407,11 @@ internal sealed partial class Replayer : IDisposable
                 case BeginCompositingGroup cg:
                 {
                     int groupEnd = _groupEnd![i] < 0 ? end : Math.Min(_groupEnd[i], end);
-                    if (_knockoutOverLimit!.Contains(i))
-                    {
-                        i = groupEnd; // a fallback region (Analyze) covers it
-                        break;
-                    }
-                    DrawGroup(surface, cg.Bounds, cg.Alpha, cg.Blend, cg.SoftMask, cg.Isolated, cg.Knockout, _containsBlend![i],
+                    // A knockout group with more elements than the compositor takes is drawn as an
+                    // ordinary group: overlapping elements then show through each other where
+                    // knockout would have hidden them, but nothing is left out.
+                    bool knock = cg.Knockout && !_knockoutOverLimit!.Contains(i);
+                    DrawGroup(surface, cg.Bounds, cg.Alpha, cg.Blend, cg.SoftMask, cg.Isolated, knock, _containsBlend![i],
                         i + 1, groupEnd, pageToDevice, ctm, visiblePage);
                     i = groupEnd;
                     break;
@@ -1285,20 +1282,12 @@ internal sealed partial class Replayer : IDisposable
         byGlyphId = false;
         var face = run.Face;
         IDWriteFontFace? dw = null;
+        // An embedded program DirectWrite cannot load, or one in a format the engine does not read,
+        // is replaced by a system substitute for the font's name, as PDFium replaces it.
         if (face != null && !face.ProgramData.IsEmpty && face.Format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff)
         {
             dw = _res.GetEmbeddedFace(face);
-            if (dw == null)
-            {
-                _lastTextProblem = "Embedded font program could not be loaded by DirectWrite";
-                return null;
-            }
-            byGlyphId = true;
-        }
-        else if (face?.Format == PdfFontProgramFormat.Unsupported)
-        {
-            _lastTextProblem = "Embedded font program format is not loadable";
-            return null;
+            byGlyphId = dw != null;
         }
 
         double th = run.HorizontalScaling / 100.0;
@@ -1333,15 +1322,23 @@ internal sealed partial class Replayer : IDisposable
         foreach (var extra in UnicodeFallbackFamilies)
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
+        (IDWriteFontFace Face, (ushort[] Indices, Vector2[] Offsets, float[]? Scales) Mapped, int Missing)? best = null;
         foreach (var (inst, fam, b, it, symbolCodes) in chain)
         {
             var candidate = inst != null ? _res.GetInstalledFace(inst, b, it) : _res.GetSystemFace(fam, b, it);
             if (candidate == null)
                 continue;
-            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign);
+            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _);
             if (mapped != null)
                 return (candidate, mapped.Value.Indices, mapped.Value.Offsets, mapped.Value.Scales);
+            // Best effort: the face that has the most of the run's glyphs draws it, leaving out the
+            // ones none of them has (PDFium draws what its substitute has too).
+            var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing);
+            if (partial != null && (best == null || missing < best.Value.Missing))
+                best = (candidate, partial.Value, missing);
         }
+        if (best is { } found)
+            return (found.Face, found.Mapped.Indices, found.Mapped.Offsets, found.Mapped.Scales);
         _lastTextProblem = family == null ? "No system substitute for font" : "Substitute font lacks a glyph used by this text";
         return null;
     }
@@ -1357,8 +1354,11 @@ internal sealed partial class Replayer : IDisposable
     /// it does not run into the next, and one narrower is widened by up to a tenth and centred in the
     /// rest, so the gaps fall evenly instead of all after it.
     /// </summary>
-    private static (ushort[] Indices, Vector2[] Offsets, float[]? Scales)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign)
+    /// <param name="allowMissing">Leave out glyphs the face lacks (counted in <paramref name="missing"/>) instead of failing.</param>
+    private static (ushort[] Indices, Vector2[] Offsets, float[]? Scales)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
+        bool allowMissing, out int missing)
     {
+        missing = 0;
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
         var widths = new List<double>(run.Glyphs.Count);
@@ -1380,7 +1380,10 @@ internal sealed partial class Replayer : IDisposable
             {
                 if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0))
                     continue;
-                return null;
+                if (!allowMissing)
+                    return null;
+                missing++;
+                continue;
             }
             indices.Add(index);
             offsets.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));

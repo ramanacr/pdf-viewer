@@ -1160,7 +1160,7 @@ public class PdfiumDocumentService : IPdfDocumentService
             int start = Math.Max(1, fromPage);
             int end = toPage < 1 ? totalPages : Math.Min(totalPages, toPage);
 
-            var docPaginator = new PdfiumPdfPaginator(this, start, end, printDialog.PrintableAreaWidth, printDialog.PrintableAreaHeight, rotationAngle);
+            var docPaginator = new PageImagePaginator(this, start, end, printDialog.PrintableAreaWidth, printDialog.PrintableAreaHeight, rotationAngle);
             printDialog.PrintDocument(docPaginator, $"Printing {Path.GetFileName(_currentFilePath)}");
         }
     }

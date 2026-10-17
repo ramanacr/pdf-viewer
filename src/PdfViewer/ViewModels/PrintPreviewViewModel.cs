@@ -112,7 +112,7 @@ public partial class PrintPreviewViewModel : ObservableObject
     [ObservableProperty]
     private string _statusMessage = string.Empty;
 
-    /// <summary>Acrobat's "Print as image" (Advanced): pages go to the printer as PDFium images.</summary>
+    /// <summary>Acrobat's "Print as image" (Advanced): pages go to the printer as images drawn by the screen renderer.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PrintMethodDescription))]
     private bool _printAsImage;

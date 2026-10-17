@@ -211,6 +211,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         _interpreter = new PdfContentInterpreter(_resolver, new PdfEngine.Vector.Fonts.PdfFontResolver(_resolver, _limits), _limits)
         {
             HiddenOptionalContentGroups = ResolveHiddenOptionalContent(catalog, resolver),
+            WidgetAppearance = GeneratedWidgetAppearance,
         };
         _displayListCache = new DisplayListCache(limits.MaxCachedDisplayListCommands);
 
@@ -327,6 +328,95 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
             TargetZoom = zoom > 0 ? zoom : null,
             Children = item.Children.Select(ToBookmark).ToList(),
         };
+    }
+
+    // ------------------------------------------------------------------ form field appearances
+
+    private readonly object _formSync = new();
+    private bool _formRead;
+    private PdfEngine.Vector.Forms.PdfAcroForm? _form;
+    private Dictionary<int, (PdfEngine.Vector.Forms.PdfFormField Field, PdfEngine.Vector.Forms.PdfFormWidget Widget)>? _widgets;
+    private readonly Dictionary<int, PdfStream?> _generatedAppearances = new();
+
+    /// <summary>
+    /// The appearance drawn for a widget whose own cannot be used: generated from the field's value
+    /// when the form has /NeedAppearances (text and choice fields) or the widget has no appearance,
+    /// as PDFium and Acrobat generate it. Built once per widget, in memory only.
+    /// </summary>
+    private PdfStream? GeneratedWidgetAppearance(int widgetObject, bool hasAppearance)
+    {
+        lock (_formSync)
+        {
+            if (!_formRead)
+            {
+                _formRead = true;
+                try
+                {
+                    _form = PdfEngine.Vector.Forms.PdfAcroForm.Read(this);
+                }
+                catch (Exception ex) when (ex is PdfVectorException or InvalidOperationException or ArgumentException or FormatException or OverflowException)
+                {
+                    _form = null; // a form that cannot be read: widgets draw their own appearances
+                }
+                if (_form != null)
+                {
+                    _widgets = new();
+                    foreach (var field in _form.Fields)
+                        foreach (var widget in field.Widgets)
+                            _widgets.TryAdd(widget.ObjectNumber, (field, widget));
+                }
+            }
+            if (_form == null || _widgets == null || !_widgets.TryGetValue(widgetObject, out var entry))
+                return null;
+            if (hasAppearance && !_form.NeedAppearances)
+                return null;
+            if (!_generatedAppearances.TryGetValue(widgetObject, out var stream))
+            {
+                stream = PdfEngine.Vector.Forms.PdfFormFiller.GenerateAppearance(_form, entry.Field, entry.Widget, _resolver, hasAppearance);
+                _generatedAppearances[widgetObject] = stream;
+            }
+            return stream;
+        }
+    }
+
+    /// <summary>
+    /// The page as a printer gets it: annotations with the Print flag only, NoView ones included
+    /// (ISO 32000-2 12.5.3). The screen display list is returned when no annotation on the page
+    /// prints differently from how it shows; otherwise a list is built for the job (not cached).
+    /// </summary>
+    public async ValueTask<IPdfDisplayList> GetPagePrintDisplayListAsync(int pageNumber, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        int idx = pageNumber - 1;
+        if (idx < 0 || idx >= _pageTree.Count)
+            throw new ArgumentOutOfRangeException(nameof(pageNumber));
+        var pageNode = _pageTree.Pages[idx];
+        if (!PrintsDifferently(pageNode))
+            return await GetPageDisplayListAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        await _buildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => _interpreter.BuildDisplayList(pageNode, cancellationToken, forPrinting: true), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _buildGate.Release();
+        }
+    }
+
+    private bool PrintsDifferently(PdfPageNode page)
+    {
+        if (_resolver.Resolve(page.Dictionary["Annots"]) is not PdfArray annots)
+            return false;
+        foreach (var item in annots)
+        {
+            if (_resolver.Resolve(item) is not PdfDictionary annot || annot.GetName("Subtype") is "Popup" or "Link")
+                continue;
+            long flags = annot.GetInteger("F") ?? 0;
+            if ((flags & 2) == 0 && ((flags & 4) == 0 || (flags & 32) != 0))
+                return true;
+        }
+        return false;
     }
 
     public async ValueTask<IPdfDisplayList> GetPageDisplayListAsync(int pageNumber, CancellationToken cancellationToken = default)

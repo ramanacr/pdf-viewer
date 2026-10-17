@@ -88,8 +88,9 @@ public class LruPageCache
         }
     }
 
-    public static string CreateKey(int pageNumber, int dpi, int rotation) =>
-        $"{pageNumber}_{dpi}_{rotation}";
+    /// <param name="night">The night-mode (colour-inverted) rendering of the page, cached beside the day one.</param>
+    public static string CreateKey(int pageNumber, int dpi, int rotation, bool night = false) =>
+        night ? $"{pageNumber}_{dpi}_{rotation}_n" : $"{pageNumber}_{dpi}_{rotation}";
 
     /// <summary>Bytes a decoded bitmap occupies, from its own dimensions and pixel format.</summary>
     public static long MeasureBytes(BitmapSource image)
@@ -107,9 +108,11 @@ public class LruPageCache
         }
     }
 
-    public bool TryGet(int pageNumber, int dpi, int rotation, out BitmapSource? image)
+    public bool TryGet(int pageNumber, int dpi, int rotation, out BitmapSource? image) => TryGet(pageNumber, dpi, rotation, false, out image);
+
+    public bool TryGet(int pageNumber, int dpi, int rotation, bool night, out BitmapSource? image)
     {
-        string key = CreateKey(pageNumber, dpi, rotation);
+        string key = CreateKey(pageNumber, dpi, rotation, night);
         lock (_lock)
         {
             if (_cache.TryGetValue(key, out var node))
@@ -124,11 +127,11 @@ public class LruPageCache
         return false;
     }
 
-    public void Add(int pageNumber, int dpi, int rotation, BitmapSource image)
+    public void Add(int pageNumber, int dpi, int rotation, BitmapSource image, bool night = false)
     {
         if (image == null) return;
 
-        string key = CreateKey(pageNumber, dpi, rotation);
+        string key = CreateKey(pageNumber, dpi, rotation, night);
         long bytes = MeasureBytes(image);
 
         lock (_lock)

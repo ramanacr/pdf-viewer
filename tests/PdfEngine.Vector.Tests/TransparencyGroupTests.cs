@@ -246,7 +246,7 @@ public class TransparencyGroupTests
     }
 
     [Fact]
-    public async Task KnockoutGroup_WithTooManyElements_FallsBackToRegion()
+    public async Task KnockoutGroup_WithTooManyElements_IsDrawnAsAnOrdinaryGroup()
     {
         var b = new VectorPdfBuilder();
         var content = new System.Text.StringBuilder("/H gs ");
@@ -259,9 +259,12 @@ public class TransparencyGroupTests
         var list = await doc.GetPageDisplayListAsync(1);
         Assert.False(list.HasFallback);
         using var renderer = new Direct2DVectorRenderer();
-        var token = Assert.Single(await renderer.AnalyzeAsync(list));
-        Assert.Equal(PdfFallbackReason.TransparencyGroup, token.Reason);
-        Assert.Equal("direct2d", token.Metadata!["origin"]);
+        // Past the compositor's element limit the group is drawn without knockout, not handed on.
+        Assert.Empty(await renderer.AnalyzeAsync(list));
+        using var page = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 });
+        var p = page.Pixels.Span;
+        int o = (page.HeightPixels - 20) * page.Stride + 20 * 4; // inside the overlapping squares
+        Assert.False(p[o] > 240 && p[o + 1] > 240 && p[o + 2] > 240, "the group's elements are drawn");
     }
 
     [Fact]
