@@ -31,8 +31,15 @@ public static class DocxSmoke
         string? outPath = Program.Option(args, "--out");
         string? keep = Program.Option(args, "--keep");
         if (keep != null) Directory.CreateDirectory(keep);
+        using var word = args.Contains("--word") ? WordPages.TryStart() : null;
+        if (args.Contains("--word") && word == null) Console.WriteLine("Word is not installed: page counts are not compared.");
+        var ratios = new List<double>();
+        int pdfPagesTotal = 0, wordPagesTotal = 0, samePages = 0;
         var files = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).Take(limit).ToList();
         using var engine = new PdfiumEngine();
+        // Drawings other than rectangles and lines come over as pictures drawn by the vector renderer.
+        using var renderer = Program.CreateRenderer(args);
+        var options = new DocxExportOptions { Renderer = renderer };
         using var report = outPath != null ? new StreamWriter(outPath) : null;
         int ok = 0, skipped = 0, failed = 0, noText = 0;
         var coverages = new List<double>();
@@ -47,6 +54,7 @@ public static class DocxSmoke
             string status = "ok";
             string detail = string.Empty;
             double? coverage = null, inOrder = null;
+            int? wordPages = null;
             var fileClock = Stopwatch.StartNew();
             try
             {
@@ -54,8 +62,16 @@ public static class DocxSmoke
                 using var doc = await PdfVectorDocument.OpenAsync(bytes);
                 if (doc.IsEncrypted || doc.PageCount == 0) { skipped++; continue; }
                 var output = new MemoryStream();
-                var result = await DocxExporter.ExportAsync(doc, output);
+                var result = await DocxExporter.ExportAsync(doc, output, options);
                 if (keep != null) await File.WriteAllBytesAsync(Path.Combine(keep, Path.ChangeExtension(Path.GetFileName(file), ".docx")), output.ToArray());
+                if (word != null && word.Count(output.ToArray()) is int wp)
+                {
+                    wordPages = wp;
+                    ratios.Add((double)wp / result.Pages);
+                    pdfPagesTotal += result.Pages;
+                    wordPagesTotal += wp;
+                    if (wp == result.Pages) samePages++;
+                }
                 output.Position = 0;
                 var (body, repeated, columns) = ReadPackage(output);
                 tables += result.Tables;
@@ -95,7 +111,8 @@ public static class DocxSmoke
                 }
                 ok++;
                 detail = $"pages {result.Pages}, paragraphs {result.Paragraphs}, tables {result.Tables}, images {result.Images}, lists {result.Lists}, sections {result.Sections}"
-                    + (coverage is double c ? $", words {c:P1}, in order {inOrder:P1}" : string.Empty) + $", {fileClock.Elapsed.TotalSeconds:F1} s";
+                    + (coverage is double c ? $", words {c:P1}, in order {inOrder:P1}" : string.Empty)
+                    + (wordPages is int wpages ? $", word pages {wpages}" : string.Empty) + $", {fileClock.Elapsed.TotalSeconds:F1} s";
             }
             catch (Exception ex)
             {
@@ -106,7 +123,7 @@ public static class DocxSmoke
             }
             if (fileClock.Elapsed.TotalSeconds > slowest.Seconds) slowest = (name, fileClock.Elapsed.TotalSeconds);
             if (status != "ok" && status != "no-text") Console.WriteLine($"{status,-14} {name}  {detail}");
-            report?.WriteLine(JsonSerializer.Serialize(new { file = name, status, coverage, inOrder, detail }));
+            report?.WriteLine(JsonSerializer.Serialize(new { file = name, status, coverage, inOrder, wordPages, detail }));
         }
         Console.WriteLine($"\n{files.Count} files in {clock.Elapsed.TotalSeconds:F0} s: exported {ok}, skipped (encrypted or empty) {skipped}, errors {failed}; {noText} without a text layer");
         if (coverages.Count > 0)
@@ -117,6 +134,12 @@ public static class DocxSmoke
             var text = textCoverages.OrderBy(c => c).ToList();
             Console.WriteLine($"words found in order in the text (letter-spaced words PDFium splits count): mean {100 * text.Average():F2}%, median {100 * text[text.Count / 2]:F2}%, "
                 + $"worst {100 * text[0]:F2}%, files >= 99% {text.Count(c => c >= 0.99)}, < 90% {text.Count(c => c < 0.9)}");
+        }
+        if (ratios.Count > 0)
+        {
+            var r = ratios.OrderBy(v => v).ToList();
+            Console.WriteLine($"pages in Word over {r.Count} files: {wordPagesTotal} for {pdfPagesTotal} PDF pages ({(double)wordPagesTotal / pdfPagesTotal:F3}x); per file median {r[r.Count / 2]:F3}x, "
+                + $"mean {r.Average():F3}x, worst {r[^1]:F2}x; same count {samePages} ({100.0 * samePages / r.Count:F1}%), within 5% {r.Count(v => v <= 1.05)}, more than 1.5x {r.Count(v => v > 1.5)}");
         }
         Console.WriteLine($"tables {tables}, images {images}, lists {lists}, headings {headings}; files with a header or footer {withHeader}, with section columns {multiColumn}; slowest {slowest.Seconds:F1} s");
         return failed > 0 ? 1 : 0;
@@ -165,4 +188,62 @@ public static class DocxSmoke
     }
 
     private static IEnumerable<string> Words(string text) => Regex.Matches(text, @"[\p{L}\p{N}]+").Select(m => m.Value.ToLowerInvariant());
+}
+
+/// <summary>
+/// Word through COM, for page counts: one hidden instance, each document opened read-only (not
+/// added to the recent files, no repair), paginated and closed without saving. Word's own
+/// settings are never changed.
+/// </summary>
+internal sealed class WordPages : IDisposable
+{
+    private dynamic? _word;
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "vectorpdf-word-" + Environment.ProcessId);
+
+    private WordPages(dynamic word)
+    {
+        _word = word;
+        Directory.CreateDirectory(_dir);
+    }
+
+    public static WordPages? TryStart()
+    {
+        if (!OperatingSystem.IsWindows() || Type.GetTypeFromProgID("Word.Application") is not { } type) return null;
+        try
+        {
+            dynamic word = Activator.CreateInstance(type)!;
+            word.Visible = false;
+            word.DisplayAlerts = 0;
+            return new WordPages(word);
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException) { return null; }
+    }
+
+    /// <summary>The pages Word lays the package out on, or null when Word cannot open it.</summary>
+    public int? Count(byte[] docx)
+    {
+        if (_word == null) return null;
+        string path = Path.Combine(_dir, "check.docx");
+        File.WriteAllBytes(path, docx);
+        dynamic? document = null;
+        try
+        {
+            // FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, passwords, Revert, write
+            // passwords, Format, Encoding, Visible, OpenAndRepair.
+            document = _word.Documents.Open(path, false, true, false, "", "", true, "", "", 0, 0, false, false);
+            return (int)document.ComputeStatistics(2);
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { return null; }
+        finally
+        {
+            try { document?.Close(0); } catch (System.Runtime.InteropServices.COMException) { }
+        }
+    }
+
+    public void Dispose()
+    {
+        try { _word?.Quit(0); } catch (System.Runtime.InteropServices.COMException) { }
+        _word = null;
+        try { Directory.Delete(_dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
 }
