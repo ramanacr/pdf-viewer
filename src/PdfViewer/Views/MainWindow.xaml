@@ -263,21 +263,22 @@
                           ToolTip="Inverts the pages themselves for reading in the dark. Separate from the window theme."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.NightMode}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="Rendering _Engine" ToolTip="Select the active PDF rendering engine"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.RenderingEngine}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
-                    <MenuItem Header="_Auto (Hybrid Vector + Fallback)"
+                    <MenuItem Header="_Auto (Direct2D, best effort)"
                               Command="{Binding SetEngineModeAutoCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsAutoEngineMode, Mode=OneWay}"
-                              ToolTip="DirectX vector rendering where supported, with seamless PDFium fallback."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineAuto}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
-                    <MenuItem Header="_Vector Only (Native DirectX/WPF)"
+                              ToolTip="Direct2D vector rendering; content the engine cannot reproduce exactly is drawn as well as it can be."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineAuto}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Vector Only (strict)"
                               Command="{Binding SetEngineModeVectorCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsVectorEngineMode, Mode=OneWay}"
-                              ToolTip="Force 100% native vector rendering."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineVector}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
-                    <MenuItem Header="_PDFium Only (Google PDFium Rasterizer)"
+                              ToolTip="Strict vector rendering: content the engine cannot reproduce exactly is outlined."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineVector}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_PDFium Only (developer build)"
                               Command="{Binding SetEngineModePdfiumCommand}"
                               IsCheckable="True"
                               IsChecked="{Binding IsPdfiumEngineMode, Mode=OneWay}"
-                              ToolTip="Force Google PDFium rasterizer for all pages."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineRaster}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                              Visibility="{Binding PdfiumEngineModeVisibility}"
+                              ToolTip="Renders every page with PDFium, the reference the vector engine is compared with. Not in published builds."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.EngineRaster}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
             </MenuItem>
 

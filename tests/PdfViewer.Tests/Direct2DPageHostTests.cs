@@ -64,6 +64,52 @@ public class Direct2DPageHostTests : IDisposable
     }
 
     [Fact]
+    public async Task NightPageBitmap_IsTheInvertedDayPage_DrawnByDirect2D()
+    {
+        // Night mode inverts the page on the GPU (a Direct2D Invert effect over the day tile).
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        Assert.True(service.IsDirect2DActive);
+        await service.OpenDocumentAsync(SquarePdf());
+        var day = Pixels((await service.RenderPageAsync(1, 96, 0))!);
+        var night = Pixels((await service.RenderPageInvertedAsync(1, 96, 0))!);
+        Assert.Equal(day.Length, night.Length);
+        int worst = 0;
+        for (int i = 0; i < day.Length; i += 4)
+            for (int c = 0; c < 3; c++)
+                worst = Math.Max(worst, Math.Abs(255 - day[i + c] - night[i + c]));
+        Assert.True(worst <= 1, $"night = 255 - day, worst channel difference {worst}");
+        Assert.Equal(PdfEngineMode.Vector, service.GetPageEngineReport(1)!.Engine);
+    }
+
+    [Fact]
+    public async Task ExportedPageImages_AreTheVectorEnginesPixels()
+    {
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+        await service.OpenDocumentAsync(SquarePdf());
+        string outDir = Path.Combine(_dir, "export");
+        await service.ExportPagesToImagesAsync(outDir, "page", 1, 1, "PNG", 72);
+        string file = Path.Combine(outDir, "page_page_001.png");
+        Assert.True(File.Exists(file));
+        BitmapSource exported;
+        using (var fs = File.OpenRead(file))
+            exported = BitmapFrame.Create(fs, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+        var expected = Pixels((await service.RenderPageAsync(1, 72, 0))!);
+        var actual = Pixels(exported);
+        Assert.Equal(expected.Length, actual.Length);
+        Assert.True(expected.AsSpan().SequenceEqual(actual), "the exported PNG holds the screen renderer's pixels");
+    }
+
+    [Fact]
+    public void PdfiumEngineMode_ExistsOnlyInBuildsWithThePdfiumRenderer()
+    {
+        var expected = PdfDocumentServiceFactory.IsPdfiumRendererAvailable ? PdfEngineMode.Pdfium : PdfEngineMode.Auto;
+        Assert.Equal(expected, PdfDocumentServiceFactory.Normalize(PdfEngineMode.Pdfium));
+        Assert.Equal(PdfEngineMode.Vector, PdfDocumentServiceFactory.Normalize(PdfEngineMode.Vector));
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Pdfium);
+        Assert.Equal(expected, service.EngineMode);
+    }
+
+    [Fact]
     public async Task DefaultHost_IsDirect2DBitmaps()
     {
         using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);

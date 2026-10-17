@@ -29,8 +29,8 @@ public sealed class PdfSecurityLimits
     /// <summary>Maximum number of `/Prev` trailer links to follow.</summary>
     public int MaxTrailerChainDepth { get; init; } = 100;
 
-    /// <summary>Maximum Form XObject recursion depth.</summary>
-    public int MaxFormXObjectDepth { get; init; } = 16;
+    /// <summary>Maximum Form XObject recursion depth (PDFium draws up to 40 levels too).</summary>
+    public int MaxFormXObjectDepth { get; init; } = 40;
 
     /// <summary>Maximum drawing commands per page display list.</summary>
     public int MaxCommandsPerPage { get; init; } = 500_000;

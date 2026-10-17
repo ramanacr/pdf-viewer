@@ -105,17 +105,20 @@ public class EngineModeAndDiagnosticsTests
         Assert.False(r1.IsFallback);
         Assert.Contains("Vector", r1.BadgeText);
 
-        // Page 2: a damaged JPEG is composited from PDFium; the rest (knockout group included) stays vector.
-        // ('ri' is a valid operator and must NOT trigger fallback.)
+        // Page 2: a damaged JPEG the engine cannot decode is left out, as PDFium leaves out what it
+        // cannot decode; everything else (knockout group included) is drawn by the engine, and no
+        // other renderer is asked. ('ri' is a valid operator and must not be reported.)
         var p2 = await service.RenderPageAsync(2, 150);
         Assert.NotNull(p2);
         var r2 = service.GetPageEngineReport(2);
         Assert.NotNull(r2);
-        Assert.Equal(PdfEngineMode.Hybrid, r2.Engine);
-        Assert.True(r2.IsFallback);
-        Assert.Contains("Hybrid", r2.BadgeText);
+        Assert.Equal(PdfEngineMode.Vector, r2.Engine);
+        Assert.False(r2.IsFallback);
+        Assert.Contains("Vector", r2.BadgeText);
         Assert.Contains(r2.FallbackReasons, r => r.Contains("ImageDecode"));
         Assert.DoesNotContain(r2.FallbackReasons, r => r.Contains("UnknownOperator"));
+        // The region without fallback pixels is not covered by a placeholder (strict mode's orange).
+        Assert.Equal(0, CountOutlinePixels(p2));
 
         // Page 3: Native Vector
         var p3 = await service.RenderPageAsync(3, 150);
@@ -125,6 +128,39 @@ public class EngineModeAndDiagnosticsTests
         Assert.Equal(PdfEngineMode.Vector, r3.Engine);
         Assert.False(r3.IsFallback);
         Assert.Contains("Vector", r3.BadgeText);
+    }
+
+    /// <summary>Pixels of the orange outline strict vector mode draws around unsupported regions.</summary>
+    private static int CountOutlinePixels(System.Windows.Media.Imaging.BitmapSource bitmap)
+    {
+        var converted = new System.Windows.Media.Imaging.FormatConvertedBitmap(bitmap, System.Windows.Media.PixelFormats.Bgra32, null, 0);
+        int stride = converted.PixelWidth * 4;
+        var pixels = new byte[stride * converted.PixelHeight];
+        converted.CopyPixels(pixels, stride, 0);
+        int count = 0;
+        for (int i = 0; i < pixels.Length; i += 4)
+            if (pixels[i + 2] > 240 && pixels[i + 1] is > 120 and < 160 && pixels[i] < 30) count++;
+        return count;
+    }
+
+    [Fact]
+    public async Task StrictVectorMode_OutlinesWhatTheEngineCannotReproduce()
+    {
+        string samplePath = Path.Combine(Path.GetTempPath(), $"showcase-strict-{Guid.NewGuid():N}.pdf");
+        TestPdfBuilder.CreateEngineShowcasePdf(samplePath);
+        try
+        {
+            using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Vector);
+            await service.OpenDocumentAsync(samplePath);
+            var p2 = await service.RenderPageAsync(2, 150);
+            Assert.NotNull(p2);
+            Assert.True(CountOutlinePixels(p2!) > 0, "strict mode outlines the undecodable image");
+            Assert.Contains("unsupported", service.GetPageEngineReport(2)!.BadgeText);
+        }
+        finally
+        {
+            File.Delete(samplePath);
+        }
     }
 
     [Fact]

@@ -19,7 +19,13 @@ public enum PdfFeatureSet
     Transparency = 1 << 5,
     Forms = 1 << 6,
     Clipping = 1 << 7,
-    Fallback = 1 << 8
+    Fallback = 1 << 8,
+    /// <summary>
+    /// Damaged or unsupported content was drawn by best effort rather than handed to another
+    /// renderer: an unknown operator ignored, a stream that could not be decoded skipped, the
+    /// commands before a parse error kept (as PDFium does).
+    /// </summary>
+    Recovered = 1 << 9
 }
 
 /// <summary>

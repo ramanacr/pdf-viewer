@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.Input;
-using PdfEngine.Pdfium;
 using PdfEngine.Rendering;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Editing;
 using PdfViewer.RenderingAdapters;
+using PdfViewer.Services;
 
 namespace PdfViewer.ViewModels;
 
@@ -77,12 +77,12 @@ public partial class MainViewModel
         string? password = _openPassword;
         return await Task.Run(async () =>
         {
-            using var engine = new PdfiumEngine();
-            await using var doc = await engine.OpenDocumentAsync(marked, password, ct);
+            // Drawn by the vector engine, as the page will look on screen.
+            using var doc = await PdfVectorDocument.OpenAsync(marked, password: password, cancellationToken: ct);
             var info = await doc.GetPageInfoAsync(pageNumber, ct);
             // About 420 pixels across the longer side.
             double longest = Math.Max(Math.Max(info.WidthPoints, info.HeightPoints), 1);
-            using var page = await engine.Renderer.RenderPageAsync(doc, new RenderRequest { PageNumber = pageNumber, Dpi = 72 * 420 / longest }, ct);
+            using var page = await VectorPdfRenderer.Shared.RenderPageAsync(doc, new RenderRequest { PageNumber = pageNumber, Dpi = 72 * 420 / longest }, ct);
             return (ImageSource)WpfBitmapAdapter.ToBitmapSource(page);
         }, ct);
     }

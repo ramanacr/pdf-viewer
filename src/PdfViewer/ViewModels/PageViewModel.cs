@@ -496,12 +496,11 @@ public partial class PageViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var bitmap = await renderer.GetOrRenderPageAsync(PageNumber, dpi, rotation, ct);
+            // Night mode: the renderer draws the page inverted (on the GPU for vector pages).
+            var bitmap = await renderer.GetOrRenderPageAsync(PageNumber, dpi, rotation, ct, nightMode);
             if (!ct.IsCancellationRequested && bitmap != null)
             {
-                // Inverted here rather than in the renderer, so the shared page cache keeps
-                // one copy of the page that both modes are derived from.
-                RenderedImage = nightMode ? NightModeImage.Invert(bitmap) : bitmap;
+                RenderedImage = bitmap;
                 _renderedDpi = dpi;
                 _renderedNightMode = nightMode;
                 RenderErrorMessage = string.Empty;

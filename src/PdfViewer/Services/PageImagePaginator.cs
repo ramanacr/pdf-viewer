@@ -9,11 +9,12 @@ using PdfEngine.Vector.Direct2D;
 namespace PdfViewer.Services;
 
 /// <summary>
-/// Prints pages as images rendered through <see cref="IPdfDocumentService"/>: the path for "Print
-/// as image", for documents that allow only low-quality printing, and for printers Direct2D's
-/// print control cannot drive (see <see cref="DocumentPrinter"/>).
+/// Prints pages as images rendered through <see cref="IPdfDocumentService"/> (the vector engine's
+/// Direct2D raster in the shipped viewer): the path for "Print as image", for documents that
+/// allow only low-quality printing, and for printers Direct2D's print control cannot drive (see
+/// <see cref="DocumentPrinter"/>).
 /// </summary>
-public class PdfiumPdfPaginator : DocumentPaginator
+public class PageImagePaginator : DocumentPaginator
 {
     private readonly IPdfDocumentService _service;
     private readonly IReadOnlyList<int> _pages;
@@ -24,7 +25,7 @@ public class PdfiumPdfPaginator : DocumentPaginator
     private readonly int _rotationAngle;
 
     /// <summary>Pages <paramref name="startPage"/> to <paramref name="endPage"/>, each fitted to a sheet of the given size.</summary>
-    public PdfiumPdfPaginator(IPdfDocumentService service, int startPage, int endPage, double pageWidth, double pageHeight, int rotationAngle = 0)
+    public PageImagePaginator(IPdfDocumentService service, int startPage, int endPage, double pageWidth, double pageHeight, int rotationAngle = 0)
         : this(service, Enumerable.Range(startPage, Math.Max(0, endPage - startPage + 1)).ToArray(), pageWidth, pageHeight,
                new PrintRect(0, 0, pageWidth, pageHeight), PrintScaling.Fit, 100, rotationAngle)
     {
@@ -33,7 +34,7 @@ public class PdfiumPdfPaginator : DocumentPaginator
     /// <param name="pages">One-based page numbers in print order.</param>
     /// <param name="sheetWidth">Sheet width in DIPs, in the ticket's orientation.</param>
     /// <param name="printable">The part of the sheet the printer reaches, where pages are placed.</param>
-    public PdfiumPdfPaginator(IPdfDocumentService service, IReadOnlyList<int> pages, double sheetWidth, double sheetHeight,
+    public PageImagePaginator(IPdfDocumentService service, IReadOnlyList<int> pages, double sheetWidth, double sheetHeight,
         PrintRect printable, PrintScaling scaling, double scalePercent, int rotationAngle)
     {
         _service = service;

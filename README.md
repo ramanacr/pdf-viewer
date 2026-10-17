@@ -212,7 +212,7 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - Dedicated **Modern In-App Print & Print Preview Dialog** (`Ctrl+P`).
   - Live interactive document page preview with page navigation (`<<`, `<`, `Page X of Y`, `>`, `>>`).
   - Printer discovery, status inspection, orientation (Portrait/Landscape/Auto), copies, collate, color mode (Color vs Grayscale), and custom page range formatting.
-  - High-resolution (300 DPI) paginated physical/virtual printing via `PdfiumPdfPaginator`.
+  - Vector printing through Direct2D's print control, or 300 DPI page images (`PageImagePaginator`) drawn by the same renderer as the screen.
 - **Windows Shell Document Preview & Thumbnail Integration**:
   - Complete Windows File Explorer integration: `PerceivedType=document`, `Treatment=0`, `ThumbnailCutoff=0`, and `PreviewDetails` metadata registration.
   - CLI thumbnail generator: `PdfViewer.exe --thumbnail <input.pdf> <output.png> [dpi]` for instant headless page rendering.
@@ -267,19 +267,19 @@ pwsh -ExecutionPolicy Bypass -File .\eng\pdfium\build.ps1
 
 The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.Vector`, rendered by Direct2D/DirectWrite in `PdfEngine.Vector.Direct2D`, with the WPF renderer `PdfEngine.Vector.Windows` as fallback). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
 
-**Engine modes** (View → Rendering Engine, or the `PDF_ENGINE_MODE` environment variable: `Auto`, `Hybrid`, `Vector`, `Pdfium`):
+**Engine modes** (View → Rendering Engine, or the `PDF_ENGINE_MODE` environment variable: `Auto`, `Hybrid`, `Vector`, and `Pdfium` in developer builds):
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` / `Hybrid` | Vector path first. Blend modes, soft masks, transparency groups, tiling patterns, knockout and non-isolated groups, tiling patterns, glyph-outline clips, vertical writing, predefined CJK CMaps, all shading types, and JPEG, JPEG 2000, JBIG2 and CCITT images are rendered natively. Content the vector path cannot reproduce faithfully (damaged images, fonts no backend can load, …) is composited **per region** from PDFium. Encrypted documents (RC4 and AES up to 256-bit, user or owner password, and certificate-encrypted files that PDFium cannot open) are decrypted by the vector engine itself, and their permissions (print, copy, edit, annotate, forms) are enforced unless the owner password is given. Pages where fallback covers ≥ 50 % of the area and documents the vector parser cannot open are rendered entirely by PDFium. |
-| `Vector` | Strict: unsupported regions are outlined in orange instead of rendered. For development and CI. |
-| `Pdfium` | The original PDFium renderer only (kill switch). |
+| `Auto` / `Hybrid` | Every page, tile, print and export image is drawn by the vector engine. Blend modes, soft masks, transparency groups, knockout and non-isolated groups, tiling patterns, glyph-outline clips, vertical writing, predefined CJK CMaps, all shading types, and JPEG, JPEG 2000, JBIG2 and CCITT images are rendered natively; form fields are drawn from their appearance streams, generated where the form asks for it (`/NeedAppearances`) or a widget has none. Damaged or unsupported content is drawn by best effort, as PDFium draws it: unknown operators are ignored, undecodable streams and images skipped, fonts that cannot be loaded replaced by a substitute for their name. Encrypted documents (RC4 and AES up to 256-bit, user or owner password, and certificate-encrypted files that PDFium cannot open) are decrypted by the vector engine itself, and their permissions (print, copy, edit, annotate, forms) are enforced unless the owner password is given. |
+| `Vector` | Strict vector mode for development and CI: what the engine still classifies as unsupported is outlined in orange, and a page that fails to build or render is an error rather than a blank page. |
+| `Pdfium` | Every page rendered by PDFium, the reference the engine is compared with. Only in builds made with `PdfiumRenderer=true` (the default for `dotnet build` and `dotnet test`); the published app (`scripts/build_publish.ps1`, `-p:PdfiumRenderer=false`) has no PDFium renderer and treats this mode as `Auto`. |
 
-The status-bar badge shows which engine rendered the current page (`⚡ Vector`, `⚡ Hybrid (N PDFium regions)`, `🖼️ PDFium (Fallback)`); its tooltip lists the classified fallback reasons.
+The status-bar badge shows how the current page was drawn (`⚡ Vector`, `⚡ Vector (N approximated)`, strict mode's `⚡ Vector (N unsupported)`, or `⚠ Unreadable page` for a page the engine cannot read at all, shown blank); its tooltip lists the classified reasons.
 
-**What stays on PDFium** regardless of mode: search, annotations and forms editing, saving, printing, image export, redaction, signatures and page organisation. **Releases still ship `pdfium.dll`** — it is required for fallback and for those features.
+**What stays on PDFium** regardless of mode: text extraction and search, annotation editing, attachments, saving, redaction, signatures and page organisation (later milestones). **Releases still ship `pdfium.dll`** for those features; it no longer draws pages.
 
-**Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it, for vector and PDFium pages alike. On a GPU in a local session, vector detail tiles go straight from Direct2D to the screen through a shared texture (`D3DImage`), with no copy through the CPU; `PDF_GPU_PRESENT=0` turns that off. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
+**Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it. Night mode draws the page and its tiles as by day and inverts them on the GPU (a Direct2D Invert effect). On a GPU in a local session, vector detail tiles go straight from Direct2D to the screen through a shared texture (`D3DImage`), with no copy through the CPU; `PDF_GPU_PRESENT=0` turns that off. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
 
 **Known limitations of the vector path:** the WPF fallback renderer is ~2× slower than PDFium, while Direct2D is faster than PDFium at every zoom (`eng/vectorpdf/baseline-bench.txt`).
 
