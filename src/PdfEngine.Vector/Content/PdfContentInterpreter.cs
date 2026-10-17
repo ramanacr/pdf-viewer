@@ -309,8 +309,11 @@ public sealed class PdfContentInterpreter
                         }
                         break;
                     case "ri":
+                        if (LastName(operands) is string intentName)
+                            gs.RenderingIntent = ParseIntent(intentName) ?? gs.RenderingIntent;
+                        break;
                     case "i":
-                        break; // rendering intent / flatness: device-dependent, no visual contract here
+                        break; // flatness: device-dependent, no visual contract here
 
                     case "gs":
                         if (LastName(operands) is string gsName)
@@ -335,17 +338,17 @@ public sealed class PdfContentInterpreter
                     case "G":
                     case "g":
                         if (!ctx.UncoloredGlyph && TryNumbers(operands, 1, out var gray))
-                            SetDeviceColor(gs, op == "G", PdfColorSpace.DeviceGray, gray);
+                            SetDeviceColor(gs, op == "G", DeviceSpace(resources, "DeviceGray"), gray);
                         break;
                     case "RG":
                     case "rg":
                         if (!ctx.UncoloredGlyph && TryNumbers(operands, 3, out var rgb))
-                            SetDeviceColor(gs, op == "RG", PdfColorSpace.DeviceRgb, rgb);
+                            SetDeviceColor(gs, op == "RG", DeviceSpace(resources, "DeviceRGB"), rgb);
                         break;
                     case "K":
                     case "k":
                         if (!ctx.UncoloredGlyph && TryNumbers(operands, 4, out var cmyk))
-                            SetDeviceColor(gs, op == "K", PdfColorSpace.DeviceCmyk, cmyk);
+                            SetDeviceColor(gs, op == "K", DeviceSpace(resources, "DeviceCMYK"), cmyk);
                         break;
 
                     case "sh":
@@ -1106,7 +1109,7 @@ public sealed class PdfContentInterpreter
                 ? PdfColorSpace.Resolve(new PdfName("Pattern"), _resolver, resources)
                 : PdfColorSpace.Resolve(new PdfName(name), _resolver, resources);
             var initial = cs.InitialComponents;
-            var color = cs.IsPattern ? PdfColor.Black : cs.ToRgbColor(initial, 1f);
+            var color = cs.IsPattern ? PdfColor.Black : WithIntent(cs, gs.RenderingIntent).ToRgbColor(initial, 1f);
             if (stroke)
             {
                 gs.StrokeColorSpace = cs;
@@ -1145,7 +1148,7 @@ public sealed class PdfContentInterpreter
                         }
                         if (got == bn)
                         {
-                            var pc = baseCs.ToRgbColor(bcomps, 1f);
+                            var pc = WithIntent(baseCs, gs.RenderingIntent).ToRgbColor(bcomps, 1f);
                             if (stroke) gs.StrokeColor = pc; else gs.FillColor = pc;
                         }
                     }
@@ -1165,13 +1168,13 @@ public sealed class PdfContentInterpreter
             if (available < n)
                 return; // malformed: keep the previous colour
 
-            var color = cs.ToRgbColor(comps, 1f);
+            var color = WithIntent(cs, gs.RenderingIntent).ToRgbColor(comps, 1f);
             if (stroke) gs.StrokeColor = color; else gs.FillColor = color;
         }
 
         private static void SetDeviceColor(GraphicsState gs, bool stroke, PdfColorSpace cs, double[] comps)
         {
-            var color = cs.ToRgbColor(comps, 1f);
+            var color = WithIntent(cs, gs.RenderingIntent).ToRgbColor(comps, 1f);
             if (stroke)
             {
                 gs.StrokeColorSpace = cs;
@@ -1185,6 +1188,37 @@ public sealed class PdfContentInterpreter
                 gs.FillPattern = null;
             }
         }
+
+        private readonly Dictionary<(PdfDictionary Resources, string Name), PdfColorSpace> _deviceSpaces = new();
+
+        /// <summary>
+        /// The space the G/g, RG/rg and K/k operators select: the device space, or the /DefaultGray,
+        /// /DefaultRGB or /DefaultCMYK resource that replaces it (ISO 32000-2 8.6.5.6).
+        /// </summary>
+        private PdfColorSpace DeviceSpace(PdfDictionary resources, string name)
+        {
+            var device = name switch { "DeviceGray" => PdfColorSpace.DeviceGray, "DeviceRGB" => PdfColorSpace.DeviceRgb, _ => PdfColorSpace.DeviceCmyk };
+            if (_resolver.Resolve(resources["ColorSpace"]) is not PdfDictionary)
+                return device;
+            if (!_deviceSpaces.TryGetValue((resources, name), out var cs))
+                _deviceSpaces[(resources, name)] = cs = PdfColorSpace.Resolve(new PdfName(name), _resolver, resources, _limits);
+            return cs;
+        }
+
+        /// <summary>
+        /// <paramref name="cs"/> converting with the content's rendering intent; unchanged when the content sets
+        /// none, so each space keeps its own default (see <see cref="PdfColorSpace.DefaultIntent"/>).
+        /// </summary>
+        private static PdfColorSpace WithIntent(PdfColorSpace cs, PdfRenderingIntent? intent) => intent is { } i ? cs.WithIntent(i) : cs;
+
+        private static PdfRenderingIntent? ParseIntent(string name) => name switch
+        {
+            "Perceptual" => PdfRenderingIntent.Perceptual,
+            "RelativeColorimetric" => PdfRenderingIntent.RelativeColorimetric,
+            "Saturation" => PdfRenderingIntent.Saturation,
+            "AbsoluteColorimetric" => PdfRenderingIntent.AbsoluteColorimetric,
+            _ => null, // unknown intents are ignored (8.6.5.8 says to use RelativeColorimetric; keep the current one)
+        };
 
         // ------------------------------------------------------------------ ExtGState
 
@@ -1230,6 +1264,10 @@ public sealed class PdfContentInterpreter
                         break;
                     case "AIS":
                         gs.AlphaIsShape = value.TryGetBoolean(out bool ais) && ais;
+                        break;
+                    case "RI":
+                        if (value is PdfName riName)
+                            gs.RenderingIntent = ParseIntent(riName.Value) ?? gs.RenderingIntent;
                         break;
                     case "Font":
                         if (value is PdfArray fa && fa.Count >= 2 && _resolver.Resolve(fa[0]) is PdfDictionary fontDict && fa[1].TryGetNumber(out double fsz))
@@ -2195,6 +2233,10 @@ public sealed class PdfContentInterpreter
                 }
                 // JPX images may omit /ColorSpace: the codestream's own colour applies (8.9.5).
                 cs = csObj == null ? null : PdfColorSpace.Resolve(csObj, _resolver, resources);
+                // An image's own /Intent overrides the graphics state's (8.6.5.8).
+                var imageIntent = _resolver.Resolve(dict["Intent"]) is PdfName intentName ? ParseIntent(intentName.Value) : null;
+                if (cs != null)
+                    cs = WithIntent(cs, imageIntent ?? gs.RenderingIntent);
                 if (cs != null && (cs.IsPattern || cs.UnsupportedReason != null))
                 {
                     AddFallback(cs.UnsupportedReason ?? PdfFallbackReason.UnsupportedColorSpace, "Image colour space unsupported", pageBounds);
