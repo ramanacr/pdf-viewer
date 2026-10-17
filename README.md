@@ -1,8 +1,8 @@
 # Native Windows PDF Viewer
 
-A high-performance, feature-rich Windows desktop native PDF Viewer application built with **C# / WPF on .NET 9** and powered by the open-source **Google PDFium** native engine (x64).
+A high-performance, feature-rich Windows desktop native PDF Viewer application built with **C# / WPF on .NET 9** and powered by its own PDF engine, **`PdfEngine.Vector`**, drawn by Direct2D/DirectWrite (x64). The published application contains no PDFium; developer and test builds keep Google PDFium as the reference the engine is compared with.
 
-The solution is structured using the modern XML-based **`.slnx`** solution format, utilizing a version-pinned, checksum-verified native PDFium binary (`chromium/8021` / `154.0.8021.0`), asynchronous background page rendering with an in-memory **LRU cache**, zero intermediate PNG encoding overhead, comprehensive text searching and selection, vector and ink annotations, bookmark tree exploration, high-DPI image export, native Windows printing, and Light/Dark themes.
+The solution is structured using the modern XML-based **`.slnx`** solution format, asynchronous background page rendering with an in-memory **LRU cache**, zero intermediate PNG encoding overhead, comprehensive text searching and selection, vector and ink annotations, bookmark tree exploration, high-DPI image export, native Windows printing, and Light/Dark themes.
 
 ---
 
@@ -12,7 +12,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Optional Components](#optional-components)
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
-- [Native Engine & PDFium Tooling](#native-engine--pdfium-tooling)
+- [PDFium (Developer and Test Builds Only)](#pdfium-developer-and-test-builds-only)
 - [Rendering Engines (Vector Migration)](#rendering-engines-vector-migration)
 - [Prerequisites & System Requirements](#prerequisites--system-requirements)
 - [Project & Directory Structure](#project--directory-structure)
@@ -50,9 +50,9 @@ exactly those features. This viewer takes the opposite position from the mainstr
 
 | Guarantee | What backs it |
 | --- | --- |
-| No script engine is present | PDFium is linked without V8. None of the JavaScript runtime files a script-enabled build requires (`v8.dll`, `v8_context_snapshot.bin`, `snapshot_blob.bin`, `icudtl.dat`) ship with the application, and a test asserts their absence. |
+| No script engine is present | The engine has no JavaScript interpreter: a form's formatting and validation scripts are recognised (the Acrobat `AF*` calls) without being run, and any other script is reported and left inert. No JavaScript runtime (`v8.dll`, `v8_context_snapshot.bin`, `snapshot_blob.bin`, `icudtl.dat`) ships with the application, and a test asserts their absence. |
 | Embedded actions are never executed | JavaScript, `/Launch` actions and embedded files are parsed, reported and left inert. Links open only on an explicit click, through `PdfSecurityPolicy`. |
-| You are told what is inside | Every document is inspected on open by `PdfiumSafetyInspector`. Anything active is named in the status bar and detailed under **Tools → Document Safety**. |
+| You are told what is inside | Every document is inspected on open by the engine (`PdfNativeSafetyInspector`). Anything active is named in the status bar and detailed under **Tools → Document Safety**. |
 | You can defuse it | **Tools → Save Clean Copy** writes a copy with the script, launch actions and embedded files removed, keeping the pages. The copy is re-inspected before it is handed back, and discarded if it is not actually clean. The original is never modified. Both major competitors put sanitization behind a paid tier; here it is not even behind the feature gate. |
 | Attachments come out only when you ask | **File → Embedded Files** lists what the document carries and extracts one to a path you choose. Nothing is unpacked on open, an executable type is flagged before anything is written, the extracted file is written as data and never launched, and the document-supplied name cannot steer the save outside the folder you picked. |
 | No telemetry, no analytics, no account | Nothing about you or your documents is recorded or transmitted. There is no sign-in and no cloud storage. |
@@ -126,23 +126,25 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 │  • IPdfFormService, IPdfSignatureService, IPdfRedactionService          │
 │  • Typed Exception Hierarchy (PdfOpenException, Corrupt, Password, etc) │
 └────────────────────────────────────▲────────────────────────────────────┘
-                                     │ Implementation Adapter
+                                     │ Implementation
 ┌────────────────────────────────────▼────────────────────────────────────┐
-│                PdfEngine.Pdfium (Native Interop Layer)                  │
-│  • SafeHandles (SafeDocumentHandle, SafePageHandle, SafeTextPageHandle) │
-│  • PdfiumNativeBridge (C ABI P/Invoke bindings pinned to Chromium 8021) │
-│  • Zero-Copy NativeMemoryOwner (IMemoryOwner<byte> BGRA Pixel Buffers)  │
-│  • Native Adapters: Renderer, Text, Annotations, Forms, Redaction, etc. │
-│  • pdfium.dll (x64 Native Engine: FreeType, libjpeg-turbo, OpenJPEG)    │
+│                PdfEngine.Vector (the PDF engine, managed)               │
+│  • Parser, xref repair, security handlers (RC4, AES, certificates)     │
+│  • Fonts, text page, search, structure tree, display lists             │
+│  • Forms, annotations, signatures, redaction, saving, page assembly    │
+│  • PdfEngine.Vector.Direct2D / .Windows: drawing and printing          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+Developer and test builds also have `PdfEngine.Pdfium` (PDFium interop and `pdfium.dll`), the
+oracle the engine is tested against; the published application does not contain it.
 
 ### Key Architectural Strengths
 
 1. **Zero Intermediate Encoding Overhead**:
-   Pages render directly into native BGRA memory buffers (`FPDFBitmap_CreateEx`), which construct frozen WPF `BitmapSource` instances without intermediate PNG/JPEG disk encoding and decoding roundtrips.
-2. **Deterministic Native Memory & SafeHandles**:
-   All unmanaged PDFium objects (`FPDF_DOCUMENT`, `FPDF_PAGE`, `FPDF_TEXTPAGE`, `FPDF_SCHHANDLE`, `FPDF_ANNOTATION`) are wrapped in specialized `.NET` `SafeHandle` classes ensuring leak-free disposal even during cancellations or exceptions.
+   Pages are drawn by Direct2D straight into BGRA buffers (or, for zoomed detail, into a texture shared with the screen), which become frozen WPF `BitmapSource` instances without intermediate PNG/JPEG encoding and decoding roundtrips.
+2. **Managed Engine, Bounded Native Surface**:
+   The PDF parser and every document service are managed code with resource limits (`PdfSecurityLimits`); native code is limited to Windows' own Direct2D, DirectWrite and WIC, whose COM objects are released deterministically even during cancellations or exceptions.
 3. **Thread-Safe LRU Memory Cache**:
    The `LruPageCache` maintains an in-memory linked list and hash map of rendered bitmaps for recently viewed pages and DPIs. When navigating large 500+ page documents, older pages are evicted automatically, keeping the application's memory footprint bounded.
 4. **Cancellation-Aware Scrolling & Zooming**:
@@ -172,7 +174,7 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 - **Organize Pages** (*File → Organize Pages*): reorder, rotate, duplicate or leave out pages, and save the result as a new document. Applied in a single pass, so the output is always consistent; the original is never modified.
 - **Export Text** (*File → Export Text*): writes the document's text layer to a plain text file, and says so plainly when a page has no text layer rather than handing back an empty file.
 - **Embedded Files** (*File → Embedded Files*): lists what the document carries, flags attachments Windows would treat as executable, and extracts one only when you ask. Nothing is ever unpacked on open or run.
-- **Word-processor text selection** (character-level text layout from PDFium's text page: reading order, inferred spaces and line breaks, line-end hyphens):
+- **Word-processor text selection** (character-level text layout from the engine's text page: reading order, inferred spaces and line breaks, line-end hyphens):
   - **Click and drag** selects character by character, across lines, columns and pages; the view scrolls when the pointer nears the edge.
   - **Double-click** selects only the word (no trailing space or punctuation; `don't`, `3.14` and `snake_case` stay whole); **double-click and drag** extends by whole words.
   - **Triple-click** selects the paragraph; **Ctrl+click** the sentence.
@@ -185,7 +187,7 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
   - **Untagged pages** get paragraphs from the text layout, headings from their larger text, list items from their markers, and vertical text read as words.
   - **Read mode** reflows that content (size with `Ctrl+Plus/Minus`, follows the dark theme and night mode). It is a WPF FlowDocument, which UI Automation exposes as a text document, so Narrator, NVDA and JAWS read and navigate it by paragraph, line, word and character. Pages carry accessible names. The document's accessibility-extraction permission is honoured.
 - **In-Document Text Search**:
-  - Real-time searching powered by PDFium native text search APIs.
+  - Real-time searching over the engine's text page.
   - Case-sensitive / case-insensitive search toggle.
   - Match occurrence counter (e.g. *"Match 2 of 14 (Page 3)"*).
   - Next match (`F3`) and Previous match (`Shift+F3`) navigation.
@@ -193,7 +195,7 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 - **Annotations & Markup**:
   - Highlights, Underlines, Strikethrough, Notes, FreeText, Rectangles, Ellipses, and Freehand Ink.
   - **Multi-Mode Saving**:
-    - **Embedded**: Standard PDF annotation objects preserved for editing in Adobe Acrobat / PDFium.
+    - **Embedded**: Standard PDF annotation objects preserved for editing in Adobe Acrobat and other viewers.
     - **Flattened**: Annotations permanently baked into page graphics.
     - **Export XFDF**: XML-based comments exported without modifying the original document.
     - **Strict Overwrite Protection**: Prohibits destructive accidental overwriting of the source document.
@@ -247,14 +249,14 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 
 ---
 
-## Native Engine & PDFium Tooling
+## PDFium (Developer and Test Builds Only)
 
-The application uses an officially pinned standalone release of Google PDFium from `bblanchon/pdfium-binaries`.
+The published application has no PDFium (M10): `scripts/build_publish.ps1` builds with `-p:PdfiumRenderer=false`, so neither `pdfium.dll` nor `PdfEngine.Pdfium` is referenced, copied or bundled, and the PDFium-free release gate checks the payload and starts the app with PDFium disabled. Developer and test builds (`dotnet build`, `dotnet test`, the default `PdfiumRenderer=true`) keep an officially pinned standalone release of Google PDFium from `bblanchon/pdfium-binaries` as the oracle the engine is tested against, and as the `Pdfium` engine mode. Its licences are in `eng/pdfium/` (`LICENSE`, `licenses/`).
 
 - **Release Pin**: `chromium/8021` (`154.0.8021.0`)
 - **Architecture**: Windows x64 (Non-V8 / Non-XFA standalone)
 - **Verified SHA-256 Checksum**: `ADAC8CE034015427B5DAA81F8EEDDFCC8E84BC2A9F036F007890FF18BD4388C4`
-- **Automation Script**: `eng/pdfium/build.ps1` (downloads, verifies checksum, extracts headers, copies `pdfium.dll` to runtime folders, and updates `THIRD_PARTY_NOTICES.md`).
+- **Automation Script**: `eng/pdfium/build.ps1` (downloads, verifies checksum, extracts headers and copies `pdfium.dll` to the runtime folder of developer builds).
 
 To re-run or verify the native tooling setup:
 ```powershell
@@ -265,7 +267,7 @@ pwsh -ExecutionPolicy Bypass -File .\eng\pdfium\build.ps1
 
 ## Rendering Engines (Vector Migration)
 
-The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.Vector`, rendered by Direct2D/DirectWrite in `PdfEngine.Vector.Direct2D`, with the WPF renderer `PdfEngine.Vector.Windows` as fallback). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
+The viewer has moved from PDFium to its own vector-first engine (`PdfEngine.Vector`, rendered by Direct2D/DirectWrite in `PdfEngine.Vector.Direct2D`, with the WPF renderer `PdfEngine.Vector.Windows` as fallback); the published application is PDFium-free (M10). The plan, decisions and gates live in [`docs/pdf-viewer-vector-migration/`](docs/pdf-viewer-vector-migration/00_README.md); current status and measured evidence are in [`18_IMPLEMENTATION_STATUS.md`](docs/pdf-viewer-vector-migration/18_IMPLEMENTATION_STATUS.md).
 
 **Engine modes** (View → Rendering Engine, or the `PDF_ENGINE_MODE` environment variable: `Auto`, `Hybrid`, `Vector`, and `Pdfium` in developer builds):
 
@@ -277,7 +279,7 @@ The viewer is migrating from PDFium to its own vector-first engine (`PdfEngine.V
 
 The status-bar badge shows how the current page was drawn (`⚡ Vector`, `⚡ Vector (N approximated)`, strict mode's `⚡ Vector (N unsupported)`, or `⚠ Unreadable page` for a page the engine cannot read at all, shown blank); its tooltip lists the classified reasons.
 
-**What stays on PDFium** regardless of mode: text extraction and search, annotation editing, attachments, saving, redaction, signatures and page organisation (later milestones). **Releases still ship `pdfium.dll`** for those features; it no longer draws pages.
+**Nothing stays on PDFium.** Opening (passwords, repair, permissions, certificate encryption), drawing, text extraction and search, annotations, forms, attachments, document safety and clean copies, saving, redaction, signatures and page organisation are all the engine's (M9 and M10). **Releases ship no `pdfium.dll` and no `PdfEngine.Pdfium`**; the release gate fails a payload that has either, and starts the published app with `PDF_PDFIUM_DISABLED=1` to open, draw and search a document (`eng/releasegate/README.md`). Removing PDFium took 7.1 MiB off the payload and 3.6 MiB off its compressed form, which the installer carries.
 
 **Sharp at every zoom (25–1600 %):** pages are rendered by Direct2D (GPU, or WARP without one); when a page is zoomed past its bitmap, the visible area is re-rendered at exact device resolution as a detail tile over it. Night mode draws the page and its tiles as by day and inverts them on the GPU (a Direct2D Invert effect). On a GPU in a local session, vector detail tiles go straight from Direct2D to the screen through a shared texture (`D3DImage`), with no copy through the CPU; `PDF_GPU_PRESENT=0` turns that off. `PDF_VECTOR_HOST=wpf` selects the earlier live WPF drawing host. Measure on-screen frame times with `vectorpdf live <file.pdf>` (opens a window).
 
@@ -286,6 +288,8 @@ The status-bar badge shows how the current page was drawn (`⚡ Vector`, `⚡ Ve
 **Verification tooling:**
 ```powershell
 dotnet test tests/PdfEngine.Vector.Tests                        # unit, fixture, PDFium-differential and fuzz tests
+dotnet test tests/PdfViewer.Tests                               # the viewer, with the PDFium oracle tests
+dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false       # the viewer as published: no PDFium, oracle tests left out
 $env:VECTOR_FUZZ_ITERATIONS=100000; dotnet test tests/PdfEngine.Vector.Tests --filter Fuzz
 dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- bench --pages 20
 dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- corpus <folder> --out report.jsonl --diff
@@ -310,12 +314,12 @@ d:\Practice\pdf-viewer\
 ├── Directory.Build.props          # Dynamic auto-incremented build numbering
 ├── PdfViewer.slnx                 # Modern XML-based Solution file (.NET 9+)
 ├── README.md                      # Complete architecture, benchmark & usage guide
-├── THIRD_PARTY_NOTICES.md         # Open-source licenses & notices (Google PDFium)
+├── THIRD_PARTY_NOTICES.md         # Open-source licenses & notices of what ships
 │
 ├── assets/                        # Multi-resolution application & file icons
 ├── benchmarks/
 │   └── PdfViewer.Benchmarks/      # BenchmarkDotNet & high-throughput memory metrics
-├── eng/pdfium/                    # Native PDFium configuration & header definitions
+├── eng/pdfium/                    # PDFium for developer and test builds (the oracle): pin, headers, licences
 ├── publish/                       # Output folder for distribution (Setup & Portable EXE, SBOM)
 ├── samples/                       # Multi-page test documents
 ├── scripts/
@@ -324,7 +328,7 @@ d:\Practice\pdf-viewer\
 │
 ├── src/
 │   ├── PdfEngine.Abstractions/    # UI-neutral domain models, geometry, exceptions & contracts
-│   ├── PdfEngine.Pdfium/          # Native PDFium safe interop engine, adapters & memory manager
+│   ├── PdfEngine.Pdfium/          # PDFium interop, the oracle of developer and test builds (not shipped)
 │   ├── PdfViewer.Core/            # DocumentSession, RenderPriorityScheduler, MultiTierCache & Undo/Redo
 │   ├── PdfViewer/                 # Modern WPF MVVM application with Light/Dark themes
 │   └── Installer/                 # Windows Graphical Setup Installer & Uninstaller
@@ -370,10 +374,11 @@ dotnet run --project src\PdfViewer\PdfViewer.csproj -- "samples\SampleDocument.p
 
 ### Run Automated Tests
 
-To execute the automated xUnit test suite covering native PDFium initialization, rendering, bookmarks, search, LRU caching, image export, encrypted PDFs, multithreading, and 500-page handling:
+To execute the automated xUnit test suites covering rendering, bookmarks, search, LRU caching, image export, encrypted PDFs, multithreading, and 500-page handling, with PDFium as the oracle:
 
 ```powershell
 dotnet test PdfViewer.slnx
+dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the published configuration, without PDFium
 ```
 
 ---
@@ -477,7 +482,7 @@ dotnet test PdfViewer.slnx
 ## Troubleshooting & FAQ
 
 ### 1. Does the application require any commercial licenses?
-No. The application is completely open-source and powered by the Google PDFium native engine (BSD 3-Clause / Apache 2.0). There are zero commercial license keys, evaluations, or page limits.
+No. The application is completely open-source (MIT), with its own PDF engine; the third-party components it ships are open-source too (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). There are zero commercial license keys, evaluations, or page limits.
 
 ### 2. How does the application handle very large PDF files (e.g. 500+ pages)?
 The application does not rasterize all pages into memory at once. It uses the `LruPageCache` to maintain only currently visible and nearby pages in memory at a bounded limit (default 60 pages). As you scroll through the document, pages behind you are evicted and new pages are rendered asynchronously on background threads.
@@ -496,4 +501,4 @@ Release binaries are Authenticode-signed, built only by this repository's releas
 ## License & Third-Party Notices
 
 - **PDF Viewer Application**: Licensed under the [MIT License](LICENSE).
-- **PDF Engine**: Google PDFium (BSD 3-Clause / Apache 2.0); vector renderer via Vortice.Windows (MIT); predefined CJK CMaps from Adobe cmap-resources (BSD 3-Clause); JPEG 2000 via CoreJ2K (BSD 3-Clause). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license texts.
+- **PDF Engine**: `PdfEngine.Vector` (this project, MIT); Direct2D access via Vortice.Windows (MIT); predefined CJK CMaps from Adobe cmap-resources (BSD 3-Clause); JPEG 2000 via CoreJ2K (BSD 3-Clause). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full license texts.

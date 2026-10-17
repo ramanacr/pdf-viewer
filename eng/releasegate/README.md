@@ -1,9 +1,11 @@
 # Release gates
 
 Two checks that hold a release to what the last one shipped, each against a baseline committed
-here. Both run in CI (`.github/workflows/ci.yml`) on the payload that
-`scripts/build_publish.ps1 -DryRun` stages in `publish/app`, and the payload gate also runs at
-the end of a full `scripts/build_publish.ps1`, against the installer it has just built.
+here, and one that holds it to having no PDFium. The first two run in CI
+(`.github/workflows/ci.yml`) on the payload that `scripts/build_publish.ps1 -DryRun` stages in
+`publish/app`, and the payload gate also runs at the end of a full `scripts/build_publish.ps1`,
+against the installer it has just built. The PDFium-free gate runs inside every
+`scripts/build_publish.ps1`, dry run or full, so CI and the release workflow both run it.
 
 Nothing here touches the network or collects anything: the measurements are local files.
 
@@ -11,6 +13,7 @@ Nothing here touches the network or collects anything: the measurements are loca
 |---|---|---|---|
 | Installer payload size | `baseline-payload.json` | the payload, the payload compressed, or the installer grows more than **5 %**, or passes a hard **budget** | `releasegate payload` |
 | Cold start | `baseline-startup.json` | the **warm** median start to first page exceeds the baseline by more than the tolerance | `releasegate startup` |
+| PDFium-free | none | the payload holds a `pdfium*.dll` or `PdfEngine.Pdfium` (loose, bundled, or named by a `.deps.json`), or the app, started with `PDF_PDFIUM_DISABLED=1`, does not open, draw and search the probe document without loading PDFium | `releasegate pdfium-free` |
 
 `releasegate` is `ReleaseGate.Tool` in this folder. From the repository root:
 
@@ -66,8 +69,10 @@ Largest inside PdfViewer.exe (22 bundled files):
 ```
 
 (That last listing shows a real finding this gate made: `pdfium.dll` was bundled twice, because
-the project files published it to two target paths. It is now deployed once, beside the
-application, which took 6.93 MiB off the payload and about 3.5 MiB off the installer.)
+the project files published it to two target paths. It was then deployed once, which took 6.93
+MiB off the payload and about 3.5 MiB off the installer. Since M10 the published app has no
+PDFium at all: the 2026-10-18 baseline is 31.46 MiB, 9.64 MiB compressed, installer 9.89 MiB,
+against 38.55 MiB, 13.24 MiB compressed for the same source published with PDFium.)
 
 A shrink of more than the tolerance is reported as a note asking for a refresh, so the gate
 holds the gain.
@@ -130,6 +135,34 @@ In `baseline-startup.json` under `tolerance`: the limit is
 Only the warm median is gated. Cold starts are reported against the same rule but never fail:
 emptying the operating system's file cache needs administrator rights, so on a shared runner a
 "cold" start is too variable to block a merge on. p95 values are reported, not gated.
+
+## PDFium-free
+
+```powershell
+./scripts/build_publish.ps1 -DryRun
+dotnet run --project eng/releasegate/ReleaseGate.Tool/ReleaseGate.Tool.csproj -c Release --no-build -- `
+    pdfium-free --app publish/app --out pdfium-free.json
+```
+
+The published app is built with `-p:PdfiumRenderer=false` (M10), which leaves PdfEngine.Pdfium and
+`pdfium.dll` out. This gate checks that the payload really is PDFium-free, and that the app works
+without it:
+
+1. **Files.** Every file in the payload, and every file bundled inside a single-file executable
+   (the manifest `BundleManifest` reads), is checked: no `pdfium*.dll`, no `PdfEngine.Pdfium*`,
+   and no `.deps.json` that names PdfEngine.Pdfium. Files the host extracts during the launch
+   below are checked too.
+2. **Launch.** A copy of the payload is started as
+   `PdfViewer.exe --startup-probe <result.json> <probe.pdf> --search "Startup probe"` with
+   `PDF_PDFIUM_DISABLED=1` (and `PDF_ENGINE_MODE` cleared). The probe opens the twelve-page probe
+   document, waits for page 1 on screen, runs the viewer's own search, and writes the matches
+   with what of PDFium is in the process: the managed adapter among the loaded assemblies, the
+   native library among the loaded modules, and whether the PDFium renderer was compiled in. The
+   gate passes when page 1 was drawn, the heading was found on all twelve pages, PDFium was
+   disabled, nothing of it was loaded, and the build has no PDFium renderer.
+
+`--no-launch` checks the files only. A failure names each PDFium file, or the reason the launch
+did not pass; `--out` keeps the probe's result.
 
 ## Refreshing a baseline
 
