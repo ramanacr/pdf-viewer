@@ -298,15 +298,17 @@ public class CompositingTests
     }
 
     [Fact]
-    public async Task UncapturableSoftMask_StillFallsBack()
+    public async Task UncapturableSoftMask_IsLeftOut_AndTheObjectIsDrawn()
     {
         var b = new VectorPdfBuilder();
-        // /S /Bogus is not a soft-mask subtype.
+        // /S /Bogus is not a soft-mask subtype: the fill is drawn without it, as PDFium draws it.
         int mask = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 200 200]", "1 g 0 0 200 200 re f");
         b.AddPage("/M1 gs 0 0 1 rg 10 10 100 100 re f",
             $"<< /ExtGState << /M1 << /SMask << /S /Bogus /G {mask} 0 R >> >> >> >>");
         using var doc = await PdfVectorDocument.OpenAsync(b.Build());
         var list = await doc.GetPageDisplayListAsync(1);
-        Assert.Contains(list.FallbackTokens, t => t.Reason == PdfFallbackReason.SoftMask);
+        Assert.False(list.HasFallback);
+        Assert.True(list.Features.HasFlag(PdfFeatureSet.Recovered));
+        Assert.Single(list.Commands.OfType<FillPath>());
     }
 }

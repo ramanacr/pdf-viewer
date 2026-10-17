@@ -17,12 +17,19 @@ internal sealed class BoundedOutputBuffer
     private readonly long _maxBytes;
     private readonly double _maxRatio;
     private readonly long _inputLength;
+    private readonly long _ratioExempt;
     private byte[] _buffer;
     private int _length;
 
-    public BoundedOutputBuffer(long inputLength, long maxBytes, double maxRatio, int initialCapacity = 0)
+    /// <param name="ratioExemptBytes">
+    /// Output the caller knows to be legitimate (an image's samples, bounded by the pixel limit):
+    /// up to this size the expansion ratio is not enforced. A plain white scan compresses far
+    /// beyond any bomb ratio and is still only its pixels.
+    /// </param>
+    public BoundedOutputBuffer(long inputLength, long maxBytes, double maxRatio, int initialCapacity = 0, long ratioExemptBytes = 0)
     {
         _inputLength = Math.Max(1, inputLength);
+        _ratioExempt = Math.Max(RatioEnforcementThreshold, ratioExemptBytes);
         _maxBytes = maxBytes <= 0 ? long.MaxValue : Math.Min(maxBytes, Array.MaxLength);
         _maxRatio = maxRatio <= 0 ? double.MaxValue : maxRatio;
         int capacity = (int)Math.Clamp(initialCapacity, 0, Math.Min(_maxBytes, 1024 * 1024));
@@ -33,8 +40,8 @@ internal sealed class BoundedOutputBuffer
     public static BoundedOutputBuffer Unbounded(int inputLength) =>
         new(inputLength, long.MaxValue, double.MaxValue, inputLength);
 
-    public static BoundedOutputBuffer For(PdfSecurityLimits limits, long inputLength) =>
-        new(inputLength, limits.MaxDecodedStreamBytes, limits.MaxDecompressionRatio, (int)Math.Min(inputLength * 2, 1024 * 1024));
+    public static BoundedOutputBuffer For(PdfSecurityLimits limits, long inputLength, long ratioExemptBytes = 0) =>
+        new(inputLength, limits.MaxDecodedStreamBytes, limits.MaxDecompressionRatio, (int)Math.Min(inputLength * 2, 1024 * 1024), ratioExemptBytes);
 
     public int Length => _length;
 
@@ -78,7 +85,7 @@ internal sealed class BoundedOutputBuffer
                 $"Decoded stream exceeded the security ceiling of {_maxBytes} bytes.");
         }
 
-        if (required > RatioEnforcementThreshold && (double)required / _inputLength > _maxRatio)
+        if (required > _ratioExempt && (double)required / _inputLength > _maxRatio)
         {
             throw new PdfResourceLimitException(
                 nameof(PdfSecurityLimits.MaxDecompressionRatio),

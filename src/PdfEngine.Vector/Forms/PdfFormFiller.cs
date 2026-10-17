@@ -106,6 +106,93 @@ public static class PdfFormFiller
 
     private delegate void Setter(int number, string key, PdfObject? value);
 
+    /// <summary>
+    /// The normal appearance a reader draws for a widget whose own cannot be used: the form asks
+    /// for appearances to be generated (/NeedAppearances true; text and choice fields), or the
+    /// widget has none (/AP /N missing, or no stream for its state). Text fields show their value
+    /// (a password as asterisks), combo boxes the chosen option, list boxes their options with the
+    /// selection, check boxes and radio buttons a check or a dot when on, each over the widget's
+    /// /MK background and border. The stream is built in memory; the document is not changed.
+    /// Null when nothing is to be generated (push buttons, signatures, a widget whose appearance
+    /// can be used).
+    /// </summary>
+    /// <param name="hasAppearance">The widget has a usable /AP /N stream for its state.</param>
+    public static PdfStream? GenerateAppearance(PdfAcroForm form, PdfFormField field, PdfFormWidget w, Parsing.PdfObjectResolver r, bool hasAppearance)
+    {
+        bool choiceOrText = field.Kind is PdfFormFieldKind.Text or PdfFormFieldKind.ComboBox or PdfFormFieldKind.ListBox;
+        if (hasAppearance && !(form.NeedAppearances && choiceOrText))
+            return null;
+        if (w.Rect.Width <= 0 || w.Rect.Height <= 0)
+            return null;
+
+        var content = new StringBuilder();
+        PdfDictionary? fonts;
+        double width = w.Rect.Width, height = w.Rect.Height;
+        if (w.Rotation is 90 or 270) (width, height) = (height, width);
+        switch (field.Kind)
+        {
+            case PdfFormFieldKind.Text:
+            {
+                string shown = field.IsPassword ? new string('*', field.Value.Length) : field.Value;
+                if (field.MaxLength > 0 && shown.Length > field.MaxLength) shown = shown[..field.MaxLength];
+                fonts = TextAppearance(content, field, form, r, w, shown);
+                break;
+            }
+            case PdfFormFieldKind.ComboBox:
+            {
+                string shown = field.Options.FirstOrDefault(o => o.Export == field.Value).Display ?? field.Value;
+                fonts = TextAppearance(content, field, form, r, w, shown);
+                break;
+            }
+            case PdfFormFieldKind.ListBox:
+            {
+                var values = field.Values.Count > 0 ? field.Values : field.Value.Length > 0 ? new[] { field.Value } : Array.Empty<string>();
+                var indices = values.Select(v => field.Options.ToList().FindIndex(o => o.Export == v)).Where(i => i >= 0).OrderBy(i => i).ToList();
+                fonts = ListAppearance(content, field, form, r, w, indices);
+                break;
+            }
+            case PdfFormFieldKind.CheckBox:
+            case PdfFormFieldKind.RadioGroup:
+            {
+                Frame(content, w, width, height);
+                string state = w.AppearanceState ?? field.Value;
+                bool on = state.Length > 0 && state != "Off" && (w.OnState == null || w.OnState == state);
+                fonts = null;
+                if (on)
+                {
+                    // ZapfDingbats '4' (a check mark) and 'l' (a dot), the defaults of /MK /CA.
+                    double size = Math.Min(width, height) * 0.8;
+                    char glyph = field.Kind == PdfFormFieldKind.CheckBox ? '4' : 'l';
+                    double glyphWidth = (glyph == '4' ? 846 : 791) * size / 1000.0;
+                    double x = (width - glyphWidth) / 2, y = (height - size * 0.7) / 2;
+                    content.Append($"q BT /ZaDb {F(size)} Tf 0 g 1 0 0 1 {F(x)} {F(y)} Tm ({glyph}) Tj ET Q\n");
+                    fonts = new PdfDictionary(new Dictionary<string, PdfObject>
+                    {
+                        ["ZaDb"] = new PdfDictionary(new Dictionary<string, PdfObject>
+                        {
+                            ["Type"] = new PdfName("Font"), ["Subtype"] = new PdfName("Type1"), ["BaseFont"] = new PdfName("ZapfDingbats"),
+                        }),
+                    });
+                }
+                break;
+            }
+            default:
+                return null;
+        }
+
+        var entries = new Dictionary<string, PdfObject>
+        {
+            ["Type"] = new PdfName("XObject"),
+            ["Subtype"] = new PdfName("Form"),
+            ["BBox"] = new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(0), new PdfReal(width), new PdfReal(height) }),
+        };
+        if (w.Rotation != 0)
+            entries["Matrix"] = RotationMatrix(w.Rotation, w.Rect.Width, w.Rect.Height);
+        if (fonts != null)
+            entries["Resources"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["Font"] = fonts });
+        return PdfObjectWriter.NewStream(entries, Encoding.Latin1.GetBytes(content.ToString()));
+    }
+
     /// <summary>A new /AP /N stream for a widget; returns the next free object number.</summary>
     private static int SetAppearance(PdfFormWidget w, PdfFormField field, PdfAcroForm form, Parsing.PdfObjectResolver r,
         Dictionary<int, PdfObject> objects, Func<int, PdfDictionary> current, Action<int, string, PdfObject?> set, int next,

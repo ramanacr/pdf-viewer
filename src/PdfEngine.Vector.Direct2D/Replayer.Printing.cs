@@ -98,8 +98,7 @@ internal sealed partial class Replayer
             int end = _groupEnd![i] < 0 ? i : _groupEnd[i];
             switch (cmds[i])
             {
-                case BeginCompositingGroup g when !_knockoutOverLimit!.Contains(i)
-                                                  && (g.Blend != PdfBlendMode.Normal || !g.Isolated && (g.Knockout || _containsBlend![i])):
+                case BeginCompositingGroup g when (g.Blend != PdfBlendMode.Normal || !g.Isolated && (g.Knockout && !_knockoutOverLimit!.Contains(i) || _containsBlend![i])):
                     groups.Add((i, end, g.Bounds));
                     break;
                 case BeginTransparencyGroup t when _containsBlend![i] && !t.Isolated:

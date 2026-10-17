@@ -146,22 +146,21 @@ public class InterpreterCoverageTests
         Assert.IsType<FillPath>(cmds[i - 1]); // the blue rectangle stays outside the group
     }
 
-    [Theory]
-    [InlineData("/SMask << /Type /Mask /S /Luminosity /G 99 0 R >>", PdfFallbackReason.SoftMask)]
-    public async Task UnsupportedTransparency_IsClassifiedWithObjectBounds(string gsEntries, PdfFallbackReason expected)
+    [Fact]
+    public async Task UncapturableSoftMask_IsLeftOut_AndTheObjectIsDrawn()
     {
+        // A soft mask whose group does not exist: drawn without it, as PDFium draws it.
         var b = new VectorPdfBuilder();
-        int gs = b.Add($"<< /Type /ExtGState {gsEntries} >>");
+        int gs = b.Add("<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G 99 0 R >> >>");
         b.AddPage("0 0 1 rg 10 10 30 30 re f /G1 gs 1 0 0 rg 100 100 20 20 re f", $"<< /ExtGState << /G1 {gs} 0 R >> >>");
 
         var list = await BuildAsync(b.Build());
-        var token = Assert.Single(list.FallbackTokens);
-        Assert.Equal(expected, token.Reason);
-        // Region fallback: only the affected object, not the page.
-        Assert.InRange(token.Bounds.X, 97, 100);
-        Assert.InRange(token.Bounds.Width, 20, 26);
-        Assert.Single(list.Commands.OfType<FillPath>()); // the unaffected blue rectangle
-        Assert.True(list.ComputeFallbackAreaRatio() < 0.05);
+        Assert.False(list.HasFallback);
+        Assert.True(list.Features.HasFlag(PdfFeatureSet.Recovered));
+        Assert.Equal(2, list.Commands.OfType<FillPath>().Count());
+        using var page = await RenderAsync(list);
+        var red = Pixel(page, 110, page.HeightPixels - 110);
+        Assert.True(red.R > 200 && red.G < 60, $"the masked rectangle is drawn, got {red}");
     }
 
     [Fact]
@@ -192,16 +191,21 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
-    public async Task UnknownOperator_OutsideCompatibility_IsClassified_InsideBxEx_IsIgnored()
+    public async Task UnknownOperator_IsIgnored_InsideAndOutsideCompatibility()
     {
         var b = new VectorPdfBuilder();
         b.AddPage("BX 1 2 frobnicate EX 0 0 10 10 re f");
         b.AddPage("1 2 frobnicate 0 0 10 10 re f");
         var bytes = b.Build();
 
-        Assert.False((await BuildAsync(bytes, 1)).HasFallback);
+        var first = await BuildAsync(bytes, 1);
+        Assert.False(first.HasFallback);
+        Assert.False(first.Features.HasFlag(PdfFeatureSet.Recovered));
+        // Outside BX/EX it is an error PDFium ignores too: the rest of the page is drawn.
         var second = await BuildAsync(bytes, 2);
-        Assert.Equal(PdfFallbackReason.UnknownOperator, Assert.Single(second.FallbackTokens).Reason);
+        Assert.False(second.HasFallback);
+        Assert.True(second.Features.HasFlag(PdfFeatureSet.Recovered));
+        Assert.Single(second.Commands.OfType<FillPath>());
     }
 
     [Fact]
@@ -344,12 +348,15 @@ public class InterpreterCoverageTests
     }
 
     [Fact]
-    public async Task OperatorBudget_ProducesClassifiedResourceLimitFallback()
+    public async Task OperatorBudget_KeepsWhatWasDrawnBeforeTheLimit()
     {
         var b = new VectorPdfBuilder();
         b.AddPage(string.Concat(Enumerable.Repeat("0 0 1 1 re f ", 5000)));
         var list = await BuildAsync(b.Build(), limits: new PdfSecurityLimits { MaxOperatorsPerPage = 1000 });
-        Assert.Contains(list.FallbackTokens, t => t.Reason == PdfFallbackReason.ResourceLimit);
+        Assert.False(list.HasFallback);
+        Assert.True(list.Features.HasFlag(PdfFeatureSet.Recovered));
+        int fills = list.Commands.OfType<FillPath>().Count();
+        Assert.InRange(fills, 100, 1000); // the page up to the ceiling, never past it
     }
 
     [Fact]

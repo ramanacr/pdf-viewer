@@ -59,9 +59,10 @@ public sealed class PdfStreamDecoder
     /// (DCTDecode, JPXDecode, JBIG2Decode, CCITTFaxDecode), returning the still-encoded bytes and that
     /// filter's normalised name and parameters.
     /// </summary>
-    public PdfDecodedStream DecodeImageStream(PdfStream stream) => Decode(stream, stopAtImageFilter: true);
+    /// <param name="expectedBytes">The size of the image's samples (width × height × components × bits), which the decompression ratio does not limit.</param>
+    public PdfDecodedStream DecodeImageStream(PdfStream stream, long expectedBytes = 0) => Decode(stream, stopAtImageFilter: true, expectedBytes);
 
-    private PdfDecodedStream Decode(PdfStream stream, bool stopAtImageFilter)
+    private PdfDecodedStream Decode(PdfStream stream, bool stopAtImageFilter, long expectedBytes = 0)
     {
         ReadOnlyMemory<byte> rawData = stream.GetRawBytes();
         var filters = GetFilters(stream.Dictionary);
@@ -86,7 +87,7 @@ public sealed class PdfStreamDecoder
                     $"Image codec filter /{name} requires an image decoder; use DecodeImageStream.");
             }
 
-            current = DecodeFilter(current, name, parms);
+            current = DecodeFilter(current, name, parms, expectedBytes);
         }
 
         return new PdfDecodedStream(current, null, null);
@@ -150,9 +151,10 @@ public sealed class PdfStreamDecoder
         return result;
     }
 
-    private byte[] DecodeFilter(byte[] input, string filterName, PdfDictionary? parms)
+    private byte[] DecodeFilter(byte[] input, string filterName, PdfDictionary? parms, long expectedBytes = 0)
     {
-        var output = BoundedOutputBuffer.For(_limits, input.Length);
+        // Predictor rows carry a tag byte each: leave room for them in the exemption.
+        var output = BoundedOutputBuffer.For(_limits, input.Length, expectedBytes > 0 ? expectedBytes + expectedBytes / 8 + 4096 : 0);
 
         switch (filterName)
         {

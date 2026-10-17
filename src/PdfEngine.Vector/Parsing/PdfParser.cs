@@ -135,7 +135,19 @@ public sealed class PdfParser
     {
         // Skip single EOL after 'stream' keyword (either CRLF or LF)
         var source = lexer.Source;
+        long keywordEnd = source.Position;
         int b = source.ReadByte();
+        // Some writers put spaces before the end of line ("stream \n"). That is not allowed, but
+        // PDFium accepts it, so the spaces are skipped when an end of line follows them.
+        if (b is 0x20 or 0x09)
+        {
+            while (b is 0x20 or 0x09) b = source.ReadByte();
+            if (b is not (0x0D or 0x0A))
+            {
+                source.Position = keywordEnd;
+                b = source.ReadByte();
+            }
+        }
         if (b == 0x0D)
         {
             int next = source.ReadByte();
