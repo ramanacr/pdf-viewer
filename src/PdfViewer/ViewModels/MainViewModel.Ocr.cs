@@ -76,7 +76,9 @@ public partial class MainViewModel
             byte[] bytes = _docService.CurrentBytes!;
             using var engine = new PdfEngine.Pdfium.PdfiumEngine();
             await using (var pdoc = await engine.OpenDocumentAsync(bytes, _openPassword, ct))
+            using (var textDoc = await PdfVectorDocument.OpenAsync(bytes, _docService.CurrentFilePath, password: _openPassword, cancellationToken: ct))
             {
+                TextService.Attach(pdoc, textDoc);
                 for (int i = 0; i < scanned.Count; i++)
                 {
                     ct.ThrowIfCancellationRequested();

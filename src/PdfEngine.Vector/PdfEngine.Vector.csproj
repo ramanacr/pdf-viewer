@@ -23,6 +23,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
     <InternalsVisibleTo Include="PdfViewer.Tests" />
+    <InternalsVisibleTo Include="vectorpdf" />
   </ItemGroup>
 
   <ItemGroup>

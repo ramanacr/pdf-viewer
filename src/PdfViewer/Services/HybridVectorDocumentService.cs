@@ -780,54 +780,96 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return model;
     }
 
-    public Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default) =>
-        _pdfiumService.SearchTextAsync(query, matchCase, ct);
+    // ------------------------------------------------------------------ text (native text page, M9)
+
+    /// <summary>
+    /// The document text comes from: the vector engine's text page in Auto and Vector modes (no
+    /// PDFium call), PDFium's in PDFium mode. Null when the vector document could not be opened;
+    /// Auto mode then reads text with PDFium, as it renders with it.
+    /// </summary>
+    private PdfVectorDocument? TextDocument => _mode == PdfEngineMode.Pdfium ? null : _vectorDoc;
+
+    private bool TextFromPdfium => _mode == PdfEngineMode.Pdfium || (_vectorDoc == null && _mode != PdfEngineMode.Vector);
+
+    public async Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default)
+    {
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        if (TextDocument is { } doc)
+            return await Task.Run(() => NativePageText.Search(doc, query, matchCase, ct), ct).ConfigureAwait(false);
+        if (TextFromPdfium)
+            return await _pdfiumService.SearchTextAsync(query, matchCase, ct).ConfigureAwait(false);
+        return new List<SearchMatch>();
+    }
 
     public List<PageTextSegment> ExtractPageTextSegments(int pageNumber)
     {
-        if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium && IsPageVectorRendered(pageNumber))
+        if (TextDocument is { } doc)
         {
-            try
-            {
-                var displayList = _vectorDoc.GetPageDisplayListAsync(pageNumber).GetAwaiter().GetResult();
-                if (displayList.Features.HasFlag(PdfFeatureSet.Text))
-                {
-                    var segments = ExtractCharSegmentsFromDisplayList(displayList);
-                    if (segments.Count > 0) return segments;
-                }
-            }
-            catch { }
+            if (IsPageVectorRendered(pageNumber) && DisplayListSegments(doc, pageNumber, CancellationToken.None) is { Count: > 0 } glyphs)
+                return glyphs;
+            return NativePageText.Segments(doc, pageNumber);
         }
-        return _pdfiumService.ExtractPageTextSegments(pageNumber);
+        return TextFromPdfium ? _pdfiumService.ExtractPageTextSegments(pageNumber) : new List<PageTextSegment>();
     }
 
     /// <summary>
-    /// Selection text comes from PDFium's text page on every engine: it has the reading order,
-    /// the inferred spaces and line breaks, and line-end hyphens. It works on the same file (or
-    /// on the decrypted copy of a certificate-encrypted one), so boxes match the vector render.
+    /// Selection text comes from the text page: it has the reading order, the inferred spaces and
+    /// line breaks, and line-end hyphens. It reads the same file (or the decrypted copy of a
+    /// certificate-encrypted one) as the renderer, so boxes match the page.
     /// </summary>
-    public Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default) =>
-        _pdfiumService.ExtractPageTextLayoutAsync(pageNumber, ct);
+    public async Task<PdfViewer.Text.PageTextLayout> ExtractPageTextLayoutAsync(int pageNumber, CancellationToken ct = default)
+    {
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        if (TextDocument is { } doc)
+            return await Task.Run(() => NativePageText.Layout(doc, pageNumber, ct), ct).ConfigureAwait(false);
+        if (TextFromPdfium)
+            return await _pdfiumService.ExtractPageTextLayoutAsync(pageNumber, ct).ConfigureAwait(false);
+        return PdfViewer.Text.PageTextLayout.Empty;
+    }
 
-    public Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default) =>
-        _pdfiumService.ExtractAccessibleContentAsync(pageNumber, ct);
+    public async Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default)
+    {
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        if (TextDocument is { } doc)
+        {
+            var tagged = await Task.Run(() => NativePageText.Tagged(doc, pageNumber, ct), ct).ConfigureAwait(false);
+            if (tagged != null && tagged.Blocks.Count > 0)
+                return tagged;
+            var layout = await ExtractPageTextLayoutAsync(pageNumber, ct).ConfigureAwait(false);
+            return PdfViewer.Text.PageAccessibleContent.FromLayout(pageNumber, layout);
+        }
+        if (TextFromPdfium)
+            return await _pdfiumService.ExtractAccessibleContentAsync(pageNumber, ct).ConfigureAwait(false);
+        return PdfViewer.Text.PageAccessibleContent.FromLayout(pageNumber, PdfViewer.Text.PageTextLayout.Empty);
+    }
 
     public async Task<List<PageTextSegment>> ExtractPageTextSegmentsAsync(int pageNumber, CancellationToken ct = default)
     {
-        if (_vectorDoc != null && _mode != PdfEngineMode.Pdfium && IsPageVectorRendered(pageNumber))
+        await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
+        if (TextDocument is { } doc)
         {
-            try
+            return await Task.Run(() =>
             {
-                var displayList = await _vectorDoc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
-                if (displayList.Features.HasFlag(PdfFeatureSet.Text))
-                {
-                    var segments = ExtractCharSegmentsFromDisplayList(displayList);
-                    if (segments.Count > 0) return segments;
-                }
-            }
-            catch { }
+                if (IsPageVectorRendered(pageNumber) && DisplayListSegments(doc, pageNumber, ct) is { Count: > 0 } glyphs)
+                    return glyphs;
+                return NativePageText.Segments(doc, pageNumber, ct);
+            }, ct).ConfigureAwait(false);
         }
-        return await _pdfiumService.ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false);
+        return TextFromPdfium ? await _pdfiumService.ExtractPageTextSegmentsAsync(pageNumber, ct).ConfigureAwait(false) : new List<PageTextSegment>();
+    }
+
+    /// <summary>Per-glyph segments of a page the vector engine drew (its display list), or null.</summary>
+    private static List<PageTextSegment>? DisplayListSegments(PdfVectorDocument doc, int pageNumber, CancellationToken ct)
+    {
+        try
+        {
+            var displayList = doc.GetPageDisplayListAsync(pageNumber, ct).AsTask().GetAwaiter().GetResult();
+            return displayList.Features.HasFlag(PdfFeatureSet.Text) ? ExtractCharSegmentsFromDisplayList(displayList) : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
