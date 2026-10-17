@@ -31,6 +31,9 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     private readonly DisplayListCache _displayListCache;
     // Resolver, font cache and byte source are not re-entrant across threads: one page builds at a time.
     private readonly SemaphoreSlim _buildGate = new(1, 1);
+
+    /// <summary>Held while the resolver and byte source are in use by a page build (display list or text page).</summary>
+    internal SemaphoreSlim BuildGate => _buildGate;
     private bool _disposed;
 
     public string FilePath { get; }

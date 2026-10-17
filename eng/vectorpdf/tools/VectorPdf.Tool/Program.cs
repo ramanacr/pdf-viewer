@@ -47,6 +47,7 @@ public static class Program
             "pdfa-convert" => await PdfASmoke.ConvertAsync(args),
             "pdfua" => await PdfUaSmoke.RunAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),
+            "text" => await TextParity.RunAsync(args),
             "docservices" => await DocServicesSmoke.RunAsync(args),
             _ => 2,
         };

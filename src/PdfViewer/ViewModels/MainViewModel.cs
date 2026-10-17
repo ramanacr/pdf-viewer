@@ -336,6 +336,9 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     public IOcrEngine OcrEngine { get; }
 
+    /// <summary>The native text service: page text, words and search from the vector engine's text page.</summary>
+    internal PdfEngine.Vector.Text.PdfVectorTextService TextService { get; } = new();
+
     /// <summary>True when genuine optical recognition is available on this machine.</summary>
     public bool IsOpticalRecognitionAvailable { get; }
 
@@ -377,7 +380,8 @@ public partial class MainViewModel : ObservableObject
         }
         _opticalEngine = optical;
         IsOpticalRecognitionAvailable = optical != null;
-        OcrEngine = new DefaultOcrEngine(engine.TextService, optical);
+        // The embedded text layer is read natively (no PDFium); PDFium only draws pages for recognition.
+        OcrEngine = new DefaultOcrEngine(TextService, optical);
 
         ReloadRecentFiles();
         CurrentTheme = ThemeManager.CurrentTheme;
@@ -2841,12 +2845,11 @@ public partial class MainViewModel : ObservableObject
             var text = new StringBuilder();
             int pagesWithText = 0;
 
-            using (var engine = new PdfEngine.Pdfium.PdfiumEngine())
-            await using (var doc = await engine.OpenDocumentAsync(sourcePath))
+            using (var doc = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(sourcePath, password: _openPassword))
             {
                 for (int page = 1; page <= doc.PageCount; page++)
                 {
-                    string pageText = await engine.TextService.ExtractPageTextAsync(doc, page);
+                    string pageText = await TextService.ExtractPageTextAsync(doc, page);
                     if (!string.IsNullOrWhiteSpace(pageText)) pagesWithText++;
 
                     text.AppendLine($"--- Page {page} ---");
@@ -2907,7 +2910,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-            var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, engine.TextService);
+            var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, TextService);
 
             await using var docA = await engine.OpenDocumentAsync(_docService.CurrentFilePath);
             await using var docB = await engine.OpenDocumentAsync(picker.FileName);
