@@ -82,7 +82,7 @@ public static class IconGlyphs
 
     /// <summary>
     /// Clockwise. The font has no counter-clockwise twin, so that one is this glyph mirrored
-    /// (see the MirroredGlyph style), which keeps the two a matched pair.
+    /// (see the MirroredMenuGlyph and MirroredToolbarGlyph styles), which keeps the two a matched pair.
     /// </summary>
     public const string Rotate = "";
     public const string Sidebar = "";
