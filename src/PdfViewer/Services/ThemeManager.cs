@@ -72,4 +72,48 @@ public static class ThemeManager
     {
         SetTheme(CurrentTheme == AppTheme.Light ? AppTheme.Dark : AppTheme.Light);
     }
+
+    /// <summary>The theme brushes the icons draw with; see <see cref="FollowHighContrast"/>.</summary>
+    internal const string IconBrushKey = "IconBrush";
+    internal const string IconAccentBrushKey = "IconAccentBrush";
+
+    private static bool _followingHighContrast;
+
+    /// <summary>
+    /// While Windows high contrast is on, icons draw in the system's colours instead of the
+    /// theme's, so they keep the contrast the user asked for. The overrides go in the
+    /// application's own resources, which take precedence over the merged theme dictionary and
+    /// so survive a light/dark switch. Applied now, and again whenever the setting changes.
+    /// </summary>
+    public static void FollowHighContrast()
+    {
+        ApplyHighContrastIcons();
+        if (_followingHighContrast) return;
+        _followingHighContrast = true;
+        SystemParameters.StaticPropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SystemParameters.HighContrast))
+            {
+                Application.Current?.Dispatcher.BeginInvoke(new Action(ApplyHighContrastIcons));
+            }
+        };
+    }
+
+    internal static void ApplyHighContrastIcons() => ApplyHighContrastIcons(Application.Current?.Resources, SystemParameters.HighContrast);
+
+    internal static void ApplyHighContrastIcons(ResourceDictionary? resources, bool highContrast)
+    {
+        if (resources == null) return;
+
+        if (highContrast)
+        {
+            resources[IconBrushKey] = SystemColors.ControlTextBrush;
+            resources[IconAccentBrushKey] = SystemColors.HighlightBrush;
+        }
+        else
+        {
+            resources.Remove(IconBrushKey);
+            resources.Remove(IconAccentBrushKey);
+        }
+    }
 }

@@ -1,0 +1,58 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:themes="clr-namespace:PdfViewer.Themes">
+
+    <!--
+        How every icon is drawn. The glyphs themselves are listed once, in IconGlyphs.cs; these
+        styles decide size and colour so the same glyph looks the same in a menu, the toolbar
+        and the sidebar.
+    -->
+    <x:Static x:Key="IconFontFamily" Member="themes:IconGlyphs.IconFont" />
+
+    <Style x:Key="GlyphBase" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource IconFontFamily}" />
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontStyle" Value="Normal" />
+        <Setter Property="TextAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+        <!-- The glyph is decoration: the control around it carries the name. -->
+        <Setter Property="Focusable" Value="False" />
+    </Style>
+
+    <!--
+        Menu icons take the menu item's own text colour rather than a theme brush. A context menu
+        lives in its own popup and keeps the system's colours, so a theme brush there could draw
+        light-on-light; inheriting matches the text beside it in every theme, high contrast
+        included, and greys out with a disabled item.
+    -->
+    <Style x:Key="MenuGlyph" TargetType="TextBlock" BasedOn="{StaticResource GlyphBase}" />
+
+    <!-- Toolbar and sidebar icons sit on themed surfaces, so they use the icon brush. -->
+    <Style x:Key="ToolbarGlyph" TargetType="TextBlock" BasedOn="{StaticResource GlyphBase}">
+        <Setter Property="Foreground" Value="{DynamicResource IconBrush}" />
+    </Style>
+
+    <Style x:Key="SmallGlyph" TargetType="TextBlock" BasedOn="{StaticResource ToolbarGlyph}">
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <!-- The counter-clockwise twin of a glyph that only exists one way round. -->
+    <Style x:Key="MirroredMenuGlyph" TargetType="TextBlock" BasedOn="{StaticResource MenuGlyph}">
+        <Setter Property="RenderTransform">
+            <Setter.Value>
+                <ScaleTransform ScaleX="-1" />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="MirroredToolbarGlyph" TargetType="TextBlock" BasedOn="{StaticResource ToolbarGlyph}">
+        <Setter Property="RenderTransform">
+            <Setter.Value>
+                <ScaleTransform ScaleX="-1" />
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

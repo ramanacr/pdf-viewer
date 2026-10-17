@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:themes="clr-namespace:PdfViewer.Themes">
 
     <!-- Global Default Font -->
     <Style TargetType="Control" x:Key="BaseControlStyle">
@@ -17,6 +18,8 @@
         <Setter Property="Width" Value="32" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <!-- The content is an icon-font character, which is no name; the tooltip is. -->
+        <Setter Property="AutomationProperties.Name" Value="{Binding ToolTip, RelativeSource={RelativeSource Self}}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -53,6 +56,8 @@
         <Setter Property="Width" Value="32" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <!-- The content is an icon-font character, which is no name; the tooltip is. -->
+        <Setter Property="AutomationProperties.Name" Value="{Binding ToolTip, RelativeSource={RelativeSource Self}}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
@@ -77,6 +82,25 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <!--
+        Menu items. The menu bar is themed, but a submenu opens in a popup that keeps the system's
+        light menu background, and it inherited the bar's text colour: in the dark theme that
+        drew light text, and the icons that follow it, on a light popup. Items inside a popup
+        now use the system menu text colour (right for high contrast too); only the items on
+        the bar itself use the theme's.
+    -->
+    <Style TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}" />
+        <Style.Triggers>
+            <Trigger Property="Role" Value="TopLevelHeader">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            </Trigger>
+            <Trigger Property="Role" Value="TopLevelItem">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- Clean Modern ScrollBar Style -->
@@ -137,14 +161,22 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Sidebar Tab Item Style -->
+    <!--
+        Sidebar tabs. Every tab shows its icon; only the selected one also shows its label, so
+        the row stays narrow enough for the sidebar. The label is not lost to anyone: it is each
+        tab's tooltip, and each tab carries it as AutomationProperties.Name for screen readers.
+
+        The selected label eases open over 120 ms, unless Windows has animations turned off
+        (SystemParameters.ClientAreaAnimation), in which case it simply appears.
+    -->
     <Style x:Key="SidebarTabItemStyle" TargetType="TabItem">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0,0,0,2" />
         <Setter Property="BorderBrush" Value="Transparent" />
-        <Setter Property="Padding" Value="14,10" />
+        <Setter Property="Padding" Value="10,8" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="ToolTip" Value="{Binding Header, RelativeSource={RelativeSource Self}}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
@@ -153,16 +185,62 @@
                             BorderThickness="{TemplateBinding BorderThickness}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             Padding="{TemplateBinding Padding}">
-                        <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock x:Name="TabGlyph"
+                                       Text="{Binding Path=(themes:IconGlyphs.Glyph), RelativeSource={RelativeSource TemplatedParent}}"
+                                       FontFamily="{x:Static themes:IconGlyphs.IconFont}"
+                                       FontSize="16"
+                                       FontWeight="Normal"
+                                       VerticalAlignment="Center"
+                                       Foreground="{TemplateBinding Foreground}" />
+                            <ContentPresenter x:Name="TabLabel"
+                                              ContentSource="Header"
+                                              Margin="6,0,0,0"
+                                              VerticalAlignment="Center"
+                                              Visibility="Collapsed" />
+                        </StackPanel>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="TabLabel" Property="Visibility" Value="Visible" />
                             <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
                             <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
                         </Trigger>
-                        <Trigger Property="IsMouseOver" Value="True">
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True" />
+                                <Condition Property="IsSelected" Value="False" />
+                            </MultiTrigger.Conditions>
                             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                        </MultiTrigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource AccentLightBrush}" />
                         </Trigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
+                                <Condition Binding="{Binding Path=(SystemParameters.ClientAreaAnimation)}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <MultiDataTrigger.EnterActions>
+                                <BeginStoryboard x:Name="RevealLabel">
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="TabLabel"
+                                                         Storyboard.TargetProperty="MaxWidth"
+                                                         From="0" To="200" Duration="0:0:0.12">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut" />
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="TabLabel"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         From="0" To="1" Duration="0:0:0.12" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </MultiDataTrigger.EnterActions>
+                            <MultiDataTrigger.ExitActions>
+                                <RemoveStoryboard BeginStoryboardName="RevealLabel" />
+                            </MultiDataTrigger.ExitActions>
+                        </MultiDataTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
