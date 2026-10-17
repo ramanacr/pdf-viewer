@@ -104,7 +104,7 @@ internal sealed partial class PageReader
                 if (decoded.Format == PdfDecodedImageFormat.Jpeg)
                 {
                     // Colours only the viewer's codec can map (a Separation JPEG) cannot be written as they are.
-                    if (decoded.MapJpegComponents == null) rel = _package.AddImage(decoded.Data.ToArray(), "jpeg");
+                    if (decoded.MapJpegComponents == null || decoded.JpegIsSelfContained) rel = _package.AddImage(decoded.Data.ToArray(), "jpeg");
                 }
                 else if (decoded.Data.Length >= decoded.Width * decoded.Height * 4)
                     rel = _package.AddImage(PngEncoder.Encode(decoded.Data.Span, decoded.Width, decoded.Height, decoded.Alpha is { } a ? a.Span : default), "png");

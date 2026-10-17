@@ -34,6 +34,9 @@ public sealed class GraphicsState
     public double FillAlpha { get; set; } = 1.0;
     public string BlendMode { get; set; } = "Normal";
 
+    /// <summary>Rendering intent set by /RI or the ri operator; null when the content sets none.</summary>
+    public PdfEngine.Vector.Color.PdfRenderingIntent? RenderingIntent { get; set; }
+
     /// <summary>An ExtGState /SMask other than /None is in effect.</summary>
     public bool SoftMaskActive { get; set; }
 
@@ -112,6 +115,7 @@ public sealed class GraphicsState
             StrokeAlpha = StrokeAlpha,
             FillAlpha = FillAlpha,
             BlendMode = BlendMode,
+            RenderingIntent = RenderingIntent,
             SoftMaskActive = SoftMaskActive,
             SoftMask = SoftMask,
             AlphaIsShape = AlphaIsShape,

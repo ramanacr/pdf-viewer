@@ -82,10 +82,17 @@ public sealed class PdfImageSource : IPdfImageSource
             bool invert = IsInvertedDecode(dict, _colorSpace?.NumberOfComponents ?? 3);
             bool cmyk = _colorSpace?.NumberOfComponents == 4;
             // A JPEG's samples are colour-space components like any image's: a /Separation or
-            // /DeviceN JPEG holds tints (1 = full ink), and shown as gray it is a negative. Device
-            // spaces keep the fast path; everything else is mapped by the core.
-            bool mapped = _colorSpace is { } space && (space.Name is not ("DeviceGray" or "DeviceRGB" or "DeviceCMYK" or "ICCBased")
-                                                      || (invert && !cmyk));
+            // /DeviceN JPEG holds tints (1 = full ink), and shown as gray it is a negative. Gray and
+            // RGB device spaces keep the backend's fast path; everything else, CMYK and colour-managed
+            // ICC spaces included, is mapped by the core so every backend converts colour the same way.
+            bool mapped = _colorSpace is { } space && (space.Name is not ("DeviceGray" or "DeviceRGB" or "ICCBased")
+                                                      || cmyk
+                                                      || space is PdfColorSpace.IccBasedColorSpace { UsesProfile: true }
+                                                      || invert);
+            // The JPEG's own colours are a fair rendition when only colour management is missing from
+            // them (device and ICC spaces): exporters without the PDF's colour mapping may embed it as is.
+            bool selfContained = _colorSpace is not { } own
+                                 || (own.Name is "DeviceGray" or "DeviceRGB" or "DeviceCMYK" or "ICCBased" && !(invert && !cmyk));
             Func<byte[], int, int, int, byte[]>? map = mapped
                 ? (samples, components, w, h) =>
                 {
@@ -96,7 +103,7 @@ public sealed class PdfImageSource : IPdfImageSource
                 : null;
             // Adobe CMYK JPEGs store inverted components; a /Decode [1 0 …] flips them back.
             return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, FromStartOfImage(decoded.Data), alpha,
-                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map) { JpegMask = jpegMask };
+                InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map) { JpegMask = jpegMask, JpegIsSelfContained = selfContained };
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
             return DecodeJpx(dict, decoded.Data, alpha, ct) with { JpegMask = jpegMask };
@@ -415,7 +422,13 @@ public sealed class PdfImageSource : IPdfImageSource
         }
 
         bool fastRgb8 = cs.Name == "DeviceRGB" && bpc == 8 && IsDefaultDecode(dMin, dMax);
-        bool fastCmyk8 = cs.Name == "DeviceCMYK" && bpc == 8 && IsDefaultDecode(dMin, dMax);
+
+        // Colour-managed 8-bit images (CMYK, ICC) convert through the space's sampled lookup table.
+        if (lut == null && !fastRgb8 && bpc == 8 && cs.ImageLut is { } imageLut && imageLut.Channels == n
+            && DecodeDirection(dMin, dMax) is { } inverted)
+        {
+            return DecodeWithLut(imageLut, data, width, height, n, inverted, colorKey, ct);
+        }
 
         for (int y = 0; y < height; y++)
         {
@@ -450,13 +463,6 @@ public sealed class PdfImageSource : IPdfImageSource
                     bgra[p + 1] = (byte)raw[1];
                     bgra[p + 2] = (byte)raw[0];
                 }
-                else if (fastCmyk8)
-                {
-                    int k = 255 - raw[3];
-                    bgra[p] = (byte)((255 - raw[2]) * k / 255);
-                    bgra[p + 1] = (byte)((255 - raw[1]) * k / 255);
-                    bgra[p + 2] = (byte)((255 - raw[0]) * k / 255);
-                }
                 else
                 {
                     for (int c = 0; c < n; c++)
@@ -471,6 +477,55 @@ public sealed class PdfImageSource : IPdfImageSource
         }
 
         return bgra;
+    }
+
+    /// <summary>
+    /// Converts 8-bit samples through <paramref name="lut"/>; <paramref name="inverted"/> applies a
+    /// /Decode of [1 0 ...] first. Short data reads as zero samples, as <see cref="BitReader"/> does.
+    /// </summary>
+    private static byte[] DecodeWithLut(ColorLut8 lut, byte[] data, int width, int height, int n, bool inverted, int[]? colorKey, CancellationToken ct)
+    {
+        int pixels = checked(width * height);
+        int sampleCount = checked(pixels * n);
+        byte[] samples = data;
+        if (data.Length < sampleCount || inverted)
+        {
+            samples = new byte[sampleCount];
+            data.AsSpan(0, Math.Min(data.Length, sampleCount)).CopyTo(samples);
+            if (inverted)
+                for (int i = 0; i < samples.Length; i++) samples[i] = (byte)(255 - samples[i]);
+        }
+        ct.ThrowIfCancellationRequested();
+        var bgra = new byte[checked(pixels * 4)];
+        lut.ToBgra(samples, 0, bgra, 0, pixels);
+        ct.ThrowIfCancellationRequested();
+
+        if (colorKey != null)
+        {
+            // Colour-key masking compares the raw samples, before /Decode.
+            for (int p = 0; p < pixels; p++)
+            {
+                bool masked = true;
+                for (int c = 0; c < n && masked; c++)
+                {
+                    int raw = p * n + c < data.Length ? data[p * n + c] : 0;
+                    masked = raw >= colorKey[c * 2] && raw <= colorKey[c * 2 + 1];
+                }
+                if (masked) bgra[p * 4 + 3] = 0;
+            }
+        }
+        return bgra;
+    }
+
+    /// <summary>False for the default /Decode, true for a fully inverted one, null for any other mapping.</summary>
+    private static bool? DecodeDirection(double[] dMin, double[] dMax)
+    {
+        if (IsDefaultDecode(dMin, dMax)) return false;
+        for (int i = 0; i < dMin.Length; i++)
+        {
+            if (dMin[i] != 1 || dMax[i] != 0) return null;
+        }
+        return true;
     }
 
     private static bool IsDefaultDecode(double[] dMin, double[] dMax)

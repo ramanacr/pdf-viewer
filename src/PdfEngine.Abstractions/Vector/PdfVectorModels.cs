@@ -292,8 +292,8 @@ public sealed record PdfDecodedImage(
     bool InvertCmykJpeg = false,
     Func<byte[], int, int, int, byte[]>? MapJpegComponents = null)
 {
-    // MapJpegComponents: for a JPEG whose colour space is not a device space (Separation, DeviceN,
-    // Indexed, Lab) or whose /Decode is not the default, the backend decodes the raw components
+    // MapJpegComponents: for a JPEG whose colour space is not device gray or RGB (CMYK, colour-managed
+    // ICC, Separation, DeviceN, Indexed, Lab) or whose /Decode is not the default, the backend decodes the raw components
     // (8-bit, interleaved in PDF order: gray / R G B / C M Y K, Adobe inversion already undone)
     // and passes (samples, components, width, height); the core returns BGRA through the colour
     // space. Null: the decoded pixels are the colours.
@@ -301,6 +301,13 @@ public sealed record PdfDecodedImage(
 
     /// <summary>A soft mask the core cannot decode (a JPEG): the backend decodes it and applies it as alpha.</summary>
     public PdfJpegMask? JpegMask { get; init; }
+
+    /// <summary>
+    /// For a JPEG: its own colours are a fair rendition even when <see cref="MapJpegComponents"/> is set
+    /// (a device or ICC colour space whose mapping only adds colour management), so a consumer without
+    /// a JPEG codec, such as a document exporter, may embed the data as it is.
+    /// </summary>
+    public bool JpegIsSelfContained { get; init; }
 }
 
 /// <summary>

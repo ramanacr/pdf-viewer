@@ -6,34 +6,77 @@ namespace PdfEngine.Vector.Color;
 public abstract partial class PdfColorSpace
 {
     /// <summary>
-    /// ICCBased (ISO 32000-2 8.6.5.5). No colour management module is used: colours are rendered through the
-    /// /Alternate space when present and compatible, otherwise through the device space implied by /N.
+    /// ICCBased (ISO 32000-2 8.6.5.5). Colours are converted to sRGB through the embedded profile (gray TRC,
+    /// RGB matrix/TRC or A2B lookup pipelines, see <see cref="IccProfile"/>). When the profile is missing,
+    /// broken or for another number of components, the /Alternate space (or the device space for /N)
+    /// renders instead. A profile equivalent to sRGB passes RGB values through unchanged.
     /// </summary>
     public sealed class IccBasedColorSpace : PdfColorSpace
     {
         private readonly double[]? _range;
+        private readonly IccProfileHandle? _profile;
+        private readonly IccTransform? _transform;
+        private readonly PdfRenderingIntent _intent;
+        private IccBasedColorSpace?[]? _byIntent;
 
-        internal IccBasedColorSpace(int components, PdfColorSpace alternate, double[]? range)
+        internal IccBasedColorSpace(int components, PdfColorSpace alternate, double[]? range,
+            IccProfileHandle? profile = null, PdfRenderingIntent intent = DefaultIntent)
         {
             NumberOfComponents = components;
             AlternateColorSpace = alternate;
             _range = range;
+            _profile = profile;
+            _intent = intent;
+            var transform = profile?.Transform(intent);
+            // An sRGB profile changes nothing: keep the exact device RGB path (and its fast image paths).
+            _transform = transform is { IsSrgb: true } ? null : transform;
+            if (transform is { IsSrgb: true } && alternate.Name != "DeviceRGB")
+                AlternateColorSpace = DeviceRgb;
         }
 
         public override string Name => "ICCBased";
         public override int NumberOfComponents { get; }
 
-        /// <summary>The space used to render: the profile's /Alternate or the device space for /N.</summary>
+        /// <summary>The space used when the profile cannot be: the /Alternate or the device space for /N.</summary>
         public PdfColorSpace AlternateColorSpace { get; }
+
+        /// <summary>True when colours go through the embedded profile rather than <see cref="AlternateColorSpace"/>.</summary>
+        public bool UsesProfile => _transform != null;
+
+        public override PdfColorSpace WithIntent(PdfRenderingIntent intent)
+        {
+            if (intent == _intent || _transform == null) return this;
+            var cache = _byIntent ??= new IccBasedColorSpace?[4];
+            int i = (int)intent & 3;
+            return cache[i] ??= new IccBasedColorSpace(NumberOfComponents, AlternateColorSpace, _range, _profile, intent);
+        }
+
+        internal override ColorLut8? ImageLut => _transform != null ? _transform.ImageLut : AlternateColorSpace.ImageLut;
 
         public override (double Min, double Max) GetComponentRange(int i) =>
             _range != null && 2 * i + 1 < _range.Length ? (_range[2 * i], _range[2 * i + 1]) : AlternateColorSpace.GetComponentRange(i);
 
         public override PdfColor ToRgbColor(ReadOnlySpan<double> components, float alpha = 1.0f) =>
-            AlternateColorSpace.ToRgbColor(components, alpha);
+            _transform != null ? _transform.ToColor(components, alpha) : AlternateColorSpace.ToRgbColor(components, alpha);
 
-        public override void ToRgb24(ReadOnlySpan<double> components, Span<byte> rgb) =>
-            AlternateColorSpace.ToRgb24(components, rgb);
+        public override void ToRgb24(ReadOnlySpan<double> components, Span<byte> rgb)
+        {
+            if (_transform == null)
+            {
+                AlternateColorSpace.ToRgb24(components, rgb);
+                return;
+            }
+            int n = NumberOfComponents;
+            int pixels = Math.Min(components.Length / n, rgb.Length / 3);
+            Span<double> result = stackalloc double[3];
+            for (int p = 0; p < pixels; p++)
+            {
+                _transform.ToSrgb(components.Slice(p * n, n), result);
+                rgb[3 * p] = ToByte(result[0]);
+                rgb[3 * p + 1] = ToByte(result[1]);
+                rgb[3 * p + 2] = ToByte(result[2]);
+            }
+        }
     }
 
     /// <summary>

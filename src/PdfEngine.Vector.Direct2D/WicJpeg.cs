@@ -55,23 +55,14 @@ public static class WicJpeg
             }
             return map(samples, n, width, height);
         }
-        var result = new byte[width * height * 4];
         if (frame.PixelFormat == Vortice.WIC.PixelFormat.Format32bppCMYK)
         {
+            // Normally mapped by the core above; a CMYK JPEG without a colour space still converts the same way.
             var cmyk = new byte[width * height * 4];
             frame.CopyPixels((uint)(width * 4), cmyk);
-            for (int i = 0; i < cmyk.Length; i += 4)
-            {
-                int c = cmyk[i], m = cmyk[i + 1], y = cmyk[i + 2], k = cmyk[i + 3];
-                if (decoded.InvertCmykJpeg) { c = 255 - c; m = 255 - m; y = 255 - y; k = 255 - k; }
-                int kk = 255 - k;
-                result[i] = (byte)((255 - y) * kk / 255);
-                result[i + 1] = (byte)((255 - m) * kk / 255);
-                result[i + 2] = (byte)((255 - c) * kk / 255);
-                result[i + 3] = 255;
-            }
-            return result;
+            return PdfEngine.Vector.Color.PdfColorConversion.CmykToBgra(cmyk, width * height, decoded.InvertCmykJpeg);
         }
+        var result = new byte[width * height * 4];
         using var converter = wic.CreateFormatConverter();
         converter.Initialize(frame, Vortice.WIC.PixelFormat.Format32bppBGRA, BitmapDitherType.None, null, 0, BitmapPaletteType.Custom);
         converter.CopyPixels((uint)(width * 4), result);
