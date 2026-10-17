@@ -19,8 +19,8 @@ public sealed record PdfAIssueItem(string Rule, string Message, string? Location
 /// <summary>
 /// PDF/A for the open document: checks it against a chosen part and level (reporting every rule
 /// it breaks, by ISO 19005 clause), and converts it to PDF/A-1b, -2b or -3b as a new file, reporting
-/// what was changed and anything that could not be fixed (PDF/A-1b is refused, with the reason, for a
-/// document that uses transparency).
+/// what was changed and anything that could not be fixed. For PDF/A-1b, transparency is flattened
+/// (the transparent areas are drawn as images, the rest stays vector) and the summary says where.
 /// </summary>
 public sealed partial class PdfAViewModel : ObservableObject
 {
@@ -54,6 +54,9 @@ public sealed partial class PdfAViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isBusy;
+
+    /// <summary>What was flattened in the converted copy (PDF/A-1b), or null.</summary>
+    public PdfFlatteningReport? Flattening { get; private set; }
 
     /// <summary>The converted file, once saved.</summary>
     [ObservableProperty]
@@ -111,7 +114,8 @@ public sealed partial class PdfAViewModel : ObservableObject
             var result = await Task.Run(async () =>
             {
                 using var doc = await PdfVectorDocument.OpenAsync(_bytes, _path, password: _password);
-                return PdfAConverter.Convert(doc, _bytes, new PdfAConversionOptions { Flavour = flavour });
+                using var rasterizer = flavour.Part == 1 ? Services.FlatteningRasterizer.Create() : null;
+                return PdfAConverter.Convert(doc, _bytes, new PdfAConversionOptions { Flavour = flavour, Rasterizer = rasterizer });
             });
             await File.WriteAllBytesAsync(outputPath, result.Bytes);
             ConvertedPath = outputPath;
@@ -121,6 +125,8 @@ public sealed partial class PdfAViewModel : ObservableObject
             Summary = result.Report.IsCompliant
                 ? $"Saved as {flavour}: {Path.GetFileName(outputPath)}. It passes the {flavour} check."
                 : $"Saved {Path.GetFileName(outputPath)}, but {result.Report.Summary.Count()} rule(s) could not be fixed automatically (listed below).";
+            if (result.Flattening is { } flattening && (flattening.Pages.Count > 0 || flattening.Annotations.Count > 0)) Summary += " " + flattening.Summary + ".";
+            Flattening = result.Flattening;
             return true;
         }
         catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or IOException or UnauthorizedAccessException or ArgumentException)

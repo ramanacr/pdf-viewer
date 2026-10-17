@@ -95,10 +95,11 @@ public static class PdfASmoke
     }
 
     /// <summary>
-    /// vectorpdf pdfa-convert &lt;dir&gt; [--limit N] [--flavour 1b|2b|3b]: converts every file to PDF/A-2b
-    /// (or the flavour given), validates the result and compares page 1 with the original (it must look
-    /// the same). Reports what stays non-conforming by rule, and the files PDF/A-1b refuses (they use
-    /// transparency). Document text is never printed.
+    /// vectorpdf pdfa-convert &lt;dir&gt; [--limit N] [--flavour 1b|2b|3b] [--no-flatten]: converts every file
+    /// to PDF/A-2b (or the flavour given), validates the result and compares page 1 with the original (it
+    /// must look the same). Reports what stays non-conforming by rule, the files whose transparency
+    /// PDF/A-1b flattened, and those it refuses (hidden layers, or transparency without --flatten).
+    /// Document text is never printed.
     /// </summary>
     public static async Task<int> ConvertAsync(string[] args)
     {
@@ -107,7 +108,9 @@ public static class PdfASmoke
         var flavour = PdfAFlavour.Parse(Program.Option(args, "--flavour")) ?? PdfAFlavour.A2b;
         var files = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).Take(limit).ToList();
         using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
-        int compliant = 0, remaining = 0, failed = 0, skipped = 0, looksDifferent = 0, refused = 0;
+        // PDF/A-1b flattens transparency with the engine's renderer (PDFium for pages it cannot draw).
+        using var rasterizer = flavour.Part == 1 && !args.Contains("--no-flatten") ? new PdfEngine.Vector.Direct2D.Direct2DPageRasterizer(PdfiumPage, renderer) : null;
+        int compliant = 0, remaining = 0, failed = 0, skipped = 0, looksDifferent = 0, refused = 0, flattened = 0, flattenedPages = 0, regions = 0;
         var rules = new Dictionary<string, int>(StringComparer.Ordinal);
         var clock = Stopwatch.StartNew();
         foreach (var file in files)
@@ -123,8 +126,15 @@ public static class PdfASmoke
                 {
                     if (doc.PageCount == 0) { skipped++; continue; }
                     PdfAConversionResult result;
-                    try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = flavour }); }
-                    catch (PdfAConversionRefusedException) { refused++; continue; }
+                    try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = flavour, Rasterizer = rasterizer }); }
+                    catch (PdfAConversionRefusedException ex) { refused++; Console.WriteLine($"refused  {name}: {ex.Message}"); continue; }
+                    if (result.Flattening is { } flat && (flat.Pages.Count > 0 || flat.Annotations.Count > 0))
+                    {
+                        flattened++;
+                        flattenedPages += flat.Pages.Count;
+                        regions += flat.RegionCount;
+                        Console.WriteLine($"flattened  {name}  {flat.Pages.Count} page(s), {flat.RegionCount} region(s), {flat.Annotations.Count} annotation(s), whole pages {flat.Pages.Count(p => p.WholePage)}, {(result.Report.IsCompliant ? "valid" : "issues remain")}");
+                    }
                     if (Program.Option(args, "--out") is { } outDir) await File.WriteAllBytesAsync(Path.Combine(outDir, Path.GetFileName(file)), result.Bytes);
                     using var after = await PdfVectorDocument.OpenAsync(result.Bytes);
                     // Compared through PDFium on both sides, so our own renderer's font stand-ins do not count.
@@ -147,9 +157,22 @@ public static class PdfASmoke
             }
         }
         Console.WriteLine($"\n{files.Count} files in {clock.Elapsed.TotalSeconds:F0} s: {flavour} {compliant}, still non-conforming {remaining}, look different {looksDifferent}, refused {refused}, errors {failed}, skipped {skipped}");
+        if (rasterizer != null) Console.WriteLine($"flattened {flattened} file(s): {flattenedPages} page(s), {regions} region(s)");
         foreach (var (rule, count) in rules.OrderByDescending(r => r.Value).Take(25)) Console.WriteLine($"  {rule,-16} {count}");
         return failed > 0 ? 1 : 0;
     }
+
+    /// <summary>A window of a page drawn by PDFium at exactly width × height pixels, for pages the engine cannot draw by itself.</summary>
+    private static PdfRasterImage? PdfiumPage(byte[] bytes, int page, int width, int height, PdfPixelWindow window) => Task.Run(async () =>
+    {
+        using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+        await using var doc = await engine.OpenDocumentAsync(bytes, null);
+        using var rendered = await engine.Renderer.RenderPageAsync(doc, new PdfEngine.Rendering.RenderRequest
+        {
+            PageNumber = page, TargetWidthPixels = width, TargetHeightPixels = height, RenderAnnotations = false, RenderForms = false,
+        });
+        return new PdfRasterImage(window.Width, window.Height, PdfEngine.Vector.Direct2D.Direct2DPageRasterizer.Crop(rendered, window.X, window.Y, window.Width, window.Height), "PDFium");
+    }).GetAwaiter().GetResult();
 
     private static async Task<double> PdfiumDifference(byte[] before, byte[] after)
     {

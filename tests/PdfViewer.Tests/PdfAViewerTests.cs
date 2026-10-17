@@ -73,7 +73,7 @@ public class PdfAViewerTests : IDisposable
     }
 
     [Fact]
-    public async Task ConvertingToPdfA1b_ADocumentWithTransparency_IsRefusedWithTheReason()
+    public async Task ConvertingToPdfA1b_ADocumentWithTransparency_FlattensIt_AndSaysWhere()
     {
         var b = new VectorPdfBuilder();
         int gs = b.Add("<< /Type /ExtGState /ca 0.5 >>");
@@ -84,9 +84,13 @@ public class PdfAViewerTests : IDisposable
         var pdfa = vm.CreatePdfAViewModel()!;
         pdfa.SelectedFlavour = "PDF/A-1b";
         string output = Path.Combine(_dir, "translucent_PDFA.pdf");
-        Assert.False(await pdfa.ConvertAsync(output));
-        Assert.Contains("does not allow transparency", pdfa.Summary);
-        Assert.False(File.Exists(output));
+        Assert.True(await pdfa.ConvertAsync(output));
+        Assert.Contains("passes the PDF/A-1b check", pdfa.Summary);
+        Assert.Contains("Flattened transparency on page(s) 1", pdfa.Summary);
+        Assert.Contains(pdfa.Changes, c => c.StartsWith("Flattened transparency", StringComparison.Ordinal));
+        Assert.Equal(1, Assert.Single(pdfa.Flattening!.Pages).PageNumber);
+        Assert.Empty(pdfa.Issues);
+        Assert.True(File.Exists(output));
     }
 
     [Fact]
