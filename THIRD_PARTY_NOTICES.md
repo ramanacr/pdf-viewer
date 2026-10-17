@@ -58,7 +58,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## CoreJ2K (JPEG 2000 decoder)
-Version: 2.3.3.91 · Source: https://github.com/cinderblocks/CoreJ2K · License: BSD-3-Clause (includes the JJ2000 copyright notice below).
+Version: 2.4.1.108 · Source: https://github.com/cinderblocks/CoreJ2K · License: BSD-3-Clause (includes the JJ2000 copyright notice below).
 
 ```text
 Copyright (c) 2007-2016, CSJ2K contributors.
