@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Functions;
 using PdfEngine.Vector.Limits;
@@ -11,8 +12,10 @@ namespace PdfEngine.Vector.Color;
 
 /// <summary>
 /// Color space management conforming to ISO 32000-2 Clause 8.6.
-/// Supports the device spaces, CIE-based spaces (CalGray, CalRGB, Lab, ICCBased via /N or /Alternate)
-/// and the special spaces (Indexed, Separation, DeviceN, Pattern). Constructs that cannot be rendered
+/// Supports the device spaces, CIE-based spaces (CalGray, CalRGB, Lab, ICCBased through the embedded profile,
+/// falling back to /Alternate or /N), the default spaces /DefaultGray, /DefaultRGB and /DefaultCMYK, and the
+/// special spaces (Indexed, Separation, DeviceN, Pattern). DeviceCMYK is colour managed through a SWOP
+/// profile (see <see cref="DefaultCmyk"/>). Constructs that cannot be rendered
 /// faithfully are returned as usable spaces flagged through <see cref="UnsupportedReason"/> rather than
 /// being silently substituted.
 /// </summary>
@@ -62,6 +65,27 @@ public abstract partial class PdfColorSpace
     public virtual (double Min, double Max) GetComponentRange(int i) => (0.0, 1.0);
 
     /// <summary>
+    /// The intent ICCBased spaces use when the content sets none. PDFium converts embedded profiles with the
+    /// perceptual intent whatever /RI says; matching it keeps the oracle comparisons meaningful.
+    /// </summary>
+    public const PdfRenderingIntent DefaultIntent = PdfRenderingIntent.Perceptual;
+
+    /// <summary>
+    /// The intent DeviceCMYK uses when the content sets none: relative colorimetric, which is how Acrobat
+    /// shows device CMYK through U.S. Web Coated (SWOP) (a K-only black is the dark gray 35/31/32).
+    /// </summary>
+    public const PdfRenderingIntent DefaultCmykIntent = PdfRenderingIntent.RelativeColorimetric;
+
+    /// <summary>
+    /// This space converting with <paramref name="intent"/> (ISO 32000-2 8.6.5.8). Only colour-managed spaces
+    /// (ICCBased with a profile, DeviceCMYK) depend on the intent; others return themselves.
+    /// </summary>
+    public virtual PdfColorSpace WithIntent(PdfRenderingIntent intent) => this;
+
+    /// <summary>A fast 8-bit sample to BGRA converter for images, or null to convert pixel by pixel.</summary>
+    internal virtual ColorLut8? ImageLut => null;
+
+    /// <summary>
     /// Converts packed pixels to 8-bit RGB. <paramref name="components"/> holds consecutive pixels of
     /// <see cref="NumberOfComponents"/> values each; three bytes per pixel are written to <paramref name="rgb"/>.
     /// Pixels beyond either span's capacity are ignored.
@@ -89,7 +113,7 @@ public abstract partial class PdfColorSpace
 
     public static readonly PdfColorSpace DeviceGray = new DeviceGrayColorSpace();
     public static readonly PdfColorSpace DeviceRgb = new DeviceRgbColorSpace();
-    public static readonly PdfColorSpace DeviceCmyk = new DeviceCmykColorSpace();
+    public static readonly PdfColorSpace DeviceCmyk = new DeviceCmykColorSpace(DefaultCmykIntent);
 
     /// <summary>
     /// Resolves a color space from a name (device family or /ColorSpace resource key) or an array definition.
@@ -106,11 +130,15 @@ public abstract partial class PdfColorSpace
         PdfSecurityLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(resolver);
-        var ctx = new ResolveContext(resolver, pageResources, limits ?? PdfSecurityLimits.Default);
+        var ctx = new ResolveContext(resolver, pageResources, limits ?? PdfSecurityLimits.Default, AllowDefaults: true);
         return Resolve(csObj, ctx, depth: 0);
     }
 
-    private sealed record ResolveContext(PdfObjectResolver Resolver, PdfDictionary? Resources, PdfSecurityLimits Limits);
+    /// <param name="AllowDefaults">
+    /// Device names may be replaced by the /DefaultGray, /DefaultRGB or /DefaultCMYK resource. Off inside a
+    /// default space's own definition and an ICC profile's /Alternate, where device names mean the device.
+    /// </param>
+    private sealed record ResolveContext(PdfObjectResolver Resolver, PdfDictionary? Resources, PdfSecurityLimits Limits, bool AllowDefaults);
 
     private static PdfColorSpace Resolve(PdfObject? csObj, ResolveContext ctx, int depth)
     {
@@ -141,7 +169,7 @@ public abstract partial class PdfColorSpace
     {
         var device = ResolveDeviceName(name);
         if (device != null)
-            return device;
+            return ctx.AllowDefaults && !device.IsPattern && DefaultSpace(device, ctx, depth) is { } substitute ? substitute : device;
 
         if (ctx.Resources != null
             && ctx.Resolver.Resolve(ctx.Resources["ColorSpace"]) is PdfDictionary csDict
@@ -151,6 +179,23 @@ public abstract partial class PdfColorSpace
         }
 
         return new UnsupportedColorSpace(name, 1, $"Color space /{name} is not defined in the resources.");
+    }
+
+    /// <summary>
+    /// The /DefaultGray, /DefaultRGB or /DefaultCMYK colour space that replaces <paramref name="device"/>
+    /// (ISO 32000-2 8.6.5.6), when the resources define a usable one with the same number of components.
+    /// </summary>
+    private static PdfColorSpace? DefaultSpace(PdfColorSpace device, ResolveContext ctx, int depth)
+    {
+        if (ctx.Resources == null || ctx.Resolver.Resolve(ctx.Resources["ColorSpace"]) is not PdfDictionary csDict)
+            return null;
+        string key = device.NumberOfComponents switch { 1 => "DefaultGray", 3 => "DefaultRGB", _ => "DefaultCMYK" };
+        if (!csDict.TryGetValue(key, out var definition))
+            return null;
+        var substitute = Resolve(definition, ctx with { AllowDefaults = false }, depth + 1);
+        return substitute.UnsupportedReason == null && !substitute.IsPattern && substitute.NumberOfComponents == device.NumberOfComponents
+            ? substitute
+            : null;
     }
 
     private static PdfColorSpace ResolveArray(PdfArray arr, ResolveContext ctx, int depth)
@@ -199,11 +244,21 @@ public abstract partial class PdfColorSpace
         var dict = stream.Dictionary;
         int n = ctx.Resolver.Resolve(dict["N"]) is { } nObj && nObj.TryGetInteger(out long nl) ? (int)Math.Clamp(nl, 0, 64) : 0;
 
-        // Prefer a resolvable /Alternate with the same number of components (ISO 32000-2 8.6.5.5).
+        // Profiles are parsed once per stream and shared (IccProfileHandle caches them).
+        var limits = ctx.Limits;
+        var resolver = ctx.Resolver;
+        var handle = IccProfileHandle.For(stream, () => new PdfStreamDecoder(limits, resolver.Resolve).DecodeStream(stream));
+        if (n == 0 && handle != null)
+            n = handle.Profile.Channels; // /N is required, but the profile says how many components it has
+        if (handle != null && handle.Profile.Channels != n)
+            handle = null; // a profile for another number of components is not this space's
+
+        // The fallback when the profile is unusable: a resolvable /Alternate with the same number of
+        // components (ISO 32000-2 8.6.5.5), else the device space for /N.
         PdfColorSpace? alternate = null;
         if (dict.TryGetValue("Alternate", out var altObj))
         {
-            var candidate = Resolve(altObj, ctx, depth + 1);
+            var candidate = Resolve(altObj, ctx with { AllowDefaults = false }, depth + 1);
             if (candidate.UnsupportedReason == null && !candidate.IsPattern
                 && (n == 0 || candidate.NumberOfComponents == n))
             {
@@ -230,11 +285,16 @@ public abstract partial class PdfColorSpace
 
         if (alternate == null)
         {
-            return new UnsupportedColorSpace("ICCBased", n is >= 1 and <= 32 ? n : 1,
-                $"ICCBased profile with /N {n} has no usable alternate space.");
+            if (handle == null || n > 32)
+            {
+                return new UnsupportedColorSpace("ICCBased", n is >= 1 and <= 32 ? n : 1,
+                    $"ICCBased profile with /N {n} has no usable alternate space.");
+            }
+            // A valid profile for a space without a device equivalent (2 or 5+ colorants) renders by itself.
+            alternate = new UnsupportedColorSpace("ICCBased", n, "Alternate of an ICCBased space without a device equivalent.");
         }
 
-        return new IccBasedColorSpace(n, alternate, range);
+        return new IccBasedColorSpace(n, alternate, range, handle, DefaultIntent);
     }
 
     private static PdfColorSpace ResolveIndexed(PdfArray arr, ResolveContext ctx, int depth)
@@ -375,31 +435,54 @@ public abstract partial class PdfColorSpace
         }
     }
 
+    /// <summary>
+    /// DeviceCMYK, converted through the default CMYK profile (<see cref="DefaultCmyk"/>) instead of the naive
+    /// complement formula, so a K-only black renders as the dark gray of ink on paper as in Acrobat.
+    /// </summary>
     private sealed class DeviceCmykColorSpace : PdfColorSpace
     {
+        private static readonly DeviceCmykColorSpace?[] ByIntent = new DeviceCmykColorSpace?[4];
+        private readonly PdfRenderingIntent _intent;
+
+        public DeviceCmykColorSpace(PdfRenderingIntent intent) => _intent = intent;
+
         public override string Name => "DeviceCMYK";
         public override int NumberOfComponents => 4;
 
         /// <summary>DeviceCMYK initial color is black: [0 0 0 1] (ISO 32000-2 8.6.4.4).</summary>
         public override double[] InitialComponents => [0.0, 0.0, 0.0, 1.0];
 
-        public override PdfColor ToRgbColor(ReadOnlySpan<double> components, float alpha = 1.0f) =>
-            PdfColor.FromCmyk(
-                (float)Component(components, 0),
-                (float)Component(components, 1),
-                (float)Component(components, 2),
-                (float)Component(components, 3),
-                alpha);
+        private ColorTransform Transform => DefaultCmyk.For(_intent);
+
+        public override PdfColorSpace WithIntent(PdfRenderingIntent intent)
+        {
+            if (intent == _intent) return this;
+            int i = (int)intent & 3;
+            return Volatile.Read(ref ByIntent[i]) ?? Interlocked.CompareExchange(ref ByIntent[i], new DeviceCmykColorSpace(intent), null) ?? ByIntent[i]!;
+        }
+
+        internal override ColorLut8? ImageLut => Transform.ImageLut;
+
+        public override PdfColor ToRgbColor(ReadOnlySpan<double> components, float alpha = 1.0f)
+        {
+            Span<double> cmyk = stackalloc double[4];
+            for (int i = 0; i < 4; i++) cmyk[i] = Math.Clamp(Component(components, i), 0, 1);
+            return Transform.ToColor(cmyk, alpha);
+        }
 
         public override void ToRgb24(ReadOnlySpan<double> components, Span<byte> rgb)
         {
+            var transform = Transform;
+            Span<double> cmyk = stackalloc double[4];
+            Span<double> result = stackalloc double[3];
             int pixels = Math.Min(components.Length / 4, rgb.Length / 3);
             for (int p = 0; p < pixels; p++)
             {
-                double k = 1.0 - Math.Clamp(components[4 * p + 3], 0, 1);
-                rgb[3 * p] = ToByte((1.0 - Math.Clamp(components[4 * p], 0, 1)) * k);
-                rgb[3 * p + 1] = ToByte((1.0 - Math.Clamp(components[4 * p + 1], 0, 1)) * k);
-                rgb[3 * p + 2] = ToByte((1.0 - Math.Clamp(components[4 * p + 2], 0, 1)) * k);
+                for (int i = 0; i < 4; i++) cmyk[i] = Math.Clamp(components[4 * p + i], 0, 1);
+                transform.ToSrgb(cmyk, result);
+                rgb[3 * p] = ToByte(result[0]);
+                rgb[3 * p + 1] = ToByte(result[1]);
+                rgb[3 * p + 2] = ToByte(result[2]);
             }
         }
     }

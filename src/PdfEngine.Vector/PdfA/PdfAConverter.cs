@@ -321,15 +321,7 @@ public static class PdfAConverter
             return null;
         }
 
-        private static byte[]? WindowsCmykProfile()
-        {
-            try
-            {
-                string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "spool", "drivers", "color", "RSWOP.icm");
-                return File.Exists(path) ? File.ReadAllBytes(path) : null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        }
+        private static byte[]? WindowsCmykProfile() => PdfEngine.Vector.Color.SystemColorProfiles.WindowsCmykProfile();
 
         private static PdfStream IccStream(byte[] profile, int n) => PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
         {

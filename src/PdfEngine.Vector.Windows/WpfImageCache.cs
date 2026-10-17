@@ -156,20 +156,8 @@ internal sealed class WpfImageCache
         int w = cmyk.PixelWidth, h = cmyk.PixelHeight;
         var src = new byte[w * h * 4];
         cmyk.CopyPixels(src, w * 4, 0);
-        var dst = new byte[w * h * 4];
-        for (int i = 0; i < src.Length; i += 4)
-        {
-            int c = src[i], m = src[i + 1], y = src[i + 2], k = src[i + 3];
-            if (invert)
-            {
-                c = 255 - c; m = 255 - m; y = 255 - y; k = 255 - k;
-            }
-            int kk = 255 - k;
-            dst[i] = (byte)((255 - y) * kk / 255);
-            dst[i + 1] = (byte)((255 - m) * kk / 255);
-            dst[i + 2] = (byte)((255 - c) * kk / 255);
-            dst[i + 3] = 255;
-        }
+        // The same DeviceCMYK conversion as the core and the Direct2D backend.
+        var dst = PdfEngine.Vector.Color.PdfColorConversion.CmykToBgra(src, w * h, invert);
         return BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, dst, w * 4);
     }
 

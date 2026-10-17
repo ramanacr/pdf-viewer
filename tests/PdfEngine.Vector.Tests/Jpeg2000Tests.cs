@@ -23,7 +23,7 @@ public class Jpeg2000Tests
     private readonly ITestOutputHelper _output;
     public Jpeg2000Tests(ITestOutputHelper output) => _output = output;
 
-    private static byte[] Encode(int w, int h, int components, bool jp2 = false, bool lossless = true)
+    private static byte[] Encode(int w, int h, int components, bool jp2 = false, bool lossless = true, params (string Key, string Value)[] options)
     {
         var planes = new int[components][];
         for (int c = 0; c < components; c++)
@@ -43,6 +43,7 @@ public class Jpeg2000Tests
         var p = J2kImage.GetDefaultEncoderParameterList();
         p["lossless"] = lossless ? "on" : "off";
         p["file_format"] = jp2 ? "on" : "off";
+        foreach (var (key, value) in options) p[key] = value;
         return J2kImage.ToBytes(source, p);
     }
 
@@ -136,24 +137,91 @@ public class Jpeg2000Tests
     public Task Rgba_WithSMaskInData() => AssertMatches("rgba", "/SMaskInData 1", Encode(64, 48, 4, jp2: true));
 
     /// <summary>
-    /// CoreJ2K decodes lossy colour codestreams (9/7 wavelet with the irreversible colour transform)
-    /// differently from one decode to the next, so those go to the fallback renderer; lossless and
-    /// gray ones are decoded here.
+    /// Lossless (5/3) and lossy (9/7 with the irreversible colour transform) codestreams in every
+    /// progression order, with several tiles and resolution levels, against PDFium (OpenJPEG).
+    /// Lossy colour images used to go to the fallback renderer because CoreJ2K 2.3 decoded them
+    /// differently from run to run.
     /// </summary>
-    [Fact]
-    public async Task LossyColourCodestreams_GoToTheFallbackRenderer()
+    [Theory]
+    [InlineData("lossless-layer", true, "layer", "")]
+    [InlineData("lossless-res", true, "res", "32 32")]
+    [InlineData("lossless-res-pos", true, "res-pos", "32 32")]
+    [InlineData("lossless-pos-comp", true, "pos-comp", "")]
+    [InlineData("lossless-comp-pos", true, "comp-pos", "32 32")]
+    [InlineData("lossy-layer", false, "layer", "")]
+    [InlineData("lossy-res", false, "res", "32 32")]
+    [InlineData("lossy-res-pos", false, "res-pos", "")]
+    [InlineData("lossy-pos-comp", false, "pos-comp", "32 32")]
+    [InlineData("lossy-comp-pos", false, "comp-pos", "")]
+    public Task Rgb_EveryProgressionOrder_MatchesPdfium(string name, bool lossless, string progression, string tiles)
     {
-        Assert.False(PdfEngine.Vector.Images.PdfImageSource.IsUnreliableJpx(Encode(64, 48, 3)));
-        Assert.False(PdfEngine.Vector.Images.PdfImageSource.IsUnreliableJpx(Encode(64, 48, 1, lossless: false)));
-        byte[] lossy = Encode(64, 48, 3, lossless: false);
-        Assert.True(PdfEngine.Vector.Images.PdfImageSource.IsUnreliableJpx(lossy));
+        var options = new System.Collections.Generic.List<(string, string)> { ("Aptype", progression), ("Wlev", "3") };
+        if (tiles.Length > 0) options.Add(("tiles", tiles));
+        if (!lossless) options.Add(("rate", "1.5"));
+        return AssertMatches(name, "/ColorSpace /DeviceRGB /BitsPerComponent 8", Encode(64, 48, 3, lossless: lossless, options: options.ToArray()));
+    }
 
-        var b = new VectorPdfBuilder();
-        int image = b.AddStream("/Type /XObject /Subtype /Image /Width 64 /Height 48 /Filter /JPXDecode /ColorSpace /DeviceRGB /BitsPerComponent 8", lossy);
-        b.AddPage("q 180 0 0 135 10 30 cm /Im1 Do Q", $"<< /XObject << /Im1 {image} 0 R >> >>");
-        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
-        using var renderer = new Direct2DVectorRenderer();
-        Assert.NotEmpty(await renderer.AnalyzeAsync(await doc.GetPageDisplayListAsync(1)));
+    [Fact]
+    public Task LossyRgba_WithSMaskInData_MatchesPdfium() =>
+        AssertMatches("lossy-rgba", "/SMaskInData 1", Encode(64, 48, 4, jp2: true, lossless: false, ("rate", "2")));
+
+    [Fact]
+    public Task LossyGray_MatchesPdfium() => AssertMatches("lossy-gray", "", Encode(64, 48, 1, false, false, ("rate", "1")));
+
+    /// <summary>
+    /// The cause of the old run-to-run differences: CoreJ2K 2.3 took its wavelet buffers from the
+    /// shared ArrayPool without clearing them, so code-blocks with nothing coded (most chroma
+    /// subbands at a low rate) showed whatever the pool held. Dirtying the pool between decodes
+    /// reproduces it; the same codestream must decode bit-identically every time, also in parallel.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SameCodestream_DecodesIdentically_RepeatedlyAndInParallel(bool lossless)
+    {
+        byte[] data = lossless
+            ? Encode(96, 72, 3, false, true, ("tiles", "48 48"), ("Wlev", "4"))
+            : Encode(96, 72, 3, false, false, ("rate", "0.5"), ("tiles", "48 48"), ("Wlev", "4"));
+        string Digest()
+        {
+            var planes = PdfEngine.Vector.Images.PdfImageSource.ReadJpx(data);
+            var all = planes.Planes.SelectMany(p => p).SelectMany(BitConverter.GetBytes).ToArray();
+            return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(all));
+        }
+        static void DirtySharedPool()
+        {
+            foreach (int size in new[] { 96 * 72, 48 * 48, 4096, 16384 })
+            {
+                var f = System.Buffers.ArrayPool<float>.Shared.Rent(size);
+                Array.Fill(f, 1234.5f);
+                System.Buffers.ArrayPool<float>.Shared.Return(f);
+                var n = System.Buffers.ArrayPool<int>.Shared.Rent(size);
+                Array.Fill(n, 4321);
+                System.Buffers.ArrayPool<int>.Shared.Return(n);
+            }
+        }
+
+        string expected = Digest();
+        for (int i = 0; i < 8; i++)
+        {
+            DirtySharedPool();
+            Assert.Equal(expected, Digest());
+        }
+        var parallel = new System.Collections.Concurrent.ConcurrentBag<string>();
+        Parallel.For(0, 24, new ParallelOptions { MaxDegreeOfParallelism = 8 }, _ =>
+        {
+            DirtySharedPool();
+            parallel.Add(Digest());
+        });
+        Assert.All(parallel, d => Assert.Equal(expected, d));
+    }
+
+    [Fact]
+    public void Decode_ObservesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => PdfEngine.Vector.Images.PdfImageSource.ReadJpx(Encode(64, 48, 3), cts.Token));
     }
 
     [Fact]

@@ -12,7 +12,7 @@ namespace PdfEngine.Vector.Tests;
 
 public class ColorSpaceTests
 {
-    private static readonly PdfObjectResolver Empty = EmptyResolver();
+    internal static readonly PdfObjectResolver Empty = EmptyResolver();
 
     private static PdfName N(string name) => new(name);
     private static PdfArray A(params PdfObject[] items) => new(items);
@@ -75,8 +75,12 @@ public class ColorSpaceTests
     public void ToRgb24_DeviceSpaces()
     {
         var rgb = new byte[6];
+        // DeviceCMYK is colour managed: pixels match the space's own colour conversion, and a K-only black
+        // is the dark gray of ink on paper rather than pure black.
         PdfColorSpace.DeviceCmyk.ToRgb24([1, 0, 0, 0, 0, 0, 0, 1], rgb);
-        Assert.Equal(new byte[] { 0, 255, 255, 0, 0, 0 }, rgb);
+        Assert.Equal(Bytes(PdfColorSpace.DeviceCmyk.ToRgbColor([1, 0, 0, 0])), rgb[..3]);
+        Assert.Equal(Bytes(PdfColorSpace.DeviceCmyk.ToRgbColor([0, 0, 0, 1])), rgb[3..]);
+        Assert.InRange(rgb[3], 20, 50);
 
         PdfColorSpace.DeviceGray.ToRgb24([0.5, 1], rgb);
         Assert.Equal(new byte[] { 128, 128, 128, 255, 255, 255 }, rgb);
@@ -84,6 +88,12 @@ public class ColorSpaceTests
         PdfColorSpace.DeviceRgb.ToRgb24([1, 0, 0, 0, 0, 1], rgb);
         Assert.Equal(new byte[] { 255, 0, 0, 0, 0, 255 }, rgb);
     }
+
+    private static byte[] Bytes(PdfColor c) =>
+        [(byte)Math.Round(c.R * 255), (byte)Math.Round(c.G * 255), (byte)Math.Round(c.B * 255)];
+
+    private static void AssertSameColor(PdfColor expected, PdfColor actual) =>
+        AssertColor(actual, expected.R, expected.G, expected.B);
 
     // ---------------- ICCBased ----------------
 
@@ -93,8 +103,10 @@ public class ColorSpaceTests
         var cs = PdfColorSpace.Resolve(A(N("ICCBased"), IccStream(4)), Empty);
         Assert.Equal(4, cs.NumberOfComponents);
         Assert.Null(cs.UnsupportedReason);
-        AssertColor(cs.ToRgbColor([1, 0, 0, 0]), 0, 1, 1);
-        AssertColor(cs.ToRgbColor([0, 0, 0, 1]), 0, 0, 0);
+        // The stream is not a valid profile, so DeviceCMYK renders it.
+        Assert.False(Assert.IsType<PdfColorSpace.IccBasedColorSpace>(cs).UsesProfile);
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([1, 0, 0, 0]), cs.ToRgbColor([1, 0, 0, 0]));
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([0, 0, 0, 1]), cs.ToRgbColor([0, 0, 0, 1]));
     }
 
     [Fact]
@@ -213,13 +225,14 @@ public class ColorSpaceTests
         Assert.Equal("Spot", sep.ColorantName);
         Assert.Null(cs.UnsupportedReason);
         Assert.Equal(new[] { 1.0 }, cs.InitialComponents);
-        AssertColor(cs.ToRgbColor([1]), 0, 1, 1);
-        AssertColor(cs.ToRgbColor([0]), 1, 1, 1);
-        AssertColor(cs.ToRgbColor([0.5]), 0.5, 1, 1);
+        // The tints map into DeviceCMYK, which is then colour managed.
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([1, 0, 0, 0]), cs.ToRgbColor([1]));
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([0, 0, 0, 0]), cs.ToRgbColor([0]));
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([0.5, 0, 0, 0]), cs.ToRgbColor([0.5]));
 
         var rgb = new byte[3];
         cs.ToRgb24([1], rgb);
-        Assert.Equal(new byte[] { 0, 255, 255 }, rgb);
+        Assert.Equal(Bytes(PdfColorSpace.DeviceCmyk.ToRgbColor([1, 0, 0, 0])), rgb);
     }
 
     [Fact]
@@ -255,8 +268,8 @@ public class ColorSpaceTests
         Assert.Equal(2, cs.NumberOfComponents);
         Assert.Null(cs.UnsupportedReason);
         Assert.Equal(new[] { 1.0, 1.0 }, cs.InitialComponents);
-        AssertColor(cs.ToRgbColor([1, 1]), 0, 0, 1);
-        AssertColor(cs.ToRgbColor([1, 0]), 0, 1, 1);
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([1, 1, 0, 0]), cs.ToRgbColor([1, 1]));
+        AssertSameColor(PdfColorSpace.DeviceCmyk.ToRgbColor([1, 0, 0, 0]), cs.ToRgbColor([1, 0]));
     }
 
     [Fact]

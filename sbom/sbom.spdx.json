@@ -168,8 +168,8 @@
     {
       "SPDXID": "SPDXRef-Package-NuGet-CoreJ2K",
       "name": "CoreJ2K",
-      "versionInfo": "2.3.3.91",
-      "downloadLocation": "https://www.nuget.org/packages/CoreJ2K/2.3.3.91",
+      "versionInfo": "2.4.1.108",
+      "downloadLocation": "https://www.nuget.org/packages/CoreJ2K/2.4.1.108",
       "filesAnalyzed": false,
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -178,7 +178,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:nuget/CoreJ2K@2.3.3.91"
+          "referenceLocator": "pkg:nuget/CoreJ2K@2.4.1.108"
         }
       ]
     },
