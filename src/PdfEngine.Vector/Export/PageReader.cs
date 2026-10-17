@@ -62,8 +62,13 @@ internal sealed partial class PageReader
         public int VertAlign;
     }
 
-    public PageReader(PdfVectorDocument doc, StructureTree? tags, IReadOnlyList<int>? pageObjects, DocxPackage package, List<string> hyperlinks)
+    private readonly IPdfVectorRenderer? _renderer;
+    private readonly double _graphicsDpi;
+
+    public PageReader(PdfVectorDocument doc, StructureTree? tags, IReadOnlyList<int>? pageObjects, DocxPackage package, List<string> hyperlinks, DocxExportOptions? options = null)
     {
+        _renderer = options?.Renderer;
+        _graphicsDpi = Math.Clamp(options?.GraphicsDpi ?? 150, 72, 300);
         _doc = doc;
         _tags = tags;
         _pageObjects = pageObjects;
@@ -102,10 +107,14 @@ internal sealed partial class PageReader
         var images = new List<(PdfImageRef Ref, PdfMatrix M)>();
         _rules = new List<Rule>();
         _fills = new List<Fill>();
+        _ruleSource = new List<int>();
+        _fillSource = new List<int>();
+        _drawn = new List<Drawn>();
+        IPdfDisplayList? displayList = null;
         try
         {
-            var list = await _doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
-            ReadGraphics(list.Commands, images);
+            displayList = await _doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+            ReadGraphics(displayList.Commands, images);
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
         {
@@ -136,10 +145,18 @@ internal sealed partial class PageReader
         // A tagged page says where its tables are; elsewhere text aligned in columns can be one.
         if (!visible.Any(g => _info[g].Node != null)) tables.AddRange(GridTables(paragraphs));
         foreach (var p in paragraphs) p.Shading = ShadingOf(p.Box);
+        // Turned text goes in a text box turned the same way, where it is: in the flow it would
+        // be a line across the page that pushes the text after it down.
+        foreach (var p in paragraphs.Where(p => p.Rotated && p.Image == null).ToList())
+        {
+            paragraphs.Remove(p);
+            page.TextBoxes.Add(TurnedBox(p));
+        }
 
         page.Items.AddRange(paragraphs);
         page.Items.AddRange(tables);
         PlaceImages(page, images, recognized, ct);
+        if (displayList != null) await PlaceDrawingsAsync(page, displayList, tables, underlines, ct).ConfigureAwait(false);
         page.VerticalWriting = paragraphs.Sum(p => p.Vertical ? p.Text.Length : 0) > paragraphs.Sum(p => p.Vertical ? 0 : p.Text.Length);
         return page;
     }
@@ -231,8 +248,9 @@ internal sealed partial class PageReader
         var stack = new Stack<PdfMatrix>();
         int segments = 0;
         double pageArea = _width * _height;
-        foreach (var cmd in commands)
+        for (int index = 0; index < commands.Count; index++)
         {
+            var cmd = commands[index];
             switch (cmd)
             {
                 case SaveState: stack.Push(ctm); break;
@@ -245,26 +263,42 @@ internal sealed partial class PageReader
                     double scale = Math.Sqrt(Math.Abs(ctm.Determinant));
                     double width = Math.Max(sp.Stroke.Width * scale, 0.25);
                     string color = Hex(sp.Paint.Color);
-                    foreach (var poly in Polylines(sp.Path, ctm, closeAlways: false))
+                    var polys = Polylines(sp.Path, ctm, closeAlways: false);
+                    int source = Record(index, sp.Path, ctm, null, color, width, polys, stroked: true);
+                    foreach (var poly in polys)
                         for (int i = 1; i < poly.Count; i++)
                         {
                             segments++;
-                            AddRule(poly[i - 1], poly[i], width, color);
+                            AddRule(poly[i - 1], poly[i], width, color, source);
                         }
                     break;
                 }
                 case FillPath fp when segments < MaxPathSegments:
                 {
-                    if (Invisible(fp.Paint)) break;
+                    if (Invisible(fp.Paint))
+                    {
+                        // A pattern fill: drawn only as a picture.
+                        if (fp.Paint.PatternName != null && fp.Paint.Alpha >= 0.1) Record(index, fp.Path, ctm, "pattern", null, 0, new List<List<PdfPoint>>(), stroked: false);
+                        break;
+                    }
                     string color = Hex(fp.Paint.Color);
-                    foreach (var poly in Polylines(fp.Path, ctm, closeAlways: true))
+                    var polys = Polylines(fp.Path, ctm, closeAlways: true);
+                    int source = Record(index, fp.Path, ctm, color, null, 0, polys, stroked: false);
+                    foreach (var poly in polys)
                     {
                         segments += poly.Count;
                         if (RectangleOf(poly) is not { } box) continue;
-                        if (box.H <= 2.5 && box.W > 2) _rules.Add(new Rule(true, box.Cy, box.L, box.R, Math.Max(box.H, 0.25), color));
-                        else if (box.W <= 2.5 && box.H > 2) _rules.Add(new Rule(false, box.Cx, box.T, box.B, Math.Max(box.W, 0.25), color));
-                        else if (box.W * box.H < 0.8 * pageArea && color != "FFFFFF") _fills.Add(new Fill(box, color));
+                        if (box.H <= 2.5 && box.W > 2) { _rules.Add(new Rule(true, box.Cy, box.L, box.R, Math.Max(box.H, 0.25), color)); _ruleSource.Add(source); }
+                        else if (box.W <= 2.5 && box.H > 2) { _rules.Add(new Rule(false, box.Cx, box.T, box.B, Math.Max(box.W, 0.25), color)); _ruleSource.Add(source); }
+                        else if (box.W * box.H < 0.8 * pageArea && color != "FFFFFF") { _fills.Add(new Fill(box, color)); _fillSource.Add(source); }
                     }
+                    break;
+                }
+                case DrawShading or DrawTilingPattern when cmd.Bounds is { } bounds:
+                {
+                    // A gradient or a pattern: drawn only as a picture.
+                    var b = ToBox(_display.Transform(bounds));
+                    _drawn.Add(new Drawn { Index = index, Box = b, Complex = true });
                     break;
                 }
             }
@@ -280,12 +314,12 @@ internal sealed partial class PageReader
         ? $"{(int)Math.Round(Math.Clamp(rgb[0], 0, 1) * 255):X2}{(int)Math.Round(Math.Clamp(rgb[1], 0, 1) * 255):X2}{(int)Math.Round(Math.Clamp(rgb[2], 0, 1) * 255):X2}"
         : "000000";
 
-    private void AddRule(PdfPoint a, PdfPoint b, double width, string color)
+    private void AddRule(PdfPoint a, PdfPoint b, double width, string color, int source)
     {
         if (color == "FFFFFF") return;
         double dx = Math.Abs(a.X - b.X), dy = Math.Abs(a.Y - b.Y);
-        if (dy < 0.8 && dx > 2) _rules.Add(new Rule(true, (a.Y + b.Y) / 2, Math.Min(a.X, b.X), Math.Max(a.X, b.X), width, color));
-        else if (dx < 0.8 && dy > 2) _rules.Add(new Rule(false, (a.X + b.X) / 2, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), width, color));
+        if (dy < 0.8 && dx > 2) { _rules.Add(new Rule(true, (a.Y + b.Y) / 2, Math.Min(a.X, b.X), Math.Max(a.X, b.X), width, color)); _ruleSource.Add(source); }
+        else if (dx < 0.8 && dy > 2) { _rules.Add(new Rule(false, (a.X + b.X) / 2, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), width, color)); _ruleSource.Add(source); }
     }
 
     /// <summary>A path's subpaths as points on the page as shown (none for subpaths with curves).</summary>
@@ -412,12 +446,18 @@ internal sealed partial class PageReader
 
     private string? ShadingOf(Box box)
     {
-        Fill? best = null;
-        foreach (var f in _fills)
+        int best = -1;
+        for (int i = 0; i < _fills.Count; i++)
+        {
+            var f = _fills[i];
             if (f.Box.L <= box.L + 1 && f.Box.R >= box.R - 1 && f.Box.T <= box.T + 1 && f.Box.B >= box.B - 1
-                && (best == null || f.Box.W * f.Box.H < best.Value.Box.W * best.Value.Box.H))
-                best = f;
-        return best?.Color;
+                && (best < 0 || f.Box.W * f.Box.H < _fills[best].Box.W * _fills[best].Box.H))
+                best = i;
+        }
+        if (best < 0) return null;
+        // The fill is the paragraph's or cell's shading now, not a shape of its own.
+        if (_fillSource[best] >= 0) _drawn[_fillSource[best]].Used = true;
+        return _fills[best].Color;
     }
 
     // ------------------------------------------------------------------ paragraphs
@@ -429,7 +469,9 @@ internal sealed partial class PageReader
     /// </summary>
     private List<DocParagraph> BuildFlow(List<ContentGlyph> flow)
     {
-        var gutters = DocumentLayout.Gutters(flow.Where(g => g.Text.Trim().Length > 0).Select(g => _info[g].Box).ToList(), 3);
+        // Upright text only: turned text (a title up the page's edge) crosses no column.
+        var gutters = DocumentLayout.Gutters(flow.Where(g => g.Text.Trim().Length > 0 && !g.Style.Vertical && Direction(TextBlocks.FrameOf(g).Item1).X > 0.98)
+            .Select(g => _info[g].Box).ToList(), 3);
         if (gutters.Count == 0) return BuildParagraphs(flow);
         bool Crosses(Box b) => gutters.Any(gt => b.R > gt.From + 0.5 && b.L < gt.To - 0.5);
         // Rows by baseline.
@@ -640,6 +682,25 @@ internal sealed partial class PageReader
         }
         p.Box = p.Lines.Select(l => l.Box).Aggregate((a, b) => a.Union(b));
         p.Pitch = block.Lines.Count >= 2 ? block.Pitch : 1.2 * p.Size;
+        if (p.Rotated)
+        {
+            // How far the text runs along its own direction: from the first glyph's start to the last one's end.
+            double len = Math.Sqrt(du.X * du.X + du.Y * du.Y);
+            var dn = len > 1e-9 ? new PdfPoint(du.X / len, du.Y / len) : new PdfPoint(1, 0);
+            p.Angle = Math.Atan2(dn.Y, dn.X) * 180 / Math.PI;
+            double first = double.MaxValue, end = double.MinValue;
+            foreach (int li in lines)
+                foreach (var g in block.Lines[li].Glyphs)
+                {
+                    var m = g.Matrix;
+                    var a = Show(g.Origin);
+                    var b = Show(new PdfPoint(g.Origin.X + g.Advance * m.A, g.Origin.Y + g.Advance * m.B));
+                    double sa = a.X * dn.X + a.Y * dn.Y, sb = b.X * dn.X + b.Y * dn.Y;
+                    first = Math.Min(first, Math.Min(sa, sb));
+                    end = Math.Max(end, Math.Max(sa, sb));
+                }
+            p.Along = end > first ? end - first : Math.Max(p.Box.W, p.Box.H);
+        }
         string shown = p.Text;
         p.Rtl = shown.Count(TextKinds.IsRtl) > shown.Count(ch => char.IsLetter(ch) && !TextKinds.IsRtl(ch));
 
@@ -665,6 +726,25 @@ internal sealed partial class PageReader
             }
         }
         return p;
+    }
+
+    /// <summary>A text box for turned text: as long as the text (with room for a wider stand-in font), its lines high, centred where the text is.</summary>
+    internal static DocTextBox TurnedBox(DocParagraph p)
+    {
+        double size = p.Size, pitch = p.Lines.Count >= 2 ? p.Pitch : 1.2 * size;
+        double w = p.Along * 1.15 + size, h = Math.Max(1, p.Lines.Count) * pitch + 0.3 * size;
+        double rad = p.Angle * Math.PI / 180, cos = Math.Cos(rad), sin = Math.Sin(rad);
+        // The text starts at the box's start: the extra length is past its end.
+        double shift = (w - p.Along) / 2;
+        double cx = p.Box.Cx + cos * shift, cy = p.Box.Cy + sin * shift;
+        double bw = Math.Abs(w * cos) + Math.Abs(h * sin), bh = Math.Abs(w * sin) + Math.Abs(h * cos);
+        int rotation = (int)Math.Round(p.Angle);
+        rotation = ((rotation % 360) + 360) % 360;
+        return new DocTextBox
+        {
+            Box = new Box(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2), Width = w, Height = h, Rotation = rotation,
+            Paragraphs = { p },
+        };
     }
 
     private static ContentGlyph? NextGlyph(TextBlock block, int k, int to)

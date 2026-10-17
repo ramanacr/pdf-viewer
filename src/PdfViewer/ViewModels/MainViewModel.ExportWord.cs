@@ -58,7 +58,8 @@ public partial class MainViewModel
             var progress = new Progress<int>(n => StatusText = $"Exporting to Word: page {n} of {pages}... (run again to stop)");
             DocxExportResult result;
             using (var doc = await PdfVectorDocument.OpenAsync(bytes, source, password: _openPassword, cancellationToken: ct))
-                result = await Task.Run(() => DocxExporter.ExportAsync(doc, target, progress, ct), ct);
+            using (var renderer = CreateExportRenderer())
+                result = await Task.Run(() => DocxExporter.ExportAsync(doc, target, new DocxExportOptions { Renderer = renderer }, progress, ct), ct);
             StatusText = $"Exported {result.Pages} page(s) to Word: {result.Paragraphs} paragraphs, {result.Tables} tables, {result.Images} images.";
             string note = result.Warnings.Count > 0 ? $"\n\nSome content could not be carried over ({result.Warnings.Count} note(s))." : string.Empty;
             if (Confirm($"The document was exported to:\n{target}{note}\n\nOpen it now?", "Export to Word"))
@@ -79,6 +80,13 @@ public partial class MainViewModel
             _exportWordCts?.Dispose();
             _exportWordCts = null;
         }
+    }
+
+    /// <summary>The renderer that draws charts and other drawings as pictures for the export; none where Direct2D cannot start.</summary>
+    private static PdfEngine.Vector.IPdfVectorRenderer? CreateExportRenderer()
+    {
+        try { return new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(); }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or System.Runtime.InteropServices.COMException or DllNotFoundException) { return null; }
     }
 
     private static string? ChooseWordTarget(string source, string suggested)

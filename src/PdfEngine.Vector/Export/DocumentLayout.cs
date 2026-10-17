@@ -14,25 +14,29 @@ namespace PdfEngine.Vector.Export;
 /// </summary>
 internal static partial class DocumentLayout
 {
-    public static DocDocument Build(List<DocPage> pages, List<string> hyperlinks, string? title)
+    public static DocDocument Build(List<DocPage> pages, List<string> hyperlinks, string? title, Dictionary<string, (bool Serif, bool Fixed)>? fontKinds = null)
     {
         var doc = new DocDocument { Hyperlinks = hyperlinks, Title = title };
+        if (fontKinds != null) doc.FontKinds = fontKinds;
         HeadersAndFooters(pages, doc);
         BodyStyle(pages, doc);
         foreach (var p in pages.SelectMany(pg => pg.Paragraphs)) p.List = Marker(p);
         Headings(pages, doc);
         Sections(pages, doc);
         GroupLists(doc);
+        FitWidths(doc);
         return doc;
     }
 
     private static IEnumerable<DocParagraph> AllParagraphs(IEnumerable<DocPage> pages) =>
-        pages.SelectMany(pg => pg.Items.SelectMany(i => i is DocTable t ? t.Cells.SelectMany(c => c.Paragraphs) : i is DocParagraph p ? new[] { p } : Array.Empty<DocParagraph>()));
+        pages.SelectMany(pg => pg.Items.SelectMany(i => i is DocTable t ? t.Cells.SelectMany(c => c.AllParagraphs) : i is DocParagraph p ? new[] { p } : Array.Empty<DocParagraph>()));
 
     // ------------------------------------------------------------------ headers and footers
 
     private static string Normalize(string text)
     {
+        // A page number in roman numerals on its own (front matter).
+        if (RomanFormat(text) is { } format) return "#" + format;
         var sb = new StringBuilder(text.Length);
         bool digits = false, space = false;
         foreach (char c in text.Trim().ToLowerInvariant())
@@ -46,16 +50,39 @@ internal static partial class DocumentLayout
         return sb.ToString();
     }
 
+    /// <summary>lowerRoman or upperRoman when the text is a roman numeral and nothing else.</summary>
+    private static string? RomanFormat(string text)
+    {
+        string t = text.Trim();
+        if (t.Length is 0 or > 8 || Roman(t) <= 0) return null;
+        return t.All(char.IsLower) ? "lowerRoman" : t.All(char.IsUpper) ? "upperRoman" : null;
+    }
+
+    /// <summary>Paragraphs at one place on several pages, and what their numbers are.</summary>
+    private sealed class Repeat
+    {
+        public bool Top;
+        public List<(DocPage Page, DocParagraph Para)> Where = new();
+        /// <summary>Number tokens that are the page number or the page count (-1: the whole text, a roman numeral).</summary>
+        public List<(int Token, string Field)> Fields = new();
+        public Dictionary<DocPage, int> Values = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The numbers that are neither, as each page has them (the same over runs of pages).</summary>
+        public Dictionary<DocPage, string> Literal = new(ReferenceEqualityComparer.Instance);
+        public string Format = "decimal";
+    }
+
     /// <summary>
-    /// Text at the same place near the top or bottom of most pages (the same words, numbers
-    /// aside) is the header or footer: it is taken off the pages and written once, with page
-    /// numbers as a PAGE field.
+    /// Text at the same place near the top or bottom of many pages (the same words, numbers
+    /// aside) is a header or footer: it is taken off the pages. Pages can have different ones
+    /// (odd and even pages, front matter, parts of a report): each combination is written once,
+    /// and the sections of the pages that have it use it. Page numbers become a PAGE field, and
+    /// where the printed numbers start again (A-1, B-1, roman then arabic) a section does too.
     /// </summary>
     private static void HeadersAndFooters(List<DocPage> pages, DocDocument doc)
     {
         int n = pages.Count;
         if (n < 2) return;
-        int need = n == 2 ? 2 : (int)Math.Ceiling(0.5 * n);
+        int need = n <= 4 ? Math.Max(2, (int)Math.Ceiling(0.5 * n)) : Math.Max(3, (int)Math.Ceiling(0.2 * n));
         var byKey = new Dictionary<string, List<(DocPage Page, DocParagraph Para)>>();
         foreach (var page in pages)
             foreach (var p in page.Paragraphs.Where(p => p.Image == null && !p.Rotated && !p.Vertical && p.Lines.Count <= 2 && p.Text.Trim().Length > 0))
@@ -67,59 +94,136 @@ internal static partial class DocumentLayout
                 if (!byKey.TryGetValue(key, out var list)) byKey[key] = list = new List<(DocPage, DocParagraph)>();
                 list.Add((page, p));
             }
-        var found = new List<(string Key, List<(DocPage Page, DocParagraph Para)> Where)>();
+        var found = new List<Repeat>();
         foreach (var (key, all) in byKey)
         {
             double y = all.Select(o => o.Para.Box.T).OrderBy(v => v).ElementAt(all.Count / 2);
             var at = all.Where(o => Math.Abs(o.Para.Box.T - y) <= 8).GroupBy(o => o.Page).Select(g => g.First()).ToList();
-            if (at.Count >= need) found.Add((key, at));
+            if (at.Count < need) continue;
+            bool top = key.StartsWith("top", StringComparison.Ordinal);
+            if (Analyze(at, top, n) is { } r) { found.Add(r); continue; }
+            // Numbers that are neither the page number nor the same everywhere: only text that is the same repeats.
+            foreach (var same in at.GroupBy(o => o.Para.Text.Trim(), StringComparer.Ordinal).Where(s => s.Count() >= need))
+                if (Analyze(same.ToList(), top, n) is { } s) found.Add(s);
         }
         if (found.Count == 0) return;
 
-        foreach (var (key, where) in found)
-            foreach (var (page, para) in where)
+        foreach (var r in found)
+            foreach (var (page, para) in r.Where)
             {
                 page.Items.Remove(para);
-                (key.StartsWith("top", StringComparison.Ordinal) ? page.Header : page.Footer).Add(para);
+                (r.Top ? page.Header : page.Footer).Add(para);
+                para.Repeated = true;
             }
-        doc.HeaderOnFirstPage = pages[0].Header.Count > 0 || !pages.Skip(1).Any(p => p.Header.Count > 0);
-        doc.FooterOnFirstPage = pages[0].Footer.Count > 0 || !pages.Skip(1).Any(p => p.Footer.Count > 0);
 
-        // Numbers that follow the page number are the page number; one that is the page count is that.
-        int? offset = null;
-        bool offsetClash = false;
-        foreach (var (_, where) in found)
+        // Each page's combination of headers and of footers, written once each.
+        var headers = new Dictionary<string, int>(StringComparer.Ordinal);
+        var footers = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var page in pages)
         {
-            var values = where.Select(o => Regex.Matches(o.Para.Text, @"\d+").Select(m => m.Value).ToList()).ToList();
-            int tokens = values.Min(v => v.Count);
-            var rep = where.OrderBy(o => o.Page.Number).First();
-            var fields = new List<(int Token, string Field)>();
-            for (int t = 0; t < tokens; t++)
-            {
-                var nums = values.Select(v => long.TryParse(v[t], NumberStyles.None, CultureInfo.InvariantCulture, out long x) && x < 100000 ? x : -1).ToList();
-                if (nums.Any(x => x < 0)) continue;
-                var diffs = nums.Zip(where, (x, o) => x - o.Page.Number).Distinct().ToList();
-                if (diffs.Count == 1 && where.Count >= 2)
-                {
-                    fields.Add((t, "PAGE"));
-                    if (offset != null && offset != diffs[0]) offsetClash = true;
-                    offset ??= (int)diffs[0];
-                }
-                else if (nums.Distinct().Count() == 1 && nums[0] == n) fields.Add((t, "NUMPAGES"));
-            }
-            foreach (var (_, para) in where) para.Repeated = true;
-            // The first page's copy stands for all; its numbers become fields.
-            var matches = Regex.Matches(rep.Para.Text, @"\d+");
-            foreach (var (t, field) in fields.OrderByDescending(f => f.Token))
-                ReplaceWithField(rep.Para, matches[t].Index, matches[t].Length, field);
+            var mine = found.Select((r, i) => (R: r, Index: i)).Where(x => x.R.Where.Any(o => ReferenceEquals(o.Page, page))).ToList();
+            page.HeaderVariant = VariantOf(page, mine.Where(x => x.R.Top).ToList(), headers, doc.Headers);
+            page.FooterVariant = VariantOf(page, mine.Where(x => !x.R.Top).ToList(), footers, doc.Footers);
+            foreach (var (r, _) in mine)
+                if (r.Values.TryGetValue(page, out int value)) { page.PageValue = value; page.NumberFormat = r.Format; break; }
         }
-        if (offset is int k && !offsetClash && k != 0 && 1 + k >= 0) doc.FirstPageNumber = 1 + k;
+    }
 
-        // The page with the most of them stands for the others.
-        var header = pages.OrderByDescending(p => p.Header.Count).First();
-        var footer = pages.OrderByDescending(p => p.Footer.Count).First();
-        doc.Header = Rows(header.Header.Where(p => p.Repeated).ToList(), header.Width);
-        doc.Footer = Rows(footer.Footer.Where(p => p.Repeated).ToList(), footer.Width);
+    private static int VariantOf(DocPage page, List<(Repeat R, int Index)> repeats, Dictionary<string, int> known, List<DocHeaderFooter> variants)
+    {
+        if (repeats.Count == 0) return -1;
+        string key = string.Join(",", repeats.Select(x => x.Index + (x.R.Literal.TryGetValue(page, out var literal) ? ":" + literal : string.Empty)));
+        if (known.TryGetValue(key, out int index)) return index;
+        // This page's copies stand for every page with the same ones; their numbers become fields.
+        var paragraphs = new List<DocParagraph>();
+        foreach (var (r, _) in repeats)
+        {
+            var para = r.Where.First(o => ReferenceEquals(o.Page, page)).Para;
+            var matches = Regex.Matches(para.Text, @"\d+");
+            foreach (var (t, field) in r.Fields.OrderByDescending(f => f.Token))
+            {
+                if (t < 0)
+                {
+                    string text = para.Text;
+                    int start = text.Length - text.TrimStart().Length;
+                    ReplaceWithField(para, start, text.Trim().Length, field);
+                }
+                else if (t < matches.Count) ReplaceWithField(para, matches[t].Index, matches[t].Length, field);
+            }
+            paragraphs.Add(para);
+        }
+        index = variants.Count;
+        variants.Add(new DocHeaderFooter { Paragraphs = Rows(paragraphs, page.Width), Page = page });
+        known[key] = index;
+        return index;
+    }
+
+    /// <summary>What the numbers of a repeated text are: the page number, the page count or the same everywhere; null when they are none of these.</summary>
+    private static Repeat? Analyze(List<(DocPage Page, DocParagraph Para)> where, bool top, int pageCount)
+    {
+        var r = new Repeat { Top = top, Where = where };
+        if (RomanFormat(where[0].Para.Text) is { } format)
+        {
+            var romans = where.Select(o => (long)Roman(o.Para.Text.Trim())).ToList();
+            if (PageNumbers(where, romans, r)) { r.Fields.Add((-1, "PAGE")); r.Format = format; return r; }
+            return where.Select(o => o.Para.Text.Trim()).Distinct(StringComparer.Ordinal).Count() == 1 ? r : null;
+        }
+        var values = where.Select(o => Regex.Matches(o.Para.Text, @"\d+").Select(m => m.Value).ToList()).ToList();
+        int tokens = values.Min(v => v.Count);
+        if (values.Any(v => v.Count != tokens)) return null;
+        bool page = false;
+        var other = new List<int>();
+        for (int t = 0; t < tokens; t++)
+        {
+            var nums = values.Select(v => long.TryParse(v[t], NumberStyles.None, CultureInfo.InvariantCulture, out long x) && x < 100000 ? x : -1).ToList();
+            bool same = values.Select(v => v[t]).Distinct(StringComparer.Ordinal).Count() == 1;
+            if (!nums.Any(x => x < 0) && !page && where.Count >= 2 && !same && PageNumbers(where, nums, r))
+            {
+                r.Fields.Add((t, "PAGE"));
+                page = true;
+            }
+            else if (same)
+            {
+                if (nums[0] == pageCount && pageCount > 1) r.Fields.Add((t, "NUMPAGES"));
+            }
+            else other.Add(t);
+        }
+        if (other.Count == 0) return r;
+        // A number that stays the same over runs of pages beside the page number (the chapter in
+        // "2-14"): each run gets a header or footer of its own, with its number as it is.
+        if (!page) return null;
+        var byPage = where.Select((o, i) => (o.Page, Key: string.Join("-", other.Select(t => values[i][t])))).OrderBy(x => x.Page.Number).ToList();
+        int changes = byPage.Zip(byPage.Skip(1)).Count(p => p.First.Key != p.Second.Key);
+        if (changes > Math.Max(4, byPage.Count / 3)) return null;
+        foreach (var (p, k) in byPage) r.Literal[p] = k;
+        return r;
+    }
+
+    /// <summary>
+    /// Numbers that go up with the pages: the page's number plus an offset that is the same over
+    /// runs of pages (a few runs at most, each of two pages or more: parts numbered on their own).
+    /// </summary>
+    private static bool PageNumbers(List<(DocPage Page, DocParagraph Para)> where, List<long> nums, Repeat r)
+    {
+        if (nums.Any(x => x <= 0)) return false;
+        var order = where.Select((o, i) => (o.Page, Value: nums[i])).OrderBy(x => x.Page.Number).ToList();
+        int runs = 0, length = 0;
+        long diff = long.MinValue;
+        for (int i = 0; i < order.Count; i++)
+        {
+            long d = order[i].Value - order[i].Page.Number;
+            if (d != diff)
+            {
+                if (runs > 0 && length < 2) return false;
+                runs++;
+                length = 0;
+                diff = d;
+            }
+            length++;
+        }
+        if (length < 2 && runs > 1 || runs > Math.Max(4, order.Count / 3)) return false;
+        foreach (var (p, v) in order) r.Values[p] = (int)v;
+        return true;
     }
 
     private static void ReplaceWithField(DocParagraph p, int start, int length, string field)
@@ -181,6 +285,39 @@ internal static partial class DocumentLayout
         if (first.Lines.Count > 0 && next.Lines.Count > 0) first.Lines[0].Box = first.Lines[0].Box.Union(next.Lines[0].Box);
         first.Align = PdfTextAlignment.Left;
         first.AlignKnown = true;
+    }
+
+    /// <summary>Puts <paramref name="next"/> after <paramref name="first"/> on its line, a space between (they overlap on the page).</summary>
+    internal static void AppendWithSpace(DocParagraph first, DocParagraph next)
+    {
+        var space = (first.Runs.LastOrDefault() ?? next.Runs[0]).Clone(" ");
+        space.Field = null;
+        space.Link = -1;
+        first.Runs.Add(space);
+        first.CharX.Add(double.NaN);
+        first.CharLine.Add(0);
+        first.Runs.AddRange(next.Runs);
+        first.CharX.AddRange(next.CharX);
+        first.CharLine.AddRange(next.CharLine.Select(_ => 0));
+        foreach (var t in next.Tabs) first.Tabs.Add(t);
+        first.Box = first.Box.Union(next.Box);
+        if (first.Lines.Count > 0 && next.Lines.Count > 0) first.Lines[0].Box = first.Lines[0].Box.Union(next.Lines[0].Box);
+    }
+
+    /// <summary>Puts a one-line <paramref name="mark"/> at the start of <paramref name="p"/>'s first line, a space after it.</summary>
+    internal static void Prepend(DocParagraph p, DocParagraph mark)
+    {
+        var runs = mark.Runs.Select(r => r.Clone(r.Text)).ToList();
+        var space = runs[^1].Clone(" ");
+        space.Field = null;
+        space.Link = -1;
+        space.VertAlign = 0;
+        runs.Add(space);
+        p.Runs.InsertRange(0, runs);
+        p.CharX.InsertRange(0, mark.CharX.Append(double.NaN));
+        p.CharLine.InsertRange(0, Enumerable.Repeat(0, mark.CharX.Count + 1));
+        p.Box = p.Box.Union(mark.Box);
+        p.Lines[0].Box = p.Lines[0].Box.Union(mark.Box);
     }
 
     // ------------------------------------------------------------------ style
