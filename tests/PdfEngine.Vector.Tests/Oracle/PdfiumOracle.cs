@@ -232,10 +232,14 @@ public sealed class PdfiumOracle : IDisposable
 
     // ------------------------------------------------------------------ rendering
 
-    /// <summary>BGRA pixels of the page at <paramref name="dpi"/>, upright (with /Rotate applied), annotations drawn.</summary>
-    public (int Width, int Height, byte[] Bgra) Render(int index, double dpi = 72)
+    /// <summary>
+    /// BGRA pixels of the page at <paramref name="dpi"/>, upright (with /Rotate applied) and then
+    /// turned a further <paramref name="quarterTurns"/> clockwise by PDFium itself, annotations drawn.
+    /// </summary>
+    public (int Width, int Height, byte[] Bgra) Render(int index, double dpi = 72, int quarterTurns = 0)
     {
         var (w, h) = PageSize(index);
+        if (quarterTurns % 2 != 0) (w, h) = (h, w);
         int pw = Math.Max(1, (int)Math.Round(w * dpi / 72)), ph = Math.Max(1, (int)Math.Round(h * dpi / 72));
         return WithPage(index, page =>
         {
@@ -243,7 +247,7 @@ public sealed class PdfiumOracle : IDisposable
             try
             {
                 N.FPDFBitmap_FillRect(bitmap, 0, 0, pw, ph, 0xFFFFFFFF);
-                N.FPDF_RenderPageBitmap(bitmap, page, 0, 0, pw, ph, 0, 0x01);
+                N.FPDF_RenderPageBitmap(bitmap, page, 0, 0, pw, ph, ((quarterTurns % 4) + 4) % 4, 0x01);
                 int stride = N.FPDFBitmap_GetStride(bitmap);
                 var pixels = new byte[pw * ph * 4];
                 IntPtr buffer = N.FPDFBitmap_GetBuffer(bitmap);

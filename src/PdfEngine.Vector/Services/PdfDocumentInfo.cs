@@ -86,7 +86,20 @@ public static class PdfDocumentInfo
     {
         var r = document.Resolver;
         var info = document.XrefTable.Trailer is { } trailer ? r.Resolve(trailer["Info"]) as PdfDictionary : null;
-        string Text(string key) => info != null ? PdfTextStrings.Decode(r.Resolve(info[key])) ?? string.Empty : string.Empty;
+        string Text(string key)
+        {
+            switch (info != null ? r.Resolve(info[key]) : null)
+            {
+                case PdfString s:
+                    return PdfTextStrings.Decode(s.RawBytes.Span);
+                case PdfStream st:
+                    // Not a text string, but PDFium reads a stream's data as one; so do we, to agree.
+                    try { return PdfTextStrings.Decode(new Streams.PdfStreamDecoder(null, r.Resolve).DecodeStream(st)); }
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { return string.Empty; }
+                default:
+                    return string.Empty;
+            }
+        }
 
         var custom = new Dictionary<string, string>();
         if (info != null)

@@ -86,15 +86,15 @@ public sealed class PdfAnnotationEditor
     }
 
     /// <summary>
-    /// Removes the annotation at <paramref name="index"/>, with its pop-up and the replies to it
-    /// (12.5.6.4, /IRT), as Acrobat does.
+    /// Removes the annotation at <paramref name="index"/> with its pop-up and, unless
+    /// <paramref name="cascadeReplies"/> is false, the replies to it (12.5.6.4, /IRT), as Acrobat does.
     /// </summary>
-    public void Delete(int pageNumber, int index)
+    public void Delete(int pageNumber, int index, bool cascadeReplies = true)
     {
         var page = State(pageNumber);
         if (index < 0 || index >= page.Items.Count)
             throw new ArgumentOutOfRangeException(nameof(index), $"Page {pageNumber} has no annotation at position {index}.");
-        Remove(page, index);
+        Remove(page, index, cascadeReplies);
     }
 
     internal static void RemoveAt(PdfUpdate update, int pageNumber, int index)
@@ -104,7 +104,7 @@ public sealed class PdfAnnotationEditor
         editor.Finish();
     }
 
-    private void Remove(PageState page, int index)
+    private void Remove(PageState page, int index, bool cascadeReplies = true)
     {
         var item = page.Items[index];
         if (item == null) return;
@@ -121,8 +121,8 @@ public sealed class PdfAnnotationEditor
             var od = Resolved(other);
             bool isPopup = number > 0 && number == popup
                 || self > 0 && od?.GetName("Subtype") == "Popup" && od["Parent"] is PdfIndirectRef parent && parent.ObjectNumber == self;
-            bool isReply = self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
-            if (isPopup || isReply) Remove(page, i);
+            bool isReply = cascadeReplies && self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
+            if (isPopup || isReply) Remove(page, i, cascadeReplies);
         }
     }
 

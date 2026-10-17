@@ -42,9 +42,11 @@ public static class PdfAttachments
         var r = document.Resolver;
         var nav = new PdfNavigation(document);
         var result = new List<PdfAttachment>();
+        var listed = new HashSet<PdfStream>(ReferenceEqualityComparer.Instance);
         foreach (var (key, value) in EmbeddedFiles(document))
         {
             result.Add(Describe(result.Count, PdfAttachmentSource.EmbeddedFiles, key, value, r, nav));
+            if (FileStream(value, r) is { } s) listed.Add(s);
         }
         if (!includeAnnotations) return result;
         for (int p = 0; p < document.PageCount; p++)
@@ -53,6 +55,8 @@ public static class PdfAttachments
             for (int i = 0; i < annots.Count; i++)
             {
                 if (r.Resolve(annots[i]) is not PdfDictionary a || a.GetName("Subtype") != "FileAttachment" || a["FS"] == null) continue;
+                // The same file shown on a page and listed in the name tree is one file.
+                if (FileStream(a["FS"], r) is { } shown && !listed.Add(shown)) continue;
                 result.Add(Describe(result.Count, PdfAttachmentSource.Annotation, string.Empty, a["FS"], r, nav) with { PageNumber = p + 1, AnnotationIndex = i });
             }
         }
@@ -88,8 +92,11 @@ public static class PdfAttachments
         };
     }
 
+    /// <summary>The file specification of name-tree entry <paramref name="index"/>.</summary>
+    public static PdfObject? EmbeddedFileSpec(PdfVectorDocument document, int index) => EmbeddedFiles(document).ElementAtOrDefault(index).Value;
+
     /// <summary>The embedded file stream of a file specification: /EF /UF, /F, /DOS, /Mac, /Unix, as CPDF_FileSpec looks it up.</summary>
-    internal static PdfStream? FileStream(PdfObject? spec, PdfObjectResolver r)
+    public static PdfStream? FileStream(PdfObject? spec, PdfObjectResolver r)
     {
         if (r.Resolve(spec) is not PdfDictionary d || r.Resolve(d["EF"]) is not PdfDictionary ef) return null;
         foreach (var key in new[] { "UF", "F", "DOS", "Mac", "Unix" })

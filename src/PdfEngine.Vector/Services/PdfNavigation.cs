@@ -112,9 +112,10 @@ public sealed class PdfNavigation
     /// Resolves a destination: an explicit array, a name or string looked up in the /Dests name
     /// tree and then the catalog's /Dests dictionary, or a dictionary carrying it under /D.
     /// </summary>
-    public PdfDestination? ResolveDestination(PdfObject? dest) => ResolveDestination(dest, 0);
+    public PdfDestination? ResolveDestination(PdfObject? dest) => ResolveDestination(dest, 0, named: false);
 
-    private PdfDestination? ResolveDestination(PdfObject? dest, int depth)
+    /// <param name="named">A dictionary with /D is a destination only as the value of a named destination (12.3.2.3), as PDFium reads it.</param>
+    private PdfDestination? ResolveDestination(PdfObject? dest, int depth, bool named)
     {
         if (depth > 8) return null;
         var value = _r.Resolve(dest);
@@ -126,8 +127,8 @@ public sealed class PdfNavigation
                 return LookupNamed(name.Value, depth);
             case PdfString str:
                 return LookupNamed(PdfTextStrings.Decode(str.RawBytes.Span), depth);
-            case PdfDictionary dict when dict["D"] != null:
-                return ResolveDestination(dict["D"], depth + 1);
+            case PdfDictionary dict when named && dict["D"] != null:
+                return ResolveDestination(dict["D"], depth + 1, named: false);
             default:
                 return null;
         }
@@ -144,7 +145,7 @@ public sealed class PdfNavigation
         if (target == null && _r.Resolve(_doc.Catalog["Dests"]) is PdfDictionary dests)
             target = dests[name];
         if (target == null) return null;
-        var resolved = ResolveDestination(target, depth + 1);
+        var resolved = ResolveDestination(target, depth + 1, named: true);
         return resolved == null ? null : resolved with { Name = name };
     }
 
@@ -161,11 +162,11 @@ public sealed class PdfNavigation
     {
         if (array.Count == 0) return null;
         int page = -1;
-        var first = array[0];
-        if (first is PdfIndirectRef || _r.Resolve(first) is PdfDictionary)
-            page = PageIndexOf(first);
-        else if (_r.Resolve(first) is { } n && n.TryGetInteger(out long number))
-            page = (int)Math.Clamp(number, int.MinValue, int.MaxValue); // PDFium returns the integer as the index
+        var first = _r.Resolve(array[0]);
+        if (first is PdfDictionary)
+            page = PageIndexOf(array[0]);
+        else if (first is PdfInteger or PdfReal && first.TryGetInteger(out long number))
+            page = (int)Math.Clamp(number, int.MinValue, int.MaxValue); // PDFium returns the number as the index, even out of range
         var fit = array.Count > 1 && _r.Resolve(array[1]) is PdfName fitName && Enum.TryParse<PdfDestinationFit>(fitName.Value, out var f) && f != PdfDestinationFit.Unknown
             ? f : PdfDestinationFit.Unknown;
         var parameters = new List<double?>();
@@ -179,6 +180,9 @@ public sealed class PdfNavigation
     {
         if (_r.Resolve(action) is not PdfDictionary a) return null;
         string type = a.GetName("S") ?? string.Empty;
+        // /Type is optional, but an action carrying another one is not an action (PDFium's CPDF_Action::GetType).
+        if (a["Type"] != null && a.GetName("Type") != "Action")
+            return new PdfAction(PdfActionKind.Unsupported, type);
         switch (type)
         {
             case "GoTo":
@@ -210,27 +214,48 @@ public sealed class PdfNavigation
     /// </summary>
     private string? Uri(PdfDictionary action)
     {
-        if (_r.Resolve(action["URI"]) is not PdfString s) return null;
-        string uri = System.Text.Encoding.Latin1.GetString(s.RawBytes.Span);
+        string uri = _r.Resolve(action["URI"]) is PdfString s ? System.Text.Encoding.Latin1.GetString(s.RawBytes.Span) : string.Empty;
         int colon = uri.IndexOf(':');
         if (colon <= 0 && _r.Resolve(_doc.Catalog["URI"]) is PdfDictionary uriDict && _r.Resolve(uriDict["Base"]) is PdfString b)
             uri = System.Text.Encoding.Latin1.GetString(b.RawBytes.Span) + uri;
         return uri;
     }
 
-    /// <summary>A file specification's name: a string, or /UF, /F, /Unix, /Mac, /DOS of a dictionary.</summary>
+    /// <summary>
+    /// A file specification's name (7.11): a string, or /UF, /F, /Unix, /Mac, /DOS of a dictionary,
+    /// in Windows form as PDFium's CPDF_FileSpec::GetFileName gives it ("/c/dir/f" is "c:\dir\f").
+    /// </summary>
     public string? FileName(PdfObject? spec)
     {
+        string? raw = null;
         switch (_r.Resolve(spec))
         {
             case PdfString s:
-                return PdfTextStrings.Decode(s.RawBytes.Span);
+                raw = PdfTextStrings.Decode(s.RawBytes.Span);
+                break;
             case PdfDictionary d:
-                foreach (var key in new[] { "UF", "F", "Unix", "Mac", "DOS" })
-                    if (_r.Resolve(d[key]) is PdfString v) return PdfTextStrings.Decode(v.RawBytes.Span);
-                return null;
-            default:
-                return null;
+                foreach (var key in new[] { "UF", "F", "DOS", "Mac", "Unix" })
+                {
+                    if (_r.Resolve(d[key]) is PdfString v && v.RawBytes.Length > 0)
+                    {
+                        raw = PdfTextStrings.Decode(v.RawBytes.Span);
+                        if (raw.Length > 0) break;
+                    }
+                }
+                if (raw != null && d.GetName("FS") == "URL") return raw; // a URL is not a file name
+                break;
         }
+        return raw == null ? null : PlatformFileName(raw);
+    }
+
+    /// <summary>The 7.11.2 file name syntax in Windows form (CPDF_FileSpec::DecodeFileName).</summary>
+    internal static string PlatformFileName(string path)
+    {
+        if (path.Length <= 1) return string.Empty;
+        static string Slashes(string s) => s.Replace('/', '\\');
+        if (path[0] != '/') return Slashes(path);
+        if (path[1] == '/') return Slashes(path[1..]);
+        if (path.Length > 2 && path[2] == '/') return path[1] + ":" + Slashes(path[2..]);
+        return "\\" + Slashes(path);
     }
 }
