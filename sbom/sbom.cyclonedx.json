@@ -379,16 +379,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:nuget/CoreJ2K@2.3.3.91",
+      "bom-ref": "pkg:nuget/CoreJ2K@2.4.1.108",
       "name": "CoreJ2K",
-      "version": "2.3.3.91",
+      "version": "2.4.1.108",
       "scope": "required",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
         }
       ],
-      "purl": "pkg:nuget/CoreJ2K@2.3.3.91",
+      "purl": "pkg:nuget/CoreJ2K@2.4.1.108",
       "externalReferences": [
         {
           "type": "website",
@@ -551,7 +551,7 @@
         "pkg:generic/google/pdfium@=x86_64&os=windows",
         "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
         "pkg:nuget/System.Speech@9.0.0",
-        "pkg:nuget/CoreJ2K@2.3.3.91",
+        "pkg:nuget/CoreJ2K@2.4.1.108",
         "pkg:nuget/SharpGen.Runtime@2.4.2-beta",
         "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta",
         "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
