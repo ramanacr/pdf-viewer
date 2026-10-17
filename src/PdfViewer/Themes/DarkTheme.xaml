@@ -33,4 +33,8 @@
     <SolidColorBrush x:Key="HighlightMatchBrush" Color="{StaticResource HighlightMatchColor}" />
     <SolidColorBrush x:Key="ActiveMatchBrush" Color="{StaticResource ActiveMatchColor}" />
 
+    <!-- Icons. ThemeManager swaps these for system colours while Windows high contrast is on. -->
+    <SolidColorBrush x:Key="IconBrush" Color="{StaticResource TextPrimaryColor}" />
+    <SolidColorBrush x:Key="IconAccentBrush" Color="{StaticResource AccentColor}" />
+
 </ResourceDictionary>

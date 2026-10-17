@@ -7,7 +7,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Themes/LightTheme.xaml" />
-                <ResourceDictionary Source="Themes/VectorIcons.xaml" />
+                <ResourceDictionary Source="Themes/IconGlyphs.xaml" />
                 <ResourceDictionary Source="Themes/Controls.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
