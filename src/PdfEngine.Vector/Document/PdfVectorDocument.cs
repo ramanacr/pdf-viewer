@@ -51,6 +51,12 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     /// <summary>The Standard security handler of an encrypted document (permissions, revision), else null.</summary>
     public PdfEngine.Vector.Security.PdfSecurityHandler? Security { get; private init; }
 
+    /// <summary>The version in the file header ("%PDF-1.7" gives "1.7"), or null when the header has none.</summary>
+    public string? HeaderVersion { get; private init; }
+
+    /// <summary>The document catalog (/Root).</summary>
+    public PdfDictionary Catalog => _catalog;
+
     public static async ValueTask<PdfVectorDocument> OpenAsync(
         string filePath,
         PdfSecurityLimits? limits = null,
@@ -157,7 +163,24 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         // Resolve basic metadata
         var meta = ExtractMetadata(xref.Trailer!, resolver, filePath, source.Length, pageTree.Count);
 
-        return new PdfVectorDocument(source, filePath, meta, xref, resolver, pageTree, catalog, limits) { Security = security };
+        return new PdfVectorDocument(source, filePath, meta, xref, resolver, pageTree, catalog, limits)
+        {
+            Security = security,
+            HeaderVersion = ReadHeaderVersion(source),
+        };
+    }
+
+    /// <summary>"%PDF-M.m" within the first kilobyte (7.5.2 allows leading junk, as readers do).</summary>
+    private static string? ReadHeaderVersion(IPdfByteSource source)
+    {
+        var head = source.ReadMemory(0, (int)Math.Min(1024, source.Length)).Span;
+        ReadOnlySpan<byte> marker = "%PDF-"u8;
+        int at = head.IndexOf(marker);
+        if (at < 0 || at + marker.Length + 3 > head.Length) return null;
+        var v = head.Slice(at + marker.Length, 3);
+        return char.IsAsciiDigit((char)v[0]) && v[1] == '.' && char.IsAsciiDigit((char)v[2])
+            ? $"{(char)v[0]}.{(char)v[2]}"
+            : null;
     }
 
     private static PdfDictionary? ResolveCatalog(PdfXrefTable xref, PdfObjectResolver resolver)
@@ -280,124 +303,31 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return ValueTask.FromResult(page);
     }
 
+    /// <summary>
+    /// The outline as bookmarks: destinations resolved through named destinations (the /Dests
+    /// name tree and the catalog's /Dests) and go-to actions, as PDFium resolves them.
+    /// </summary>
     public ValueTask<IReadOnlyList<BookmarkItem>> GetBookmarksAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (!_catalog.TryGetValue("Outlines", out var outlinesObj))
-        {
-            return ValueTask.FromResult<IReadOnlyList<BookmarkItem>>(Array.Empty<BookmarkItem>());
-        }
-
-        var outlines = _resolver.Resolve(outlinesObj) as PdfDictionary;
-        if (outlines == null || !outlines.TryGetValue("First", out var firstRef))
-        {
-            return ValueTask.FromResult<IReadOnlyList<BookmarkItem>>(Array.Empty<BookmarkItem>());
-        }
-
-        var visited = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
-        var result = TraverseOutlineList(firstRef, visited, depth: 0);
-        return ValueTask.FromResult<IReadOnlyList<BookmarkItem>>(result);
+        var outline = PdfEngine.Vector.Services.PdfDocumentInfo.ReadOutline(this);
+        return ValueTask.FromResult<IReadOnlyList<BookmarkItem>>(outline.Select(ToBookmark).ToList());
     }
 
-    private List<BookmarkItem> TraverseOutlineList(PdfObject? firstItemRef, HashSet<PdfDictionary> visited, int depth)
+    private BookmarkItem ToBookmark(PdfEngine.Vector.Services.PdfOutlineItem item)
     {
-        var list = new List<BookmarkItem>();
-        if (depth > 50 || firstItemRef == null)
-            return list;
-
-        var currentRef = firstItemRef;
-        while (currentRef != null)
+        var dest = item.Destination ?? (item.Action?.Kind == PdfEngine.Vector.Services.PdfActionKind.GoTo ? item.Action.Destination : null);
+        double? Param(int i) => dest != null && dest.Fit == PdfEngine.Vector.Services.PdfDestinationFit.XYZ && i < dest.Parameters.Count ? dest.Parameters[i] : null;
+        double? zoom = Param(2);
+        return new BookmarkItem
         {
-            var itemObj = _resolver.Resolve(currentRef) as PdfDictionary;
-            if (itemObj == null || !visited.Add(itemObj))
-                break;
-
-            string title = ExtractString(itemObj["Title"]);
-            int targetPage = 1;
-            double? targetX = null;
-            double? targetY = null;
-            double? targetZoom = null;
-
-            // Check /Dest or /A
-            PdfObject? destObj = _resolver.Resolve(itemObj["Dest"]);
-            if (destObj == null && itemObj.TryGetValue("A", out var aObj))
-            {
-                var actionDict = _resolver.Resolve(aObj) as PdfDictionary;
-                if (actionDict != null && actionDict.GetName("S") == "GoTo")
-                {
-                    destObj = _resolver.Resolve(actionDict["D"]);
-                }
-            }
-
-            if (destObj is PdfArray destArr && destArr.Count > 0)
-            {
-                var targetPageObj = _resolver.Resolve(destArr[0]);
-                if (targetPageObj is PdfDictionary targetDict && _pageDictToNumber.TryGetValue(targetDict, out int pNum))
-                {
-                    targetPage = pNum;
-                }
-                else if (destArr[0].TryGetInteger(out long pIdx))
-                {
-                    targetPage = Math.Clamp((int)pIdx + 1, 1, Math.Max(1, _pageTree.Count));
-                }
-
-                if (destArr.Count >= 4 && destArr[1].TryGetName(out string mode) && mode == "XYZ")
-                {
-                    if (destArr[2].TryGetNumber(out double x)) targetX = x;
-                    if (destArr[3].TryGetNumber(out double y)) targetY = y;
-                    if (destArr.Count >= 5 && destArr[4].TryGetNumber(out double z) && z > 0) targetZoom = z;
-                }
-            }
-
-            var bookmark = new BookmarkItem
-            {
-                Title = title,
-                TargetPageNumber = targetPage,
-                TargetX = targetX,
-                TargetY = targetY,
-                TargetZoom = targetZoom
-            };
-
-            // Recursively resolve children if any
-            if (itemObj.TryGetValue("First", out var childFirst))
-            {
-                bookmark.Children = TraverseOutlineList(childFirst, visited, depth + 1);
-            }
-
-            list.Add(bookmark);
-
-            // Move to next sibling
-            if (itemObj.TryGetValue("Next", out var nextRef))
-            {
-                currentRef = nextRef;
-            }
-            else
-            {
-                break;
-            }
-        }
-
-        return list;
-    }
-
-    private string ExtractString(PdfObject? obj)
-    {
-        var resolved = _resolver.Resolve(obj);
-        if (resolved is not PdfString str)
-            return string.Empty;
-
-        var span = str.RawBytes.Span;
-        if (span.Length >= 2 && span[0] == 0xFE && span[1] == 0xFF)
-        {
-            return System.Text.Encoding.BigEndianUnicode.GetString(span.Slice(2));
-        }
-
-        if (span.Length >= 2 && span[0] == 0xFF && span[1] == 0xFE)
-        {
-            return System.Text.Encoding.Unicode.GetString(span.Slice(2));
-        }
-
-        return System.Text.Encoding.Latin1.GetString(span);
+            Title = item.Title,
+            TargetPageNumber = item.PageIndex >= 0 ? Math.Clamp(item.PageIndex + 1, 1, Math.Max(1, _pageTree.Count)) : 1,
+            TargetX = Param(0),
+            TargetY = Param(1),
+            TargetZoom = zoom > 0 ? zoom : null,
+            Children = item.Children.Select(ToBookmark).ToList(),
+        };
     }
 
     // ------------------------------------------------------------------ form field appearances

@@ -595,6 +595,10 @@ public static class PdfiumNativeBridge
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFAnnot_GetColor(SafeAnnotHandle annot, int type, out uint R, out uint G, out uint B, out uint A);
 
+    /// <summary>A number entry of the annotation dictionary (e.g. /CA), which FPDFAnnot_GetColor will not report once there is an appearance stream.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern int FPDFAnnot_GetNumberValue(SafeAnnotHandle annot, [MarshalAs(UnmanagedType.LPStr)] string key, out float value);
+
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern int FPDFAnnot_SetStringValue(SafeAnnotHandle annot, [MarshalAs(UnmanagedType.LPStr)] string key, byte[] value);
 

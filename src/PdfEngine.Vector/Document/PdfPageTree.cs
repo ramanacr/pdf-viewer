@@ -18,9 +18,20 @@ public sealed class PdfPageTree
     private readonly PdfObjectResolver _resolver;
     private readonly PdfSecurityLimits _limits;
     private readonly List<PdfPageNode> _pages = new();
+    private readonly List<int> _pageObjectNumbers = new();
+    private readonly List<int[]> _pageAncestors = new();
 
     public IReadOnlyList<PdfPageNode> Pages => _pages;
     public int Count => _pages.Count;
+
+    /// <summary>The object number of each page's dictionary, or -1 for a page written as a direct object.</summary>
+    public IReadOnlyList<int> PageObjectNumbers => _pageObjectNumbers;
+
+    /// <summary>
+    /// For each page, the object numbers of the /Pages nodes above it, root first (-1 for a node
+    /// that is a direct object). Page-tree edits change the last one's /Kids and every /Count.
+    /// </summary>
+    public IReadOnlyList<int[]> PageAncestors => _pageAncestors;
 
     public PdfPageTree(PdfObjectResolver resolver, PdfSecurityLimits? limits = null)
     {
@@ -31,13 +42,15 @@ public sealed class PdfPageTree
     public void Load(PdfDictionary rootCatalog)
     {
         _pages.Clear();
+        _pageObjectNumbers.Clear();
+        _pageAncestors.Clear();
         var pagesRef = rootCatalog["Pages"];
         var pagesNode = _resolver.Resolve(pagesRef);
         if (pagesNode is not PdfDictionary pagesDict)
             return;
 
         var visited = new HashSet<PdfDictionary>();
-        CollectPages(pagesDict, PdfRect.Empty, PdfRect.Empty, 0, null, visited, depth: 0);
+        CollectPages(pagesDict, PdfRect.Empty, PdfRect.Empty, 0, null, visited, depth: 0, NumberOf(pagesRef), new List<int>());
     }
 
     private void CollectPages(
@@ -47,7 +60,9 @@ public sealed class PdfPageTree
         int inheritedRotate,
         PdfDictionary? inheritedResources,
         HashSet<PdfDictionary> visited,
-        int depth)
+        int depth,
+        int selfNumber,
+        List<int> ancestors)
     {
         if (depth > _limits.MaxPageTreeDepth)
             throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxPageTreeDepth), $"PDF Page tree recursion depth exceeded limit ({_limits.MaxPageTreeDepth}).");
@@ -83,6 +98,8 @@ public sealed class PdfPageTree
             var contentsList = ResolveContents(node["Contents"]);
             var page = new PdfPageNode(pageNum, node, mediaBox, cropBox, rotate, mergedResources, contentsList);
             _pages.Add(page);
+            _pageObjectNumbers.Add(selfNumber);
+            _pageAncestors.Add(ancestors.ToArray());
         }
         else
         {
@@ -90,17 +107,21 @@ public sealed class PdfPageTree
             var kidsObj = _resolver.Resolve(node["Kids"]);
             if (kidsObj is PdfArray kidsArray)
             {
+                ancestors.Add(selfNumber);
                 foreach (var kidRef in kidsArray)
                 {
                     var kidNode = _resolver.Resolve(kidRef);
                     if (kidNode is PdfDictionary kidDict)
                     {
-                        CollectPages(kidDict, mediaBox, specifiedCropBox, rotate, mergedResources, visited, depth + 1);
+                        CollectPages(kidDict, mediaBox, specifiedCropBox, rotate, mergedResources, visited, depth + 1, NumberOf(kidRef), ancestors);
                     }
                 }
+                ancestors.RemoveAt(ancestors.Count - 1);
             }
         }
     }
+
+    private static int NumberOf(PdfObject? reference) => reference is PdfIndirectRef r ? r.ObjectNumber : -1;
 
     private IReadOnlyList<PdfStream> ResolveContents(PdfObject? contentsObj)
     {
