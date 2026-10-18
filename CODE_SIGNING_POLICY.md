@@ -17,7 +17,8 @@ public part (`PdfViewer-codesign.cer`) so a download can be checked:
 (Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
 ```
 
-An application for free code signing by SignPath Foundation has been made. Once it is accepted,
+This project uses the SignPath Foundation for code signing. An application for free code signing
+by SignPath Foundation has been made. Once it is accepted,
 this section will read: *Free code signing provided by [SignPath.io](https://signpath.io),
 certificate by [SignPath Foundation](https://signpath.org).*
 
