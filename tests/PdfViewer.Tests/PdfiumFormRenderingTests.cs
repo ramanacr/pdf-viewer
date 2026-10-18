@@ -2,9 +2,11 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
-using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.Services;
 using Xunit;
+
+// PDFium-only (PdfiumOnlyTest): it tests the PDFium adapter's form-fill environment, which the
+// PDFium-free build does not have. NativeFormRenderingTests checks the same fields on vector-drawn pages.
 
 namespace PdfViewer.Tests;
 
@@ -25,39 +27,9 @@ public class PdfiumFormRenderingTests : IDisposable
         try { Directory.Delete(_dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
-    /// <summary>A text field whose appearance shows "FILLED" in large black type, and a checked box.</summary>
-    private string FormPdf()
-    {
-        var b = new VectorPdfBuilder();
-        int helv = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-        int ap = b.AddStream($"/Type /XObject /Subtype /Form /BBox [0 0 180 40] /Resources << /Font << /Helv {helv} 0 R >> >>",
-            "/Tx BMC q BT /Helv 30 Tf 0 g 4 8 Td (FILLED) Tj ET Q EMC");
-        int check = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 20 20]", "q 0 g 0 0 20 20 re f Q");
-        int off = b.AddStream("/Type /XObject /Subtype /Form /BBox [0 0 20 20]", "");
-        int page = b.AddPage("", "<< >>", mediaBox: "[0 0 200 200]", extra: "/Annots [PAGE_ANNOTS]");
-        int text = page + 1, box = page + 2, acro = page + 3;
-        b.Add($"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (FILLED) /Rect [10 140 190 180] /P {page} 0 R /DA (/Helv 30 Tf 0 g) /AP << /N {ap} 0 R >> >>");
-        b.Add($"<< /Type /Annot /Subtype /Widget /FT /Btn /T (ok) /V /Yes /AS /Yes /Rect [10 100 30 120] /P {page} 0 R /AP << /N << /Yes {check} 0 R /Off {off} 0 R >> >> >>");
-        b.Add($"<< /Fields [{text} 0 R {box} 0 R] /DR << /Font << /Helv {helv} 0 R >> >> /DA (/Helv 0 Tf 0 g) >>");
-        b.WithCatalog($"/AcroForm {acro} 0 R");
-        string pdf = System.Text.Encoding.Latin1.GetString(b.Build()).Replace("/Annots [PAGE_ANNOTS]", $"/Annots [{text} 0 R {box} 0 R]");
-        // Offsets moved: let the loader rebuild the table (PDFium and this viewer both repair).
-        string path = Path.Combine(_dir, "form.pdf");
-        File.WriteAllBytes(path, System.Text.Encoding.Latin1.GetBytes(pdf));
-        return path;
-    }
+    private string FormPdf() => NativeFormRenderingTests.FormPdf(_dir);
 
-    private static int DarkPixels(BitmapSource bmp, int x0, int y0, int x1, int y1)
-    {
-        int stride = bmp.PixelWidth * 4;
-        var px = new byte[stride * bmp.PixelHeight];
-        bmp.CopyPixels(px, stride, 0);
-        int dark = 0;
-        for (int y = y0; y < y1; y++)
-            for (int x = x0; x < x1; x++)
-                if (px[y * stride + x * 4 + 1] < 100) dark++;
-        return dark;
-    }
+    private static int DarkPixels(BitmapSource bmp, int x0, int y0, int x1, int y1) => NativeFormRenderingTests.DarkPixels(bmp, x0, y0, x1, y1);
 
     [Fact]
     public async Task PdfiumRenders_ShowFormFields()
