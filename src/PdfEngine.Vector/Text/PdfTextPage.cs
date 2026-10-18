@@ -40,19 +40,26 @@ public sealed class PdfTextPage
     private enum MarkedContentState { Pass, Done, Delay }
     private enum GenerateCharacter { None, Space, LineBreak, Hyphen }
 
-    internal sealed class CharInfo
+    /// <summary>
+    /// One character of the page. A value (copied, not shared): a page has thousands, and as
+    /// objects they were most of what building a page allocated.
+    /// </summary>
+    internal struct CharInfo
     {
         public PdfTextCharType Type;
-        public int CharCode = InvalidCode;
-        public int Cid = InvalidCode;
+        public int CharCode;
+        public int Cid;
         public char Unicode;
         public PdfPoint Origin;
         public TextRect CharBox;
-        public PdfMatrix Matrix = PdfMatrix.Identity;
         public TextObject? TextObject;
         public TextRect LooseBox;
 
-        public CharInfo Clone() => (CharInfo)MemberwiseClone();
+        public CharInfo()
+        {
+            CharCode = InvalidCode;
+            Cid = InvalidCode;
+        }
     }
 
     private readonly struct Transformed
@@ -62,11 +69,13 @@ public sealed class PdfTextPage
         public PdfMatrix Form { get; }
     }
 
-    private readonly List<CharInfo> _chars = new();
+    private readonly CharList _chars = new();
     private readonly StringBuilder _text = new();
-    private readonly List<CharInfo> _tempChars = new();
-    private readonly StringBuilder _tempText = new();
-    private readonly List<Transformed> _lineObjects = new();
+    // Working buffers of the build, borrowed from the thread and handed back when it is done.
+    private List<CharInfo> _tempChars;
+    private StringBuilder _tempText;
+    private List<Transformed> _lineObjects;
+    private char[] _lineBuffer;
     private readonly List<(int Index, int Count)> _charIndices = new();
     private readonly PdfMatrix _display;
     private TextOrientation _textlineDir = TextOrientation.Unknown;
@@ -93,8 +102,72 @@ public sealed class PdfTextPage
         _pageWidth = swap ? pageBox.Height : pageBox.Width;
         _pageHeight = swap ? pageBox.Width : pageBox.Height;
         _display = DisplayMatrix(pageBox, Rotation, _pageWidth, _pageHeight);
+        var scratch = t_scratch ?? new Scratch();
+        t_scratch = null;
+        _tempChars = scratch.TempChars;
+        _tempText = scratch.TempText;
+        _lineObjects = scratch.LineObjects;
+        _lineBuffer = scratch.Line;
         ProcessObject(content);
         BuildCharIndices();
+        scratch.Line = _lineBuffer;
+        scratch.Reset();
+        t_scratch = scratch;
+        _tempChars = null!;
+        _tempText = null!;
+        _lineObjects = null!;
+        _lineBuffer = null!;
+    }
+
+    private sealed class Scratch
+    {
+        public readonly List<CharInfo> TempChars = new();
+        public readonly StringBuilder TempText = new();
+        public readonly List<Transformed> LineObjects = new();
+        public char[] Line = new char[256];
+
+        public void Reset()
+        {
+            TempChars.Clear();
+            TempText.Clear();
+            LineObjects.Clear();
+            // A very long line is not kept for the next page.
+            if (TempChars.Capacity > 1 << 16) TempChars.Capacity = 1 << 10;
+            if (Line.Length > 1 << 16) Line = new char[256];
+        }
+    }
+
+    [ThreadStatic] private static Scratch? t_scratch;
+
+    /// <summary>
+    /// The page's characters in chunks of 512 (53 KB, under the large object heap threshold), so
+    /// that a long page neither copies its characters as it grows nor puts them on the large
+    /// object heap, whose allocations cost full collections.
+    /// </summary>
+    private sealed class CharList
+    {
+        private const int Shift = 9, ChunkSize = 1 << Shift, Mask = ChunkSize - 1;
+        private CharInfo[][] _chunks = new CharInfo[1][];
+
+        public int Count { get; private set; }
+
+        public ref CharInfo this[int index] => ref _chunks[index >> Shift][index & Mask];
+
+        public void Add(in CharInfo info)
+        {
+            int chunk = Count >> Shift, at = Count & Mask;
+            if (chunk == _chunks.Length) Array.Resize(ref _chunks, chunk * 2);
+            var items = _chunks[chunk];
+            if (items == null) _chunks[chunk] = items = new CharInfo[chunk == 0 ? 16 : ChunkSize];
+            else if (at == items.Length)
+            {
+                // Only the first chunk starts small (most pages have few characters) and grows.
+                Array.Resize(ref items, Math.Min(ChunkSize, items.Length * 2));
+                _chunks[chunk] = items;
+            }
+            items[at] = info;
+            Count++;
+        }
     }
 
     /// <summary>PDFium's page display matrix for (0, 0, width, height) and no extra rotation: user space to top-down device space.</summary>
@@ -122,28 +195,35 @@ public sealed class PdfTextPage
     /// <summary>The page text: every character that reads as text, in order (line breaks as "\r\n").</summary>
     public string Text => _text.ToString();
 
-    public char GetUnicode(int index) => _chars[index].Unicode;
-    public PdfTextCharType GetCharType(int index) => _chars[index].Type;
-    public bool IsGenerated(int index) => _chars[index].Type == PdfTextCharType.Generated;
-    public bool IsHyphen(int index) => _chars[index].Type == PdfTextCharType.Hyphen;
+    /// <summary>The character at <paramref name="index"/>, read in place.</summary>
+    private ref readonly CharInfo At(int index)
+    {
+        if ((uint)index >= (uint)_chars.Count) throw new ArgumentOutOfRangeException(nameof(index));
+        return ref _chars[index];
+    }
+
+    public char GetUnicode(int index) => At(index).Unicode;
+    public PdfTextCharType GetCharType(int index) => At(index).Type;
+    public bool IsGenerated(int index) => At(index).Type == PdfTextCharType.Generated;
+    public bool IsHyphen(int index) => At(index).Type == PdfTextCharType.Hyphen;
 
     /// <summary>The character's glyph box (its ink, from the font's outline) in user space.</summary>
-    public TextRect GetCharBox(int index) => _chars[index].CharBox;
+    public TextRect GetCharBox(int index) => At(index).CharBox;
 
     /// <summary>The character's box from the font box (ascent to descent, so a line's characters line up), in user space.</summary>
-    public TextRect GetLooseCharBox(int index) => _chars[index].LooseBox;
+    public TextRect GetLooseCharBox(int index) => At(index).LooseBox;
 
     /// <summary>Where the glyph is drawn from, in user space.</summary>
-    public PdfPoint GetOrigin(int index) => _chars[index].Origin;
+    public PdfPoint GetOrigin(int index) => At(index).Origin;
 
     /// <summary>The font size of the text the character belongs to; 0 for a generated character.</summary>
-    public double GetFontSize(int index) => _chars[index].TextObject?.FontSize ?? 0;
+    public double GetFontSize(int index) => At(index).TextObject?.FontSize ?? 0;
 
     /// <summary>The marked-content identifier (MCID) of the text the character belongs to, or -1 (none, or a generated character).</summary>
-    public int GetMarkedContentId(int index) => _chars[index].TextObject?.Mcid ?? -1;
+    public int GetMarkedContentId(int index) => At(index).TextObject?.Mcid ?? -1;
 
     /// <summary>True when the character belongs to a text object (it is not a generated space or line break).</summary>
-    public bool HasTextObject(int index) => _chars[index].TextObject != null;
+    public bool HasTextObject(int index) => At(index).TextObject != null;
 
     /// <summary>The text of characters [start, start + count), as PDFium's FPDFText_GetText returns it.</summary>
     public string GetText(int start, int count)
@@ -419,7 +499,6 @@ public sealed class PdfTextPage
             case GenerateCharacter.Space:
                 if (GenerateCharInfo(' ') is { } space)
                 {
-                    if (!form.IsIdentity) space.Matrix = form;
                     _tempText.Append(' ');
                     _tempChars.Add(space);
                 }
@@ -428,8 +507,8 @@ public sealed class PdfTextPage
                 CloseTempLine();
                 if (_text.Length > 0)
                 {
-                    AppendGeneratedCharacter('\r', form);
-                    AppendGeneratedCharacter('\n', form);
+                    AppendGeneratedCharacter('\r');
+                    AppendGeneratedCharacter('\n');
                 }
                 return true;
             case GenerateCharacter.Hyphen:
@@ -451,6 +530,7 @@ public sealed class PdfTextPage
                 _tempText.Length--;
                 last.Unicode = '\u0002';
                 last.Type = PdfTextCharType.Hyphen;
+                _tempChars[^1] = last;
                 _tempText.Append('￾');
                 return true;
             }
@@ -459,12 +539,11 @@ public sealed class PdfTextPage
         }
     }
 
-    private CharInfo? PrevCharInfo() => _tempChars.Count > 0 ? _tempChars[^1] : _chars.Count > 0 ? _chars[^1] : null;
+    private CharInfo? PrevCharInfo() => _tempChars.Count > 0 ? _tempChars[^1] : _chars.Count > 0 ? _chars[_chars.Count - 1] : null;
 
     private CharInfo? GenerateCharInfo(char unicode)
     {
-        var prev = PrevCharInfo();
-        if (prev == null) return null;
+        if (PrevCharInfo() is not { } prev) return null;
         double preWidth = 0;
         if (prev.TextObject != null && prev.CharCode != InvalidCode)
             preWidth = prev.TextObject.Font.GetCharWidth(prev.CharCode, prev.Cid);
@@ -475,12 +554,10 @@ public sealed class PdfTextPage
         return new CharInfo { Type = PdfTextCharType.Generated, Unicode = unicode, Origin = origin, CharBox = box, LooseBox = box };
     }
 
-    private void AppendGeneratedCharacter(char unicode, PdfMatrix form)
+    private void AppendGeneratedCharacter(char unicode)
     {
-        var info = GenerateCharInfo(unicode);
-        if (info == null) return;
+        if (GenerateCharInfo(unicode) is not { } info) return;
         _text.Append(unicode);
-        if (!form.IsIdentity) info.Matrix = form;
         _chars.Add(info);
     }
 
@@ -490,7 +567,7 @@ public sealed class PdfTextPage
     /// text gets a font-size-wide column cell. Characters without a text object (or of size 0)
     /// keep their glyph box.
     /// </summary>
-    private static TextRect LooseBounds(CharInfo info)
+    private static TextRect LooseBounds(in CharInfo info, in PdfMatrix matrix, ref PdfMatrix? inverse)
     {
         var obj = info.TextObject;
         if (obj == null || obj.FontSize == 0 || info.Type == PdfTextCharType.Piece && info.CharCode == InvalidCode) return info.CharBox;
@@ -508,8 +585,10 @@ public sealed class PdfTextPage
         if (ascent == descent) return info.CharBox;
         // In text space: the advance wide, descent to ascent tall; then where the text matrix puts it.
         double width = obj.GetCharWidth(info.CharCode, info.Cid);
-        var o = info.Matrix.Inverse().Transform(info.Origin);
-        var loose = new TextRect(o.X, descent * fs / 1000, o.X + width, ascent * fs / 1000).Transform(info.Matrix);
+        // The inverse is the same for every character of an object: the caller keeps it.
+        inverse ??= matrix.Inverse();
+        var o = inverse.Value.Transform(info.Origin);
+        var loose = new TextRect(o.X, descent * fs / 1000, o.X + width, ascent * fs / 1000).Transform(matrix);
         // Ink past the advance or the ascent widens it. A font that is not embedded is measured
         // on a stand-in face whose ink is not the reader's: only its width is taken, so a line's
         // characters keep one band.
@@ -522,7 +601,7 @@ public sealed class PdfTextPage
             var ink = info.CharBox;
             ink.Normalize();
             loose.Normalize();
-            if (ink.Width > 0 && info.Matrix.B == 0 && info.Matrix.C == 0)
+            if (ink.Width > 0 && matrix.B == 0 && matrix.C == 0)
             {
                 loose.Left = Math.Min(loose.Left, ink.Left);
                 loose.Right = Math.Max(loose.Right, ink.Right);
@@ -540,6 +619,10 @@ public sealed class PdfTextPage
         double baseSpace = obj.CharSpace == 0 || obj.CountItems < 3 ? 0 : CalculateBaseSpace(obj, matrix) + CalculateBaseSpaceAdjustment(obj, matrix);
         double spacing = 0;
         int nItems = obj.CountItems;
+        // The same for every character of the object.
+        double f = obj.FontSize / 1000;
+        double dupThreshold = matrix.TransformXDistance(0.07 * obj.FontSize);
+        PdfMatrix? inverse = null;
         for (int i = 0; i < nItems; i++)
         {
             var item = obj.GetItemInfo(i);
@@ -560,7 +643,7 @@ public sealed class PdfTextPage
                     _tempText.Append(' ');
                     _tempChars.Add(new CharInfo
                     {
-                        Type = PdfTextCharType.Generated, Unicode = ' ', Origin = origin, CharBox = box, LooseBox = box, Matrix = form, TextObject = obj,
+                        Type = PdfTextCharType.Generated, Unicode = ' ', Origin = origin, CharBox = box, LooseBox = box, TextObject = obj,
                     });
                 }
             }
@@ -568,24 +651,27 @@ public sealed class PdfTextPage
 
             string unicode = font.UnicodeFromCharCode(item.Code);
             var type = PdfTextCharType.Normal;
-            if (unicode.Length == 0 && item.Code != 0)
+            // A code without Unicode stands for itself (one character, no string made for it).
+            char codeChar = '\0';
+            int length = unicode.Length;
+            if (length == 0 && item.Code != 0)
             {
-                unicode = ((char)item.Code).ToString();
+                codeChar = (char)item.Code;
+                length = 1;
                 type = PdfTextCharType.NotUnicode;
             }
             var glyph = font.GetCharBBox(item.Code, item.Cid);
-            double f = obj.FontSize / 1000;
             var cb = new TextRect(glyph.Left * f + item.X, glyph.Bottom * f + item.Y, glyph.Right * f + item.X, glyph.Top * f + item.Y);
             if (Math.Abs(cb.Top - cb.Bottom) < SizeEpsilon) cb.Top = cb.Bottom + f;
             if (Math.Abs(cb.Right - cb.Left) < SizeEpsilon) cb.Right = cb.Left + obj.GetCharWidth(item.Code, item.Cid);
             var info = new CharInfo
             {
                 Type = type, CharCode = item.Code, Cid = item.Cid, Origin = matrix.Transform(item.X, item.Y),
-                CharBox = cb.Transform(matrix), Matrix = matrix, TextObject = obj,
+                CharBox = cb.Transform(matrix), TextObject = obj,
             };
-            info.LooseBox = LooseBounds(info);
+            info.LooseBox = LooseBounds(info, matrix, ref inverse);
 
-            if (unicode.Length == 0)
+            if (length == 0)
             {
                 info.Unicode = '\0';
                 _tempChars.Add(info);
@@ -595,10 +681,10 @@ public sealed class PdfTextPage
 
             bool duplicate = false;
             int count = Math.Min(_tempChars.Count, 7);
-            double dupThreshold = matrix.TransformXDistance(0.07 * obj.FontSize);
-            for (int n = _tempChars.Count; n > _tempChars.Count - count; n--)
+            var temp = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_tempChars);
+            for (int n = temp.Length; n > temp.Length - count; n--)
             {
-                var c1 = _tempChars[n - 1];
+                ref readonly var c1 = ref temp[n - 1];
                 double dx = c1.Origin.X - info.Origin.X, dy = c1.Origin.Y - info.Origin.Y;
                 if (c1.CharCode == info.CharCode && c1.TextObject != null && ReferenceEquals(c1.TextObject.Font, font) &&
                     Math.Abs(dx) < dupThreshold && Math.Abs(dy) < dupThreshold)
@@ -609,9 +695,11 @@ public sealed class PdfTextPage
             }
             if (!duplicate)
             {
-                foreach (char c in unicode)
+                // One piece per character of the text; the last one is the character itself.
+                for (int k = 0; k < length; k++)
                 {
-                    var piece = info.Clone();
+                    char c = unicode.Length == 0 ? codeChar : unicode[k];
+                    var piece = info;
                     piece.Unicode = c;
                     _tempText.Append(c != '\0' ? c : '￾');
                     _tempChars.Add(piece);
@@ -736,14 +824,12 @@ public sealed class PdfTextPage
         while (i > 0 && buf[i] == ' ') i--;
         if (!IsHyphenCode(buf[i])) return false;
         if (i > 0 && char.IsLetter(buf[i - 1]) && char.IsLetterOrDigit(curChar)) return true;
-        var prev = PrevCharInfo();
-        return prev != null && prev.Type == PdfTextCharType.Piece && IsHyphenCode(prev.Unicode);
+        return PrevCharInfo() is { } prev && prev.Type == PdfTextCharType.Piece && IsHyphenCode(prev.Unicode);
     }
 
     private void FindPreviousTextObject()
     {
-        var prev = PrevCharInfo();
-        if (prev?.TextObject != null) _prevObj = prev.TextObject;
+        if (PrevCharInfo() is { TextObject: { } obj }) _prevObj = obj;
     }
 
     private GenerateCharacter ProcessInsertObject(TextObject obj, PdfMatrix form)
@@ -905,7 +991,7 @@ public sealed class PdfTextPage
             b.Translate(k * step, 0);
             var info = new CharInfo
             {
-                Type = PdfTextCharType.Piece, Unicode = c, Origin = obj.Pos, CharBox = b, LooseBox = b, Matrix = matrix, TextObject = obj,
+                Type = PdfTextCharType.Piece, Unicode = c, Origin = obj.Pos, CharBox = b, LooseBox = b, TextObject = obj,
             };
             _tempText.Append(c);
             _tempChars.Add(info);
@@ -916,6 +1002,17 @@ public sealed class PdfTextPage
 
     private static bool IsRightToLeft(TextObject obj)
     {
+        // Without a character that can be right-to-left no run is: the common case, decided
+        // without building the object's text.
+        bool any = false;
+        for (int i = 0; i < obj.CountItems && !any; i++)
+        {
+            int code = obj.Codes[i];
+            if (code == InvalidCode) continue;
+            string u = obj.Font.UnicodeFromCharCode(code);
+            any = Bidi.CanBeRight(u.Length > 0 ? u[0] : (char)code);
+        }
+        if (!any) return false;
         var sb = new StringBuilder();
         for (int i = 0; i < obj.CountItems; i++)
         {
@@ -931,46 +1028,80 @@ public sealed class PdfTextPage
     private void CloseTempLine()
     {
         if (_tempChars.Count == 0) return;
+        // Runs of spaces collapse to one (a space whose index has no character is kept), in one pass.
+        int length = _tempText.Length, chars = _tempChars.Count;
+        if (_lineBuffer.Length < length) _lineBuffer = new char[Math.Max(length, _lineBuffer.Length * 2)];
+        var line = _lineBuffer;
+        _tempText.CopyTo(0, line, 0, length);
         bool prevSpace = false;
-        for (int i = 0; i < _tempText.Length; i++)
+        int w = 0;
+        bool rtl = false;
+        for (int r = 0; r < length; r++)
         {
-            if (_tempText[i] != ' ') { prevSpace = false; continue; }
-            if (prevSpace && i < _tempChars.Count)
+            char c = line[r];
+            if (c != ' ')
             {
-                _tempText.Remove(i, 1);
-                _tempChars.RemoveAt(i);
-                i--;
-            }
-            prevSpace = true;
-        }
-        string str = _tempText.ToString();
-        var overall = Bidi.Segments(str, out var segments);
-        var current = overall;
-        int limit = Math.Min(str.Length, _tempChars.Count);
-        foreach (var seg in segments)
-        {
-            if (seg.Direction == Bidi.Direction.Right || (seg.Direction == Bidi.Direction.Neutral && current == Bidi.Direction.Right))
-            {
-                current = Bidi.Direction.Right;
-                for (int m = seg.Start + seg.Count; m > seg.Start; m--)
-                    if (m - 1 < limit) AddCharInfoByRLDirection(str[m - 1], _tempChars[m - 1]);
+                prevSpace = false;
             }
             else
             {
-                if (seg.Direction != Bidi.Direction.LeftWeak) current = Bidi.Direction.Left;
-                for (int m = seg.Start; m < seg.Start + seg.Count; m++)
-                    if (m < limit) AddCharInfoByLRDirection(str[m], _tempChars[m]);
+                bool drop = prevSpace && r < chars;
+                prevSpace = true;
+                if (drop) continue;
+            }
+            rtl |= Bidi.CanBeRight(c);
+            if (w != r)
+            {
+                line[w] = c;
+                if (r < chars) _tempChars[w] = _tempChars[r];
+            }
+            w++;
+        }
+        if (w < length)
+        {
+            int removed = length - w;
+            // Characters past the end of the text keep their place after the kept ones.
+            for (int r = length; r < chars; r++) _tempChars[r - removed] = _tempChars[r];
+            _tempChars.RemoveRange(chars - removed, removed);
+            length = w;
+        }
+        int limit = Math.Min(length, _tempChars.Count);
+
+        if (!rtl)
+        {
+            // Nothing right-to-left: the runs are all read left to right, in order.
+            for (int m = 0; m < limit; m++) AddCharInfoByLRDirection(line[m], _tempChars[m]);
+        }
+        else
+        {
+            string str = new(line, 0, length);
+            var overall = Bidi.Segments(str, out var segments);
+            var current = overall;
+            foreach (var seg in segments)
+            {
+                if (seg.Direction == Bidi.Direction.Right || (seg.Direction == Bidi.Direction.Neutral && current == Bidi.Direction.Right))
+                {
+                    current = Bidi.Direction.Right;
+                    for (int m = seg.Start + seg.Count; m > seg.Start; m--)
+                        if (m - 1 < limit) AddCharInfoByRLDirection(str[m - 1], _tempChars[m - 1]);
+                }
+                else
+                {
+                    if (seg.Direction != Bidi.Direction.LeftWeak) current = Bidi.Direction.Left;
+                    for (int m = seg.Start; m < seg.Start + seg.Count; m++)
+                        if (m < limit) AddCharInfoByLRDirection(str[m], _tempChars[m]);
+                }
             }
         }
         _tempChars.Clear();
         _tempText.Clear();
     }
 
-    private static bool IsControlChar(CharInfo info) =>
+    private static bool IsControlChar(in CharInfo info) =>
         info.Unicode is '\u0002' or '\u0003' or '\u0093' or '\u0094' or '\u0096' or '\u0097' or '\u0098' or '￾' &&
         info.Type != PdfTextCharType.Hyphen;
 
-    private static bool IsNormalCharacter(CharInfo info) =>
+    private static bool IsNormalCharacter(in CharInfo info) =>
         (info.Unicode != 0 && !IsControlChar(info)) || (info.Unicode == 0 && info.CharCode != 0);
 
     private static readonly Dictionary<char, string> Ligatures = new()
@@ -978,7 +1109,7 @@ public sealed class PdfTextPage
         ['ﬀ'] = "ff", ['ﬁ'] = "fi", ['ﬂ'] = "fl", ['ﬃ'] = "ffi", ['ﬄ'] = "ffl", ['ﬅ'] = "ſt", ['ﬆ'] = "st",
     };
 
-    private void AddCharInfoByLRDirection(char c, CharInfo info)
+    private void AddCharInfoByLRDirection(char c, in CharInfo info)
     {
         if (!IsNormalCharacter(info))
         {
@@ -989,7 +1120,7 @@ public sealed class PdfTextPage
         {
             foreach (char p in parts)
             {
-                var piece = info.Clone();
+                var piece = info;
                 piece.Unicode = p;
                 piece.Type = PdfTextCharType.Piece;
                 _text.Append(p);
@@ -1001,7 +1132,7 @@ public sealed class PdfTextPage
         _chars.Add(info);
     }
 
-    private void AddCharInfoByRLDirection(char c, CharInfo info)
+    private void AddCharInfoByRLDirection(char c, in CharInfo info)
     {
         if (!IsNormalCharacter(info))
         {
@@ -1012,7 +1143,7 @@ public sealed class PdfTextPage
         string normalized = Bidi.Normalize(c);
         if (normalized.Length == 0)
         {
-            var copy = info.Clone();
+            var copy = info;
             copy.Unicode = c;
             _text.Append(c);
             _chars.Add(copy);
@@ -1020,7 +1151,7 @@ public sealed class PdfTextPage
         }
         foreach (char p in normalized)
         {
-            var piece = info.Clone();
+            var piece = info;
             piece.Unicode = p;
             piece.Type = PdfTextCharType.Piece;
             _text.Append(p);

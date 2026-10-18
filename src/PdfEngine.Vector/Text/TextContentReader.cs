@@ -117,14 +117,19 @@ internal sealed class TextContentReader
     private readonly Func<PdfFont, PdfDictionary?, TextFontInfo> _fontInfo;
     private readonly PdfStreamDecoder _decoder;
     private readonly HashSet<PdfStream> _activeForms = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<PdfStream, byte[]> _forms = new(ReferenceEqualityComparer.Instance);
     private int _order, _depth;
     private TextFontInfo? _missing;
 
     /// <summary>A font name the resources do not have: Helvetica, as PDFium substitutes.</summary>
-    private TextFontInfo Missing() => _missing ??= _fontInfo(_fonts.ResolveFont("\0missing", null), null);
+    private TextFontInfo Missing() => _missing ??= _missingInfo?.Invoke() ?? _fontInfo(_fonts.ResolveFont("\0missing", null), null);
 
-    public TextContentReader(PdfObjectResolver resolver, PdfFontResolver fonts, Func<PdfFont, PdfDictionary?, TextFontInfo> fontInfo)
+    private readonly Func<TextFontInfo>? _missingInfo;
+
+    /// <param name="missing">The substitute for missing fonts, when the caller keeps one (it is the same for every page).</param>
+    public TextContentReader(PdfObjectResolver resolver, PdfFontResolver fonts, Func<PdfFont, PdfDictionary?, TextFontInfo> fontInfo, Func<TextFontInfo>? missing = null)
     {
+        _missingInfo = missing;
         _r = resolver;
         _fonts = fonts;
         _fontInfo = fontInfo;
@@ -147,19 +152,28 @@ internal sealed class TextContentReader
         return holder;
     }
 
+    // Buffers of one text-showing operator, reused (the walk is single-threaded and Show does not nest).
+    private readonly List<int> _codes = new();
+    private readonly List<int> _cids = new();
+    private readonly List<int> _lengths = new();
+    private readonly List<double> _kernAt = new();
+    private readonly List<PdfString> _strings = new();
+    private double[] _kernings = new double[16];
+
     private void Walk(byte[] content, PdfDictionary resources, State gs, TextHolder holder)
     {
         var stack = new Stack<State>();
         var marks = new List<PdfDictionary?>();
-        var operands = new List<PdfObject>(8);
+        // The marks array and MCID handed to text objects, rebuilt only when the marks change.
+        PdfDictionary?[]? marksArray = Array.Empty<PdfDictionary?>();
+        int marksMcid = -1;
         PdfMatrix tm = PdfMatrix.Identity;
         float posX = 0, posY = 0, lineX = 0, lineY = 0; // single precision, as PDFium
+        var n = new double[6];
 
-        using var src = new MemoryByteSource(content);
-        var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
-        var parser = new PdfParser(PdfSecurityLimits.Default);
+        var lexer = new TextContentLexer(content);
 
-        void Show(IReadOnlyList<PdfString> strings, double initKerning, IReadOnlyList<double> kernings, int segments)
+        void Show(List<PdfString> strings, double initKerning, double[] kernings, int total, int segments)
         {
             // Text shown before any font is set is not text to PDFium (nothing is drawn either).
             if (gs.Font is not { } font) return;
@@ -172,10 +186,11 @@ internal sealed class TextContentReader
             if (segments == 0) return;
             if (holder.Objects.Count >= MaxTextObjects) return;
 
-            var codes = new List<int>();
-            var cids = new List<int>();
-            var lengths = new List<int>();
-            var kernAt = new Dictionary<int, double>();
+            var codes = _codes;
+            var cids = _cids;
+            var lengths = _lengths;
+            var kernAt = _kernAt;
+            codes.Clear(); cids.Clear(); lengths.Clear(); kernAt.Clear();
             for (int i = 0; i < segments; i++)
             {
                 var bytes = strings[i].RawBytes.Span;
@@ -188,16 +203,27 @@ internal sealed class TextContentReader
                     codes.Add(code);
                     cids.Add(cid);
                     lengths.Add(consumed);
+                    kernAt.Add(0);
                 }
                 if (i != segments - 1)
                 {
-                    kernAt[codes.Count] = kernings[i];
                     codes.Add(TextFontInfo.InvalidCode);
                     cids.Add(TextFontInfo.InvalidCode);
                     lengths.Add(0);
+                    kernAt.Add(kernings[i]);
                 }
             }
 
+            if (marksArray == null)
+            {
+                marksArray = marks.ToArray();
+                marksMcid = -1;
+                foreach (var m in marksArray)
+                    if (m?["MCID"] is PdfInteger id) { marksMcid = (int)id.Value; break; }
+            }
+
+            int count = codes.Count;
+            var codeArray = codes.ToArray();
             var obj = new TextObject
             {
                 Font = font,
@@ -206,28 +232,34 @@ internal sealed class TextContentReader
                 WordSpace = gs.Tw,
                 HorzScale = gs.Th,
                 RenderMode = font.IsType3 ? 0 : gs.Tr,
-                Codes = codes.ToArray(),
-                Cids = cids.ToArray(),
-                CharPos = new double[Math.Max(0, codes.Count - 1)],
+                Codes = codeArray,
+                // A simple font's CIDs are its codes: the arrays are shared (neither is written after).
+                Cids = font.IsComposite ? cids.ToArray() : codeArray,
+                CharPos = count > 1 ? new double[count - 1] : Array.Empty<double>(),
                 Order = _order++,
+                Marks = marksArray,
+                Mcid = marksMcid,
             };
             // Position data (PDFium CalcPositionData): item origins along the line and the glyph box.
             float curpos = 0; double minX = 10000, maxX = -10000, minY = 10000, maxY = -10000;
             double fs = gs.FontSize;
-            for (int i = 0; i < obj.Codes.Length; i++)
+            var objCodes = obj.Codes;
+            var objCids = obj.Cids;
+            var charPos = obj.CharPos;
+            for (int i = 0; i < objCodes.Length; i++)
             {
-                int code = obj.Codes[i];
+                int code = objCodes[i];
                 if (i > 0)
                 {
                     if (code == TextFontInfo.InvalidCode)
                     {
-                        obj.CharPos[i - 1] = kernAt[i];
+                        charPos[i - 1] = kernAt[i];
                         curpos -= (float)(kernAt[i] * fs / 1000);
                         continue;
                     }
-                    obj.CharPos[i - 1] = curpos;
+                    charPos[i - 1] = curpos;
                 }
-                int cid = obj.Cids[i];
+                int cid = objCids[i];
                 var box = font.GetCharBBox(code, cid);
                 double charWidth;
                 if (vertical)
@@ -262,17 +294,13 @@ internal sealed class TextContentReader
             obj.Matrix = new PdfMatrix(linear.A, linear.B, linear.C, linear.D, origin.X, origin.Y).ToSingle();
             obj.Rect = new TextRect(minX, minY, maxX, maxY).Transform(obj.Matrix);
             obj.Rect = new TextRect(TextMatrixMath.F(obj.Rect.Left), TextMatrixMath.F(obj.Rect.Bottom), TextMatrixMath.F(obj.Rect.Right), TextMatrixMath.F(obj.Rect.Top));
-            for (int i = 0; i < obj.CharPos.Length; i++) obj.CharPos[i] = TextMatrixMath.F(obj.CharPos[i]);
-
-            obj.Marks = marks.ToArray();
-            foreach (var m in marks)
-                if (m?["MCID"] is PdfInteger id) { obj.Mcid = (int)id.Value; break; }
+            for (int i = 0; i < charPos.Length; i++) charPos[i] = TextMatrixMath.F(charPos[i]);
 
             if (vertical) posY += curpos;
             else posX += curpos * (float)gs.Th;
             holder.Objects.Add(obj);
 
-            double trailing = kernings.Count > 0 ? kernings[^1] : 0;
+            double trailing = total > 0 ? kernings[total - 1] : 0;
             if (trailing != 0)
             {
                 if (vertical) posY -= (float)(trailing * gs.FontSize / 1000);
@@ -283,7 +311,11 @@ internal sealed class TextContentReader
         void ShowOne(PdfString s)
         {
             if (s.RawBytes.Length == 0) return;
-            Show(new[] { Limit(s) }, 0, new double[] { 0 }, 1);
+            var strings = _strings;
+            strings.Clear();
+            strings.Add(Limit(s));
+            _kernings[0] = 0;
+            Show(strings, 0, _kernings, 1, 1);
         }
 
         void NextLine()
@@ -292,154 +324,156 @@ internal sealed class TextContentReader
             posX = lineX; posY = lineY;
         }
 
-        while (true)
+        while (lexer.Next(out var op))
         {
-            long tokenPos = src.Position;
-            PdfToken token;
-            try { token = lexer.NextToken(); }
-            catch (Exception ex) when (ex is not OutOfMemoryException) { break; }
-            if (token.Type == PdfTokenType.EndOfFile) break;
-            if (token.Type != PdfTokenType.Keyword || token.TextValue is "true" or "false" or "null")
+            int count = lexer.Count;
+            switch (op)
             {
-                src.Position = tokenPos;
-                PdfObject? obj;
-                try
-                {
-                    obj = token.Type == PdfTokenType.Keyword
-                        ? (token.TextValue == "null" ? PdfNull.Instance : token.TextValue == "true" ? PdfBoolean.True : PdfBoolean.False)
-                        : parser.ParseObject(lexer);
-                    if (token.Type == PdfTokenType.Keyword) lexer.NextToken();
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException) { obj = null; src.Position = tokenPos + 1; }
-                if (obj != null) operands.Add(obj);
-                else if (src.Position == tokenPos) src.Position = tokenPos + 1;
-                if (operands.Count > 64) operands.RemoveAt(0);
-                continue;
-            }
-
-            switch (token.TextValue)
-            {
-                case "q":
+                case TextOperator.q:
                     if (stack.Count < 512) stack.Push(gs.Clone());
                     break;
-                case "Q":
+                case TextOperator.Q:
                     if (stack.Count > 0) gs = stack.Pop();
                     break;
-                case "cm" when Numbers(operands, 6) is { } m:
-                    gs.Ctm = new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]) * gs.Ctm;
+                case TextOperator.cm when lexer.Numbers(6, n):
+                    gs.Ctm = new PdfMatrix(n[0], n[1], n[2], n[3], n[4], n[5]) * gs.Ctm;
                     break;
-                case "BT":
+                case TextOperator.BT:
                     tm = PdfMatrix.Identity;
                     posX = posY = lineX = lineY = 0;
                     break;
-                case "Tf" when operands.Count >= 2:
+                case TextOperator.Tf when count >= 2:
                 {
-                    if (operands[^1].TryGetNumber(out double size)) gs.FontSize = size;
-                    if (operands[^2] is PdfName fn)
+                    if (lexer.TryNumber(1, out double size)) gs.FontSize = size;
+                    if (lexer.NameAt(2) is { } fn)
                     {
                         PdfFont font;
-                        var fontDict = _r.Resolve((_r.Resolve(resources["Font"]) as PdfDictionary)?[fn.Value]) as PdfDictionary;
-                        try { font = fontDict != null ? _fonts.ResolveFont(fontDict, fn.Value) : _fonts.ResolveFont(fn.Value, resources); }
+                        var fontDict = _r.Resolve((_r.Resolve(resources["Font"]) as PdfDictionary)?[fn]) as PdfDictionary;
+                        try { font = fontDict != null ? _fonts.ResolveFont(fontDict, fn) : _fonts.ResolveFont(fn, resources); }
                         catch (Exception ex) when (ex is not OutOfMemoryException) { gs.Font = Missing(); break; }
                         gs.Font = font.IsMissingResource ? Missing() : _fontInfo(font, fontDict);
                     }
                     break;
                 }
-                case "gs" when operands.Count >= 1 && operands[^1] is PdfName gsName:
+                case TextOperator.gs when count >= 1 && lexer.NameAt(1) is { } gsName:
                 {
                     // An ExtGState's /Font [font size] sets the font as Tf does.
-                    var ext = _r.Resolve((_r.Resolve(resources["ExtGState"]) as PdfDictionary)?[gsName.Value]) as PdfDictionary;
+                    var ext = _r.Resolve((_r.Resolve(resources["ExtGState"]) as PdfDictionary)?[gsName]) as PdfDictionary;
                     if (ext != null && _r.Resolve(ext["Font"]) is PdfArray { Count: >= 2 } fontEntry &&
                         _r.Resolve(fontEntry.Items[0]) is PdfDictionary gsFontDict && _r.Resolve(fontEntry.Items[1]) is { } sizeObj && sizeObj.TryGetNumber(out double gsSize))
                     {
                         gs.FontSize = gsSize;
-                        try { gs.Font = _fontInfo(_fonts.ResolveFont(gsFontDict, gsName.Value), gsFontDict); }
+                        try { gs.Font = _fontInfo(_fonts.ResolveFont(gsFontDict, gsName), gsFontDict); }
                         catch (Exception ex) when (ex is not OutOfMemoryException) { gs.Font = Missing(); }
                     }
                     break;
                 }
-                case "Tc" when Numbers(operands, 1) is { } tc: gs.Tc = tc[0]; break;
-                case "Tw" when Numbers(operands, 1) is { } tw: gs.Tw = tw[0]; break;
-                case "Tz" when operands.Count == 1 && Numbers(operands, 1) is { } tz: gs.Th = tz[0] / 100.0; break;
-                case "TL" when Numbers(operands, 1) is { } tl: gs.TL = tl[0]; break;
-                case "Ts" when Numbers(operands, 1) is { } ts: gs.Rise = ts[0]; break;
-                case "Tr" when Numbers(operands, 1) is { } tr: gs.Tr = (int)tr[0]; break;
-                case "Td" when Numbers(operands, 2) is { } td:
-                    lineX += (float)td[0]; lineY += (float)td[1];
+                case TextOperator.Tc when lexer.Numbers(1, n): gs.Tc = n[0]; break;
+                case TextOperator.Tw when lexer.Numbers(1, n): gs.Tw = n[0]; break;
+                case TextOperator.Tz when count == 1 && lexer.Numbers(1, n): gs.Th = n[0] / 100.0; break;
+                case TextOperator.TL when lexer.Numbers(1, n): gs.TL = n[0]; break;
+                case TextOperator.Ts when lexer.Numbers(1, n): gs.Rise = n[0]; break;
+                case TextOperator.Tr when lexer.Numbers(1, n): gs.Tr = (int)n[0]; break;
+                case TextOperator.Td when lexer.Numbers(2, n):
+                    lineX += (float)n[0]; lineY += (float)n[1];
                     posX = lineX; posY = lineY;
                     break;
-                case "TD" when Numbers(operands, 2) is { } tdd:
-                    gs.TL = -tdd[1];
-                    lineX += (float)tdd[0]; lineY += (float)tdd[1];
+                case TextOperator.TD when lexer.Numbers(2, n):
+                    gs.TL = -n[1];
+                    lineX += (float)n[0]; lineY += (float)n[1];
                     posX = lineX; posY = lineY;
                     break;
-                case "Tm" when Numbers(operands, 6) is { } tmv:
-                    tm = new PdfMatrix(tmv[0], tmv[1], tmv[2], tmv[3], tmv[4], tmv[5]);
+                case TextOperator.Tm when lexer.Numbers(6, n):
+                    tm = new PdfMatrix(n[0], n[1], n[2], n[3], n[4], n[5]);
                     posX = posY = lineX = lineY = 0;
                     break;
-                case "T*":
+                case TextOperator.TStar:
                     NextLine();
                     break;
-                case "Tj" when operands.Count >= 1 && operands[^1] is PdfString s:
+                case TextOperator.Tj when count >= 1 && lexer.StringAt(1) is { } s:
                     ShowOne(s);
                     break;
-                case "'" when operands.Count >= 1 && operands[^1] is PdfString s1:
+                case TextOperator.Quote when count >= 1 && lexer.StringAt(1) is { } s1:
                     NextLine();
                     ShowOne(s1);
                     break;
-                case "\"" when operands.Count >= 3 && operands[^1] is PdfString s2 && operands[^3].TryGetNumber(out double aw) && operands[^2].TryGetNumber(out double ac):
+                case TextOperator.DoubleQuote when count >= 3 && lexer.StringAt(1) is { } s2 && lexer.TryNumber(3, out double aw) && lexer.TryNumber(2, out double ac):
                     gs.Tw = aw; gs.Tc = ac;
                     NextLine();
                     ShowOne(s2);
                     break;
-                case "TJ" when operands.Count >= 1 && operands[^1] is PdfArray arr:
+                case TextOperator.TJ when count >= 1:
                 {
+                    var last = lexer.At(1);
+                    int items = last.Kind == TextContentLexer.Kind.Array ? last.Count : last.Value is PdfArray a ? a.Count : -1;
+                    if (items < 0) break;
+                    var arr = last.Value as PdfArray;
+                    // One TJ item: a string, or a number (the kerning), else nothing.
+                    (PdfString? Str, bool IsNumber, double Number) Item(int i)
+                    {
+                        if (arr == null)
+                        {
+                            var it = lexer.ArrayItems[last.Start + i];
+                            return it.Kind == TextContentLexer.Kind.String ? ((PdfString)it.Value!, false, 0) : (null, true, it.Number);
+                        }
+                        var item = _r.Resolve(arr.Items[i]);
+                        if (item is PdfString str) return (str, false, 0);
+                        return item != null && item.TryGetNumber(out double num) ? (null, true, num) : (null, false, 0);
+                    }
+
                     int total = 0;
-                    foreach (var item in arr.Items)
-                        if (_r.Resolve(item) is PdfString) total++;
-                    var font = gs.Font;
+                    for (int i = 0; i < items; i++)
+                        if (Item(i).Str != null) total++;
                     if (total == 0)
                     {
-                        foreach (var item in arr.Items)
-                            if (_r.Resolve(item) is { } n && n.TryGetNumber(out double k) && k != 0)
+                        for (int i = 0; i < items; i++)
+                            if (Item(i) is { IsNumber: true, Number: var k } && k != 0)
                                 posX -= (float)(k * gs.FontSize / 1000 * gs.Th);
                         break;
                     }
-                    var strs = new List<PdfString>(total);
-                    var kernings = new double[total];
+                    var strs = _strings;
+                    strs.Clear();
+                    if (_kernings.Length < total) _kernings = new double[Math.Max(total, _kernings.Length * 2)];
+                    var kernings = _kernings;
+                    Array.Clear(kernings, 0, total);
                     int seg = 0;
                     double init = 0;
-                    foreach (var raw in arr.Items)
+                    for (int i = 0; i < items; i++)
                     {
-                        var item = _r.Resolve(raw);
-                        if (item is PdfString str)
+                        var (str, isNumber, num) = Item(i);
+                        if (str != null)
                         {
                             if (str.RawBytes.Length == 0) continue;
                             strs.Add(Limit(str));
                             kernings[seg++] = 0;
                         }
-                        else if (item != null && item.TryGetNumber(out double num) && double.IsFinite(num))
+                        else if (isNumber && double.IsFinite(num))
                         {
                             if (seg == 0) init += num;
                             else kernings[seg - 1] += num;
                         }
                     }
-                    Show(strs, init, kernings, seg);
+                    Show(strs, init, kernings, total, seg);
                     break;
                 }
-                case "BI":
-                    PageContentWalker.InlineImage(src, lexer, parser);
+                case TextOperator.BI:
+                    lexer.SkipInlineImage();
                     break;
-                case "Do" when operands.Count >= 1 && operands[^1] is PdfName xname:
+                case TextOperator.Do when count >= 1 && lexer.NameAt(1) is { } xname:
                 {
-                    var xobject = _r.Resolve((_r.Resolve(resources["XObject"]) as PdfDictionary)?[xname.Value]) as PdfStream;
+                    var xobject = _r.Resolve((_r.Resolve(resources["XObject"]) as PdfDictionary)?[xname]) as PdfStream;
                     if (xobject?.Dictionary.GetName("Subtype") != "Form" || _depth >= MaxFormDepth || !_activeForms.Add(xobject)) break;
                     _depth++;
                     try
                     {
                         byte[] formContent;
-                        try { formContent = _decoder.DecodeStream(xobject); }
-                        catch (Exception ex) when (ex is not OutOfMemoryException) { break; }
+                        // A form drawn several times on the page is decoded once.
+                        if (!_forms.TryGetValue(xobject, out formContent!))
+                        {
+                            try { formContent = _decoder.DecodeStream(xobject); }
+                            catch (Exception ex) when (ex is not OutOfMemoryException) { break; }
+                            _forms[xobject] = formContent;
+                        }
                         var dict = xobject.Dictionary;
                         var formResources = _r.Resolve(dict["Resources"]) as PdfDictionary ?? resources;
                         // The form's own content starts from its /Matrix with the text state
@@ -460,25 +494,25 @@ internal sealed class TextContentReader
                     }
                     break;
                 }
-                case "BDC":
+                case TextOperator.BDC:
                 {
                     PdfDictionary? props = null;
-                    if (operands.Count >= 2)
+                    if (count >= 2)
                     {
-                        props = operands[^1] as PdfDictionary
-                            ?? (operands[^1] is PdfName pn ? _r.Resolve((_r.Resolve(resources["Properties"]) as PdfDictionary)?[pn.Value]) as PdfDictionary : null);
+                        props = lexer.ValueAt(1) as PdfDictionary
+                            ?? (lexer.NameAt(1) is { } pn ? _r.Resolve((_r.Resolve(resources["Properties"]) as PdfDictionary)?[pn]) as PdfDictionary : null);
                     }
-                    if (marks.Count < 256) marks.Add(props);
+                    if (marks.Count < 256) { marks.Add(props); marksArray = null; }
                     break;
                 }
-                case "BMC":
-                    if (marks.Count < 256) marks.Add(null);
+                case TextOperator.BMC:
+                    if (marks.Count < 256) { marks.Add(null); marksArray = null; }
                     break;
-                case "EMC":
-                    if (marks.Count > 0) marks.RemoveAt(marks.Count - 1);
+                case TextOperator.EMC:
+                    if (marks.Count > 0) { marks.RemoveAt(marks.Count - 1); marksArray = null; }
                     break;
             }
-            operands.Clear();
+            lexer.Clear();
         }
     }
 
@@ -495,15 +529,6 @@ internal sealed class TextContentReader
             return new PdfMatrix(v[0], v[1], v[2], v[3], v[4], v[5]);
         }
         return PdfMatrix.Identity;
-    }
-
-    private static double[]? Numbers(List<PdfObject> operands, int n)
-    {
-        if (operands.Count < n) return null;
-        var v = new double[n];
-        for (int i = 0; i < n; i++)
-            if (!operands[operands.Count - n + i].TryGetNumber(out v[i]) || !double.IsFinite(v[i])) return null;
-        return v;
     }
 
     /// <summary>A text string (ISO 32000-2 7.9.2.2): UTF-16BE or UTF-8 with a byte-order mark, else PDFDocEncoding.</summary>

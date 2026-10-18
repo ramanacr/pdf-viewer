@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Fonts;
 using PdfEngine.Vector.Fonts.Programs;
@@ -30,6 +31,7 @@ internal sealed class TextFontInfo
 
     private readonly PdfFont _font;
     private readonly Dictionary<int, GlyphBox> _boxes = new();
+    private GlyphBox?[]? _boxSmall;
     private readonly Func<int, int, int>? _glyphId;
     private readonly int[]? _loca;
     private readonly byte[]? _glyf;
@@ -150,6 +152,27 @@ internal sealed class TextFontInfo
     /// </summary>
     public string UnicodeFromCharCode(int code)
     {
+        // Asked several times per character while a page is built: kept per code (the font's
+        // tables do not change), single-byte codes in an array.
+        if (code is >= 0 and < 256)
+        {
+            _unicodeSmall ??= new string?[256];
+            return _unicodeSmall[code] ??= UnicodeFromCharCodeCore(code);
+        }
+        _unicodeLarge ??= new Dictionary<int, string>();
+        if (!_unicodeLarge.TryGetValue(code, out var text))
+            _unicodeLarge[code] = text = UnicodeFromCharCodeCore(code);
+        return text;
+    }
+
+    /// <summary>Starts reading the index of installed fonts in the background (once per process).</summary>
+    internal static void PrefetchSystemFonts() => SystemFontIndex.Prefetch();
+
+    private string?[]? _unicodeSmall;
+    private Dictionary<int, string>? _unicodeLarge;
+
+    private string UnicodeFromCharCodeCore(int code)
+    {
         if (ToUnicode() is { } map)
         {
             string u = map.Lookup(code);
@@ -234,6 +257,25 @@ internal sealed class TextFontInfo
     /// <summary>Horizontal width in 1/1000 em (whole units, as PDFium stores them); for composite fonts by CID.</summary>
     public double GetCharWidthF(int code, int cid)
     {
+        // A simple font's width depends on the code only: kept per code, as several steps of a
+        // page build ask for it (the standard 14 metrics are looked up by glyph name).
+        if (!_font.IsComposite && code is >= 0 and < 256)
+        {
+            if (_widthSmall == null)
+            {
+                _widthSmall = new double[256];
+                Array.Fill(_widthSmall, double.NaN);
+            }
+            double cached = _widthSmall[code];
+            return double.IsNaN(cached) ? _widthSmall[code] = GetCharWidthFCore(code, cid) : cached;
+        }
+        return GetCharWidthFCore(code, cid);
+    }
+
+    private double[]? _widthSmall;
+
+    private double GetCharWidthFCore(int code, int cid)
+    {
         double w = _font.IsComposite ? _font.GetGlyphWidth(cid) : code is < 0 or > 255 ? 0 : _font.GetGlyphWidth(code);
         if (!double.IsFinite(w)) return 0;
         // A Type 3 glyph without a width in /Widths advances by its procedure's own width (d0/d1).
@@ -303,6 +345,11 @@ internal sealed class TextFontInfo
     public GlyphBox GetCharBBox(int code, int cid)
     {
         int key = _font.IsComposite ? cid : code;
+        if (key is >= 0 and < 256)
+        {
+            _boxSmall ??= new GlyphBox?[256];
+            return _boxSmall[key] ??= ComputeBox(code, cid);
+        }
         if (_boxes.TryGetValue(key, out var box)) return box;
         box = ComputeBox(code, cid);
         _boxes[key] = box;
@@ -535,6 +582,15 @@ internal sealed class TextFontInfo
             return sb.ToString();
         }
 
+        /// <summary>Starts reading the index on a pool thread, once; a page that needs it first waits for that read.</summary>
+        public static void Prefetch()
+        {
+            if (Interlocked.Exchange(ref _prefetched, 1) == 0)
+                ThreadPool.UnsafeQueueUserWorkItem(static _ => _ = Index.Value, null);
+        }
+
+        private static int _prefetched;
+
         private static Dictionary<string, List<(string, bool, bool)>> Build()
         {
             var index = new Dictionary<string, List<(string, bool, bool)>>();
@@ -542,14 +598,20 @@ internal sealed class TextFontInfo
             {
                 string dir = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
                 if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return index;
-                foreach (string path in Directory.EnumerateFiles(dir, "*.ttf"))
+                // Opening hundreds of files is slow (each is scanned on open): the name tables are
+                // read in parallel, then indexed in the order the files are listed, as before.
+                var paths = Directory.GetFiles(dir, "*.ttf");
+                var names = new (string, string)?[paths.Length];
+                System.Threading.Tasks.Parallel.For(0, paths.Length, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 4 },
+                    i => names[i] = ReadNames(paths[i]));
+                for (int i = 0; i < paths.Length; i++)
                 {
-                    if (ReadNames(path) is not var (family, subfamily) || family.Length == 0) continue;
+                    if (names[i] is not var (family, subfamily) || family.Length == 0) continue;
                     bool bold = subfamily.Contains("Bold", StringComparison.OrdinalIgnoreCase) || subfamily.Contains("Black", StringComparison.OrdinalIgnoreCase);
                     bool italic = subfamily.Contains("Italic", StringComparison.OrdinalIgnoreCase) || subfamily.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
                     string key = Key(family);
                     if (!index.TryGetValue(key, out var list)) index[key] = list = new();
-                    list.Add((Path.GetFileName(path), bold, italic));
+                    list.Add((Path.GetFileName(paths[i]), bold, italic));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
