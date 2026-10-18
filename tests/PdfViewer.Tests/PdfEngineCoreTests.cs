@@ -6,7 +6,9 @@ using PdfEngine;
 using PdfEngine.Documents;
 using PdfEngine.Forms;
 using PdfEngine.Geometry;
+#if PDFIUM_RENDERER
 using PdfEngine.Pdfium;
+#endif
 using PdfEngine.Rendering;
 using PdfEngine.Signatures;
 using PdfViewer.Core.Cache;
@@ -32,14 +34,46 @@ public class PdfEngineCoreTests
         return path;
     }
 
-    [Fact]
-    public async Task TestPdfiumEngineOpeningAndLifecycle()
+    /// <summary>The engine's safety inspector: the native one, or (developer build) PDFium's.</summary>
+    private static PdfEngine.Safety.IPdfSafetyInspector SafetyInspectorFor(IPdfEngine engine) => engine switch
+    {
+        NativeTestEngine native => native.SafetyInspector,
+#if PDFIUM_RENDERER
+        PdfiumEngine => new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector(),
+#endif
+        _ => throw new ArgumentOutOfRangeException(nameof(engine)),
+    };
+
+    /// <summary>
+    /// A pixel buffer of the kind the engine's renderer hands the cache: managed for the vector
+    /// engine, unmanaged for PDFium.
+    /// </summary>
+    private static System.Buffers.IMemoryOwner<byte> PixelBuffer(string engineName, int bytes) => engineName switch
+    {
+        TestEngines.Native => new ManagedMemoryOwner(bytes),
+#if PDFIUM_RENDERER
+        TestEngines.Pdfium => new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(bytes),
+#endif
+        _ => throw new ArgumentOutOfRangeException(nameof(engineName)),
+    };
+
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestEngineOpeningAndLifecycle(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
 
-        Assert.Equal("Google PDFium Native", engine.EngineName);
-        Assert.Contains("154.0.8021.0", engine.EngineVersion);
+        if (engineName == TestEngines.Pdfium)
+        {
+            Assert.Equal("Google PDFium Native", engine.EngineName);
+            Assert.Contains("154.0.8021.0", engine.EngineVersion);
+        }
+        else
+        {
+            Assert.Equal("Vector engine (native document services)", engine.EngineName);
+            Assert.False(string.IsNullOrEmpty(engine.EngineVersion));
+        }
 
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
         Assert.True(doc.IsOpen);
@@ -52,11 +86,12 @@ public class PdfEngineCoreTests
         Assert.Equal(0, info1.RotationDegrees);
     }
 
-    [Fact]
-    public async Task TestPdfiumRendererRawBgraOutputAndWpfAdapter()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRendererRawBgraOutputAndWpfAdapter(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var req = new RenderRequest
@@ -83,11 +118,12 @@ public class PdfEngineCoreTests
         Assert.Equal(rendered.HeightPixels, bitmap.PixelHeight);
     }
 
-    [Fact]
-    public async Task TestDocumentSessionFingerprintAndRevision()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestDocumentSessionFingerprintAndRevision(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var doc = await engine.OpenDocumentAsync(samplePdf);
 
         using var session = new DocumentSession();
@@ -106,19 +142,20 @@ public class PdfEngineCoreTests
         Assert.False(session.IsDirty);
     }
 
-    [Fact]
-    public async Task TestSafetyInspectorDetectsActiveContent()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSafetyInspectorDetectsActiveContent(string engineName)
     {
         // The product promise: tell the user what the document is carrying, rather than
         // silently acting on it. Detection must be authoritative, so this fixture carries
         // real script, a launch action, and an external link.
-        string pdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ActiveContent.pdf");
+        string pdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"ActiveContent_{engineName}.pdf");
         TestPdfBuilder.CreateActiveContentPdf(pdf);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(pdf);
 
-        var inspector = new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector();
+        var inspector = SafetyInspectorFor(engine);
         var report = await inspector.InspectAsync(doc);
 
         Assert.True(report.HasKind(PdfEngine.Safety.DocumentRiskKind.JavaScript),
@@ -136,17 +173,18 @@ public class PdfEngineCoreTests
         Assert.Contains("not been run", js.Description);
     }
 
-    [Fact]
-    public async Task TestSafetyInspectorReportsOrdinaryDocumentAsClean()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSafetyInspectorReportsOrdinaryDocumentAsClean(string engineName)
     {
         // The inverse must also hold, or the indicator is noise: a plain document with no
         // active content reports clean.
         string samplePdf = GetOrCreateSamplePdf();
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
-        var inspector = new PdfEngine.Pdfium.Adapters.PdfiumSafetyInspector();
+        var inspector = SafetyInspectorFor(engine);
         var report = await inspector.InspectAsync(doc);
 
         Assert.True(report.IsClean);
@@ -175,17 +213,18 @@ public class PdfEngineCoreTests
         Assert.NotEmpty(vm.OcrEngine.EngineName);
     }
 
-    [Fact]
-    public async Task TestDocumentComparisonDetectsIdenticalAndDifferentDocuments()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestDocumentComparisonDetectsIdenticalAndDifferentDocuments(string engineName)
     {
         // Backs Tools > Compare With Document. Identical input must report identical, and
         // genuinely different content must be detected - not merely "compared".
-        string a = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CompareA.pdf");
-        string b = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CompareB.pdf");
+        string a = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"CompareA_{engineName}.pdf");
+        string b = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"CompareB_{engineName}.pdf");
         TestPdfBuilder.CreateSimplePdf(a, 2, "SameToken");
         TestPdfBuilder.CreateSimplePdf(b, 2, "OtherToken");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var comparer = new PdfViewer.Core.Comparison.PdfComparisonService(engine.Renderer, engine.TextService);
 
         // Same file compared against itself: identical.
@@ -208,15 +247,16 @@ public class PdfEngineCoreTests
         }
     }
 
-    [Fact]
-    public async Task TestFormFieldsDialogInstantiatesOnUiThread()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestFormFieldsDialogInstantiatesOnUiThread(string engineName)
     {
         // The dialog must construct cleanly - a XAML or resource-lookup failure here would
         // only ever surface when a user opened it.
-        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Dialog_Test.pdf");
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Dialog_Test_{engineName}.pdf");
         TestPdfBuilder.CreateFormPdf(formPdf);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(formPdf);
         var fields = await engine.FormService.GetFormFieldsAsync(doc, 1);
 
@@ -281,13 +321,14 @@ public class PdfEngineCoreTests
             checkedState == true);
     }
 
-    [Fact]
-    public async Task TestRedactSelectedTextRemovesItFromTheSavedCopy()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRedactSelectedTextRemovesItFromTheSavedCopy(string engineName)
     {
         // End-to-end for Edit > Redact Selected Text: select text in the viewer, build the
         // redaction areas the command uses, apply them, and confirm the text is genuinely
         // gone from the output - and that the original document is untouched.
-        string source = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RedactSelection.pdf");
+        string source = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"RedactSelection_{engineName}.pdf");
         TestPdfBuilder.CreateSimplePdf(source, 1, "ClassifiedToken");
 
         var vm = new PdfViewer.ViewModels.MainViewModel();
@@ -303,10 +344,10 @@ public class PdfEngineCoreTests
         Assert.NotEmpty(areas);
         Assert.All(areas, a => Assert.Equal(1, a.PageNumber));
 
-        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RedactSelection_out.pdf");
+        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"RedactSelection_out_{engineName}.pdf");
         if (File.Exists(target)) File.Delete(target);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
             await engine.RedactionService.ApplyRedactionsAsync(doc, target, areas);
@@ -323,21 +364,22 @@ public class PdfEngineCoreTests
         Assert.Contains("ClassifiedToken", await engine.TextService.ExtractPageTextAsync(original, 1));
     }
 
-    [Fact]
-    public async Task TestMergeSplitAndExtractProduceUsableDocuments()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestMergeSplitAndExtractProduceUsableDocuments(string engineName)
     {
         // These operations back the Tools > Merge / Split / Extract commands. Each output
         // must be a real, re-openable PDF with the expected page count - not just a file.
-        string docA = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OrganiseA.pdf");
-        string docB = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OrganiseB.pdf");
+        string docA = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"OrganiseA_{engineName}.pdf");
+        string docB = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"OrganiseB_{engineName}.pdf");
         TestPdfBuilder.CreateSimplePdf(docA, 2, "AlphaToken");
         TestPdfBuilder.CreateSimplePdf(docB, 3, "BetaToken");
 
-        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OrganiseOut");
+        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"OrganiseOut_{engineName}");
         if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
         Directory.CreateDirectory(outDir);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
 
         // Merge: 2 + 3 pages => 5.
         string merged = Path.Combine(outDir, "Merged.pdf");
@@ -414,15 +456,16 @@ public class PdfEngineCoreTests
         Assert.Contains("text layer", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task TestFormFieldsReportTrueTypesAndMetadata()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestFormFieldsReportTrueTypesAndMetadata(string engineName)
     {
         // Regression test: every widget was reported as TextField and IsChecked was never
         // populated, so a UI could not build the right editor for a field.
-        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Fields_Test.pdf");
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Fields_Test_{engineName}.pdf");
         TestPdfBuilder.CreateFormPdf(formPdf);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(formPdf);
 
         var fields = await engine.FormService.GetFormFieldsAsync(doc, 1);
@@ -441,19 +484,20 @@ public class PdfEngineCoreTests
         Assert.Equal("India", combo.Value);
     }
 
-    [Fact]
-    public async Task TestSetFieldValueActuallyPersists()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSetFieldValueActuallyPersists(string engineName)
     {
         // Regression test: SetFieldValueAsync was a no-op (later a throw), so XFDF import
         // reported success while discarding every value. The write must survive a save and
         // reopen cycle.
-        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Write_Test.pdf");
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Write_Test_{engineName}.pdf");
         TestPdfBuilder.CreateFormPdf(formPdf);
 
-        string savedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Write_Saved.pdf");
+        string savedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Write_Saved_{engineName}.pdf");
         if (File.Exists(savedPdf)) File.Delete(savedPdf);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
 
         await using (var doc = await engine.OpenDocumentAsync(formPdf))
         {
@@ -472,13 +516,14 @@ public class PdfEngineCoreTests
         Assert.Equal("Ramana Reddy", reloaded.Single(f => f.Name == "FullName").Value);
     }
 
-    [Fact]
-    public async Task TestSetFieldValueRejectsUnknownField()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSetFieldValueRejectsUnknownField(string engineName)
     {
-        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Unknown_Test.pdf");
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Unknown_Test_{engineName}.pdf");
         TestPdfBuilder.CreateFormPdf(formPdf);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(formPdf);
 
         // A misspelled field must fail rather than silently doing nothing.
@@ -486,21 +531,22 @@ public class PdfEngineCoreTests
             await engine.FormService.SetFieldValueAsync(doc, "NoSuchField", "x"));
     }
 
-    [Fact]
-    public async Task TestXfdfImportActuallyAppliesValues()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestXfdfImportActuallyAppliesValues(string engineName)
     {
         // The whole point of the round trip: export, edit, import, and see the values land.
-        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Xfdf_Test.pdf");
+        string formPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Xfdf_Test_{engineName}.pdf");
         TestPdfBuilder.CreateFormPdf(formPdf);
 
-        string xfdfPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Xfdf_Test.xfdf");
+        string xfdfPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Xfdf_Test_{engineName}.xfdf");
         File.WriteAllText(xfdfPath,
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
             "<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><fields>" +
             "<field name=\"FullName\"><value>Imported Name</value></field>" +
             "</fields></xfdf>");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(formPdf);
 
         await engine.FormService.ImportFormDataXfdfAsync(doc, xfdfPath);
@@ -509,6 +555,9 @@ public class PdfEngineCoreTests
         Assert.Equal("Imported Name", fields.Single(f => f.Name == "FullName").Value);
     }
 
+#if PDFIUM_RENDERER
+    // PDFium-only until the engine gap closes: the native save service exports PNG only
+    // (JPEG and BMP throw NotSupportedException).
     [Fact]
     public async Task TestImageExportProducesDecodableJpegAndBmp()
     {
@@ -543,14 +592,16 @@ public class PdfEngineCoreTests
                 $"{format} decoded to an empty image");
         }
     }
+#endif
 
-    [Fact]
-    public async Task TestImageExportRejectsUnknownFormat()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestImageExportRejectsUnknownFormat(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageExportBadFormat");
+        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"ImageExportBadFormat_{engineName}");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         // Unknown formats are refused rather than silently written as PNG under a .tiff name.
@@ -558,15 +609,16 @@ public class PdfEngineCoreTests
             await engine.SaveService.ExportPagesToImagesAsync(doc, outDir, "x", 1, 1, "tiff", dpi: 72));
     }
 
-    [Fact]
-    public async Task TestOcrReportsHonestlyWhenNoTextLayerAndNoOpticalEngine()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestOcrReportsHonestlyWhenNoTextLayerAndNoOpticalEngine(string engineName)
     {
         // Regression test: DefaultOcrEngine used to return the embedded text layer stamped
         // with a fabricated 0.98 confidence and claim it was OCR. A page with no text layer
         // and no optical engine must report zero confidence and say why - not look like a
         // successful recognition that happened to find nothing.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var textLayerOnly = new PdfViewer.Core.Ocr.DefaultOcrEngine(engine.TextService);
@@ -579,13 +631,14 @@ public class PdfEngineCoreTests
         Assert.Contains("embedded text layer", withText.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task TestOcrFallsBackToOpticalEngineForPagesWithoutText()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestOcrFallsBackToOpticalEngineForPagesWithoutText(string engineName)
     {
         // A page with no embedded text must be routed to the optical engine rather than
         // silently returning nothing.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var stubOptical = new RecordingOcrEngine();
@@ -598,11 +651,12 @@ public class PdfEngineCoreTests
         Assert.Equal("recognized text", result.FullText);
     }
 
-    [Fact]
-    public async Task TestOcrWithoutOpticalEngineReportsZeroConfidence()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestOcrWithoutOpticalEngineReportsZeroConfidence(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var noFallback = new PdfViewer.Core.Ocr.DefaultOcrEngine(new EmptyTextService());
@@ -652,8 +706,9 @@ public class PdfEngineCoreTests
         }
     }
 
-    [Fact]
-    public async Task TestWindowsOcrEngineActuallyRecognizesRenderedText()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestWindowsOcrEngineActuallyRecognizesRenderedText(string engineName)
     {
         // Proves the OCR engine performs REAL optical recognition: it rasterizes the page
         // and reads the pixels, with no access to the embedded text layer.
@@ -664,7 +719,7 @@ public class PdfEngineCoreTests
         }
 
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var ocr = new PdfViewer.Services.WindowsOcrEngine(engine.Renderer);
@@ -684,14 +739,15 @@ public class PdfEngineCoreTests
         }
     }
 
-    [Fact]
-    public async Task TestUnsignedDocumentIsNotReportedAsValidlySigned()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestUnsignedDocumentIsNotReportedAsValidlySigned(string engineName)
     {
         // SECURITY regression test: VerifySignatureAsync previously returned
         // SignatureStatus.Valid unconditionally, for ANY document - including unsigned and
         // tampered ones. An unsigned document must report Unknown, never Valid.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var signatures = await engine.SignatureService.GetSignaturesAsync(doc);
@@ -702,6 +758,8 @@ public class PdfEngineCoreTests
         Assert.Equal(SignatureStatus.Unknown, status);
     }
 
+#if PDFIUM_RENDERER
+    // Tests the PDFium adapter's own date parser, which the PDFium-free build does not have.
     [Fact]
     public void TestPdfDateParsing()
     {
@@ -717,21 +775,39 @@ public class PdfEngineCoreTests
         Assert.Null(PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate("not-a-date"));
         Assert.Null(PdfEngine.Pdfium.Adapters.PdfiumSignatureService.ParsePdfDate("D:20261305000000"));
     }
+#endif
 
     [Fact]
-    public async Task TestRedactionActuallyRemovesUnderlyingText()
+    public void TestNativePdfDateParsing()
+    {
+        // The same strings through the vector engine's signature date parser. It keeps the
+        // date's UTC offset, where the PDFium adapter's parser drops it.
+        Assert.Equal(new DateTimeOffset(2026, 9, 5, 12, 30, 45, new TimeSpan(5, 30, 0)),
+            PdfEngine.Vector.Signatures.PdfSignatureValidator.ParsePdfDate("D:20260905123045+05'30'"));
+
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            PdfEngine.Vector.Signatures.PdfSignatureValidator.ParsePdfDate("D:2026"));
+
+        Assert.Null(PdfEngine.Vector.Signatures.PdfSignatureValidator.ParsePdfDate(""));
+        Assert.Null(PdfEngine.Vector.Signatures.PdfSignatureValidator.ParsePdfDate("not-a-date"));
+        Assert.Null(PdfEngine.Vector.Signatures.PdfSignatureValidator.ParsePdfDate("D:20261305000000"));
+    }
+
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRedactionActuallyRemovesUnderlyingText(string engineName)
     {
         // SECURITY regression test: redaction previously only drew a black box and flattened
         // it, leaving the original text objects intact underneath. The "redacted" output
         // gave the text straight back to any extraction or copy-paste - the classic
         // real-world redaction disclosure.
-        string source = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redaction_Source.pdf");
+        string source = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Redaction_Source_{engineName}.pdf");
         TestPdfBuilder.CreateSimplePdf(source, 1, "TopSecretToken");
 
-        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redaction_Output.pdf");
+        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Redaction_Output_{engineName}.pdf");
         if (File.Exists(target)) File.Delete(target);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
             // Sanity check: the secret really is extractable from the source.
@@ -756,8 +832,9 @@ public class PdfEngineCoreTests
         Assert.DoesNotContain("TopSecretToken", after);
     }
 
-    [Fact]
-    public async Task TestDefaultSaveProducesAReadableDocument()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestDefaultSaveProducesAReadableDocument(string engineName)
     {
         // Regression test: SaveOptions defaulted to Incremental, and FPDF_SaveAsCopy with
         // FPDF_INCREMENTAL emits ONLY the incremental update section. Written into a
@@ -765,10 +842,10 @@ public class PdfEngineCoreTests
         // open. RemoveUnusedObjects also defaulted true and was mapped to
         // FPDF_REMOVE_SECURITY, silently stripping encryption.
         string source = GetOrCreateSamplePdf();
-        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DefaultSave_Output.pdf");
+        string target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"DefaultSave_Output_{engineName}.pdf");
         if (File.Exists(target)) File.Delete(target);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
             // Default options - exactly what a caller gets from SaveAsync(doc, path).
@@ -787,17 +864,18 @@ public class PdfEngineCoreTests
         Assert.Contains("CoreTestToken", text);
     }
 
-    [Fact]
-    public async Task TestIntrinsicPageRotationIsNotAppliedTwice()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestIntrinsicPageRotationIsNotAppliedTwice(string engineName)
     {
         // Regression test: the renderer added the page's own /Rotate to the requested
         // rotation, but FPDF_RenderPageBitmap already applies /Rotate internally and
         // FPDF_GetPageWidthF/HeightF already return rotation-adjusted sizes. A /Rotate 90
         // page therefore rendered 90 degrees off, into a transposed bitmap.
-        string rotatedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Rotated90_Test_Doc.pdf");
+        string rotatedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Rotated90_Test_Doc_{engineName}.pdf");
         TestPdfBuilder.CreateRotatedPdf(rotatedPdf, 90);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(rotatedPdf);
 
         // The page is 612x792 with /Rotate 90, so its DISPLAY size is 792x612 (landscape).
@@ -824,6 +902,9 @@ public class PdfEngineCoreTests
         }
     }
 
+#if PDFIUM_RENDERER
+    // PDFium-only until the engine gap closes: the vector renderer reports the requested DPI,
+    // not the effective one, when the raster size is set in pixels.
     [Fact]
     public async Task TestRenderReportsEffectiveDpiWhenSizedByPixels()
     {
@@ -845,7 +926,11 @@ public class PdfEngineCoreTests
 
         Assert.Equal(144.0, rendered.Dpi, precision: 1);
     }
+#endif
 
+#if PDFIUM_RENDERER
+    // PDFium-only until the engine gap closes: the vector renderer fails an oversized render
+    // with an arithmetic overflow, not a clear refusal that names the limit.
     [Fact]
     public async Task TestOversizedRenderIsRejectedInsteadOfOverflowing()
     {
@@ -868,7 +953,10 @@ public class PdfEngineCoreTests
 
         Assert.Contains("exceed", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+#endif
 
+#if PDFIUM_RENDERER
+    // Tests the PDFium adapter's unmanaged pixel buffer, which the PDFium-free build does not have.
     [Fact]
     public void TestNativeMemoryOwnerThrowsAfterDispose()
     {
@@ -881,14 +969,16 @@ public class PdfEngineCoreTests
 
         Assert.Throws<ObjectDisposedException>(() => _ = owner.Memory.Span[0]);
     }
+#endif
 
-    [Fact]
-    public async Task TestAttachDocumentDisposesPreviousDocument()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestAttachDocumentDisposesPreviousDocument(string engineName)
     {
         // Regression test: attaching a second document over the first silently dropped it,
         // leaking its PDFium handle and backing buffer and keeping the file locked.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
 
         var first = await engine.OpenDocumentAsync(samplePdf);
         var second = await engine.OpenDocumentAsync(samplePdf);
@@ -903,13 +993,14 @@ public class PdfEngineCoreTests
         Assert.True(second.IsOpen);
     }
 
-    [Fact]
-    public async Task TestSessionTokenIsCancelledOnClose()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSessionTokenIsCancelledOnClose(string engineName)
     {
         // Regression test: Close() disposed the document with no signal to in-flight work,
         // so a queued render could hand a freed PDFium handle back to the native library.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var doc = await engine.OpenDocumentAsync(samplePdf);
 
         using var session = new DocumentSession();
@@ -920,8 +1011,9 @@ public class PdfEngineCoreTests
         Assert.True(session.SessionToken.IsCancellationRequested);
     }
 
-    [Fact]
-    public void TestMultiTierCacheMemoryBudgetAndEviction()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public void TestMultiTierCacheMemoryBudgetAndEviction(string engineName)
     {
         // 200 KB cache limit
         using var cache = new MultiTierCache(maxMemoryBytes: 200 * 1024);
@@ -931,10 +1023,10 @@ public class PdfEngineCoreTests
 
         // Create dummy 100 KB rendered pages
         int pageBytes = 100 * 1024;
-        var mem1 = new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(pageBytes);
+        var mem1 = PixelBuffer(engineName, pageBytes);
         var page1 = new RenderedPage(1, 100, 250, 400, 96, PageRotation.Rotate0, mem1);
 
-        var mem2 = new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(pageBytes);
+        var mem2 = PixelBuffer(engineName, pageBytes);
         var page2 = new RenderedPage(2, 100, 250, 400, 96, PageRotation.Rotate0, mem2);
 
         cache.Put(key1, page1).Dispose();
@@ -949,7 +1041,7 @@ public class PdfEngineCoreTests
 
         // Put a 3rd page which forces eviction of least recently used key2
         var key3 = new RenderCacheKey("doc1", 3, 96, PageRotation.Rotate0, 1);
-        var mem3 = new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(pageBytes);
+        var mem3 = PixelBuffer(engineName, pageBytes);
         var page3 = new RenderedPage(3, 100, 250, 400, 96, PageRotation.Rotate0, mem3);
 
         cache.Put(key3, page3).Dispose();
@@ -958,8 +1050,9 @@ public class PdfEngineCoreTests
         Assert.True(cache.CurrentMemoryBytes <= cache.MaxMemoryBytes);
     }
 
-    [Fact]
-    public void TestCacheDoesNotFreePageStillHeldByCaller()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public void TestCacheDoesNotFreePageStillHeldByCaller(string engineName)
     {
         // Regression test: TryGet used to return the raw RenderedPage while the cache kept
         // ownership, so an eviction disposed it under the caller and reads of the pixel
@@ -969,7 +1062,7 @@ public class PdfEngineCoreTests
         int pageBytes = 100 * 1024;
         var keyA = new RenderCacheKey("doc1", 1, 96, PageRotation.Rotate0, 1);
         var pageA = new RenderedPage(1, 100, 250, 400, 96, PageRotation.Rotate0,
-            new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(pageBytes));
+            PixelBuffer(engineName, pageBytes));
 
         cache.Put(keyA, pageA).Dispose();
 
@@ -988,8 +1081,9 @@ public class PdfEngineCoreTests
         Assert.Throws<ObjectDisposedException>(() => _ = pageA.Pixels.Span[0]);
     }
 
-    [Fact]
-    public void TestCacheRejectsEntryLargerThanEntireBudget()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public void TestCacheRejectsEntryLargerThanEntireBudget(string engineName)
     {
         // Regression test: an entry bigger than the whole budget could never satisfy the
         // eviction loop's exit condition, so the cache evicted and disposed EVERY entry and
@@ -998,12 +1092,12 @@ public class PdfEngineCoreTests
 
         var smallKey = new RenderCacheKey("doc1", 1, 96, PageRotation.Rotate0, 1);
         var smallPage = new RenderedPage(1, 10, 10, 40, 96, PageRotation.Rotate0,
-            new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(400));
+            PixelBuffer(engineName, 400));
         cache.Put(smallKey, smallPage).Dispose();
 
         var hugeKey = new RenderCacheKey("doc1", 2, 96, PageRotation.Rotate0, 1);
         var hugePage = new RenderedPage(2, 500, 500, 2000, 96, PageRotation.Rotate0,
-            new PdfEngine.Pdfium.Adapters.NativeMemoryOwner(1000 * 1024));
+            PixelBuffer(engineName, 1000 * 1024));
 
         using (var hugeLease = cache.Put(hugeKey, hugePage))
         {
@@ -1018,11 +1112,12 @@ public class PdfEngineCoreTests
         stillThere?.Dispose();
     }
 
-    [Fact]
-    public async Task TestRenderPrioritySchedulerDeduplicationAndCancellation()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRenderPrioritySchedulerDeduplicationAndCancellation(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var doc = await engine.OpenDocumentAsync(samplePdf);
 
         using var session = new DocumentSession();
@@ -1175,17 +1270,19 @@ public class PdfEngineCoreTests
         Assert.Equal(LicenseTier.Community, ex.CurrentTier);
     }
 
-    [Fact]
-    public async Task TestCommandHistoryEnforcesFeatureGate()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestCommandHistoryEnforcesFeatureGate(string engineName)
     {
         // The gate is enforced at the CommandHistory choke point, so an unlicensed command
         // cannot execute no matter which call site constructed it.
         using var session = new DocumentSession();
+        using IPdfEngine engine = TestEngines.Create(engineName);
 
         var community = new CommandHistory(featureGate: new DefaultFeatureGate(LicenseTier.Community));
         var redaction = new ApplyRedactionsCommand(
-            new PdfEngine.Pdfium.Adapters.PdfiumRedactionService(),
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gated_redaction.pdf"),
+            engine.RedactionService,
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"gated_redaction_{engineName}.pdf"),
             Array.Empty<PdfEngine.Redaction.RedactionArea>());
 
         await Assert.ThrowsAsync<FeatureNotLicensedException>(
@@ -1247,12 +1344,13 @@ public class PdfEngineCoreTests
         Assert.False(permissive.IsConfirmationRequired(PdfDocumentAction.AttachmentExtraction));
     }
 
-    [Fact]
-    public async Task TestSchedulerEnforcesRenderDimensionCeiling()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSchedulerEnforcesRenderDimensionCeiling(string engineName)
     {
         // The policy ceiling is applied before any render work is scheduled or cached.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var doc = await engine.OpenDocumentAsync(samplePdf);
 
         using var session = new DocumentSession();
@@ -1273,8 +1371,9 @@ public class PdfEngineCoreTests
         Assert.Equal(150, ok.Page.WidthPixels);
     }
 
-    [Fact]
-    public async Task TestViewerRefusesOversizedRenderLoudly()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestViewerRefusesOversizedRenderLoudly(string engineName)
     {
         // The viewer REFUSES a render that would breach the policy rather than silently
         // returning a lower-resolution image that looks like the real page. The refusal is
@@ -1283,7 +1382,7 @@ public class PdfEngineCoreTests
         string samplePdf = GetOrCreateSamplePdf();
         var policy = PdfSecurityPolicy.DefaultStrict with { MaxRenderDimensionPixels = 200 };
 
-        using var service = new PdfViewer.Services.PdfiumDocumentService(policy);
+        using var service = TestEngines.CreateService(engineName, policy);
         await service.OpenDocumentAsync(samplePdf);
 
         // 5000 DPI would demand a raster far beyond the ceiling.
@@ -1298,15 +1397,16 @@ public class PdfEngineCoreTests
             $"Expected a raster within the ceiling, got {ok.PixelWidth}x{ok.PixelHeight}.");
     }
 
-    [Fact]
-    public async Task TestPageViewModelSurfacesPolicyRefusal()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPageViewModelSurfacesPolicyRefusal(string engineName)
     {
         // A policy refusal must be reported, not swallowed: a silently blank page is
         // indistinguishable from a rendering bug.
         string samplePdf = GetOrCreateSamplePdf();
         var policy = PdfSecurityPolicy.DefaultStrict with { MaxRenderDimensionPixels = 50 };
 
-        using var service = new PdfViewer.Services.PdfiumDocumentService(policy);
+        using var service = TestEngines.CreateService(engineName, policy);
         await service.OpenDocumentAsync(samplePdf);
 
         var cache = new PdfViewer.Services.LruPageCache(4);
@@ -1329,14 +1429,15 @@ public class PdfEngineCoreTests
         Assert.Contains("security limit", refusedMessage);
     }
 
-    [Fact]
-    public async Task TestServiceRejectsDocumentExceedingSizePolicy()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestServiceRejectsDocumentExceedingSizePolicy(string engineName)
     {
         // The open boundary DOES hard-refuse: an oversized file is never read into memory.
         string samplePdf = GetOrCreateSamplePdf();
         var policy = PdfSecurityPolicy.DefaultStrict with { MaxDocumentSizeBytes = 1 };
 
-        using var service = new PdfViewer.Services.PdfiumDocumentService(policy);
+        using var service = TestEngines.CreateService(engineName, policy);
 
         var ex = await Assert.ThrowsAsync<PdfEngine.Exceptions.PdfSecurityPolicyException>(
             async () => await service.OpenDocumentAsync(samplePdf));
@@ -1344,11 +1445,12 @@ public class PdfEngineCoreTests
         Assert.Equal(nameof(PdfSecurityPolicy.MaxDocumentSizeBytes), ex.PolicyName);
     }
 
-    [Fact]
-    public async Task TestSessionRejectsDocumentExceedingSizePolicy()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSessionRejectsDocumentExceedingSizePolicy(string engineName)
     {
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var doc = await engine.OpenDocumentAsync(samplePdf);
 
         // A 1-byte ceiling rejects any real document.
