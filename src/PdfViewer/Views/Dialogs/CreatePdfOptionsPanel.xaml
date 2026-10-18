@@ -1,0 +1,47 @@
+<UserControl x:Class="PdfViewer.Views.Dialogs.CreatePdfOptionsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource SurfaceBgBrush}"
+             Foreground="{DynamicResource TextPrimaryBrush}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="Visible" />
+    </UserControl.Resources>
+    <StackPanel>
+        <TextBlock Text="Page size" Margin="0,0,0,4" />
+        <ComboBox ItemsSource="{Binding PageSizes}" SelectedItem="{Binding PageSize}" AutomationProperties.Name="Page size"
+                  ToolTip="Fit to image: each page is the picture's own size at its resolution. A paper size puts the picture inside the margins, turned to landscape for a landscape picture." />
+        <StackPanel Visibility="{Binding UsesPaper, Converter={StaticResource Visible}}" Margin="0,8,0,0">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Margins (mm)" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBox Text="{Binding MarginMillimetres, UpdateSourceTrigger=PropertyChanged}" Width="50" AutomationProperties.Name="Margins in millimetres" />
+            </StackPanel>
+            <CheckBox Content="_Fill the page (crop what overflows)" IsChecked="{Binding FillPage}" Margin="0,6,0,0" />
+        </StackPanel>
+
+        <TextBlock Text="Image quality" Margin="0,12,0,4" />
+        <ComboBox ItemsSource="{Binding Qualities}" SelectedIndex="{Binding QualityIndex}" AutomationProperties.Name="Image quality"
+                  ToolTip="Keep: JPEG photos go in byte for byte, with no loss, and other pictures are compressed without losing anything. Compress: smaller files, pictures compressed again as JPEG (JPEGs that need no change are still kept as they are)." />
+        <StackPanel Orientation="Horizontal" Margin="0,6,0,0" IsEnabled="{Binding UseJpeg}">
+            <TextBlock Text="JPEG quality (10-100)" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox Text="{Binding JpegQuality, UpdateSourceTrigger=PropertyChanged}" Width="40" AutomationProperties.Name="JPEG quality" />
+        </StackPanel>
+        <CheckBox Content="_Greyscale" IsChecked="{Binding Grayscale}" Margin="0,12,0,0" />
+        <CheckBox Content="Make _searchable (recognize text)" IsChecked="{Binding MakeSearchable}" IsEnabled="{Binding IsOcrAvailable}" Margin="0,6,0,0"
+                  ToolTip="Windows text recognition reads the pages that have no text and adds the words as invisible text, so they can be searched and copied. Nothing leaves this computer." />
+        <TextBlock Text="Text recognition needs an OCR language: Windows Settings > Time &amp; language > Language &amp; region." TextWrapping="Wrap" FontSize="11"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="20,2,0,0">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsOcrAvailable}" Value="False">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+        <CheckBox Content="Save as PDF/_A-2b (archiving)" IsChecked="{Binding ConvertToPdfA}" Margin="0,6,0,0"
+                  ToolTip="Converts the new PDF to PDF/A-2b for long-term archiving: colour profiled, fonts embedded, metadata written." />
+    </StackPanel>
+</UserControl>

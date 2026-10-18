@@ -34,6 +34,9 @@ public sealed class PdfAssemblyOptions
     /// (else the source's /Title, else "Document n"), holding that source's outline.
     /// </summary>
     public IReadOnlyList<string?>? SourceTitles { get; init; }
+
+    /// <summary>The result's document information, in place of the first source's (Combine Files).</summary>
+    public Create.PdfCreateInfo? Info { get; init; }
 }
 
 /// <summary>
@@ -166,7 +169,16 @@ public static class PdfPageAssembler
             Set(catalog, new PdfDictionary(catalogEntries));
 
             int? info = null;
-            if (primary?.XrefTable.Trailer?["Info"] is { } infoRef && primary.Resolver.Resolve(infoRef) is PdfDictionary infoDict)
+            if (_options.Info is { } created)
+            {
+                string now = PdfTextStrings.FormatDate(DateTime.Now);
+                var entries = new Dictionary<string, PdfObject>();
+                foreach (var (key, value) in new[] { ("Title", created.Title), ("Author", created.Author), ("Subject", created.Subject),
+                             ("Creator", created.Creator), ("Producer", (string?)created.Producer), ("CreationDate", now), ("ModDate", now) })
+                    if (!string.IsNullOrWhiteSpace(value)) entries[key] = PdfObjectWriter.TextString(value);
+                info = Add(new PdfDictionary(entries));
+            }
+            else if (primary?.XrefTable.Trailer?["Info"] is { } infoRef && primary.Resolver.Resolve(infoRef) is PdfDictionary infoDict)
             {
                 info = Add(_copiers[primary].CopyValue(infoDict));
                 _copiers[primary].Drain();
