@@ -16,11 +16,10 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Rendering Engines (Vector Migration)](#rendering-engines-vector-migration)
 - [Prerequisites & System Requirements](#prerequisites--system-requirements)
 - [Project & Directory Structure](#project--directory-structure)
-- [Building & Running](#building--running)
-  - [Build Solution](#build-solution)
-  - [Run Application](#run-application)
-  - [Command-Line Arguments](#command-line-arguments)
-  - [Publish Single-File Executable](#publish-single-file-executable)
+- [Building & Publishing](#building--publishing)
+  - [1-Click Automated Build & Package Script](#1-click-automated-build--package-script)
+  - [Manual Build](#manual-build)
+  - [Run from Source](#run-from-source)
   - [Run Automated Tests](#run-automated-tests)
 - [User Guide & Workflows](#user-guide--workflows)
   - [Opening Documents & Drag-and-Drop](#opening-documents--drag-and-drop)
@@ -28,12 +27,9 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
   - [Zooming, Scaling & Panning](#zooming-scaling--panning)
   - [Text Selection, Copying & Highlighting](#text-selection-copying--highlighting)
   - [Searching Text](#searching-text)
-  - [Navigating Bookmarks & Thumbnails](#navigating-bookmarks--thumbnails)
   - [Exporting Pages to Images](#exporting-pages-to-images)
   - [Printing Documents](#printing-documents)
   - [Inspecting Document Properties](#inspecting-document-properties)
-  - [Switching Themes (Light / Dark)](#switching-themes-light--dark)
-  - [Handling Password-Protected PDFs](#handling-password-protected-pdfs)
 - [Comprehensive Keyboard Shortcuts](#comprehensive-keyboard-shortcuts)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
 - [Code signing policy](#code-signing-policy)
@@ -101,7 +97,7 @@ The application follows the **Model-View-ViewModel (MVVM)** architectural patter
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           WPF UI Layer (.NET 9)                         │
-│  • MainWindow.xaml (Ribbon, Menus, Status Bar, Dark/Light Themes)       │
+│  • MainWindow.xaml (Menus, Toolbar, Sidebar, Tabs, Dark/Light Themes)   │
 │  • MainViewModel (Controllers: Navigation, Search, Annotations, Zoom)   │
 │  • WpfBitmapAdapter (Zero-copy RenderedPage BGRA -> BitmapSource)       │
 └────────────────────────────────────▲────────────────────────────────────┘
@@ -160,7 +156,7 @@ oracle the engine is tested against; the published application does not contain 
 - **Dynamic Zoom & Scaling**:
   - **Fit to Width** (`Ctrl+1`): Automatically fits the document width to the available viewport width.
   - **Fit to Page** (`Ctrl+0`): Scales the entire page (width and height) to fit inside the visible viewport.
-  - **Arbitrary Zoom Range**: 25% up to 500% with slider control, preset increments, and live percentage display.
+  - **Arbitrary Zoom Range**: 25% up to 1600% with slider control, preset increments, and live percentage display. Pages stay sharp at every zoom because they are redrawn as vectors, never scaled up from a bitmap.
   - **Mouse Wheel Zoom**: Smooth dynamic zooming using `Ctrl + MouseWheel`.
   - **Interactive Panning**: Hand/Pan tool toggle or Middle-Mouse drag to pan smoothly around zoomed pages.
 - **Page Rotation**:
@@ -233,21 +229,27 @@ oracle the engine is tested against; the published application does not contain 
   - Document Splitting by page count intervals.
   - Transactional Undo/Redo support for page manipulations.
 - **Irreversible Content Redaction**:
-  - Redaction bounding box markup with custom blackout overlay text.
-  - Irreversible vector flattening and underlying text stream destruction.
+  - Mark selected text, an area or every search result, then apply. The text, image pixels and drawings under the marks are removed from the file itself, not just covered, and the copy keeps no earlier revision.
+  - Optional overlay text on each redaction.
 - **Forms & AcroForm Support**:
-  - AcroForm field discovery and inspection (Text, Checkbox, Radio, Choice).
-  - Standard XFDF form data import and export.
-  - Document form field flattening.
+  - Fill fields on the page (text, check boxes, radio buttons, lists, combo boxes) with tab order, formatting, validation and calculations. The Acrobat `AF*` functions are recognised; no script is ever run.
+  - **Tools → Import / Export Form Data** (XFDF and FDF), **Reset Form** and **Flatten Form**.
 - **Document Comparison & Diff Heatmaps**:
   - Page-by-page textual diffing (Added, Deleted, Modified text tokens).
   - Visual pixel comparison with `VisualSimilarityScore` (0.0 to 1.0) and visual difference heatmap overlay generation (magenta highlighting).
-- **Pluggable OCR Engine**:
-  - Sub-pixel word token extraction with confidence scoring and searchable overlay generator.
-- **High-Performance Architecture & Benchmarks**:
-  - 150 DPI Raw Render: **7.95 ms/page** (125.8 pages/sec).
-  - Full Text Extraction: **0.10 ms/page** (5 ms for 50 pages).
-  - Memory-budgeted priority scheduler strictly maintaining memory under configured limits.
+  - **Tools → Compare With Document** shows both versions side by side, with synchronised scrolling and next/previous change.
+- **Searchable Scans (OCR)**: **Tools → Make Scanned Pages Searchable** adds an invisible text layer to pages that have none, using the OCR built into Windows, so scans can be searched, selected and copied. Nothing is uploaded.
+- **Edit Text & Images** (`Ctrl+E`): edit page text in place, in its own font, size, colour and alignment, with paragraphs reflowed; move, resize, rotate, replace or delete images; add new text and images. Right-to-left (Arabic, Hebrew) and Indic scripts are shaped, and vertical Japanese and Chinese columns keep their sideways Latin and upright digit pairs. Every edit can be undone, and changes are saved as an incremental update.
+- **Page Marks** (*Edit → Page Marks*): headers and footers, watermarks, backgrounds and Bates numbering, added or removed as a set.
+- **Export to Word** (*File → Export → Word Document*): text with its fonts and styles, headings, lists, real tables, images, drawings as shapes or pictures, and headers and footers with page numbers. The Word document usually keeps the page count of the PDF.
+- **Digital Signatures**: sign with a certificate (a `.pfx` file or the Windows certificate store) as a visible or invisible signature, optionally with a picture and an RFC 3161 timestamp, with long-term validation (PAdES-B-LT and B-LTA). **Tools → Verify Digital Signatures** checks signatures and what changed after signing.
+- **Password Protection**: **Tools → Protect with Password** (AES-256, with print, copy, edit and form permissions) and **Remove Security**. Encrypted files open with either password, and their permissions are honoured.
+- **Reduce File Size**: recompresses images, removes unused objects and subsets fonts. Encrypted documents keep their passwords and permissions.
+- **PDF/A** (*Tools → PDF/A: Check and Convert*): validates and converts to PDF/A-1b, 2b and 3b, flattening transparency for PDF/A-1b.
+- **Accessibility Check** (*Tools → Accessibility Check*): checks PDF/UA-1, lists each issue with its Matterhorn checkpoint and shows where it is on the page.
+- **Colour Management**: ICC profiles in the document are honoured, and CMYK colour is shown the way Acrobat shows it.
+- **Document Tabs**: several documents open at once (`Ctrl+Tab` / `Ctrl+Shift+Tab` to switch, `Ctrl+W` to close).
+- **Memory-Budgeted Rendering**: a priority scheduler and byte-limited caches keep memory bounded on very large documents.
 - **Software Bill of Materials (SBOM)**:
   - Automated CycloneDX v1.6 (`sbom.cyclonedx.json`) and SPDX v2.3 (`sbom.spdx.json`) generation for supply chain transparency.
 
@@ -323,7 +325,12 @@ d:\Practice\pdf-viewer\
 ├── assets/                        # Multi-resolution application & file icons
 ├── benchmarks/
 │   └── PdfViewer.Benchmarks/      # BenchmarkDotNet & high-throughput memory metrics
-├── eng/pdfium/                    # PDFium for developer and test builds (the oracle): pin, headers, licences
+├── docs/pdf-viewer-vector-migration/  # Engine plan, decisions, gates and implementation status
+├── eng/
+│   ├── pdfium/                    # PDFium for developer and test builds (the oracle): pin, headers, licences
+│   ├── releasegate/               # Startup, payload-size and PDFium-free release gates
+│   ├── signing/                   # Code-signing scripts and notes
+│   └── vectorpdf/                 # Corpus tooling (vectorpdf), baselines and the git-ignored test corpus
 ├── publish/                       # Output folder for distribution (Setup & Portable EXE, SBOM)
 ├── samples/                       # Multi-page test documents
 ├── scripts/
@@ -332,13 +339,17 @@ d:\Practice\pdf-viewer\
 │
 ├── src/
 │   ├── PdfEngine.Abstractions/    # UI-neutral domain models, geometry, exceptions & contracts
+│   ├── PdfEngine.Vector/          # The PDF engine: parser, fonts, text, forms, signatures, editing, export
+│   ├── PdfEngine.Vector.Direct2D/ # Direct2D/DirectWrite renderer and printing
+│   ├── PdfEngine.Vector.Windows/  # WPF fallback renderer
 │   ├── PdfEngine.Pdfium/          # PDFium interop, the oracle of developer and test builds (not shipped)
 │   ├── PdfViewer.Core/            # DocumentSession, RenderPriorityScheduler, MultiTierCache & Undo/Redo
 │   ├── PdfViewer/                 # Modern WPF MVVM application with Light/Dark themes
 │   └── Installer/                 # Windows Graphical Setup Installer & Uninstaller
 │
 └── tests/
-    └── PdfViewer.Tests/           # 63 automated unit, integration, comparison & engine tests
+    ├── PdfEngine.Vector.Tests/    # Engine tests: unit, fixtures, PDFium-differential and fuzz (about 1,060)
+    └── PdfViewer.Tests/           # Viewer tests: view models, windows, services, release gates (about 590)
 ```
 
 ---
@@ -402,8 +413,8 @@ dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the published conf
 - **Single Page View**: Focus on one page at a time.
 - **Toggle View Mode**: Click the **View Mode** button on the toolbar or select **View > Continuous Scrolling** / **Single Page View** in the menu.
 - **Navigation Controls**:
-  - `|<` / `>|`: Jump to First / Last Page (or `Home` / `End`).
-  - `<` / `>`: Previous / Next Page (or `PageUp` / `PageDown`).
+  - **First / Last Page** toolbar buttons (or `Home` / `End`).
+  - **Previous / Next Page** toolbar buttons (or `PageUp` / `PageDown`).
   - **Page Input Box**: Type a page number directly and press `Enter` to jump.
 
 ### Zooming, Scaling & Panning
@@ -475,6 +486,14 @@ dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the published conf
 | `Ctrl + R` | Document Loaded | Rotate view 90° Clockwise |
 | `Ctrl + Shift + R` | Document Loaded | Rotate view 90° Counter-Clockwise |
 | `Ctrl + B` | Global | Toggle navigation sidebar visibility |
+| `Ctrl + E` | Document Loaded | Edit text & images |
+| `Ctrl + 4` | Document Loaded | Read mode (reflowed, screen-reader friendly) |
+| `Ctrl + Shift + N` | Document Loaded | Night mode (invert pages) |
+| `Ctrl + Shift + S` | Document Loaded | Save annotated copy as |
+| `Ctrl + W` | Document Loaded | Close document |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Several documents | Next / previous document tab |
+| `Alt + Left` / `Alt + Right` | Document Loaded | Back / forward through jumps |
+| `F11` | Document Loaded | Full screen (`Esc` or `F11` to exit) |
 | `PageDown` / `Right` | Viewport | Go to Next Page |
 | `PageUp` / `Left` | Viewport | Go to Previous Page |
 | `Home` | Viewport | Jump to First Page |

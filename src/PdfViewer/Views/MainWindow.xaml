@@ -42,6 +42,7 @@
         <KeyBinding Key="Escape" Command="{Binding ActiveDocument.ClearSelectionCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="F" Command="{Binding ActiveDocument.ToggleSearchCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="D" Command="{Binding ActiveDocument.ShowPropertiesCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="E" Command="{Binding ActiveDocument.ToggleContentEditingCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="OemPlus" Command="{Binding ActiveDocument.ZoomInCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="Add" Command="{Binding ActiveDocument.ZoomInCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="OemMinus" Command="{Binding ActiveDocument.ZoomOutCommand}" />
