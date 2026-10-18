@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using PdfEngine.Pdfium;
 using PdfEngine.Signatures;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Forms;
@@ -80,7 +79,7 @@ public class SigningViewerTests : IDisposable
 
     private static async Task<System.Collections.Generic.IReadOnlyList<SignatureInfo>> Verify(string path)
     {
-        using var engine = new PdfiumEngine();
+        using var engine = TestEngines.Create(TestEngines.Native);
         await using var doc = await engine.OpenDocumentAsync(path);
         return await engine.SignatureService.GetSignaturesAsync(doc);
     }
