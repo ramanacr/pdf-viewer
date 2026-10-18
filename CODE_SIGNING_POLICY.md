@@ -38,4 +38,5 @@ In detail: it has no analytics, telemetry or account, and never uploads document
 network request only when the user asks for one: the update check (off until the user allows it
 on first start, and switchable in Help > Privacy & Safety), downloading an optional component,
 and, when signing or validating signatures, contacting the timestamp server or certificate
-authorities the user chooses. See the in-app privacy statement.
+authorities the user chooses. The full policy is at
+https://ramanacr.github.io/pdf-viewer/privacy/ and in the in-app privacy statement.
