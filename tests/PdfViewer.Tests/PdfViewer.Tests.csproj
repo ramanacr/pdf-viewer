@@ -33,7 +33,6 @@
     <PdfiumOnlyTest Include="PageMarksViewerTests.cs" />
     <PdfiumOnlyTest Include="PdfEngineCoreTests.cs" />
     <PdfiumOnlyTest Include="PdfiumFormRenderingTests.cs" />
-    <PdfiumOnlyTest Include="PdfServiceTests.cs" />
     <PdfiumOnlyTest Include="RedactionViewerTests.cs" />
     <PdfiumOnlyTest Include="SanitizationTests.cs" />
     <PdfiumOnlyTest Include="SaveInPlaceTests.cs" />
