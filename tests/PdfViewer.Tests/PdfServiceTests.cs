@@ -911,7 +911,7 @@ public class PdfServiceTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
-    public async Task TestPdfiumEncryptedDocumentRequiresPasswordAndOpens(string engineName)
+    public async Task TestEncryptedDocumentRequiresPasswordAndOpens(string engineName)
     {
         string encPath = FixtureGenerator.GetEncryptedPdfPath();
         Assert.True(File.Exists(encPath), $"Encrypted fixture not found at {encPath}");
@@ -949,7 +949,7 @@ public class PdfServiceTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
-    public async Task TestPdfiumMultiThreadedRenderingSafety(string engineName)
+    public async Task TestMultiThreadedRenderingSafety(string engineName)
     {
         string pdfPath = CreateSamplePdf("multithread_test.pdf", 10);
         using var service = TestEngines.CreateService(engineName);
@@ -968,7 +968,7 @@ public class PdfServiceTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
-    public async Task TestPdfiumLarge500PageDocumentPerformance(string engineName)
+    public async Task TestLarge500PageDocumentPerformance(string engineName)
     {
         string pdfPath = Path.Combine(_testDir, "large_500_pages.pdf");
         TestPdfBuilder.CreateSimplePdf(pdfPath, 500, "LargeDocKeyword");
@@ -996,7 +996,7 @@ public class PdfServiceTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
-    public async Task TestPdfiumArbitraryDpiScaling(string engineName)
+    public async Task TestArbitraryDpiScaling(string engineName)
     {
         string pdfPath = CreateSamplePdf("dpi_scaling_test.pdf", 1);
         using var service = TestEngines.CreateService(engineName);
@@ -1016,7 +1016,7 @@ public class PdfServiceTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
-    public async Task TestPdfiumInkAnnotationRoundtrip(string engineName)
+    public async Task TestInkAnnotationRoundtrip(string engineName)
     {
         string samplePdf = CreateSamplePdf("Ink_Annotation_Test.pdf", 1);
         using var service = TestEngines.CreateService(engineName);
