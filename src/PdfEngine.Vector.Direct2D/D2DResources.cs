@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using PdfEngine.Vector.Editing;
 using SharpGen.Runtime;
@@ -10,6 +12,9 @@ using Vortice.DXGI;
 using Vortice.WIC;
 
 namespace PdfEngine.Vector.Direct2D;
+
+/// <summary>A glyph run as the backend draws it; <see cref="Value"/> is null when it cannot (<see cref="Problem"/> says why).</summary>
+internal sealed record ResolvedRun((IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? Value, bool ByGlyphId, string Problem);
 
 /// <summary>
 /// Device-independent and device-dependent Direct2D/DirectWrite resources (04 "Device loss",
@@ -26,7 +31,9 @@ internal sealed class D2DResources : IDisposable
     /// blending), so its weight is the same at every zoom. DirectWrite's default glyph rasterizer
     /// is tuned for UI text: on a real-world text page at 144 dpi it drew 13 % more ink than
     /// PDFium (outlines: 3.6 %), although at 600 dpi the two agree within 0.2 % - small document
-    /// text looked bold. Same speed on text-heavy pages (`vectorpdf tiles`).
+    /// text looked bold. Same speed on text-heavy pages (`vectorpdf tiles`). Pages drawn to pixels
+    /// now draw their text from the glyph atlas (<see cref="GlyphAtlas"/>, exact-area coverage);
+    /// these parameters apply to glyph runs recorded for printing, which stay text.
     /// </summary>
     public IDWriteRenderingParams? DocumentTextParams { get; }
     public IWICImagingFactory Wic { get; }
@@ -38,6 +45,15 @@ internal sealed class D2DResources : IDisposable
 
     /// <summary>True when rendering on WARP (software) because no hardware device was available.</summary>
     public bool IsSoftware { get; private set; }
+
+    /// <summary>Time per render stage (the corpus profiler).</summary>
+    public RenderStages Stages { get; } = new();
+
+    /// <summary>
+    /// How each glyph run resolved (face and glyph indices, or why it cannot be drawn), kept as
+    /// long as the run is: font faces are device independent and owned by this object.
+    /// </summary>
+    public ConditionalWeakTable<PdfGlyphRun, ResolvedRun> ResolvedRuns { get; } = new();
 
     private readonly Dictionary<string, IDWriteFontFace?> _embeddedFaces = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IDWriteFontFace?> _systemFaces = new(StringComparer.Ordinal);
@@ -83,8 +99,32 @@ internal sealed class D2DResources : IDisposable
         Context = Device.CreateDeviceContext(DeviceContextOptions.None);
     }
 
+    /// <summary>The device's glyph atlas, once a render asked for it (<see cref="PrepareAtlas"/>).</summary>
+    public GlyphAtlas? Atlas { get; private set; }
+
+    /// <summary>
+    /// Creates the glyph atlas for the current device, or empties it when it filled up; called
+    /// before a render starts drawing, never while sprites drawn from it may still be pending.
+    /// </summary>
+    public void PrepareAtlas()
+    {
+        if (Device == null || Context == null)
+            return;
+        if (Atlas == null || !Atlas.IsFor(Device))
+        {
+            Atlas?.Dispose();
+            Atlas = new GlyphAtlas(this, Device, Context);
+        }
+        else if (Atlas.NeedsClearing)
+        {
+            Atlas.Clear();
+        }
+    }
+
     private void ReleaseDeviceResources()
     {
+        Atlas?.Dispose();
+        Atlas = null;
         foreach (var (_, bitmap, _) in _bitmapLru) bitmap.Dispose();
         _bitmapLru.Clear();
         _bitmaps.Clear();
@@ -226,6 +266,59 @@ internal sealed class D2DResources : IDisposable
     }
 
     public long CachedBitmapBytes => _bitmapBytes;
+
+    // ------------------------------------------------------------------ decoded images (device independent)
+
+    // Whether each image decodes (null) or why not, so analysis, preparation and every replayer
+    // after the first decide without decoding again. Entries are a key and a reason; the table is
+    // emptied when it grows past MaxImageOutcomes (a long session over many documents).
+    private readonly Dictionary<string, PdfFallbackReason?> _imageOutcomes = new(StringComparer.Ordinal);
+    private const int MaxImageOutcomes = 100_000;
+
+    // Pixels decoded by analysis and not yet uploaded as a bitmap: the paint that follows takes
+    // them instead of decoding the image a second time. Bounded; the oldest are dropped.
+    private readonly LinkedList<(string Key, byte[] Pixels, int Width, int Height)> _pendingLru = new();
+    private readonly Dictionary<string, LinkedListNode<(string Key, byte[] Pixels, int Width, int Height)>> _pending = new(StringComparer.Ordinal);
+    private long _pendingBytes;
+    private const long MaxPendingBytes = 128L * 1024 * 1024;
+
+    public bool TryGetImageOutcome(string key, out PdfFallbackReason? failure) => _imageOutcomes.TryGetValue(key, out failure);
+
+    public void SetImageOutcome(string key, PdfFallbackReason? failure)
+    {
+        if (_imageOutcomes.Count >= MaxImageOutcomes) _imageOutcomes.Clear();
+        _imageOutcomes[key] = failure;
+    }
+
+    /// <summary>Keeps decoded pixels for the paint that follows (the caller gives up the array).</summary>
+    public void KeepDecoded(string key, byte[] pixels, int width, int height)
+    {
+        if (_pending.ContainsKey(key) || pixels.Length > MaxPendingBytes)
+            return;
+        _pending[key] = _pendingLru.AddFirst((key, pixels, width, height));
+        _pendingBytes += pixels.Length;
+        while (_pendingBytes > MaxPendingBytes && _pendingLru.Last is { } last)
+        {
+            _pendingLru.RemoveLast();
+            _pending.Remove(last.Value.Key);
+            _pendingBytes -= last.Value.Pixels.Length;
+        }
+    }
+
+    /// <summary>Takes the pixels <see cref="KeepDecoded"/> kept; the caller owns them afterwards.</summary>
+    public bool TakeDecoded(string key, out byte[] pixels, out int width, out int height)
+    {
+        if (_pending.Remove(key, out var node))
+        {
+            _pendingLru.Remove(node);
+            _pendingBytes -= node.Value.Pixels.Length;
+            (_, pixels, width, height) = node.Value;
+            return true;
+        }
+        pixels = Array.Empty<byte>();
+        width = height = 0;
+        return false;
+    }
 
     public void Dispose()
     {

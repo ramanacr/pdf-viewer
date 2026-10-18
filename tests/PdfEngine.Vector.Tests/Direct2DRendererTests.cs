@@ -150,15 +150,16 @@ public class Direct2DRendererTests
         }
     }
     /// <summary>
-    /// Rectangular clips (<c>re W n</c>) are axis-aligned clips instead of offscreen layers; the
-    /// pixels must equal the same clip drawn as a general path (an extra collinear point keeps it
-    /// on the layer path), nested, under page rotation, fractional edges, and inside a blended
-    /// group whose content re-applies the enclosing clips.
+    /// Rectangular clips (<c>re W n</c>) are axis-aligned clips instead of offscreen layers; with
+    /// edges on whole device pixels the pixels must equal the same clip drawn as a general path (an
+    /// extra collinear point keeps it on the layer path), nested, under page rotation, and inside a
+    /// blended group whose content re-applies the enclosing clips. Fractional edges:
+    /// <see cref="Direct2D_RectangleClips_TakeEveryPixelTheyTouch"/>.
     /// </summary>
     [Theory]
     [InlineData(PageRotation.Rotate0, 72.0)]
     [InlineData(PageRotation.Rotate90, 144.0)]
-    [InlineData(PageRotation.Rotate270, 100.0)]
+    [InlineData(PageRotation.Rotate270, 216.0)]
     public async Task Direct2D_RectangleClips_MatchGeneralPathClips(PageRotation rotation, double dpi)
     {
         const string body = "1 0 0 rg 0 0 200 200 re f 0 0 1 rg 30 30 150 120 re f " +
@@ -167,8 +168,8 @@ public class Direct2DRendererTests
         string Poly(double x, double y, double w, double h) =>
             $"{x} {y} m {x + w / 2} {y} l {x + w} {y} l {x + w} {y + h} l {x} {y + h} l h";
         string Page(Func<double, double, double, double, string> clip) =>
-            $"q {clip(10.3, 12.7, 170.2, 150.1)} W n q {clip(25.5, 20, 120, 170)} W n {body} Q Q " +
-            $"q 1 0 0 1 5 5 cm {clip(0, 0, 90.5, 90)} W* n 0 0 0 rg 0 0 300 300 re f Q";
+            $"q {clip(10, 12, 170, 150)} W n q {clip(25, 20, 120, 170)} W n {body} Q Q " +
+            $"q 1 0 0 1 5 5 cm {clip(0, 0, 91, 90)} W* n 0 0 0 rg 0 0 300 300 re f Q";
         const string res = "<< /ExtGState << /GS1 << /BM /Multiply /ca 0.7 >> >> >>";
 
         async Task<RenderedPage> Draw(string content, Direct2DVectorRenderer r)
@@ -188,6 +189,31 @@ public class Direct2DRendererTests
         Assert.True(mean <= 0.25, $"mean {mean:F3}");
         Assert.True(bad <= 0.001, $"bad {bad:P3}");
     }
+    /// <summary>
+    /// A rectangular clip with fractional edges keeps every pixel it touches, unantialiased, as
+    /// PDFium clips to a rectangle (its outer pixel rectangle): a clip from 10.3 to 20.7 at 72 dpi
+    /// paints columns 10 to 20 fully and nothing beside them.
+    /// </summary>
+    [Fact]
+    public async Task Direct2D_RectangleClips_TakeEveryPixelTheyTouch()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("q 10.3 10.3 10.4 10.4 re W n 0 0 0 rg 0 0 100 100 re f Q", "<< >>", mediaBox: "[0 0 40 40]");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        using var renderer = new Direct2DVectorRenderer();
+        using var page = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 });
+        var px = page.Pixels.ToArray();
+        byte Gray(int x, int y) => px[y * page.Stride + x * 4 + 1];
+        // Page y 10.3..20.7 is device rows 19.3..29.7 on a 40-pixel page: rows 19 to 29.
+        for (int x = 9; x <= 21; x++)
+        for (int y = 18; y <= 30; y++)
+        {
+            bool inside = x is >= 10 and <= 20 && y is >= 19 and <= 29;
+            Assert.Equal(inside ? 0 : 255, Gray(x, y));
+        }
+    }
+
     /// <summary>
     /// The zero-copy path: a region rendered into a shared GPU texture holds exactly the pixels of
     /// the readback path (read here through a second Direct3D 11 device), and Direct3D 9Ex — what
