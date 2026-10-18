@@ -103,6 +103,8 @@ jobs:
         (Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
         ``````
 
+        **Code signing by the SignPath Foundation:** this project has applied for free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). Once the application is accepted, releases are signed with that certificate instead of the self-signed one.
+
         See the [code signing policy](https://github.com/$env:GITHUB_REPOSITORY/blob/main/CODE_SIGNING_POLICY.md) and the [MIT licence](https://github.com/$env:GITHUB_REPOSITORY/blob/main/LICENSE).
         "@
         $notesFile = Join-Path $env:RUNNER_TEMP "notes.md"
