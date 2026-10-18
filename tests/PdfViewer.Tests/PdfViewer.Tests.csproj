@@ -29,12 +29,10 @@
 
   <ItemGroup Condition="'$(PdfiumRenderer)' != 'true'">
     <!-- Tests that call PDFium (the oracle) or test PDFium mode: developer and test builds only. -->
-    <PdfiumOnlyTest Include="ComparisonAndOcrTests.cs" />
     <PdfiumOnlyTest Include="ContentEditingViewerTests.cs" />
     <PdfiumOnlyTest Include="CropBoxCoordinateTests.cs" />
     <PdfiumOnlyTest Include="FormAndRedactionTests.cs" />
     <PdfiumOnlyTest Include="NativeDocumentServicesViewerTests.cs" />
-    <PdfiumOnlyTest Include="NativeTextViewerTests.cs" />
     <PdfiumOnlyTest Include="PageArrangementAndAttachmentTests.cs" />
     <PdfiumOnlyTest Include="PageMarksViewerTests.cs" />
     <PdfiumOnlyTest Include="PageOrganizerTests.cs" />
