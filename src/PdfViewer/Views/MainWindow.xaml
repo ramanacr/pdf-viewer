@@ -165,6 +165,17 @@
                         </Style>
                     </MenuItem.ItemContainerStyle>
                 </MenuItem>
+                <MenuItem Header="Create P_DF"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreatePdf}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="From _Images..." Command="{Binding CreatePdfFromImagesCommand}"
+                              ToolTip="Makes a PDF from pictures (JPEG, PNG, TIFF, BMP, GIF and any other kind Windows can read), a page each. JPEGs keep their quality. Everything happens on this computer."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreateFromImages}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="From _Scanner..." Command="{Binding CreatePdfFromScannerCommand}"
+                              ToolTip="Scans pages with Windows Image Acquisition, from the glass or the document feeder, into a new PDF, searchable if you like."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreateFromScanner}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="From _File..." Command="{Binding CreatePdfFromFileCommand}"
+                              ToolTip="Converts a Word, Excel or PowerPoint file, a text, RTF or HTML file, or a picture to PDF on this computer (Office files need Microsoft Office). Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreateFromFile}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <Separator />
+                    <MenuItem Header="_Combine Files..." Command="{Binding CombineFilesCommand}"
+                              ToolTip="Puts PDFs, pictures and Office files together in one PDF, in the order you choose, with a bookmark for each file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CombineFiles}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                </MenuItem>
                 <Separator />
                 <MenuItem Header="_Close Document"
                           Command="{Binding DataContext.CloseActiveDocumentCommand, RelativeSource={RelativeSource AncestorType=Window}}"

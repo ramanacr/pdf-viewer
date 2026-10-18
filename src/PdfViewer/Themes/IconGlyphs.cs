@@ -24,6 +24,11 @@ public static class IconGlyphs
     public static readonly FontFamily IconFont = new(FontFamilyName);
 
     // File
+    public const string CreatePdf = "";
+    public const string CreateFromImages = "";
+    public const string CreateFromScanner = "";
+    public const string CreateFromFile = "";
+    public const string CombineFiles = "";
     public const string Open = "";
     public const string OpenSample = "";
     public const string Recent = "";

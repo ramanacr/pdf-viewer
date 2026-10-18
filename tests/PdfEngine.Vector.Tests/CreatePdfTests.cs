@@ -386,6 +386,31 @@ public class CreatePdfTests
         Assert.Contains("Minutes of the meeting", PdfTextExtractor.LoadPage(doc, 3).Text);
     }
 
+    /// <summary>The oracle reads what we write: PDFium opens it without repair, with the pages, text and bookmarks we put there.</summary>
+    [Fact]
+    public void Pdfium_ReadsTheCreatedDocuments()
+    {
+        byte[] images = ImagesToPdf.ToBytes(new[]
+        {
+            ImageInput.FromBytes("a.jpg", Jpeg(Pattern(64, 48, PixelFormats.Bgr24, dpi: 72), orientation: 8)),
+            ImageInput.FromBytes("b.png", Png(Pattern(20, 30, PixelFormats.Bgra32))),
+        });
+        using var text = new MemoryStream();
+        PdfTextDocument.Write("Read by the oracle", text);
+        using var first = PdfVectorDocument.OpenAsync(images).AsTask().GetAwaiter().GetResult();
+        using var second = PdfVectorDocument.OpenAsync(text.ToArray()).AsTask().GetAwaiter().GetResult();
+        byte[] combined = PdfPageAssembler.Merge(new[] { first, second }, new PdfAssemblyOptions { SourceTitles = new[] { "Pictures", "Text" } });
+
+        using var engine = new PdfEngine.Pdfium.PdfiumEngine();
+        using var doc = engine.OpenDocumentAsync(combined).AsTask().GetAwaiter().GetResult();
+        Assert.Equal(3, doc.PageCount);
+        var page1 = doc.GetPageInfoAsync(1).AsTask().GetAwaiter().GetResult();
+        Assert.True(page1.HeightPoints > page1.WidthPoints, "orientation 8 shows the landscape JPEG as portrait");
+        var segments = engine.TextService.ExtractTextSegmentsAsync(doc, 3).AsTask().GetAwaiter().GetResult();
+        Assert.Contains("oracle", string.Concat(segments.Select(s => s.Text)));
+        Assert.Equal(new[] { "Pictures", "Text" }, doc.GetBookmarksAsync().AsTask().GetAwaiter().GetResult().Select(b => b.Title));
+    }
+
     [Fact]
     public void TheWriter_StreamsToANonSeekableOutput_AndRefusesAnEmptyDocument()
     {
