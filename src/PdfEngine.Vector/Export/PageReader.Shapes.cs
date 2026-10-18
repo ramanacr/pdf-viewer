@@ -106,7 +106,7 @@ internal sealed partial class PageReader
     private async Task PicturesAsync(DocPage page, IPdfDisplayList list, CancellationToken ct)
     {
         var complex = _drawn.Where(d => !d.Used && d.Complex).ToList();
-        if (complex.Count == 0) return;
+        if (complex.Count == 0 || !_package.WantsImages) return;
         if (_renderer == null)
         {
             Warnings.Add("Drawings other than rectangles and lines need a renderer to come over as pictures.");

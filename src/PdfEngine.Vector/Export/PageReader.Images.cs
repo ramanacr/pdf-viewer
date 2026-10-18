@@ -93,6 +93,7 @@ internal sealed partial class PageReader
     /// <summary>The image's part in the package (decoded once per image), or null when it cannot be decoded.</summary>
     private string? AddImage(PdfImageRef image, CancellationToken ct)
     {
+        if (!_package.WantsImages) return null;
         string key = image.Source?.CacheKey ?? image.ImageId;
         if (_imagesByKey.TryGetValue(key, out var existing)) return existing.Length > 0 ? existing : null;
         string rel = string.Empty;
