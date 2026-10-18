@@ -36,6 +36,7 @@ public static class Program
         {
             "bench" => await Bench.RunAsync(args),
             "corpus" => await Corpus.RunAsync(args),
+            "perf" => await PerfProfile.RunAsync(args),
             "live" => LiveBench.Run(args),
             "tiles" => await TileBench.RunAsync(args),
             "gen" when args.Length >= 2 => Gen(args),
@@ -68,7 +69,7 @@ public static class Program
         {
             "wpf" => new WindowsVectorRenderer(),
             // --software: WARP, as on a CI runner without a GPU (the nightly corpus baseline).
-            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(forceSoftware: args.Contains("--software")),
+            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(forceSoftware: args.Contains("--software")) { UseGlyphAtlas = !args.Contains("--no-atlas") },
         };
 
     internal static string? Option(string[] args, string name) =>
@@ -248,10 +249,13 @@ internal static class Corpus
                     pagesTotal++;
                     IPdfDisplayList list;
                     IReadOnlyList<PdfFallbackToken> tokens;
+                    double analyzeMs;
                     try
                     {
                         list = await doc.GetPageDisplayListAsync(page);
+                        var analyzeClock = Stopwatch.StartNew();
                         tokens = await renderer.AnalyzeAsync(list);
+                        analyzeMs = analyzeClock.Elapsed.TotalMilliseconds;
                     }
                     catch (Exception pex) when (pex is not OutOfMemoryException)
                     {
@@ -277,7 +281,9 @@ internal static class Corpus
                     if ((diff && tokens.Count == 0 || diffAll) && pdfiumPages >= page)
                     {
                         var (d, vMs, pMs) = await DiffAsync(bytes, list, renderer, page);
-                        vectorRenderMs += vMs;
+                        // The page's analysis is part of its first render (the renderer keeps it for
+                        // the render that follows), so it counts towards the render time.
+                        vectorRenderMs += vMs + analyzeMs;
                         pdfiumRenderMs += pMs;
                         if (tokens.Count == 0)
                         {
@@ -468,8 +474,16 @@ internal static class DiffPage
                 string outcome;
                 try
                 {
+                    var decodeClock = Stopwatch.StartNew();
                     var decoded = image.Image.Source?.Decode();
-                    outcome = decoded == null ? "inline" : $"{decoded.Format} {decoded.Width}x{decoded.Height}";
+                    outcome = decoded == null ? "inline"
+                        : $"{decoded.Format} {decoded.Width}x{decoded.Height} {image.Image.ColorSpaceName} mapped={decoded.MapJpegComponents != null} {decodeClock.Elapsed.TotalMilliseconds:F1} ms";
+                    if (decoded?.Format == PdfDecodedImageFormat.Jpeg)
+                    {
+                        decodeClock.Restart();
+                        PdfEngine.Vector.Direct2D.WicJpeg.TryDecode(decoded, out _, out _);
+                        outcome += $", WIC {decodeClock.Elapsed.TotalMilliseconds:F1} ms";
+                    }
                 }
                 catch (Exception ex)
                 {
