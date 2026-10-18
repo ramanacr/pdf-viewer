@@ -519,6 +519,8 @@ Yes. Open `PdfViewer.slnx` in **Visual Studio 2022 (v17.12 or newer)**. Visual S
 
 Release binaries are Authenticode-signed, built only by this repository's release workflow from tagged source. Who commits, reviews and approves releases, how to check a download's signature, and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
 
+This project is moving its code signing to the SignPath Foundation: an application for free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org), has been made. Until it is accepted, releases are signed with the project's own self-signed certificate. The privacy policy is also published at https://ramanacr.github.io/pdf-viewer/privacy/.
+
 ---
 
 ## License & Third-Party Notices
