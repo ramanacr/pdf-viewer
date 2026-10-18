@@ -1,0 +1,46 @@
+{
+  "Title": "PDF Engine Showcase",
+  "Author": "Antigravity",
+  "Subject": "Vector and Hybrid Fallback Demonstration",
+  "Keywords": "",
+  "Creator": "",
+  "Producer": "",
+  "CreationDate": null,
+  "ModDate": null,
+  "PdfFormatVersion": "1.7",
+  "PageCount": 3,
+  "IsEncrypted": false,
+  "DefaultPageWidthPt": 612,
+  "DefaultPageHeightPt": 792,
+  "FileSizeBytes": 6725,
+  "Bookmarks": [
+    {
+      "Depth": 0,
+      "Title": "1. Pure Native Vector",
+      "Page": 1
+    },
+    {
+      "Depth": 0,
+      "Title": "2. Hybrid Fallback",
+      "Page": 2
+    },
+    {
+      "Depth": 0,
+      "Title": "3. Real-Time Comparison",
+      "Page": 3
+    }
+  ],
+  "Permissions": {
+    "IsEncrypted": false,
+    "Unrestricted": true,
+    "CanPrint": true,
+    "CanPrintHighQuality": true,
+    "CanModify": true,
+    "CanCopy": true,
+    "CanAnnotate": true,
+    "CanFillForms": true,
+    "CanExtractForAccessibility": true,
+    "CanAssemble": true,
+    "RestrictionSummary": ""
+  }
+}

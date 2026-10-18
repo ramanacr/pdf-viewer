@@ -10,8 +10,8 @@ using Xunit;
 namespace PdfViewer.Tests;
 
 /// <summary>
-/// Pages whose crop box does not start at 0,0 (common in scans and publisher PDFs): PDFium
-/// reports text and annotation boxes in absolute user space, the viewer's coordinates start at
+/// Pages whose crop box does not start at 0,0 (common in scans and publisher PDFs): PDF text
+/// and annotation boxes are in absolute user space, the viewer's coordinates start at
 /// the crop box. Selections, search hits and annotations must land on the text, not shifted by
 /// the crop box's offset, and annotations must save and load back where they were drawn.
 /// </summary>
@@ -24,13 +24,13 @@ public class CropBoxCoordinateTests : IDisposable
     }
 
     /// <summary>Media 600 x 800, crop [100 200 400 600]: "Hello" at user space (150, 500), 20 pt.</summary>
-    private PdfiumDocumentService Open()
+    private IPdfDocumentService Open(string engineName)
     {
         var b = new VectorPdfBuilder();
         int font = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
         b.AddPage("BT /F1 20 Tf 150 500 Td (Hello) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>", mediaBox: "[0 0 600 800]", extra: "/CropBox [100 200 400 600]");
         File.WriteAllBytes(_path, b.Build());
-        var s = new PdfiumDocumentService();
+        var s = TestEngines.CreateService(engineName);
         s.OpenDocumentAsync(_path).GetAwaiter().GetResult();
         return s;
     }
@@ -38,28 +38,31 @@ public class CropBoxCoordinateTests : IDisposable
     // "Hello" relative to the crop box: x (150-100)/300, top of the glyphs ≈ (500+14.5-200)/400 from the bottom.
     private const double ExpectedX = 50.0 / 300, ExpectedTop = 1 - 314.5 / 400;
 
-    [Fact]
-    public void TextSegments_LandOnTheText()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public void TextSegments_LandOnTheText(string engineName)
     {
-        using var s = Open();
+        using var s = Open(engineName);
         var hello = s.ExtractPageTextSegments(1).Single(t => t.Text == "Hello");
         Assert.InRange(hello.X, ExpectedX - 0.01, ExpectedX + 0.01);
         Assert.InRange(hello.Y, ExpectedTop - 0.02, ExpectedTop + 0.02);
     }
 
-    [Fact]
-    public async Task SearchHits_LandOnTheText()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task SearchHits_LandOnTheText(string engineName)
     {
-        using var s = Open();
+        using var s = Open(engineName);
         var hit = Assert.Single(await s.SearchTextAsync("Hello"));
         Assert.InRange(hit.X, ExpectedX - 0.01, ExpectedX + 0.01);
         Assert.InRange(hit.Y, ExpectedTop - 0.02, ExpectedTop + 0.02);
     }
 
-    [Fact]
-    public async Task Annotations_SaveAndLoadWhereTheyWereDrawn()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task Annotations_SaveAndLoadWhereTheyWereDrawn(string engineName)
     {
-        using (var s = Open())
+        using (var s = Open(engineName))
         {
             var annot = new AnnotationModel { PageNumber = 1, Type = AnnotationType.Rectangle, X = 0.25, Y = 0.5, Width = 0.2, Height = 0.1, ColorHex = "#FFFF0000", StrokeThickness = 1 };
             string saved = _path + ".annot.pdf";
@@ -77,7 +80,7 @@ public class CropBoxCoordinateTests : IDisposable
             Assert.Equal(175, x0, 0);
             Assert.Equal(400, top, 0);
         }
-        using var reopened = new PdfiumDocumentService();
+        using var reopened = TestEngines.CreateService(engineName);
         await reopened.OpenDocumentAsync(_path);
         var back = Assert.Single(reopened.LoadExistingAnnotations());
         Assert.Equal(0.25, back.X, 2);

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -58,8 +59,50 @@ public class HybridVectorServiceTests : IDisposable
         Assert.DoesNotContain(path, json);
     }
 
+    // The PDFium renders and word boxes below, as committed (PdfiumGoldens): the same checks in every build.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(270)]
+    public async Task Vector_AgreesWithPdfiumsRasterSizeAndContent(int rotate)
+    {
+        string path = TestPdfBuilder.CreateRotatedPdf(Path.Combine(_dir, $"rot{rotate}.pdf"), rotate);
+        using var vector = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Vector);
+        await vector.OpenDocumentAsync(path);
+        var v = await vector.RenderPageAsync(1, 72);
+        var p = PdfiumGoldens.LoadImage($"Hybrid_Rotated{rotate}");
+
+        Assert.NotNull(v);
+        Assert.Equal(p.PixelWidth, v!.PixelWidth);
+        Assert.Equal(p.PixelHeight, v.PixelHeight);
+        Assert.True(MeanDifference(v, p) < 6.0, "vector and PDFium renders diverge");
+    }
+
+    /// <summary>A word segment's box, for the goldens.</summary>
+    public sealed record WordBox(string Text, double X, double Y, double Width, double Height);
+
+    [Fact]
+    public async Task VectorTextSegments_LineUpWithPdfiumsWords()
+    {
+        string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "text.pdf"), 1, "AlignToken");
+        using var hybrid = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Vector);
+        await hybrid.OpenDocumentAsync(path);
+        await hybrid.RenderPageAsync(1, 72);
+        var chars = await hybrid.ExtractPageTextSegmentsAsync(1);
+        var words = PdfiumGoldens.Load<List<WordBox>>("Hybrid_AlignTokenWords");
+
+        Assert.NotEmpty(chars);
+        var word = words.First(w => w.Text.StartsWith("AlignToken", StringComparison.Ordinal));
+        var first = chars.First(c => c.Text == "A" &&
+                                     Math.Abs(c.Y - word.Y) < 0.05 &&
+                                     Math.Abs(c.X - word.X) < 0.05);
+        Assert.InRange(first.X, word.X - 0.01, word.X + 0.01);
+        Assert.True(first.Y + first.Height > word.Y && first.Y < word.Y + word.Height, "character box overlaps the word box vertically");
+    }
+
 #if PDFIUM_RENDERER
     [Theory]
+    [Trait("Category", PdfiumGoldens.Trait)]
     [InlineData(0)]
     [InlineData(90)]
     [InlineData(270)]
@@ -80,9 +123,11 @@ public class HybridVectorServiceTests : IDisposable
         Assert.Equal(p!.PixelWidth, v!.PixelWidth);
         Assert.Equal(p.PixelHeight, v.PixelHeight);
         Assert.True(MeanDifference(v, p) < 6.0, "vector and PDFium renders diverge");
+        PdfiumGoldens.VerifyImage($"Hybrid_Rotated{rotate}", p);
     }
 
     [Fact]
+    [Trait("Category", PdfiumGoldens.Trait)]
     public async Task VectorTextSegments_LineUpWithPdfiumWords()
     {
         string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "text.pdf"), 1, "AlignToken");
@@ -95,6 +140,7 @@ public class HybridVectorServiceTests : IDisposable
         using var pdfium = new PdfiumDocumentService(PdfSecurityPolicy.DefaultStrict);
         await pdfium.OpenDocumentAsync(path);
         var words = await pdfium.ExtractPageTextSegmentsAsync(1);
+        PdfiumGoldens.Verify("Hybrid_AlignTokenWords", words.Select(w => new WordBox(w.Text, w.X, w.Y, w.Width, w.Height)).ToList());
 
         Assert.NotEmpty(chars);
         var word = words.First(w => w.Text.StartsWith("AlignToken", StringComparison.Ordinal));

@@ -64,7 +64,29 @@ internal static class PdfiumGoldens
         return bgra;
     }
 
-    private static bool Updating => Environment.GetEnvironmentVariable(UpdateVariable) == "1";
+    /// <summary>True while the goldens are being regenerated (PDFIUM_GOLDENS_UPDATE=1, developer build).</summary>
+    public static bool Updating => Environment.GetEnvironmentVariable(UpdateVariable) == "1";
+
+    /// <summary>
+    /// A document PDFium wrote from one of the tests' synthetic documents, committed so the
+    /// PDFium-free build can read what PDFium writes. Its bytes are not compared on later runs
+    /// (PDFium stamps the time it saved); the golden of what PDFium reads from it is.
+    /// </summary>
+    public static byte[] LoadFile(string fileName)
+    {
+        string path = Path.Combine(TestProject.Directory, "PdfiumGoldens", fileName);
+        Assert.True(File.Exists(path), Missing(fileName));
+        return File.ReadAllBytes(path);
+    }
+
+    /// <summary>Developer build, while regenerating: <paramref name="bytes"/> becomes the committed file <paramref name="fileName"/>.</summary>
+    public static void SaveFile(string fileName, byte[] bytes)
+    {
+        Assert.True(Updating, "Committed files are written only while regenerating the goldens.");
+        string path = Path.Combine(TestProject.Directory, "PdfiumGoldens", fileName);
+        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+    }
 
     /// <summary>
     /// Developer build: <paramref name="fromPdfium"/> (PDFium's live result) is the committed
