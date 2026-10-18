@@ -34,6 +34,8 @@ public static class IconGlyphs
     public const string ExportImages = "";
     public const string ExportText = "";
     public const string WordDocument = "";
+    public const string ExcelWorkbook = "";
+    public const string PowerPointPresentation = "";
     public const string OrganizePages = "";
     public const string Attachments = "";
     public const string Print = "";
