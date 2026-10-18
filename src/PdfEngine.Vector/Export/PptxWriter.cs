@@ -111,6 +111,7 @@ internal sealed class PptxWriter
             if (background != null && fills)
             {
                 // The page as the slide's background: it cannot be moved by mistake while the text is edited.
+                Pictures++;
                 x.WriteStartElement("p", "bg", P);
                 x.WriteStartElement("p", "bgPr", P);
                 x.WriteStartElement("a", "blipFill", A);

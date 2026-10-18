@@ -76,7 +76,6 @@ public static class PptxExporter
         var reader = ExportSource.Reader(document, media, hyperlinks, background ? null : options.Renderer, dpi, warnings, out _);
         var first = document.PageTree.Pages[0].PageSize;
         var writer = new PptxWriter(opc, hyperlinks, first.Width, first.Height);
-        int backgrounds = 0;
         for (int n = 1; n <= document.PageCount; n++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -85,7 +84,6 @@ public static class PptxExporter
             if (background)
             {
                 picture = await BackgroundAsync(document, n, options.Renderer!, dpi, opc, n, warnings, cancellationToken).ConfigureAwait(false);
-                if (picture != null) backgrounds++;
             }
             writer.AddSlide(page, picture, invisibleText: picture != null && page.Recognized);
             progress?.Report(n);
@@ -98,7 +96,7 @@ public static class PptxExporter
             Pages = document.PageCount,
             Slides = document.PageCount,
             TextBoxes = writer.TextBoxes,
-            Pictures = writer.Pictures + backgrounds,
+            Pictures = writer.Pictures,
             Shapes = writer.Shapes,
             Tables = writer.Tables,
             SlideWidth = writer.SlideWidth,
