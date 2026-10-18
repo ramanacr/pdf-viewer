@@ -103,6 +103,65 @@ public abstract partial class PdfColorSpace
             Multiply(adaptation, xyz, d65);
             return XyzD65ToSrgb(d65[0], d65[1], d65[2], alpha);
         }
+
+        /// <summary>
+        /// The 8-bit RGB that <see cref="AdaptedXyzToSrgb"/> and the rounding of <see cref="ToRgb24"/>
+        /// give, without a power per channel (<see cref="LinearToByte"/>). Same arithmetic, same bytes.
+        /// </summary>
+        public static void AdaptedXyzToRgb24(double[] adaptation, double x, double y, double z, Span<byte> rgb)
+        {
+            Span<double> xyz = [x, y, z];
+            Span<double> d65 = stackalloc double[3];
+            Multiply(adaptation, xyz, d65);
+            double dx = d65[0], dy = d65[1], dz = d65[2];
+            rgb[0] = LinearToByte(3.2404542 * dx - 1.5371385 * dy - 0.4985314 * dz);
+            rgb[1] = LinearToByte(-0.9692660 * dx + 1.8760108 * dy + 0.0415560 * dz);
+            rgb[2] = LinearToByte(0.0556434 * dx - 0.2040259 * dy + 1.0572252 * dz);
+        }
+
+        /// <summary>
+        /// The byte a linear sRGB value shows as: <see cref="Compand"/>, single precision and clamped as
+        /// in <see cref="PdfColor.FromRgb"/>, then rounded by <see cref="ToByte"/>. The byte only changes at
+        /// 255 linear thresholds, so it is found by a binary search among them; a value within a hair
+        /// of a threshold takes the exact path, so the result is always the exact one.
+        /// </summary>
+        public static byte LinearToByte(double linear)
+        {
+            if (!(linear > 0) || linear >= 1)
+                return ExactByte(linear);
+            var t = Thresholds.Value;
+            int lo = 0, hi = 255;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) >> 1;
+                if (t[mid] <= linear) lo = mid; else hi = mid - 1;
+            }
+            const double guard = 1e-9;
+            if (linear - t[lo] <= guard * t[lo] || (lo < 255 && t[lo + 1] - linear <= guard * t[lo + 1]))
+                return ExactByte(linear);
+            return (byte)lo;
+        }
+
+        private static byte ExactByte(double linear) => ToByte(Math.Clamp((float)Compand(linear), 0f, 1f));
+
+        // Thresholds[k]: the smallest linear value whose byte is k or more (k = 1..255), found by
+        // bisection over the ordered bit patterns of the doubles in (0, 1).
+        private static readonly Lazy<double[]> Thresholds = new(() =>
+        {
+            var t = new double[256];
+            long one = BitConverter.DoubleToInt64Bits(1.0);
+            for (int k = 1; k < 256; k++)
+            {
+                long lo = 0, hi = one; // ExactByte(lo) < k <= ExactByte(hi)
+                while (hi - lo > 1)
+                {
+                    long mid = lo + (hi - lo) / 2;
+                    if (ExactByte(BitConverter.Int64BitsToDouble(mid)) >= k) hi = mid; else lo = mid;
+                }
+                t[k] = BitConverter.Int64BitsToDouble(hi);
+            }
+            return t;
+        });
     }
 
     /// <summary>
@@ -182,6 +241,93 @@ public abstract partial class PdfColorSpace
             CieMath.Multiply(_matrix, linear, xyz);
             return CieMath.AdaptedXyzToSrgb(_adaptation, xyz[0], xyz[1], xyz[2], alpha);
         }
+
+        // Per channel, the gamma of each 8-bit sample value k / 255 (what images feed in).
+        private double[][]? _gammaTables;
+
+        /// <summary>
+        /// The same bytes as converting each pixel through <see cref="ToRgbColor"/>, with the gamma of
+        /// 8-bit sample values from a table and the sRGB curve from <see cref="CieMath.LinearToByte"/>.
+        /// </summary>
+        public override void ToRgb24(ReadOnlySpan<double> components, Span<byte> rgb)
+        {
+            var tables = _gammaTables ??= BuildGammaTables();
+            int pixels = Math.Min(components.Length / 3, rgb.Length / 3);
+            Span<double> linear = stackalloc double[3];
+            Span<double> xyz = stackalloc double[3];
+            for (int p = 0; p < pixels; p++)
+            {
+                var pixel = components.Slice(p * 3, 3);
+                for (int i = 0; i < 3; i++)
+                {
+                    double c = Component(pixel, i);
+                    double scaled = c * 255;
+                    int k = scaled >= 0 && scaled <= 255 ? (int)Math.Round(scaled) : -1;
+                    linear[i] = k >= 0 && k / 255.0 == c ? tables[i][k] : Math.Pow(Math.Clamp(c, 0, 1), _gamma[i]);
+                }
+                CieMath.Multiply(_matrix, linear, xyz);
+                CieMath.AdaptedXyzToRgb24(_adaptation, xyz[0], xyz[1], xyz[2], rgb.Slice(p * 3, 3));
+            }
+        }
+
+        /// <summary>
+        /// 8-bit samples (three per pixel, rows on byte boundaries, missing data read as zero) with the
+        /// default /Decode to opaque BGRA: the same bytes as <see cref="ToRgb24"/> gives pixel by pixel.
+        /// Large images convert in parallel bands.
+        /// </summary>
+        internal void ToBgra8(byte[] samples, byte[] bgra, int width, int height, System.Threading.CancellationToken ct)
+        {
+            var tables = _gammaTables ??= BuildGammaTables();
+            double[] gr = tables[0], gg = tables[1], gb = tables[2], m = _matrix, adaptation = _adaptation;
+            long rowBytes = (long)width * 3;
+
+            void Rows(int from, int to)
+            {
+                Span<byte> rgb = stackalloc byte[3];
+                Span<double> linear = stackalloc double[3];
+                Span<double> xyz = stackalloc double[3];
+                for (int y = from; y < to; y++)
+                {
+                    long start = y * rowBytes;
+                    int o = y * width * 4;
+                    for (int x = 0; x < width; x++, o += 4)
+                    {
+                        long i = start + 3L * x;
+                        linear[0] = gr[i < samples.Length ? samples[i] : 0];
+                        linear[1] = gg[i + 1 < samples.Length ? samples[i + 1] : 0];
+                        linear[2] = gb[i + 2 < samples.Length ? samples[i + 2] : 0];
+                        CieMath.Multiply(m, linear, xyz);
+                        CieMath.AdaptedXyzToRgb24(adaptation, xyz[0], xyz[1], xyz[2], rgb);
+                        bgra[o] = rgb[2];
+                        bgra[o + 1] = rgb[1];
+                        bgra[o + 2] = rgb[0];
+                        bgra[o + 3] = 255;
+                    }
+                }
+            }
+
+            const int band = 32;
+            if ((long)width * height < 1 << 16)
+            {
+                ct.ThrowIfCancellationRequested();
+                Rows(0, height);
+                return;
+            }
+            System.Threading.Tasks.Parallel.For(0, (height + band - 1) / band, new System.Threading.Tasks.ParallelOptions { CancellationToken = ct },
+                b => Rows(b * band, Math.Min(height, (b + 1) * band)));
+        }
+
+        private double[][] BuildGammaTables()
+        {
+            var tables = new double[3][];
+            for (int i = 0; i < 3; i++)
+            {
+                tables[i] = new double[256];
+                for (int k = 0; k < 256; k++)
+                    tables[i][k] = Math.Pow(Math.Clamp(k / 255.0, 0, 1), _gamma[i]);
+            }
+            return tables;
+        }
     }
 
     /// <summary>
@@ -234,6 +380,25 @@ public abstract partial class PdfColorSpace
             double y = _whitePoint[1] * InverseF(fy);
             double z = _whitePoint[2] * InverseF(fz);
             return CieMath.AdaptedXyzToSrgb(_adaptation, x, y, z, alpha);
+        }
+
+        /// <summary>The same bytes as <see cref="ToRgbColor"/> per pixel, with the sRGB curve from <see cref="CieMath.LinearToByte"/>.</summary>
+        public override void ToRgb24(ReadOnlySpan<double> components, Span<byte> rgb)
+        {
+            int pixels = Math.Min(components.Length / 3, rgb.Length / 3);
+            for (int p = 0; p < pixels; p++)
+            {
+                var pixel = components.Slice(p * 3, 3);
+                double l = Math.Clamp(Component(pixel, 0), 0, 100);
+                double a = Math.Clamp(Component(pixel, 1), _range[0], _range[1]);
+                double b = Math.Clamp(Component(pixel, 2), _range[2], _range[3]);
+
+                double fy = (l + 16) / 116;
+                double fx = fy + a / 500;
+                double fz = fy - b / 200;
+                CieMath.AdaptedXyzToRgb24(_adaptation, _whitePoint[0] * InverseF(fx), _whitePoint[1] * InverseF(fy), _whitePoint[2] * InverseF(fz),
+                    rgb.Slice(p * 3, 3));
+            }
         }
 
         /// <summary>The g(x) function of ISO 32000-2 8.6.5.4.</summary>

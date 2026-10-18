@@ -77,8 +77,11 @@ public sealed class PdfImageSource : IPdfImageSource
         var decoded = _decoder.DecodeImageStream(_stream, expected);
         ct.ThrowIfCancellationRequested();
 
-        byte[]? alpha = BuildAlpha(dict, width, height, ct);
-        var jpegMask = JpegSoftMask(dict);
+        // The soft mask stream is decoded once, for both the alpha plane and a JPEG mask.
+        var smask = _resolver.Resolve(dict["SMask"]) as PdfStream;
+        var smaskData = smask != null ? _decoder.DecodeImageStream(smask) : null;
+        byte[]? alpha = BuildAlpha(dict, width, height, smask, smaskData, ct);
+        var jpegMask = JpegSoftMask(smask, smaskData);
 
         if (decoded.ImageFilter == "DCTDecode")
         {
@@ -128,13 +131,12 @@ public sealed class PdfImageSource : IPdfImageSource
     }
 
     /// <summary>A soft mask compressed as JPEG, which the backend decodes (the core has no JPEG codec); null otherwise.</summary>
-    private PdfJpegMask? JpegSoftMask(PdfDictionary dict)
+    private PdfJpegMask? JpegSoftMask(PdfStream? smask, PdfDecodedStream? decoded)
     {
-        if (_resolver.Resolve(dict["SMask"]) is not PdfStream smask) return null;
+        if (smask == null || decoded == null) return null;
         var md = smask.Dictionary;
         int mw = checked((int)(md.GetInteger("Width") ?? 0)), mh = checked((int)(md.GetInteger("Height") ?? 0));
         if (mw <= 0 || mh <= 0 || (long)mw * mh > _limits.MaxImagePixels) return null;
-        var decoded = _decoder.DecodeImageStream(smask);
         return decoded.ImageFilter == "DCTDecode" ? new PdfJpegMask(FromStartOfImage(decoded.Data), mw, mh, IsInvertedDecode(md, 1)) : null;
     }
 
@@ -232,19 +234,37 @@ public sealed class PdfImageSource : IPdfImageSource
             var bgra = new byte[checked(width * height * 4)];
             var comps = new double[n];
             Span<byte> rgb = stackalloc byte[3];
+            // Each distinct sample tuple is converted once (see DecodeColor).
+            int keyBits = 1;
+            for (int c = 0; c < n; c++) keyBits = Math.Max(keyBits, Math.Clamp(image.Depths[c], 1, 31));
+            var memo = n * keyBits < 64 ? new SampleColorMemo() : null;
+            int keyLimit = memo != null ? 1 << keyBits : 0;
             for (int y = 0; y < height; y++)
             {
                 if ((y & 63) == 0) ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int i = y * width + x;
-                    for (int c = 0; c < n; c++)
-                        comps[c] = indexed ? planes[c][i] : Math.Clamp(planes[c][i] * scale[c], 0, 1);
-                    cs.ToRgb24(comps, rgb);
+                    long key = 0;
+                    bool keyed = memo != null;
+                    for (int c = 0; c < n && keyed; c++)
+                    {
+                        int v = planes[c][i];
+                        keyed = v >= 0 && v < keyLimit;
+                        key = (key << keyBits) | (uint)v;
+                    }
+                    if (!keyed || !memo!.TryGet(key, out int packed))
+                    {
+                        for (int c = 0; c < n; c++)
+                            comps[c] = indexed ? planes[c][i] : Math.Clamp(planes[c][i] * scale[c], 0, 1);
+                        cs.ToRgb24(comps, rgb);
+                        packed = rgb[2] | rgb[1] << 8 | rgb[0] << 16;
+                        if (keyed) memo!.Set(key, packed);
+                    }
                     int p = i * 4;
-                    bgra[p] = rgb[2];
-                    bgra[p + 1] = rgb[1];
-                    bgra[p + 2] = rgb[0];
+                    bgra[p] = (byte)packed;
+                    bgra[p + 1] = (byte)(packed >> 8);
+                    bgra[p + 2] = (byte)(packed >> 16);
                     bgra[p + 3] = alphaComponent >= 0 ? (byte)Math.Round(Math.Clamp(planes[alphaComponent][i] * scale[alphaComponent], 0, 1) * 255) : (byte)255;
                 }
             }
@@ -369,22 +389,22 @@ public sealed class PdfImageSource : IPdfImageSource
     {
         // Sample 0 paints (with the current fill colour) unless /Decode is [1 0].
         bool invert = IsInvertedDecode(dict, 1);
-        var bits = new BitReader(data, width, 1, 1);
         var bgra = new byte[checked(width * height * 4)];
         byte r = ToByte(_stencilColor.R), g = ToByte(_stencilColor.G), b = ToByte(_stencilColor.B);
+        // The colour is the same everywhere; only alpha follows the samples.
+        uint colour = b | (uint)g << 8 | (uint)r << 16;
+        uint painted = colour | 0xFF000000u;
+        long rowBytes = ((long)width + 7) / 8;
         for (int y = 0; y < height; y++)
         {
-            bits.StartRow(y);
-            int row = y * width * 4;
+            var dst = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(bgra.AsSpan(y * width * 4, width * 4));
+            long start = y * rowBytes;
             for (int x = 0; x < width; x++)
             {
-                int sample = bits.Read();
+                long i = start + (x >> 3);
+                int sample = i < data.Length ? (data[i] >> (7 - (x & 7))) & 1 : 0;
                 bool paint = invert ? sample == 1 : sample == 0;
-                int p = row + x * 4;
-                bgra[p] = b;
-                bgra[p + 1] = g;
-                bgra[p + 2] = r;
-                bgra[p + 3] = paint ? (byte)255 : (byte)0;
+                dst[x] = paint ? painted : colour;
             }
         }
         return bgra;
@@ -426,7 +446,11 @@ public sealed class PdfImageSource : IPdfImageSource
             }
         }
 
-        bool fastRgb8 = cs.Name == "DeviceRGB" && bpc == 8 && IsDefaultDecode(dMin, dMax);
+        // An ICCBased space without a profile transform (an sRGB profile, or none usable) draws
+        // through its DeviceRGB alternate, which passes 8-bit samples through unchanged.
+        bool deviceRgb = cs.Name == "DeviceRGB"
+                         || cs is PdfColorSpace.IccBasedColorSpace { UsesProfile: false, AlternateColorSpace.Name: "DeviceRGB" };
+        bool fastRgb8 = deviceRgb && bpc == 8 && IsDefaultDecode(dMin, dMax);
 
         // Colour-managed 8-bit images (CMYK, ICC) convert through the space's sampled lookup table.
         if (lut == null && !fastRgb8 && bpc == 8 && cs.ImageLut is { } imageLut && imageLut.Channels == n
@@ -434,6 +458,22 @@ public sealed class PdfImageSource : IPdfImageSource
         {
             return DecodeWithLut(imageLut, data, width, height, n, inverted, colorKey, ct);
         }
+
+        if (colorKey == null && bpc == 8 && cs is PdfColorSpace.CalRgbColorSpace calRgb && IsDefaultDecode(dMin, dMax))
+        {
+            calRgb.ToBgra8(data, bgra, width, height, ct);
+            return bgra;
+        }
+
+        if (colorKey == null && (lut != null || fastRgb8))
+        {
+            FillRows(data, bgra, width, height, bpc, lut, ct);
+            return bgra;
+        }
+
+        // Every other space converts each distinct sample tuple once: photographs repeat colours
+        // heavily, and a CalRGB or Lab conversion costs several powers per pixel.
+        var memo = n <= 4 && n * bpc < 64 ? new SampleColorMemo() : null;
 
         for (int y = 0; y < height; y++)
         {
@@ -470,18 +510,130 @@ public sealed class PdfImageSource : IPdfImageSource
                 }
                 else
                 {
-                    for (int c = 0; c < n; c++)
-                        comps[c] = dMin[c] + Math.Min(raw[c], maxSample) * (dMax[c] - dMin[c]) / maxSample;
-                    cs.ToRgb24(comps, rgb);
-                    bgra[p] = rgb[2];
-                    bgra[p + 1] = rgb[1];
-                    bgra[p + 2] = rgb[0];
+                    long key = 0;
+                    if (memo != null)
+                        for (int c = 0; c < n; c++) key = (key << bpc) | (uint)raw[c];
+                    if (memo == null || !memo.TryGet(key, out int packed))
+                    {
+                        for (int c = 0; c < n; c++)
+                            comps[c] = dMin[c] + Math.Min(raw[c], maxSample) * (dMax[c] - dMin[c]) / maxSample;
+                        cs.ToRgb24(comps, rgb);
+                        packed = rgb[2] | rgb[1] << 8 | rgb[0] << 16;
+                        memo?.Set(key, packed);
+                    }
+                    bgra[p] = (byte)packed;
+                    bgra[p + 1] = (byte)(packed >> 8);
+                    bgra[p + 2] = (byte)(packed >> 16);
                 }
                 bgra[p + 3] = alpha;
             }
         }
 
         return bgra;
+    }
+
+    /// <summary>
+    /// Opaque pixels of a single-component image through its sample table, or of DeviceRGB 8-bit
+    /// samples, row by row and in parallel for large images. Reads samples as <see cref="BitReader"/>
+    /// does: rows start on byte boundaries and data past the end reads as zero.
+    /// </summary>
+    private static void FillRows(byte[] data, byte[] bgra, int width, int height, int bpc, byte[]? lut, CancellationToken ct)
+    {
+        uint[]? table = null;
+        if (lut != null)
+        {
+            table = new uint[lut.Length / 3];
+            for (int s = 0; s < table.Length; s++)
+                table[s] = lut[s * 3 + 2] | (uint)lut[s * 3 + 1] << 8 | (uint)lut[s * 3] << 16 | 0xFF000000u;
+        }
+        long rowBytes = table != null ? ((long)width * bpc + 7) / 8 : (long)width * 3;
+        int mask = (1 << Math.Min(bpc, 8)) - 1;
+
+        void Rows(int from, int to)
+        {
+            for (int y = from; y < to; y++)
+            {
+                var dst = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(bgra.AsSpan(y * width * 4, width * 4));
+                long start = y * rowBytes;
+                if (table == null)
+                {
+                    bool whole = start + rowBytes <= data.Length;
+                    for (int x = 0; x < width; x++)
+                    {
+                        long i = start + 3L * x;
+                        uint r, g, b;
+                        if (whole) { r = data[i]; g = data[i + 1]; b = data[i + 2]; }
+                        else
+                        {
+                            r = i < data.Length ? data[i] : 0u;
+                            g = i + 1 < data.Length ? data[i + 1] : 0u;
+                            b = i + 2 < data.Length ? data[i + 2] : 0u;
+                        }
+                        dst[x] = b | g << 8 | r << 16 | 0xFF000000u;
+                    }
+                }
+                else if (bpc == 8)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        long i = start + x;
+                        dst[x] = table[i < data.Length ? data[i] : 0];
+                    }
+                }
+                else
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        long bit = (long)x * bpc;
+                        long i = start + (bit >> 3);
+                        int b = i < data.Length ? data[i] : 0;
+                        dst[x] = table[(b >> (8 - bpc - (int)(bit & 7))) & mask];
+                    }
+                }
+            }
+        }
+
+        const int band = 64;
+        if ((long)width * height < 1 << 18)
+        {
+            for (int y = 0; y < height; y += band)
+            {
+                ct.ThrowIfCancellationRequested();
+                Rows(y, Math.Min(height, y + band));
+            }
+            return;
+        }
+        System.Threading.Tasks.Parallel.For(0, (height + band - 1) / band, new System.Threading.Tasks.ParallelOptions { CancellationToken = ct },
+            i => Rows(i * band, Math.Min(height, (i + 1) * band)));
+    }
+
+    /// <summary>
+    /// A small direct-mapped cache from packed raw samples to the colour they convert to. Bounded
+    /// (64 K entries); a colliding colour simply replaces the older one.
+    /// </summary>
+    private sealed class SampleColorMemo
+    {
+        private const int Bits = 16;
+        private readonly long[] _keys = new long[1 << Bits];
+        private readonly int[] _values = new int[1 << Bits];
+
+        public SampleColorMemo() => Array.Fill(_keys, -1L);
+
+        private static int Slot(long key) => (int)((ulong)(key * unchecked((long)0x9E3779B97F4A7C15UL)) >> (64 - Bits));
+
+        public bool TryGet(long key, out int value)
+        {
+            int slot = Slot(key);
+            value = _values[slot];
+            return _keys[slot] == key;
+        }
+
+        public void Set(long key, int value)
+        {
+            int slot = Slot(key);
+            _keys[slot] = key;
+            _values[slot] = value;
+        }
     }
 
     /// <summary>
@@ -592,11 +744,11 @@ public sealed class PdfImageSource : IPdfImageSource
 
     // ---------------------------------------------------------------- alpha: /SMask and stencil /Mask
 
-    private byte[]? BuildAlpha(PdfDictionary dict, int width, int height, CancellationToken ct)
+    private byte[]? BuildAlpha(PdfDictionary dict, int width, int height, PdfStream? smask, PdfDecodedStream? smaskData, CancellationToken ct)
     {
-        if (_resolver.Resolve(dict["SMask"]) is PdfStream smask)
-            return _decoder.DecodeImageStream(smask).ImageFilter == "DCTDecode" ? null // the backend applies it (JpegSoftMask)
-                : DecodeMaskPlane(smask, width, height, soft: true, ct);
+        if (smask != null && smaskData != null)
+            return smaskData.ImageFilter == "DCTDecode" ? null // the backend applies it (JpegSoftMask)
+                : DecodeMaskPlane(smask, width, height, soft: true, ct, smaskData);
         if (_resolver.Resolve(dict["Mask"]) is PdfStream stencil)
             return DecodeMaskPlane(stencil, width, height, soft: false, ct);
         return null;
@@ -606,7 +758,8 @@ public sealed class PdfImageSource : IPdfImageSource
     /// Decodes a soft mask (DeviceGray samples = alpha) or explicit stencil mask (1 = masked out)
     /// and resamples it nearest-neighbour to the base image size.
     /// </summary>
-    private byte[] DecodeMaskPlane(PdfStream maskStream, int width, int height, bool soft, CancellationToken ct)
+    /// <param name="decoded">The mask stream already decoded, or null to decode it here.</param>
+    private byte[] DecodeMaskPlane(PdfStream maskStream, int width, int height, bool soft, CancellationToken ct, PdfDecodedStream? decoded = null)
     {
         var md = maskStream.Dictionary;
         int mw = checked((int)(md.GetInteger("Width") ?? 0));
@@ -614,7 +767,7 @@ public sealed class PdfImageSource : IPdfImageSource
         if (mw <= 0 || mh <= 0 || (long)mw * mh > _limits.MaxImagePixels)
             throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "Mask dimensions invalid or too large.");
 
-        var decoded = _decoder.DecodeImageStream(maskStream);
+        decoded ??= _decoder.DecodeImageStream(maskStream);
         if (soft && decoded.ImageFilter == "JPXDecode")
             return Resample(DecodeJpxGray(decoded.Data, mw, mh, IsInvertedDecode(md, 1), ct), mw, mh, width, height);
         if (decoded.ImageFilter is "DCTDecode" or "JPXDecode")

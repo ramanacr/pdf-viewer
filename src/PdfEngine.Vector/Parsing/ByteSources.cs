@@ -10,6 +10,10 @@ public sealed class MemoryByteSource : IPdfByteSource
 {
     private readonly ReadOnlyMemory<byte> _memory;
     private long _position;
+    // The array behind _memory, when there is one: ReadByte indexes it directly instead of
+    // taking the memory's span for every byte (the lexer reads content streams byte by byte).
+    private readonly byte[]? _array;
+    private readonly int _arrayOffset;
 
     public long Length => _memory.Length;
 
@@ -23,6 +27,11 @@ public sealed class MemoryByteSource : IPdfByteSource
     {
         _memory = memory;
         _position = 0;
+        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(memory, out var segment) && segment.Array != null)
+        {
+            _array = segment.Array;
+            _arrayOffset = segment.Offset;
+        }
     }
 
     public MemoryByteSource(byte[] bytes) : this(bytes.AsMemory()) { }
@@ -31,7 +40,7 @@ public sealed class MemoryByteSource : IPdfByteSource
     {
         if (_position >= _memory.Length)
             return -1;
-        return _memory.Span[(int)_position++];
+        return _array != null ? _array[_arrayOffset + (int)_position++] : _memory.Span[(int)_position++];
     }
 
     public int Read(Span<byte> destination)
