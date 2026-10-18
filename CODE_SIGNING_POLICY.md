@@ -17,7 +17,8 @@ public part (`PdfViewer-codesign.cer`) so a download can be checked:
 (Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
 ```
 
-An application for free code signing by SignPath Foundation has been made. Once it is accepted,
+This project is moving its code signing to the SignPath Foundation. An application for free code signing
+by SignPath Foundation has been made. Once it is accepted,
 this section will read: *Free code signing provided by [SignPath.io](https://signpath.io),
 certificate by [SignPath Foundation](https://signpath.org).*
 
@@ -38,4 +39,5 @@ In detail: it has no analytics, telemetry or account, and never uploads document
 network request only when the user asks for one: the update check (off until the user allows it
 on first start, and switchable in Help > Privacy & Safety), downloading an optional component,
 and, when signing or validating signatures, contacting the timestamp server or certificate
-authorities the user chooses. See the in-app privacy statement.
+authorities the user chooses. The full policy is at
+https://ramanacr.github.io/pdf-viewer/privacy/ and in the in-app privacy statement.
