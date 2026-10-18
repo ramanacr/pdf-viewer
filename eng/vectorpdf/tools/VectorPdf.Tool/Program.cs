@@ -21,6 +21,9 @@ namespace VectorPdf.Tool;
 /// vectorpdf docx &lt;dir&gt; [--limit N] [--keep dir]   export to Word: package check and text coverage
 /// vectorpdf docservices &lt;dir&gt; [--limit N] [--roundtrip N]   native document services against PDFium
 /// vectorpdf services &lt;dir&gt; [--limit N] [--clean N]   native forms, safety and clean copy against PDFium
+/// vectorpdf textbench &lt;dir&gt; [--profile] [--alloc]   first text load per page, native against PDFium
+/// vectorpdf textsearch &lt;file.pdf&gt; [--query q]   whole-document search, native against PDFium
+/// vectorpdf texthash &lt;dir&gt; --out f.txt   per-page fingerprint of the native text pages (to compare builds)
 /// </summary>
 public static class Program
 {
@@ -49,6 +52,9 @@ public static class Program
             "pdfua" => await PdfUaSmoke.RunAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),
             "text" => await TextParity.RunAsync(args),
+            "textbench" => await TextBench.RunAsync(args),
+            "textsearch" => await TextBench.SearchAsync(args),
+            "texthash" => await TextBench.HashAsync(args),
             "docservices" => await DocServicesSmoke.RunAsync(args),
             "services" => await ServicesSmoke.RunAsync(args),
             _ => 2,

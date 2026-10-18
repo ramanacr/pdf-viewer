@@ -278,4 +278,53 @@ public class NativeTextTests
             Assert.Equal(expected[i].Y, actual[i].Y, 3);
         }
     }
+    [Fact]
+    public void LongPage_ThousandsOfCharacters_MatchPdfium()
+    {
+        // Past the 512-character chunks the text page keeps its characters in.
+        var content = new StringBuilder("BT /F1 6 Tf 10 290 Td 7 TL ");
+        for (int line = 0; line < 40; line++)
+            content.Append($"(Line {line:00} of a long page with many characters, words and spaces on it) ' ");
+        content.Append("ET");
+        var page = AssertSameAsPdfium(ArialPage(content.ToString()), queries: new[] { "Line 39", "spaces on it", "many" });
+        Assert.True(page.CharCount > 2048, $"{page.CharCount} characters");
+    }
+
+    private static byte[] Pages(int count, Func<int, string> content)
+    {
+        var b = new VectorPdfBuilder();
+        for (int p = 1; p <= count; p++) b.AddPage(content(p), $"<< /Font << {Helvetica} >> >>", mediaBox: "[0 0 300 300]");
+        return b.Build();
+    }
+
+    [Fact]
+    public void Cache_KeepsPagesWithinItsCharacterBudget()
+    {
+        using var doc = PdfVectorDocument.OpenAsync(Pages(40, p => $"BT /F1 12 Tf 20 250 Td (Page {p}) Tj ET")).AsTask().GetAwaiter().GetResult();
+        var first = PdfTextExtractor.LoadPage(doc, 1);
+        for (int p = 2; p <= 40; p++) PdfTextExtractor.LoadPage(doc, p);
+        // Forty small pages are well inside the budget: the first is still kept, not rebuilt.
+        Assert.True(PdfTextExtractor.IsLoaded(doc, 1));
+        Assert.Same(first, PdfTextExtractor.LoadPage(doc, 1));
+        PdfTextExtractor.Invalidate(doc);
+        Assert.False(PdfTextExtractor.IsLoaded(doc, 1));
+        Assert.NotSame(first, PdfTextExtractor.LoadPage(doc, 1));
+    }
+
+    [Fact]
+    public void Prefetch_BuildsThePageInTheBackground()
+    {
+        using var doc = PdfVectorDocument.OpenAsync(Pages(3, p => $"BT /F1 12 Tf 20 250 Td (Prefetched page {p}) Tj ET")).AsTask().GetAwaiter().GetResult();
+        PdfTextExtractor.Prefetch(doc, 2);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!PdfTextExtractor.IsLoaded(doc, 2) && clock.Elapsed < TimeSpan.FromSeconds(10)) System.Threading.Thread.Sleep(5);
+        Assert.True(PdfTextExtractor.IsLoaded(doc, 2));
+        Assert.False(PdfTextExtractor.IsLoaded(doc, 3));
+        Assert.Equal("Prefetched page 2", PdfTextExtractor.LoadPage(doc, 2).GetAllText());
+        // Asking again for a page that is kept queues nothing; a closed document is not read.
+        PdfTextExtractor.Prefetch(doc, 2);
+        doc.Dispose();
+        PdfTextExtractor.Prefetch(doc, 3);
+        Assert.False(PdfTextExtractor.IsLoaded(doc, 3));
+    }
 }

@@ -18,6 +18,9 @@ internal static class Bidi
 
     public readonly record struct Segment(Direction Direction, int Start, int Count);
 
+    /// <summary>True when <see cref="Classify"/> can find the character right-to-left (Hebrew, Arabic and their presentation forms).</summary>
+    public static bool CanBeRight(char c) => c is >= '֐' and <= 'ࣿ' or >= 'יִ' and <= '﷿' or >= 'ﹰ' and <= '﻾';
+
     public static Direction Classify(char c)
     {
         if (c is >= '0' and <= '9') return Direction.LeftWeak;
