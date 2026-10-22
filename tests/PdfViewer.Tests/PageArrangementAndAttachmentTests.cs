@@ -5,10 +5,9 @@ using System.Threading.Tasks;
 using PdfEngine;
 using PdfEngine.Exceptions;
 using PdfEngine.Pages;
-using PdfEngine.Pdfium;
-using PdfEngine.Pdfium.Adapters;
 using PdfEngine.Rendering;
 using PdfEngine.Safety;
+using PdfEngine.Vector.Services;
 using Xunit;
 
 namespace PdfViewer.Tests;
@@ -39,17 +38,27 @@ public class PageArrangementAndAttachmentTests : IDisposable
 
     private string Path_(string name) => Path.Combine(_testDir, name);
 
+    /// <summary>The embedded-files service of the engine the test runs on.</summary>
+    private static IPdfAttachmentService Attachments(string engineName) => engineName switch
+    {
+#if PDFIUM_RENDERER
+        TestEngines.Pdfium => new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService(),
+#endif
+        _ => new PdfNativeAttachmentService(),
+    };
+
     /// <summary>
     /// Reorder, drop and rotate in one pass, then prove it by reading the output back: page
     /// text identifies which source page landed where.
     /// </summary>
-    [Fact]
-    public async Task TestArrangePagesReordersDropsAndRotatesInOnePass()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestArrangePagesReordersDropsAndRotatesInOnePass(string engineName)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("arrange.pdf"), 4, "Tok");
         string target = Path_("arranged.pdf");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
 
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
@@ -84,13 +93,14 @@ public class PageArrangementAndAttachmentTests : IDisposable
         Assert.Equal(second.WidthPoints, first.HeightPoints);
     }
 
-    [Fact]
-    public async Task TestArrangePagesCanDuplicateAPage()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestArrangePagesCanDuplicateAPage(string engineName)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("dup.pdf"), 2, "Tok");
         string target = Path_("duplicated.pdf");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
             await engine.PageOrganizer.ArrangePagesAsync(doc, new[]
@@ -105,13 +115,14 @@ public class PageArrangementAndAttachmentTests : IDisposable
         Assert.Equal(3, arranged.PageCount);
     }
 
-    [Fact]
-    public async Task TestArrangePagesLeavesTheOriginalUntouched()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestArrangePagesLeavesTheOriginalUntouched(string engineName)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("untouched.pdf"), 3, "Tok");
         byte[] before = File.ReadAllBytes(source);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
             await engine.PageOrganizer.ArrangePagesAsync(
@@ -121,12 +132,13 @@ public class PageArrangementAndAttachmentTests : IDisposable
         Assert.Equal(before, File.ReadAllBytes(source));
     }
 
-    [Fact]
-    public async Task TestArrangePagesRejectsBadInput()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestArrangePagesRejectsBadInput(string engineName)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("reject.pdf"), 2, "Tok");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(source);
 
         // An empty arrangement would produce a file no reader can open.
@@ -148,16 +160,17 @@ public class PageArrangementAndAttachmentTests : IDisposable
         Assert.False(File.Exists(Path_("oob.pdf")));
     }
 
-    [Fact]
-    public async Task TestAttachmentsAreListedAndExtractedByteForByte()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestAttachmentsAreListedAndExtractedByteForByte(string engineName)
     {
         const string payload = "the exact bytes that were embedded";
         string source = TestPdfBuilder.CreateAttachmentPdf(Path_("carrier.pdf"), payload);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(source);
 
-        var service = new PdfiumAttachmentService();
+        var service = Attachments(engineName);
         var files = await service.GetAttachmentsAsync(doc);
 
         var file = Assert.Single(files);
@@ -173,15 +186,16 @@ public class PageArrangementAndAttachmentTests : IDisposable
         Assert.Contains(payload, File.ReadAllText(extracted));
     }
 
-    [Fact]
-    public async Task TestAttachmentExtractionRejectsAnIndexThatDoesNotExist()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestAttachmentExtractionRejectsAnIndexThatDoesNotExist(string engineName)
     {
         string source = TestPdfBuilder.CreateAttachmentPdf(Path_("carrier2.pdf"));
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(source);
 
-        var service = new PdfiumAttachmentService();
+        var service = Attachments(engineName);
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
             await service.ExtractAttachmentAsync(doc, 7, Path_("nope.bin")));
@@ -189,15 +203,16 @@ public class PageArrangementAndAttachmentTests : IDisposable
         Assert.False(File.Exists(Path_("nope.bin")));
     }
 
-    [Fact]
-    public async Task TestOrdinaryDocumentReportsNoAttachments()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestOrdinaryDocumentReportsNoAttachments(string engineName)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("plain.pdf"), 1, "Tok");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(source);
 
-        Assert.Empty(await new PdfiumAttachmentService().GetAttachmentsAsync(doc));
+        Assert.Empty(await Attachments(engineName).GetAttachmentsAsync(doc));
     }
 
     /// <summary>
@@ -218,7 +233,10 @@ public class PageArrangementAndAttachmentTests : IDisposable
     [InlineData("", false)]
     public void TestExecutableAttachmentNamesAreRecognised(string name, bool expected)
     {
-        Assert.Equal(expected, PdfiumAttachmentService.IsExecutableName(name));
+        Assert.Equal(expected, PdfNativeAttachmentService.IsExecutableName(name));
+#if PDFIUM_RENDERER
+        Assert.Equal(expected, PdfEngine.Pdfium.Adapters.PdfiumAttachmentService.IsExecutableName(name));
+#endif
     }
 
     /// <summary>

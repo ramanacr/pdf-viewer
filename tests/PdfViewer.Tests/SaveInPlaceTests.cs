@@ -3,7 +3,6 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using PdfEngine;
-using PdfEngine.Pdfium;
 using PdfViewer.Models;
 using PdfViewer.ViewModels;
 using Xunit;
@@ -124,7 +123,7 @@ public class SaveInPlaceTests : IDisposable
         Assert.NotEqual(sizeBefore, new FileInfo(path).Length);
 
         // Re-open from disk: the document survives and carries the annotation.
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(TestEngines.Native);
         await using var reopened = await engine.OpenDocumentAsync(path);
 
         Assert.Equal(3, reopened.PageCount);
@@ -166,7 +165,7 @@ public class SaveInPlaceTests : IDisposable
 
         Assert.False(vm.HasUnsavedChanges);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(TestEngines.Native);
         await using var reopened = await engine.OpenDocumentAsync(path);
 
         var annotations = await engine.AnnotationService.LoadAnnotationsAsync(reopened, 1);

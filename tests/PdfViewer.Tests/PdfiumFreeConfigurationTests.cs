@@ -40,6 +40,25 @@ public class PdfiumFreeConfigurationTests
         Assert.Equal(listed.Count, listed.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(listed, f => Assert.True(File.Exists(Path.Combine(dir, f)), $"{f} is listed as PDFium-only but does not exist."));
         Assert.DoesNotContain(listed, f => f.StartsWith("PdfiumFree", StringComparison.OrdinalIgnoreCase)); // the gate tests always run
+
+        // Each says why it needs PDFium (the CI job summary shows it).
+        Assert.All(project.Descendants().Where(e => e.Name.LocalName == "PdfiumOnlyTest"),
+            e => Assert.False(string.IsNullOrWhiteSpace(e.Attribute("Reason")?.Value), $"{e.Attribute("Include")!.Value} is listed as PDFium-only without a Reason."));
+    }
+
+    /// <summary>Every committed PDFium golden is read by a test, so none is left behind unchecked.</summary>
+    [Fact]
+    public void EveryPdfiumGolden_IsUsedByATest()
+    {
+        string dir = TestProjectDirectory();
+        string sources = string.Concat(Directory.EnumerateFiles(dir, "*.cs").Select(File.ReadAllText));
+        foreach (var golden in Directory.EnumerateFiles(Path.Combine(dir, "PdfiumGoldens")))
+        {
+            string name = Path.GetFileName(golden);
+            string stem = Path.GetFileNameWithoutExtension(golden);
+            Assert.True(sources.Contains($"\"{name}\"") || sources.Contains($"\"{stem}\"") || sources.Contains($"\"{stem.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')}{{"),
+                $"PdfiumGoldens\\{name} is not read by any test.");
+        }
     }
 
 #if PDFIUM_RENDERER

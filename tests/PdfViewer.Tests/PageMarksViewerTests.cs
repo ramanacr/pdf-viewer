@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using PdfEngine.Pdfium;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.ViewModels;
@@ -42,12 +41,7 @@ public class PageMarksViewerTests : IDisposable
         return vm;
     }
 
-    private static async Task<string> Text(byte[] pdf, int page = 1)
-    {
-        using var engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(pdf, null);
-        return await engine.TextService.ExtractPageTextAsync(doc, page);
-    }
+    private static Task<string> Text(byte[] pdf, int page = 1) => NativeReadBack.TextAsync(pdf, page);
 
     [Fact]
     public async Task HeaderFooter_Add_IsARevisionThatUndoesAndSaves()
