@@ -317,7 +317,7 @@ public partial class MainViewModel : ObservableObject
     public IFeatureGate FeatureGate { get; } = new DefaultFeatureGate(LicenseTier.Enterprise);
 
     public DocumentSession Session { get; }
-    public ICommandHistory CommandHistory { get; }
+    public ICommandHistory CommandHistory { get; private set; }
 
     /// <summary>
     /// How much rendered-page memory this document may retain. Set by whoever is dividing the
@@ -359,7 +359,7 @@ public partial class MainViewModel : ObservableObject
     {
         TextSelection = new TextSelectionController(() => Pages, UpdateSelectionFromPages);
         Session = new DocumentSession(SecurityPolicy);
-        CommandHistory = new CommandHistory(featureGate: FeatureGate);
+        CommandHistory = new CommandHistory(MaxUndo, FeatureGate);
 
         _docService = PdfDocumentServiceFactory.CreateService(SecurityPolicy);
         // Bounded by bytes, not just by entry count: a rendered page runs from a few megabytes
@@ -566,6 +566,9 @@ public partial class MainViewModel : ObservableObject
                 Thumbnails.Add(thumbVm);
             }
 
+            // A new document starts a new undo history, with what was just opened as its saved state.
+            ResetUndoHistory();
+
             CurrentPageNumber = 1;
             UpdateSingleCurrentPage();
             RaiseLayoutChanged();
@@ -634,6 +637,7 @@ public partial class MainViewModel : ObservableObject
         ActiveAnnotationTool = null;
 
         IsDocumentLoaded = false;
+        ResetUndoHistory();
         Metadata = null;
         PageCount = 0;
         CurrentPageNumber = 1;
@@ -1734,6 +1738,9 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnHasUnsavedChangesChanged(bool value)
     {
+        // Whatever cleared the flag (a save, signing, a new revision written to disk) made what
+        // is shown now the state that undoing back to counts as saved.
+        if (!value) MarkSavedState();
         SaveCommand.NotifyCanExecuteChanged();
         UpdateWindowTitle();
     }
@@ -1768,55 +1775,44 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     public void AddAnnotation(AnnotationModel annot)
     {
+        if (annot == null || AllAnnotations.Contains(annot)) return;
         if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
-        AllAnnotations.Add(annot);
-        if (annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count)
-        {
-            Pages[annot.PageNumber - 1].AnnotationsOnPage.Add(annot);
-        }
-        HasUnsavedChanges = true;
+        int pageIndex = annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count ? Pages[annot.PageNumber - 1].AnnotationsOnPage.Count : -1;
+        RecordAnnotationChange($"Add {AnnotationTypeName(annot.Type)}",
+            new() { new(annot, null, AnnotationState.Of(annot), AllAnnotations.Count, pageIndex) });
         StatusText = $"Added {annot.Type} annotation on page {annot.PageNumber}";
     }
 
     [RelayCommand]
     public void DeleteAnnotation(AnnotationModel annot)
     {
-        if (annot == null) return;
-        AllAnnotations.Remove(annot);
-        if (annot.PageNumber >= 1 && annot.PageNumber <= Pages.Count)
-        {
-            Pages[annot.PageNumber - 1].AnnotationsOnPage.Remove(annot);
-        }
-        HasUnsavedChanges = true;
+        if (annot == null || !AllAnnotations.Contains(annot)) return;
+        RecordAnnotationChange($"Delete {AnnotationTypeName(annot.Type)}",
+            new() { new(annot, AnnotationState.Of(annot), null, AllAnnotations.IndexOf(annot), PageIndexOf(annot)) });
         StatusText = $"Removed annotation from page {annot.PageNumber}";
     }
 
     /// <summary>
-    /// Records that an existing annotation was edited in place.
+    /// Records that an existing annotation was edited in place (its comment, colour, author...),
+    /// as one step Undo takes back to how it was before.
     ///
     /// Editing a comment used to change only the model: the title bar showed no asterisk,
     /// Save stayed greyed out, and closing asked nothing - so a rewritten comment was thrown
     /// away without a word. Only adding and removing counted as work.
     /// </summary>
-    public void NoteAnnotationEdited(AnnotationModel annot)
+    public void NoteAnnotationEdited(AnnotationModel annot, string name = "Edit Comment")
     {
         if (annot == null) return;
 
-        annot.ModifiedDate = DateTime.Now;
-        HasUnsavedChanges = true;
-        StatusText = $"Edited annotation on page {annot.PageNumber}";
+        if (RecordInPlaceEdit(annot, name))
+            StatusText = $"Edited annotation on page {annot.PageNumber}";
     }
 
     [RelayCommand]
     public void ClearAllAnnotations()
     {
-        if (AllAnnotations.Count > 0) HasUnsavedChanges = true;
-
-        AllAnnotations.Clear();
-        foreach (var page in Pages)
-        {
-            page.AnnotationsOnPage.Clear();
-        }
+        var changes = AllAnnotations.Select((a, i) => new AnnotationChange(a, AnnotationState.Of(a), null, i, PageIndexOf(a))).ToList();
+        RecordAnnotationChange("Delete All Comments", changes);
         StatusText = "Cleared all annotations.";
     }
 
@@ -1858,6 +1854,7 @@ public partial class MainViewModel : ObservableObject
             HasUnsavedChanges = false;
             _formChangedSinceSave = false;
             _savedAnnotationsFingerprint = AnnotationsFingerprint();
+            MarkSavedState();
             StatusText = $"Saved {Path.GetFileName(originalPath)}.";
             if (HasSignatures) _ = ValidateSignaturesAsync();
         }

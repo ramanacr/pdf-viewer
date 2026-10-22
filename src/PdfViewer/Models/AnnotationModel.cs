@@ -166,6 +166,18 @@ public partial class AnnotationModel : ObservableObject
         Quads = new List<Rect>(quads);
     }
 
+    /// <summary>Sets the box and the per-line rectangles exactly as given (undo restores both as they were).</summary>
+    public void SetGeometry(Rect box, IReadOnlyList<Rect> quads)
+    {
+        _suspendQuadSync = true;
+        try
+        {
+            X = box.X; Y = box.Y; Width = box.Width; Height = box.Height;
+        }
+        finally { _suspendQuadSync = false; }
+        Quads = new List<Rect>(quads);
+    }
+
     /// <summary>The lines relative to the annotation's box (0–1), drawn stretched over it.</summary>
     private System.Windows.Media.Geometry? MarkupGeometry(Func<Rect, Rect> part)
     {
