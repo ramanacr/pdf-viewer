@@ -582,9 +582,7 @@ internal sealed class WpfDisplayListCompiler
             {
                 throw;
             }
-            catch (Exception ex) when (ex is Diagnostics.PdfVectorException or System.IO.InvalidDataException
-                                           or System.IO.IOException or NotSupportedException or System.IO.FileFormatException
-                                           or ArgumentException or OverflowException)
+            catch (Exception ex) when (WpfImageCache.IsDecodeFailure(ex))
             {
                 var reason = ex is Diagnostics.PdfUnsupportedFeatureException u ? u.Reason
                            : ex is Diagnostics.PdfResourceLimitException ? PdfFallbackReason.ResourceLimit
