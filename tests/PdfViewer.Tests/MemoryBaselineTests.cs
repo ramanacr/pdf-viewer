@@ -17,6 +17,7 @@ namespace PdfViewer.Tests;
 /// page or document, which these catch; the numbers are written to the test output as the
 /// baseline.
 /// </summary>
+[Collection(MemoryBaselineCollection.Name)]
 public class MemoryBaselineTests : IDisposable
 {
     private readonly ITestOutputHelper _output;
