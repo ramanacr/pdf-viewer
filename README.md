@@ -244,6 +244,11 @@ oracle the engine is tested against; the published application does not contain 
 - **Export to Word** (*File → Export → Word Document*): text with its fonts and styles, headings, lists, real tables, images, drawings as shapes or pictures, and headers and footers with page numbers. The Word document usually keeps the page count of the PDF.
 - **Digital Signatures**: sign with a certificate (a `.pfx` file or the Windows certificate store) as a visible or invisible signature, optionally with a picture and an RFC 3161 timestamp, with long-term validation (PAdES-B-LT and B-LTA). **Tools → Verify Digital Signatures** checks signatures and what changed after signing.
 - **Password Protection**: **Tools → Protect with Password** (AES-256, with print, copy, edit and form permissions) and **Remove Security**. Encrypted files open with either password, and their permissions are honoured.
+- **Create PDF** (*File → Create PDF*), all on this computer, nothing uploaded:
+  - **From Images**: JPEG, PNG, TIFF (every page), BMP, GIF, and WebP or HEIC when Windows has their decoders, a page each. Pages fit the picture or go on A4, Letter or Legal with margins; EXIF orientation is honoured. JPEGs are kept byte for byte; other pictures are lossless unless you choose JPEG compression. Greyscale, text recognition (Windows OCR) and PDF/A-2b are options.
+  - **From Scanner**: Windows Image Acquisition, from the glass or the document feeder (both sides when the scanner can), in colour, grey or black and white, at the resolution you choose. Scan as often as you like, then create the PDF, searchable if you like. No driver is installed for you.
+  - **From File**: Word, Excel and PowerPoint files, RTF and HTML through Microsoft Office's own PDF export (read-only, in a hidden instance, no settings changed); text files are laid out by the app itself when Office is not installed.
+  - **Combine Files**: PDFs, pictures and Office files in one PDF, in the order you drag them to, with a bookmark for each file.
 - **Reduce File Size**: recompresses images, removes unused objects and subsets fonts. Encrypted documents keep their passwords and permissions.
 - **PDF/A** (*Tools → PDF/A: Check and Convert*): validates and converts to PDF/A-1b, 2b and 3b, flattening transparency for PDF/A-1b.
 - **Accessibility Check** (*Tools → Accessibility Check*): checks PDF/UA-1, lists each issue with its Matterhorn checkpoint and shows where it is on the page.
@@ -519,7 +524,7 @@ Yes. Open `PdfViewer.slnx` in **Visual Studio 2022 (v17.12 or newer)**. Visual S
 
 Release binaries are Authenticode-signed, built only by this repository's release workflow from tagged source. Who commits, reviews and approves releases, how to check a download's signature, and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
 
-This project is moving its code signing to the SignPath Foundation: an application for free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org), has been made. Until it is accepted, releases are signed with the project's own self-signed certificate. The privacy policy is also published at https://ramanacr.github.io/pdf-viewer/privacy/.
+Releases are signed with the project's own self-signed certificate for now. The privacy policy is also published at https://ramanacr.github.io/pdf-viewer/privacy/.
 
 ---
 

@@ -17,10 +17,9 @@ public part (`PdfViewer-codesign.cer`) so a download can be checked:
 (Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
 ```
 
-This project is moving its code signing to the SignPath Foundation. An application for free code signing
-by SignPath Foundation has been made. Once it is accepted,
-this section will read: *Free code signing provided by [SignPath.io](https://signpath.io),
-certificate by [SignPath Foundation](https://signpath.org).*
+The certificate is self-signed, so Windows reports the publisher as unknown and SmartScreen can
+show a warning. A certificate from a public certification authority will replace it later; this
+policy will name that authority when it does.
 
 ## Team roles
 

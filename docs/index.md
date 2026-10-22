@@ -21,9 +21,8 @@ Get the latest installer (`PdfViewerSetup.exe`) or the portable `PdfViewer.exe` 
 ## Code signing
 
 Release binaries are Authenticode-signed, built only by this repository's release workflow from
-tagged source. An application for free code signing by the
-[SignPath Foundation](https://signpath.org) has been made; until it is accepted, releases are
-signed with the project's own certificate, whose thumbprint is published with each release. See
+tagged source. For now, releases are signed with the project's own self-signed certificate,
+whose thumbprint is published with each release. See
 the [code signing policy](https://github.com/ramanacr/pdf-viewer/blob/main/CODE_SIGNING_POLICY.md).
 
 ## Source and documentation
