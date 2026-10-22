@@ -66,9 +66,9 @@ public class PageMarksViewerTests : IDisposable
         Assert.Contains("Page 2 of 2", text);
         Assert.Contains("contract.pdf", text);
 
-        await vm.UndoContentEditAsync();
+        await vm.UndoAsync();
         Assert.DoesNotContain("Page 2 of 2", await Text(vm.CurrentDocumentBytes()!, 2));
-        await vm.RedoContentEditAsync();
+        await vm.RedoAsync();
 
         await vm.SaveAsync();
         byte[] saved = File.ReadAllBytes(path);

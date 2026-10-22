@@ -35,7 +35,6 @@ public partial class MainViewModel
     /// <summary>Where installed fonts come from (tests use a fixed folder).</summary>
     public SystemFontCatalog? EditFontCatalog { get; set; }
 
-    private readonly Stack<byte[]> _editUndo = new(), _editRedo = new();
     private readonly System.Threading.SemaphoreSlim _editDocLock = new(1, 1);
     private byte[]? _editDocBytes;
     private PdfVectorDocument? _editDoc;
@@ -77,14 +76,10 @@ public partial class MainViewModel
             _editDocLock.Release();
         }
     }
-    private const int MaxEditUndo = 30;
     private bool _signedEditConfirmed;
-
-    public bool CanUndoContentEdit => _editUndo.Count > 0;
 
     /// <summary>The revision shown now (tests read it).</summary>
     internal byte[]? CurrentDocumentBytes() => _docService.CurrentBytes;
-    public bool CanRedoContentEdit => _editRedo.Count > 0;
 
     partial void OnIsEditingContentChanged(bool value)
     {
@@ -202,7 +197,7 @@ public partial class MainViewModel
     {
         if (item.Kind != ContentEditKind.Text || newText == item.Text) return Task.FromResult(false);
         return ApplyContentEditsAsync(new PdfContentEdit[] { new PdfReplaceText(item.PageNumber, item.Id, newText) },
-            newText.Trim().Length == 0 ? "Deleted the paragraph." : "Edited the text.");
+            newText.Trim().Length == 0 ? "Deleted the paragraph." : "Edited the text.", newText.Trim().Length == 0 ? "Delete Paragraph" : "Edit Text");
     }
 
     /// <summary>Moves a paragraph or image by a distance normalized to the unrotated page.</summary>
@@ -212,7 +207,7 @@ public partial class MainViewModel
         var crop = await CropOfAsync(item.PageNumber);
         var t = PdfMatrix.CreateTranslation(delta.X * crop.Width, -delta.Y * crop.Height);
         return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfTransformContent(item.PageNumber, Target(item), item.Id, t) },
-            item.Kind == ContentEditKind.Text ? "Moved the paragraph." : "Moved the image.");
+            item.Kind == ContentEditKind.Text ? "Moved the paragraph." : "Moved the image.", item.Kind == ContentEditKind.Text ? "Move Paragraph" : "Move Image");
     }
 
     /// <summary>An image stretched or shrunk to new bounds (normalized to the unrotated page).</summary>
@@ -224,7 +219,7 @@ public partial class MainViewModel
         var to = MainViewModel.ToUserSpaceRect(bounds, crop);
         var t = PdfMatrix.CreateTranslation(-from.X, -from.Y) * PdfMatrix.CreateScale(to.Width / from.Width, to.Height / from.Height) * PdfMatrix.CreateTranslation(to.X, to.Y);
         return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfTransformContent(item.PageNumber, Target(item), item.Id, t) },
-            item.Kind == ContentEditKind.Text ? "Resized the paragraph." : "Resized the image.");
+            item.Kind == ContentEditKind.Text ? "Resized the paragraph." : "Resized the image.", item.Kind == ContentEditKind.Text ? "Resize Paragraph" : "Resize Image");
     }
 
     /// <summary>Turns an image a quarter turn about its centre (positive: clockwise as seen).</summary>
@@ -234,12 +229,12 @@ public partial class MainViewModel
         var box = MainViewModel.ToUserSpaceRect(item.Bounds, crop);
         double cx = box.X + box.Width / 2, cy = box.Y + box.Height / 2;
         var t = PdfMatrix.CreateTranslation(-cx, -cy) * PdfMatrix.CreateRotation(-degreesClockwise * Math.PI / 180) * PdfMatrix.CreateTranslation(cx, cy);
-        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfTransformContent(item.PageNumber, Target(item), item.Id, t) }, "Turned the image.");
+        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfTransformContent(item.PageNumber, Target(item), item.Id, t) }, "Turned the image.", "Turn Image");
     }
 
     public Task<bool> DeleteEditItemAsync(ContentEditItem item) =>
         ApplyContentEditsAsync(new PdfContentEdit[] { new PdfDeleteContent(item.PageNumber, Target(item), item.Id) },
-            item.Kind == ContentEditKind.Text ? "Deleted the paragraph." : "Deleted the image.");
+            item.Kind == ContentEditKind.Text ? "Deleted the paragraph." : "Deleted the image.", item.Kind == ContentEditKind.Text ? "Delete Paragraph" : "Delete Image");
 
     [RelayCommand]
     public async Task DeleteSelectedContentAsync()
@@ -255,7 +250,7 @@ public partial class MainViewModel
         if (path == null) return false;
         var image = LoadImage(path);
         if (image == null) return false;
-        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfReplaceImage(item.PageNumber, item.Id, image) }, "Replaced the image.");
+        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfReplaceImage(item.PageNumber, item.Id, image) }, "Replaced the image.", "Replace Image");
     }
 
     [RelayCommand]
@@ -288,7 +283,7 @@ public partial class MainViewModel
         double x = crop.X + at.X * crop.Width, y = crop.Y + (1 - at.Y) * crop.Height;
         var baseline = new PdfPoint(x + Math.Sin(angle) * 0.8 * size, y - Math.Cos(angle) * 0.8 * size);
         var format = NewTextFormat with { AngleDegrees = rotation };
-        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfAddText(pageNumber, baseline, text, format) }, "Added text.");
+        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfAddText(pageNumber, baseline, text, format) }, "Added text.", "Add Text");
     }
 
     /// <summary>A picture from a file, placed in the middle of the page at up to half its width.</summary>
@@ -313,7 +308,7 @@ public partial class MainViewModel
         double scale = Math.Min(1.0, Math.Min(seenW * 0.5 / image.Width, seenH * 0.5 / image.Height));
         double w = image.Width * scale, h = image.Height * scale;
         var bounds = new PdfRect(crop.X + (crop.Width - w) / 2, crop.Y + (crop.Height - h) / 2, w, h);
-        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfAddImage(pageNumber, bounds, image, rotation) }, "Added the image.");
+        return await ApplyContentEditsAsync(new PdfContentEdit[] { new PdfAddImage(pageNumber, bounds, image, rotation) }, "Added the image.", "Add Image");
     }
 
     private PdfImageContent? LoadImage(string path)
@@ -340,7 +335,7 @@ public partial class MainViewModel
     /// the previous revision kept for Undo. Signed documents are warned about once: the edit
     /// is recorded after the signatures, which then show the document was changed.
     /// </summary>
-    public async Task<bool> ApplyContentEditsAsync(IReadOnlyList<PdfContentEdit> edits, string description)
+    public async Task<bool> ApplyContentEditsAsync(IReadOnlyList<PdfContentEdit> edits, string description, string undoName = "Edit")
     {
         if (WhyCannotEditContent() is { } reason)
         {
@@ -374,38 +369,10 @@ public partial class MainViewModel
             return false;
         }
 
-        _editUndo.Push(before);
-        if (_editUndo.Count > MaxEditUndo) TrimUndo();
-        _editRedo.Clear();
-        await ShowRevisionAsync(result.Bytes, edits.Select(e => e.PageNumber).Distinct().ToList());
+        await RecordRevisionAsync(undoName, before, result.Bytes, edits.Select(e => e.PageNumber).Distinct().ToList());
         string fontsNote = result.EmbeddedFonts.Count > 0 ? $" Embedded {string.Join(", ", result.EmbeddedFonts)} for characters the document's fonts lack." : string.Empty;
         StatusText = description + fontsNote + (result.Warnings.Count > 0 ? " " + string.Join(" ", result.Warnings) : string.Empty);
         return true;
-    }
-
-    private void TrimUndo()
-    {
-        var keep = _editUndo.Take(MaxEditUndo).Reverse().ToList();
-        _editUndo.Clear();
-        foreach (var b in keep) _editUndo.Push(b);
-    }
-
-    [RelayCommand]
-    public async Task UndoContentEditAsync()
-    {
-        if (_editUndo.Count == 0) return;
-        _editRedo.Push(_docService.CurrentBytes!);
-        await ShowRevisionAsync(_editUndo.Pop(), null);
-        StatusText = "Undid the edit.";
-    }
-
-    [RelayCommand]
-    public async Task RedoContentEditAsync()
-    {
-        if (_editRedo.Count == 0) return;
-        _editUndo.Push(_docService.CurrentBytes!);
-        await ShowRevisionAsync(_editRedo.Pop(), null);
-        StatusText = "Redid the edit.";
     }
 
     /// <summary>Loads a revision: the pages it changed are drawn again, and their text and edit items re-read.</summary>
@@ -430,8 +397,6 @@ public partial class MainViewModel
         _cache.Clear();
         _formChangedSinceSave = true; // an in-memory revision, written as it is on Save
         HasUnsavedChanges = true;
-        OnPropertyChanged(nameof(CanUndoContentEdit));
-        OnPropertyChanged(nameof(CanRedoContentEdit));
         _ = RenderVisiblePagesAsync();
         _ = RenderThumbnailsAsync();
         // The pages being shown for editing are read again (their ids belong to the old revision).

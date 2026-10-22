@@ -205,6 +205,9 @@
             </MenuItem>
 
             <MenuItem Header="_Edit">
+                <MenuItem Header="{Binding UndoHeader}" Command="{Binding UndoCommand}" InputGestureText="Ctrl+Z"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="{Binding RedoHeader}" Command="{Binding RedoCommand}" InputGestureText="Ctrl+Y"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <Separator />
                 <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Copy}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Highlight}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
@@ -240,8 +243,6 @@
                     <MenuItem Header="_Background..." Command="{Binding ShowBackgroundCommand}" ToolTip="Adds, updates or removes a colour, picture or PDF page behind the pages."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Background}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                     <MenuItem Header="Bates _Numbering..." Command="{Binding ShowBatesNumberingCommand}" ToolTip="Adds, updates or removes sequence numbers for legal documents."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.BatesNumbering}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
-                <MenuItem Header="_Undo Edit" Command="{Binding UndoContentEditCommand}" IsEnabled="{Binding CanUndoContentEdit}" InputGestureText="Ctrl+Z"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Red_o Edit" Command="{Binding RedoContentEditCommand}" IsEnabled="{Binding CanRedoContentEdit}" InputGestureText="Ctrl+Y"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_View">

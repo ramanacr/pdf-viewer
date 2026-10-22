@@ -83,9 +83,9 @@ public class ContentEditingViewerTests : IDisposable
         // The page's items were read again from the new revision.
         Assert.Equal("Invoice total: 150 dollars", vm.Pages[0].EditItems.Single(i => i.Kind == ContentEditKind.Text).Text);
 
-        await vm.UndoContentEditAsync();
+        await vm.UndoAsync();
         Assert.Contains("120 dollars", await Text(vm.CurrentDocumentBytes()));
-        await vm.RedoContentEditAsync();
+        await vm.RedoAsync();
         Assert.Contains("150 dollars", await Text(vm.CurrentDocumentBytes()));
 
         await vm.SaveAsync();

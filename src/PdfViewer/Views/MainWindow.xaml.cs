@@ -467,25 +467,16 @@ public partial class MainWindow : Window
         };
     }
 
-    private bool _closeConfirmed;
+    private ClosePrompt? _closePrompt;
 
-    protected override async void OnClosing(System.ComponentModel.CancelEventArgs e)
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         base.OnClosing(e);
 
         // Every open document is asked about, not just the one on screen - closing the window
         // takes them all with it.
-        if (_closeConfirmed || !_shell.Documents.Any(d => d.HasUnsavedChanges)) return;
-
-        // The prompt is async and Closing is not, so the first pass always cancels the close
-        // and the answer decides whether to ask the window to close again.
-        e.Cancel = true;
-
-        if (await _shell.ConfirmCloseAllAsync())
-        {
-            _closeConfirmed = true;
-            Close();
-        }
+        _closePrompt ??= new ClosePrompt(this, () => _shell.Documents.Any(d => d.HasUnsavedChanges), _shell.ConfirmCloseAllAsync);
+        _closePrompt.OnClosing(e);
     }
 
     protected override void OnClosed(EventArgs e)
@@ -536,13 +527,16 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
 
-            case Key.Z when _vm.IsEditingContent && Keyboard.Modifiers == ModifierKeys.Control:
-                _ = _vm.UndoContentEditAsync();
+            // One history per document: comments and markup as well as text and image edits.
+            // Not KeyBindings, so a focused text box keeps Ctrl+Z for its own typing (see above).
+            case Key.Z when Keyboard.Modifiers == ModifierKeys.Control:
+                if (_vm.UndoCommand.CanExecute(null)) _vm.UndoCommand.Execute(null);
                 e.Handled = true;
                 break;
 
-            case Key.Y when _vm.IsEditingContent && Keyboard.Modifiers == ModifierKeys.Control:
-                _ = _vm.RedoContentEditAsync();
+            case Key.Y when Keyboard.Modifiers == ModifierKeys.Control:
+            case Key.Z when Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift):
+                if (_vm.RedoCommand.CanExecute(null)) _vm.RedoCommand.Execute(null);
                 e.Handled = true;
                 break;
 
@@ -1527,8 +1521,7 @@ public partial class MainWindow : Window
             {
                 _pendingAnnotationClick = null;
                 _vm.ClearSelection();
-                var dialog = new EditCommentDialog(annot, isNew: false) { Owner = this };
-                dialog.ShowDialog();
+                EditExistingAnnotation(annot);
                 return;
             }
             _vm.UpdateSelectionFromPages();

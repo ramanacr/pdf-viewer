@@ -15,8 +15,8 @@ public class MenuShortcutTests
 {
     private static readonly XNamespace Wpf = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
 
-    // Keys the window handles in code (MainWindow.xaml.cs, Window_PreviewKeyDown): undo and redo
-    // while editing page content.
+    // Keys the window handles in code (MainWindow.xaml.cs, Window_PreviewKeyDown): undo and redo,
+    // which must leave Ctrl+Z to a focused text box rather than undo the document under it.
     private static readonly string[] HandledInCode = ["Ctrl+Z", "Ctrl+Y"];
 
     private static XDocument MainWindowXaml()
