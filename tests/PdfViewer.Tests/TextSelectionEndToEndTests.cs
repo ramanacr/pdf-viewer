@@ -55,8 +55,8 @@ public class TextSelectionEndToEndTests : IDisposable
     [Fact]
     public async Task TheLayout_HasCharactersSpacesAndALineBreak()
     {
-        var (_, page) = await Open(TwoLinePdf());
-        using var _Scope = _;
+        var (vm, page) = await Open(TwoLinePdf());
+        using var vmScope = vm;
         var layout = page.TextLayout;
         Assert.Equal(2, layout.Lines.Count);
         Assert.Equal("The quick brown fox," + Environment.NewLine + "jumps over the lazy dog.", layout.GetText(0, layout.Length));

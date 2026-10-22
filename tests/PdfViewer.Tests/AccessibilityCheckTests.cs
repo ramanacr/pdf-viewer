@@ -76,8 +76,8 @@ public class AccessibilityCheckTests : IDisposable
     [Fact]
     public async Task UntaggedDocument_FailsWithTheIssuesGroupedByCategory()
     {
-        var (_, check) = await Open(Untagged());
-        using var _Scope = _;
+        var (main, check) = await Open(Untagged());
+        using var mainScope = main;
         Assert.False(check.IsCompliant);
         Assert.StartsWith("The document fails the accessibility check", check.Summary);
         Assert.Equal("The document does not claim PDF/UA conformance.", check.ClaimText);
