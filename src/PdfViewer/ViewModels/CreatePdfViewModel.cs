@@ -263,8 +263,12 @@ public sealed partial class CreatePdfViewModel : ObservableObject
         Progress = 0;
         IsProgressIndeterminate = false;
         _cts = new CancellationTokenSource();
+        bool finished = false;
+        // Progress<T> posts each report, so one can arrive after the run ends; it must not
+        // overwrite the final status.
         var progress = new Progress<CreatePdfProgress>(p =>
         {
+            if (finished) return;
             Status = p.Message;
             IsProgressIndeterminate = p.Fraction < 0;
             if (p.Fraction >= 0) Progress = 100 * p.Fraction;
@@ -276,6 +280,7 @@ public sealed partial class CreatePdfViewModel : ObservableObject
             var report = Mode == CreatePdfMode.Images
                 ? await _service.FromImagesAsync(paths.Select(ImageInput.FromFile).ToList(), target, settings, progress, _cts.Token)
                 : await _service.CombineAsync(paths, target, settings, progress, _cts.Token);
+            finished = true;
             CreatedPath = target;
             Progress = 100;
             IsProgressIndeterminate = false;
@@ -284,12 +289,14 @@ public sealed partial class CreatePdfViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
+            finished = true;
             Status = "Stopped: no file was written.";
             return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException
                                        or ArgumentException or OfficeConversionException or PdfEngine.Vector.Diagnostics.PdfVectorException)
         {
+            finished = true;
             Status = $"The PDF could not be created: {ex.Message}";
             return false;
         }
