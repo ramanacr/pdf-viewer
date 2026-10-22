@@ -118,7 +118,10 @@ public class TextSelectionAndSearchEventTests : IDisposable
 
         // Opening the document extracts the page's real text. This test drives the selection
         // logic over known geometry, so replace it rather than selecting over whatever the
-        // fixture happens to contain.
+        // fixture happens to contain. The extraction started by opening must finish first: its
+        // check for existing segments and its writes run on another thread, so replacing the
+        // segments while it is in flight can leave the page's real text in place.
+        await page.LoadTextSegmentsAsync(vm.DocumentService);
         page.TextSegments.Clear();
         page.IsTextExtracted = true; // stand in for extraction: it must not replace these segments
 
