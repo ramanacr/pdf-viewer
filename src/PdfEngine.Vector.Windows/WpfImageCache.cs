@@ -33,9 +33,10 @@ internal sealed class WpfImageCache
         ex is Diagnostics.PdfVectorException or InvalidDataException or IOException or NotSupportedException
            or FileFormatException or ArgumentException or OverflowException;
 
-    // Images that failed to decode, by source, with the fallback reason: a damaged image is decoded
-    // once, not on every render (as the Direct2D replayer does), so a codec's native error path
-    // (libjpeg's error recovery inside WIC) does not run again for each page it is drawn on.
+    // Images that failed to decode, by source, with the fallback reason. Like the Direct2D replayer,
+    // this cache decodes a damaged image once and remembers the failure, instead of decoding it
+    // again on every render, so a codec's native error path (libjpeg's error recovery inside WIC)
+    // does not run again for each page it is drawn on.
     private readonly Dictionary<string, PdfFallbackReason> _failed = new(StringComparer.Ordinal);
     private const int MaxFailedEntries = 4096;
 
