@@ -35,7 +35,7 @@ public class ExportWordViewerTests : IDisposable
     {
         string target = Path.Combine(_dir, "out.docx");
         string? suggested = null, opened = null, asked = null;
-        var vm = new MainViewModel
+        using var vm = new MainViewModel
         {
             ShowMessageBoxAction = (_, _, _, _) => { },
             ChooseWordTargetFunc = s => { suggested = s; return target; },
@@ -58,7 +58,7 @@ public class ExportWordViewerTests : IDisposable
     public async Task Export_Cancelled_WritesNothing()
     {
         string target = Path.Combine(_dir, "none.docx");
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { }, ChooseWordTargetFunc = _ => null };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { }, ChooseWordTargetFunc = _ => null };
         await vm.LoadDocumentAsync(Document());
         await vm.ExportWordAsync();
         Assert.False(File.Exists(target));

@@ -44,7 +44,7 @@ public class ReduceSizeViewerTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         var reduce = vm.CreateReduceSizeViewModel()!;
         Assert.True(reduce.CanReduce);
         Assert.False(await reduce.ReduceAsync(path)); // never over the original
@@ -57,7 +57,7 @@ public class ReduceSizeViewerTests : IDisposable
         Assert.Contains("1 image(s) downsampled", reduce.Summary);
         Assert.True(new FileInfo(output).Length < original.Length / 3, $"{original.Length} -> {new FileInfo(output).Length}");
 
-        var copy = await Open(output);
+        using var copy = await Open(output);
         Assert.Single(copy.Pages);
     }
 
@@ -88,7 +88,7 @@ public class ReduceSizeViewerTests : IDisposable
     {
         int changesAllowed = unchecked((int)0xFFFFF0CC); // print and change; no copying
         string path = EncryptedDocument(changesAllowed);
-        var vm = await OpenWith(path, "user");
+        using var vm = await OpenWith(path, "user");
         var reduce = vm.CreateReduceSizeViewModel()!;
         Assert.True(reduce.IsEncrypted);
         Assert.True(reduce.CanReduce);
@@ -107,7 +107,7 @@ public class ReduceSizeViewerTests : IDisposable
         }
         using (var owner = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(output, password: "owner"))
             Assert.True(owner.Security!.IsOwner);
-        var copy = await OpenWith(output, "user");
+        using var copy = await OpenWith(output, "user");
         Assert.Single(copy.Pages);
     }
 
@@ -115,7 +115,7 @@ public class ReduceSizeViewerTests : IDisposable
     public async Task ADocumentThatForbidsChanges_AsksForThePermissionsPassword()
     {
         string path = EncryptedDocument(); // print only
-        var vm = await OpenWith(path, "user");
+        using var vm = await OpenWith(path, "user");
         string output = Path.Combine(_dir, "secured_reduced.pdf");
 
         var cancelled = vm.CreateReduceSizeViewModel()!;

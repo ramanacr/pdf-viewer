@@ -120,7 +120,7 @@ public class PageContextMenuTests : IDisposable
         string path = TestPdfBuilder.CreateSimplePdf(
             Path.Combine(_testDir, "ctx.pdf"), 3, "CtxToken");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         Assert.NotEmpty(vm.Pages);
@@ -136,7 +136,7 @@ public class PageContextMenuTests : IDisposable
         string path = TestPdfBuilder.CreateSimplePdf(
             Path.Combine(_testDir, "work.pdf"), 2, "CtxToken");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         var page = vm.Pages[0];

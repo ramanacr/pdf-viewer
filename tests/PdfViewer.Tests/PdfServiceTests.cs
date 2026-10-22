@@ -468,7 +468,7 @@ public class PdfServiceTests : IDisposable
     public async Task TestSearchSelectionAndScrollNavigation()
     {
         string samplePdf = CreateSamplePdf("Search_Nav_Test.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         int scrolledPage = 0;
         double scrolledNormX = -1;
@@ -718,7 +718,7 @@ public class PdfServiceTests : IDisposable
     {
         string samplePdf = CreateSamplePdf("MainVmSelectionTest.pdf", 1);
 
-        var mainVm = new MainViewModel();
+        using var mainVm = new MainViewModel();
         await mainVm.LoadDocumentAsync(samplePdf);
 
         var firstPage = mainVm.Pages[0];
@@ -806,7 +806,7 @@ public class PdfServiceTests : IDisposable
     {
         string samplePdf = CreateSamplePdf("ThumbnailRotationTest.pdf", 1);
 
-        var mainVm = new MainViewModel();
+        using var mainVm = new MainViewModel();
         await mainVm.LoadDocumentAsync(samplePdf);
 
         var thumb = mainVm.Thumbnails[0];

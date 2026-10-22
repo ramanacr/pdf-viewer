@@ -67,6 +67,7 @@ public class LongTermValidationViewerTests : IDisposable
         string path = Write("plain.pdf", FormPdfFixture.Build());
         var source = new FakeRevocationSource(_pki);
         var (vm, created) = await Open(path, source);
+        using var vmScope = vm;
 
         Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
             new SignatureOptions(_pki.Signer, null, null, null, null, path)), vm.StatusText);
@@ -85,6 +86,7 @@ public class LongTermValidationViewerTests : IDisposable
         string path = Write("contract.pdf", FormPdfFixture.Build());
         var source = new FakeRevocationSource(_pki);
         var (vm, created) = await Open(path, source);
+        using var vmScope = vm;
 
         Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
             new SignatureOptions(_pki.Signer, "Approved", null, null, null, path, AddLongTermValidation: true)), vm.StatusText);
@@ -109,6 +111,7 @@ public class LongTermValidationViewerTests : IDisposable
         string path = Write("silent.pdf", FormPdfFixture.Build());
         var source = new FakeRevocationSource(_pki) { Ocsp = false, Crls = false };
         var (vm, _) = await Open(path, source);
+        using var vmScope = vm;
         string? warning = null;
         vm.ShowMessageBoxAction = (message, _, _, image) => { if (image == MessageBoxImage.Warning) warning = message; };
 
@@ -128,6 +131,7 @@ public class LongTermValidationViewerTests : IDisposable
         byte[] before = File.ReadAllBytes(path);
         var source = new FakeRevocationSource(_pki);
         var (vm, created) = await Open(path, source);
+        using var vmScope = vm;
         await vm.ValidateSignaturesAsync();
         Assert.Equal("Not LTV enabled", Assert.Single(vm.Signatures).Ltv);
 
@@ -150,6 +154,7 @@ public class LongTermValidationViewerTests : IDisposable
         byte[] before = File.ReadAllBytes(path);
         var source = new FakeRevocationSource(_pki);
         var (vm, created) = await Open(path, source);
+        using var vmScope = vm;
         await vm.ValidateSignaturesAsync();
         vm.ConfirmFunc = (_, _) => true;
 
@@ -172,6 +177,7 @@ public class LongTermValidationViewerTests : IDisposable
         string path = Write("signed.pdf", await SignedPdf());
         var source = new FakeRevocationSource(_pki);
         var (vm, created) = await Open(path, source);
+        using var vmScope = vm;
         await vm.ValidateSignaturesAsync();
         vm.HasUnsavedChanges = true;
         bool asked = false;

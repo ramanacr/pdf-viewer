@@ -51,7 +51,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public void TestThereIsAlwaysATabToBindTo()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
 
         Assert.Single(shell.Documents);
         Assert.NotNull(shell.ActiveDocument);
@@ -62,7 +62,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestTheFirstDocumentFillsTheEmptyTabRatherThanOpeningAnother()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         await shell.OpenDocumentAsync(MakePdf("first.pdf"));
 
         Assert.Single(shell.Documents);
@@ -73,7 +73,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestASecondDocumentOpensBesideTheFirst()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var first = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
         var second = await shell.OpenDocumentAsync(MakePdf("b.pdf"));
 
@@ -90,7 +90,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestOpeningTheSameFileTwiceFocusesTheTabItIsAlreadyIn()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         string path = MakePdf("once.pdf");
 
         var first = await shell.OpenDocumentAsync(path);
@@ -108,7 +108,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestTabsDoNotShareState()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var first = await shell.OpenDocumentAsync(MakePdf("one.pdf", pages: 5));
         var second = await shell.OpenDocumentAsync(MakePdf("two.pdf", pages: 3));
 
@@ -139,7 +139,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestClosingATabFocusesItsNeighbour()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var a = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
         var b = await shell.OpenDocumentAsync(MakePdf("b.pdf"));
         var c = await shell.OpenDocumentAsync(MakePdf("c.pdf"));
@@ -160,7 +160,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestClosingTheLastDocumentLeavesAnEmptyTab()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var only = await shell.OpenDocumentAsync(MakePdf("only.pdf"));
 
         Assert.True(await shell.CloseDocumentAsync(only!));
@@ -173,7 +173,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestClosingATabAsksAboutUnsavedWorkAndCancelKeepsIt()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var a = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
         await shell.OpenDocumentAsync(MakePdf("b.pdf"));
 
@@ -189,7 +189,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestClosingTheWindowAsksAboutEveryTabNotJustTheVisibleOne()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var a = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
         var b = await shell.OpenDocumentAsync(MakePdf("b.pdf"));
 
@@ -207,7 +207,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestCancellingAnyTabStopsTheWindowClosing()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var a = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
         var b = await shell.OpenDocumentAsync(MakePdf("b.pdf"));
 
@@ -223,7 +223,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestSwitchingTabsWrapsAround()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var a = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
         var b = await shell.OpenDocumentAsync(MakePdf("b.pdf"));
         var c = await shell.OpenDocumentAsync(MakePdf("c.pdf"));
@@ -250,7 +250,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestTheMemoryBudgetIsSharedBetweenOpenDocuments()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var a = await shell.OpenDocumentAsync(MakePdf("a.pdf"));
 
         long alone = LruPageCache.ShareOfTotal(1);
@@ -274,7 +274,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestAFileThatWillNotOpenDoesNotLeaveAnEmptyTabBehind()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         await shell.OpenDocumentAsync(MakePdf("good.pdf"));
 
         string broken = Path.Combine(_testDir, "broken.pdf");
@@ -290,7 +290,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestTabTitlesShowTheFileAndItsUnsavedState()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         Assert.Equal("No document", shell.ActiveDocument!.TabTitle);
 
         var document = await shell.OpenDocumentAsync(MakePdf("named.pdf"));
@@ -303,7 +303,7 @@ public class DocumentTabsTests : IDisposable
     [Fact]
     public async Task TestOpeningPastTheLimitReplacesATabRatherThanGrowingForever()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
 
         for (int i = 0; i < ShellViewModel.MaxOpenDocuments + 3; i++)
         {

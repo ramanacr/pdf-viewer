@@ -47,7 +47,7 @@ public class AnnotationWorkflowEventTests : IDisposable
     public async Task TestAnnotationToolToggleUserEvents()
     {
         string pdfPath = CreateSamplePdf("annot_toggle.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         Assert.Null(vm.ActiveAnnotationTool);
@@ -85,7 +85,7 @@ public class AnnotationWorkflowEventTests : IDisposable
     public async Task TestAddAnnotationUserEvents()
     {
         string pdfPath = CreateSamplePdf("add_annot.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var annot = new AnnotationModel
@@ -112,7 +112,7 @@ public class AnnotationWorkflowEventTests : IDisposable
     public async Task TestDeleteAnnotationUserEvents()
     {
         string pdfPath = CreateSamplePdf("delete_annot.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var annot = new AnnotationModel
@@ -141,7 +141,7 @@ public class AnnotationWorkflowEventTests : IDisposable
     public async Task TestClearAllAnnotationsUserEvents()
     {
         string pdfPath = CreateSamplePdf("clear_annots.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         vm.AddAnnotation(new AnnotationModel { PageNumber = 1, Type = AnnotationType.Highlight });
@@ -162,7 +162,7 @@ public class AnnotationWorkflowEventTests : IDisposable
     public async Task TestInkAnnotationPointsUserEvents()
     {
         string pdfPath = CreateSamplePdf("ink_annot.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var inkAnnot = new AnnotationModel

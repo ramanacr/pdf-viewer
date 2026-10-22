@@ -52,7 +52,7 @@ public class EncryptedFormViewerTests : IDisposable
         string path = Path.Combine(_dir, "locked-form.pdf");
         File.WriteAllBytes(path, FormPdfFixture.Build(new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "user", "owner")));
         byte[] before = File.ReadAllBytes(path);
-        var vm = await Open(path, "user");
+        using var vm = await Open(path, "user");
         var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
         Assert.False(await vm.CommitFormFieldAsync(name, new PdfFieldChange("person.name", Text: "x")));
         Assert.Contains("do not allow filling in forms", vm.StatusText);
@@ -60,7 +60,7 @@ public class EncryptedFormViewerTests : IDisposable
         Assert.Equal(before, File.ReadAllBytes(path));
 
         // The owner password lifts the restriction.
-        var owner = await Open(path, "owner");
+        using var owner = await Open(path, "owner");
         Assert.True(await owner.CommitFormFieldAsync(owner.AllFormFields.Single(f => f.FullName == "person.name"),
             new PdfFieldChange("person.name", Text: "Owner")), owner.StatusText);
     }
@@ -72,7 +72,7 @@ public class EncryptedFormViewerTests : IDisposable
     {
         string path = Path.Combine(_dir, "secret-form.pdf");
         File.WriteAllBytes(path, FormPdfFixture.Build(new PdfTestEncryption(scheme, "user", "owner", permissions: AllowEverything)));
-        var vm = await Open(path, "user");
+        using var vm = await Open(path, "user");
         Assert.True(vm.HasForm);
         Assert.Null(vm.FormReadOnlyReason);
 
@@ -95,7 +95,7 @@ public class EncryptedFormViewerTests : IDisposable
         var check = Assert.Single(await PdfSignatureValidator.ValidateAsync(File.ReadAllBytes(path), password: "user"));
         Assert.Equal(PdfSignatureVerdict.Valid, check.Verdict);
 
-        var reopened = await Open(path, "user");
+        using var reopened = await Open(path, "user");
         Assert.Equal("Grace Hopper", reopened.AllFormFields.Single(f => f.FullName == "person.name").Value);
         Assert.Equal("ROM", reopened.AllFormFields.Single(f => f.FullName == "city").Value);
         await reopened.ValidateSignaturesAsync();

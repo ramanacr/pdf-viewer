@@ -48,7 +48,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestSearchQueryAndMatchNavigationUserEvents()
     {
         string pdfPath = CreateSamplePdf("search_nav.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         // User enters search query and presses Enter / Search button
@@ -88,7 +88,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestSearchMatchDirectSelectionFromSidebar()
     {
         string pdfPath = CreateSamplePdf("search_sidebar.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         vm.SearchQuery = "SearchableToken";
@@ -111,14 +111,17 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestTextSelectionAndClearUserEvents()
     {
         string pdfPath = CreateSamplePdf("text_sel.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var page = vm.Pages[0];
 
         // Opening the document extracts the page's real text. This test drives the selection
         // logic over known geometry, so replace it rather than selecting over whatever the
-        // fixture happens to contain.
+        // fixture happens to contain. The extraction started by opening must finish first: its
+        // check for existing segments and its writes run on another thread, so replacing the
+        // segments while it is in flight can leave the page's real text in place.
+        await page.LoadTextSegmentsAsync(vm.DocumentService);
         page.TextSegments.Clear();
         page.IsTextExtracted = true; // stand in for extraction: it must not replace these segments
 
@@ -146,7 +149,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestConvertSelectionToHighlightUserEvents()
     {
         string pdfPath = CreateSamplePdf("sel_to_highlight.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var page = vm.Pages[0];

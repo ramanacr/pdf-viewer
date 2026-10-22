@@ -181,7 +181,7 @@ public class CreatePdfViewerTests : IDisposable
     [Fact]
     public void TheCommands_OpenTheirWindows_WithNoDocumentOpen()
     {
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.ScannerServiceOverride = new FakeScanner();
         CreatePdfViewModel? shown = null;
         ScanViewModel? scan = null;
@@ -204,7 +204,7 @@ public class CreatePdfViewerTests : IDisposable
         string png = File("w.png", Png(8, 8));
         await StaTask(() =>
         {
-            var vm = NewViewModel();
+            using var vm = NewViewModel();
             vm.ScannerServiceOverride = new FakeScanner();
             var create = vm.CreateCreatePdfViewModel(CreatePdfMode.Combine);
             create.AddFiles(new[] { png });
@@ -229,7 +229,7 @@ public class CreatePdfViewerTests : IDisposable
     {
         string jpg = File("photo.jpg", Jpeg(48, 32)), png = File("chart.png", Png(30, 20));
         string target = Path.Combine(_dir, "album.pdf");
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         var first = shell.ActiveDocument!;
         await shell.OpenDocumentAsync(Pdf("existing.pdf", "Already open"));
         Assert.Single(shell.Documents);
@@ -267,7 +267,7 @@ public class CreatePdfViewerTests : IDisposable
     {
         string png = File("scan.png", Png(60, 80));
         var ocr = new FakeOcr();
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.OcrEngineOverride = ocr;
         var create = vm.CreateCreatePdfViewModel(CreatePdfMode.Images);
         Assert.True(create.Options.IsOcrAvailable);
@@ -289,7 +289,7 @@ public class CreatePdfViewerTests : IDisposable
     public async Task Stopping_LeavesNoFile()
     {
         string png = File("a.png", Png(20, 20));
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         CreatePdfViewModel create = null!;
         vm.OcrEngineOverride = new FakeOcr { Before = page => { if (page == 2) create.Cancel(); } };
         create = vm.CreateCreatePdfViewModel(CreatePdfMode.Images);
@@ -307,7 +307,8 @@ public class CreatePdfViewerTests : IDisposable
     public async Task ASourceInTheList_IsNeverOverwritten()
     {
         string png = File("keep.png", Png(10, 10));
-        var create = NewViewModel().CreateCreatePdfViewModel(CreatePdfMode.Combine);
+        using var owner = NewViewModel();
+        var create = owner.CreateCreatePdfViewModel(CreatePdfMode.Combine);
         string pdf = Pdf("keep.pdf", "Original");
         create.AddFiles(new[] { pdf, png });
         byte[] before = System.IO.File.ReadAllBytes(pdf);
@@ -365,7 +366,7 @@ public class CreatePdfViewerTests : IDisposable
     public async Task AFeederScan_GivesEveryPage_BothSides_AndANewDocument()
     {
         var scanner = new FakeScanner { SheetsInFeeder = 3 };
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.ScannerServiceOverride = scanner;
         string target = Path.Combine(_dir, "scanned.pdf");
         vm.ChooseCreateTargetFunc = _ => target;
@@ -402,7 +403,7 @@ public class CreatePdfViewerTests : IDisposable
     [Fact]
     public async Task NoScanner_OrNoScanningService_IsSaidPlainly()
     {
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.ScannerServiceOverride = new FakeScanner { Devices = Array.Empty<ScannerDevice>() };
         using (var none = vm.CreateScanViewModel())
         {
@@ -419,7 +420,7 @@ public class CreatePdfViewerTests : IDisposable
     [Fact]
     public async Task WhatAScannerCanDo_IsReadFromIt_AfterListing()
     {
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.ScannerServiceOverride = new FakeScanner { Devices = new[] { new ScannerDevice("net-1", "Network Scanner", true, true, true, CapabilitiesKnown: false) } };
         using var scan = vm.CreateScanViewModel();
         await scan.LoadDevicesAsync();
@@ -453,7 +454,7 @@ public class CreatePdfViewerTests : IDisposable
     {
         string txt = TextFile("minutes.txt", "Minutes of the board meeting\n\nAttendees: Ana, Bo\tand Chen\n");
         string target = Path.Combine(_dir, "minutes.pdf");
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.PickCreateSourceFunc = () => txt;
         vm.ChooseCreateTargetFunc = suggested =>
         {
@@ -474,7 +475,7 @@ public class CreatePdfViewerTests : IDisposable
     {
         string docx = File("letter.docx", new byte[] { 0x50, 0x4B, 3, 4 });
         string? alert = null;
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.ShowMessageBoxAction = (message, _, _, _) => alert = message;
         vm.PickCreateSourceFunc = () => docx;
         vm.ChooseCreateTargetFunc = s => s;
@@ -492,7 +493,7 @@ public class CreatePdfViewerTests : IDisposable
         string report = Pdf("Report.pdf", "Quarterly report");
         string photo = File("Site photo.jpg", Jpeg(40, 30));
         string notes = TextFile("Notes.txt", "Follow-up actions");
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         var create = vm.CreateCreatePdfViewModel(CreatePdfMode.Combine);
         Assert.Empty(create.AddFiles(new[] { report, photo, notes }));
         Assert.Equal(new[] { "PDF", "Picture", "Text" }, create.Items.Select(i => i.Kind));
@@ -516,7 +517,7 @@ public class CreatePdfViewerTests : IDisposable
         b.AddPage("BT /F1 14 Tf 40 700 Td (Locked text) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>");
         string locked = File("Locked.pdf", b.Build(new PdfTestEncryption(TestEncryptionKind.Aes256_R6, "open-sesame", "owner")));
         string? asked = null;
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.RequestPasswordFunc = name => { asked = name; return Task.FromResult<string?>("open-sesame"); };
         var create = vm.CreateCreatePdfViewModel(CreatePdfMode.Combine);
         create.AddFiles(new[] { locked, File("p.png", Png(10, 10)) });

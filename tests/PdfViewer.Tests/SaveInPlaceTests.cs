@@ -60,6 +60,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestAFreshlyOpenedDocumentHasNothingToSave()
     {
         var (vm, _) = await LoadedViewModel();
+        using var vmScope = vm;
 
         Assert.False(vm.HasUnsavedChanges);
         Assert.False(vm.CanSave());
@@ -70,6 +71,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestAnnotatingMarksTheDocumentUnsaved()
     {
         var (vm, _) = await LoadedViewModel();
+        using var vmScope = vm;
 
         vm.AddAnnotation(Highlight());
 
@@ -84,6 +86,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestDeletingAndClearingAlsoCount()
     {
         var (vm, _) = await LoadedViewModel();
+        using var vmScope = vm;
 
         var annotation = Highlight();
         vm.AddAnnotation(annotation);
@@ -110,6 +113,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestSaveWritesTheAnnotationIntoTheOriginalFile()
     {
         var (vm, path) = await LoadedViewModel(3);
+        using var vmScope = vm;
         long sizeBefore = new FileInfo(path).Length;
 
         vm.AddAnnotation(Highlight(2));
@@ -139,6 +143,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestSaveLeavesNoTemporaryFilesBehind()
     {
         var (vm, path) = await LoadedViewModel();
+        using var vmScope = vm;
 
         vm.AddAnnotation(Highlight());
         await vm.SaveAsync();
@@ -156,6 +161,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestSavingTwiceKeepsBothAnnotations()
     {
         var (vm, path) = await LoadedViewModel();
+        using var vmScope = vm;
 
         vm.AddAnnotation(Highlight(1));
         await vm.SaveAsync();
@@ -176,6 +182,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestSaveDoesNothingWhenThereIsNothingToSave()
     {
         var (vm, path) = await LoadedViewModel();
+        using var vmScope = vm;
         byte[] before = File.ReadAllBytes(path);
 
         await vm.SaveAsync();
@@ -191,6 +198,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestCancellingTheUnsavedPromptStopsTheAction()
     {
         var (vm, _) = await LoadedViewModel();
+        using var vmScope = vm;
         vm.AddAnnotation(Highlight());
 
         vm.ConfirmSaveBeforeClosingFunc = _ => null;   // cancel
@@ -203,6 +211,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestDiscardingLetsTheActionProceedWithoutWriting()
     {
         var (vm, path) = await LoadedViewModel();
+        using var vmScope = vm;
         byte[] before = File.ReadAllBytes(path);
 
         vm.AddAnnotation(Highlight());
@@ -216,6 +225,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestChoosingSaveAtThePromptWritesTheFile()
     {
         var (vm, path) = await LoadedViewModel();
+        using var vmScope = vm;
         long before = new FileInfo(path).Length;
 
         vm.AddAnnotation(Highlight());
@@ -233,6 +243,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestOpeningAnotherDocumentAsksAboutUnsavedWork()
     {
         var (vm, firstPath) = await LoadedViewModel();
+        using var vmScope = vm;
         vm.AddAnnotation(Highlight());
 
         string secondPath = TestPdfBuilder.CreateSimplePdf(
@@ -259,6 +270,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestWithNoPromptWiredClosingIsNotBlockedForever()
     {
         var (vm, _) = await LoadedViewModel();
+        using var vmScope = vm;
         vm.AddAnnotation(Highlight());
 
         vm.ConfirmSaveBeforeClosingFunc = null;
@@ -270,6 +282,7 @@ public class SaveInPlaceTests : IDisposable
     public async Task TestClosingTheDocumentClearsTheUnsavedMarker()
     {
         var (vm, _) = await LoadedViewModel();
+        using var vmScope = vm;
         vm.AddAnnotation(Highlight());
 
         vm.CloseDocument();

@@ -265,7 +265,7 @@ public class VectorPrintingViewerTests : IDisposable
             _output.WriteLine($"{PdfPrinter} is not installed: skipped.");
             return;
         }
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(WriteDocument("vm.pdf", 2));
         string output = Path.Combine(_dir, "vm-out.pdf");
         Assert.False(vm.CancelPrintCommand.CanExecute(null));

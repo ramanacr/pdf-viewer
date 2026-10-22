@@ -86,6 +86,7 @@ public class SigningLtaViewerTests : IDisposable
     {
         string path = Write("contract.pdf", FormPdfFixture.Build());
         var (vm, tsas, sources, tsa) = await Open(path);
+        using var vmScope = vm;
 
         Assert.True(await vm.SignAsync(Box, new SignatureOptions(_pki.Signer, "Approved", null, null, Tsa, path,
             AddLongTermValidation: true, AddDocumentTimestamp: true)), $"{vm.StatusText} {_lastAlert}");
@@ -114,6 +115,7 @@ public class SigningLtaViewerTests : IDisposable
     {
         string path = Write("plain.pdf", FormPdfFixture.Build());
         var (vm, tsas, sources, _) = await Open(path);
+        using var vmScope = vm;
         Assert.True(await vm.SignAsync(Box, new SignatureOptions(_pki.Signer, null, null, null, null, path)), vm.StatusText);
         Assert.Equal(0, tsas.Count);
         Assert.Equal(0, sources.Count);
@@ -129,6 +131,7 @@ public class SigningLtaViewerTests : IDisposable
         new SigningSettings { TimestampServer = Tsa.AbsoluteUri, UseTimestamp = true }.Save();
         string path = Write("signed.pdf", await SignedPdf());
         var (vm, tsas, sources, tsa) = await Open(path);
+        using var vmScope = vm;
         await vm.ValidateSignaturesAsync();
 
         string? asked = null;
@@ -162,6 +165,7 @@ public class SigningLtaViewerTests : IDisposable
     {
         string path = Write("signed.pdf", await SignedPdf());
         var (vm, tsas, sources, _) = await Open(path);
+        using var vmScope = vm;
         await vm.ValidateSignaturesAsync();
         string? alert = null;
         vm.ShowMessageBoxAction = (message, _, _, _) => alert = message;
@@ -204,6 +208,7 @@ public class SigningLtaViewerTests : IDisposable
     {
         string path = Write("picture.pdf", FormPdfFixture.Build());
         var (vm, _, _, _) = await Open(path);
+        using var vmScope = vm;
         var appearance = new PdfSignatureAppearance { Layout = PdfSignatureLayout.ImageAndText, Image = Stroke() };
         Assert.True(await vm.SignAsync(Box, new SignatureOptions(_pki.Signer, "Approved", null, null, null, path, Appearance: appearance)), vm.StatusText);
 
