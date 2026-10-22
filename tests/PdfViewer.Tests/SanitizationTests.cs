@@ -3,10 +3,12 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using PdfEngine;
-using PdfEngine.Pdfium;
+#if PDFIUM_RENDERER
 using PdfEngine.Pdfium.Adapters;
+#endif
 using PdfEngine.Rendering;
 using PdfEngine.Safety;
+using PdfEngine.Vector.Services;
 using Xunit;
 
 namespace PdfViewer.Tests;
@@ -14,7 +16,8 @@ namespace PdfViewer.Tests;
 /// <summary>
 /// Covers "Save Clean Copy". The value of this feature is entirely in whether the output is
 /// actually inert, so these tests prove it by re-inspecting what was written rather than by
-/// trusting the return value.
+/// trusting the return value. Each runs on the native inspector and sanitizer the viewer uses,
+/// and on PDFium's as well in the developer build.
 /// </summary>
 public class SanitizationTests : IDisposable
 {
@@ -37,15 +40,31 @@ public class SanitizationTests : IDisposable
 
     private string Path_(string name) => Path.Combine(_testDir, name);
 
-    [Fact]
-    public async Task TestSanitizeRemovesScriptAndLaunchActionsAndProvesTheOutputIsClean()
+    private static IPdfSafetyInspector Inspector(string engine) => engine switch
+    {
+#if PDFIUM_RENDERER
+        TestEngines.Pdfium => new PdfiumSafetyInspector(),
+#endif
+        _ => new PdfNativeSafetyInspector(),
+    };
+
+    private static IPdfSanitizer Sanitizer(string engine, IPdfSafetyInspector? inspector = null) => engine switch
+    {
+#if PDFIUM_RENDERER
+        TestEngines.Pdfium => new PdfiumSanitizer(inspector ?? new PdfiumSafetyInspector()),
+#endif
+        _ => new PdfNativeSanitizer(inspector ?? new PdfNativeSafetyInspector()),
+    };
+
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeRemovesScriptAndLaunchActionsAndProvesTheOutputIsClean(string name)
     {
         string source = TestPdfBuilder.CreateActiveContentPdf(Path_("active.pdf"));
         string cleaned = Path_("active.clean.pdf");
 
-        using IPdfEngine engine = new PdfiumEngine();
-        var inspector = new PdfiumSafetyInspector();
-        var sanitizer = new PdfiumSanitizer();
+        using IPdfEngine engine = TestEngines.Create(name);
+        var inspector = Inspector(name);
+        var sanitizer = Sanitizer(name);
 
         SanitizationResult result;
         await using (var doc = await engine.OpenDocumentAsync(source))
@@ -78,25 +97,38 @@ public class SanitizationTests : IDisposable
         // catch that - it walks references - so the bytes are checked directly.
         string bytes = File.ReadAllText(cleaned);
         Assert.DoesNotContain("/Launch", bytes);
-        Assert.DoesNotContain("calc.exe", bytes);
+        AssertAbsent("calc.exe", bytes);
         Assert.DoesNotContain("/JavaScript", bytes);
-        Assert.DoesNotContain("app.alert", bytes);
+        AssertAbsent("app.alert", bytes);
         Assert.DoesNotContain("/OpenAction", bytes);
 
         // The ordinary web link survives: this reader never follows a link on its own, so a
         // URI is information, not a capability, and stripping it would damage the document.
-        Assert.Contains("example.com", bytes);
+        AssertPresent("example.com", bytes);
     }
 
-    [Fact]
-    public async Task TestSanitizeRemovesEmbeddedFilesAndTheirPageAnnotation()
+    // A writer may put a string out in hex (the native writer does), so a text is looked for both ways.
+    private static string Hex(string text) => Convert.ToHexString(System.Text.Encoding.Latin1.GetBytes(text));
+
+    private static void AssertAbsent(string text, string bytes)
+    {
+        Assert.DoesNotContain(text, bytes);
+        Assert.DoesNotContain(Hex(text), bytes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AssertPresent(string text, string bytes) =>
+        Assert.True(bytes.Contains(text) || bytes.Contains(Hex(text), StringComparison.OrdinalIgnoreCase),
+            $"\"{text}\" is not in the file, as text or in hex.");
+
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeRemovesEmbeddedFilesAndTheirPageAnnotation(string name)
     {
         string source = TestPdfBuilder.CreateAttachmentPdf(Path_("attach.pdf"), "MALICIOUS_PAYLOAD_MARKER");
         string cleaned = Path_("attach.clean.pdf");
 
-        using IPdfEngine engine = new PdfiumEngine();
-        var inspector = new PdfiumSafetyInspector();
-        var sanitizer = new PdfiumSanitizer();
+        using IPdfEngine engine = TestEngines.Create(name);
+        var inspector = Inspector(name);
+        var sanitizer = Sanitizer(name);
 
         SanitizationResult result;
         await using (var doc = await engine.OpenDocumentAsync(source))
@@ -119,17 +151,17 @@ public class SanitizationTests : IDisposable
         // Removing the reference is not enough - the payload bytes must not survive into
         // the output, or the attachment is still there for anything that scans the file.
         string writtenBytes = File.ReadAllText(cleaned);
-        Assert.DoesNotContain("MALICIOUS_PAYLOAD_MARKER", writtenBytes);
+        AssertAbsent("MALICIOUS_PAYLOAD_MARKER", writtenBytes);
     }
 
-    [Fact]
-    public async Task TestSanitizeKeepsThePagesAndTheirText()
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeKeepsThePagesAndTheirText(string name)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("ordinary.pdf"), 3, "KeepThisToken");
         string cleaned = Path_("ordinary.clean.pdf");
 
-        using IPdfEngine engine = new PdfiumEngine();
-        var sanitizer = new PdfiumSanitizer();
+        using IPdfEngine engine = TestEngines.Create(name);
+        var sanitizer = Sanitizer(name);
 
         string originalText;
         await using (var doc = await engine.OpenDocumentAsync(source))
@@ -159,16 +191,16 @@ public class SanitizationTests : IDisposable
         Assert.True(rendered.HeightPixels > 0);
     }
 
-    [Fact]
-    public async Task TestSanitizeLeavesTheOriginalUntouched()
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeLeavesTheOriginalUntouched(string name)
     {
         string source = TestPdfBuilder.CreateActiveContentPdf(Path_("original.pdf"));
         byte[] before = File.ReadAllBytes(source);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(name);
         await using (var doc = await engine.OpenDocumentAsync(source))
         {
-            await new PdfiumSanitizer().SanitizeAsync(doc, Path_("original.clean.pdf"));
+            await Sanitizer(name).SanitizeAsync(doc, Path_("original.clean.pdf"));
         }
 
         Assert.Equal(before, File.ReadAllBytes(source));
@@ -176,19 +208,19 @@ public class SanitizationTests : IDisposable
         // The original still reports its active content: sanitizing produced a copy, it did
         // not quietly disarm the file the user opened.
         await using var reopened = await engine.OpenDocumentAsync(source);
-        Assert.False((await new PdfiumSafetyInspector().InspectAsync(reopened)).IsClean);
+        Assert.False((await Inspector(name).InspectAsync(reopened)).IsClean);
     }
 
-    [Fact]
-    public async Task TestSanitizeRefusesToOverwriteTheOriginal()
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeRefusesToOverwriteTheOriginal(string name)
     {
         string source = TestPdfBuilder.CreateActiveContentPdf(Path_("selfwrite.pdf"));
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(name);
         await using var doc = await engine.OpenDocumentAsync(source);
 
         var ex = await Assert.ThrowsAsync<PdfSanitizationException>(
-            async () => await new PdfiumSanitizer().SanitizeAsync(doc, source));
+            async () => await Sanitizer(name).SanitizeAsync(doc, source));
 
         Assert.Contains("cannot overwrite the original", ex.Message);
         Assert.True(File.Exists(source));
@@ -198,16 +230,16 @@ public class SanitizationTests : IDisposable
     /// The output is verified before it is returned. If verification says the copy is still
     /// dirty, the file must be deleted rather than handed to a user who would trust it.
     /// </summary>
-    [Fact]
-    public async Task TestSanitizeDiscardsTheOutputWhenVerificationFails()
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeDiscardsTheOutputWhenVerificationFails(string name)
     {
         string source = TestPdfBuilder.CreateActiveContentPdf(Path_("verify.pdf"));
         string cleaned = Path_("verify.clean.pdf");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(name);
         await using var doc = await engine.OpenDocumentAsync(source);
 
-        var sanitizer = new PdfiumSanitizer(new AlwaysDirtyInspector());
+        var sanitizer = Sanitizer(name, new AlwaysDirtyInspector());
 
         var ex = await Assert.ThrowsAsync<PdfSanitizationException>(
             async () => await sanitizer.SanitizeAsync(doc, cleaned));
@@ -216,15 +248,15 @@ public class SanitizationTests : IDisposable
         Assert.False(File.Exists(cleaned), "A copy that failed verification must not be left on disk.");
     }
 
-    [Fact]
-    public async Task TestSanitizeReportsWhatTheCopyLoses()
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSanitizeReportsWhatTheCopyLoses(string name)
     {
         string source = TestPdfBuilder.CreateSimplePdf(Path_("withbookmarks.pdf"), 4, "Token");
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(name);
         await using var doc = await engine.OpenDocumentAsync(source);
 
-        var result = await new PdfiumSanitizer().SanitizeAsync(doc, Path_("withbookmarks.clean.pdf"));
+        var result = await Sanitizer(name).SanitizeAsync(doc, Path_("withbookmarks.clean.pdf"));
 
         // The sample builder writes an outline, so the user has to be told it will not
         // survive the rebuild.

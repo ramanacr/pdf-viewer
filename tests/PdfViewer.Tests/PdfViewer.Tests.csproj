@@ -16,7 +16,9 @@
     against the published app, which has no PDFium: PdfEngine.Pdfium is not referenced, and the
     test files that need it are left out by name below (each listed, so leaving one out is a
     reviewed decision, not a silent pass). PdfiumFreeConfigurationTests checks that this list
-    and the build agree.
+    and the build agree. The differential tests run in both: without PDFium they compare with what
+    PDFium gave, committed in PdfiumGoldens\ (scripts/update_pdfium_goldens.ps1 regenerates it).
+    Single PDFium-only tests (PDFium mode, the adapter) are behind #if PDFIUM_RENDERER.
   -->
   <PropertyGroup>
     <PdfiumRenderer Condition="'$(PdfiumRenderer)' == ''">true</PdfiumRenderer>
@@ -28,24 +30,8 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(PdfiumRenderer)' != 'true'">
-    <!-- Tests that call PDFium (the oracle) or test PDFium mode: developer and test builds only. -->
-    <PdfiumOnlyTest Include="ComparisonAndOcrTests.cs" />
-    <PdfiumOnlyTest Include="ContentEditingViewerTests.cs" />
-    <PdfiumOnlyTest Include="CropBoxCoordinateTests.cs" />
-    <PdfiumOnlyTest Include="FormAndRedactionTests.cs" />
-    <PdfiumOnlyTest Include="NativeDocumentServicesViewerTests.cs" />
-    <PdfiumOnlyTest Include="NativeTextViewerTests.cs" />
-    <PdfiumOnlyTest Include="PageArrangementAndAttachmentTests.cs" />
-    <PdfiumOnlyTest Include="PageMarksViewerTests.cs" />
-    <PdfiumOnlyTest Include="PageOrganizerTests.cs" />
-    <PdfiumOnlyTest Include="PdfEngineCoreTests.cs" />
-    <PdfiumOnlyTest Include="PdfiumFormRenderingTests.cs" />
-    <PdfiumOnlyTest Include="PdfServiceTests.cs" />
-    <PdfiumOnlyTest Include="RedactionViewerTests.cs" />
-    <PdfiumOnlyTest Include="SanitizationTests.cs" />
-    <PdfiumOnlyTest Include="SaveInPlaceTests.cs" />
-    <PdfiumOnlyTest Include="SigningViewerTests.cs" />
-    <PdfiumOnlyTest Include="VectorPrintingViewerTests.cs" />
+    <!-- Test files that are only meaningful with PDFium (they test its adapter): developer and test builds only. Each says why in Reason. -->
+    <PdfiumOnlyTest Include="PdfiumFormRenderingTests.cs" Reason="tests the PDFium adapter's form-fill environment (FPDF_FFLDraw) and its lifetime; NativeFormRenderingTests checks the same fields on vector-drawn pages" />
     <Compile Remove="@(PdfiumOnlyTest)" />
   </ItemGroup>
 

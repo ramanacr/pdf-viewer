@@ -5,7 +5,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using PdfEngine.Pdfium;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.ViewModels;
 using PdfViewer.Views;
@@ -48,10 +47,9 @@ public class RedactionViewerTests : IDisposable
 
     private static async Task<string> Text(string path)
     {
-        using var engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(path);
         var sb = new StringBuilder();
-        for (int p = 1; p <= doc.PageCount; p++) sb.Append(await engine.TextService.ExtractPageTextAsync(doc, p)).Append('\n');
+        int pages = await NativeReadBack.PageCountAsync(path);
+        for (int p = 1; p <= pages; p++) sb.Append(await NativeReadBack.TextAsync(path, p)).Append('\n');
         return sb.ToString();
     }
 

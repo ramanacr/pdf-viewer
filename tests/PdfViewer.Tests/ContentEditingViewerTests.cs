@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using PdfEngine.Pdfium;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.Services;
 using PdfViewer.ViewModels;
@@ -53,12 +52,7 @@ public class ContentEditingViewerTests : IDisposable
         return vm;
     }
 
-    private static async Task<string> Text(byte[] pdf)
-    {
-        using var engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(pdf, null);
-        return await engine.TextService.ExtractPageTextAsync(doc, 1);
-    }
+    private static Task<string> Text(byte[] pdf) => NativeReadBack.TextAsync(pdf);
 
     [Fact]
     public async Task EditMode_OffersThePagesParagraphsAndImages_WhereTheyAre()
@@ -170,13 +164,10 @@ public class ContentEditingViewerTests : IDisposable
         vm.SelectedEditItem = image;
         byte[]? pageImage = null;
         int pw = 0, ph = 0, stride = 0;
-        using (var engine = new PdfiumEngine())
-        await using (var doc = await engine.OpenDocumentAsync(vm.CurrentDocumentBytes()!, null))
+        using (var rendered = await NativeReadBack.RenderAsync(vm.CurrentDocumentBytes()!, new PdfEngine.Rendering.RenderRequest { PageNumber = 1, Dpi = 72 * page.DisplayScale }))
         {
-            var rendered = await engine.Renderer.RenderPageAsync(doc, new PdfEngine.Rendering.RenderRequest { PageNumber = 1, Dpi = 72 * page.DisplayScale });
             pageImage = rendered.Pixels.ToArray();
             (pw, ph, stride) = (rendered.WidthPixels, rendered.HeightPixels, rendered.Stride);
-            rendered.Dispose();
         }
         Exception? error = null;
         var thread = new Thread(() =>

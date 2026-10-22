@@ -7,8 +7,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using PdfEngine;
 using PdfEngine.Pages;
+#if PDFIUM_RENDERER
 using PdfEngine.Pdfium;
 using PdfEngine.Pdfium.Adapters;
+#endif
 using PdfEngine.Rendering;
 using PdfEngine.Vector;
 using PdfEngine.Vector.Services;
@@ -22,7 +24,10 @@ namespace PdfViewer.Tests;
 /// <summary>
 /// M9: in Auto and Vector modes the viewer's document information, bookmarks and annotations
 /// come from the vector engine's native services, not PDFium. PDFium (PdfiumDocumentService,
-/// the PDFium-mode service) is the oracle: each reads what the other wrote, the same way.
+/// the PDFium-mode service) is the oracle: each reads what the other wrote, the same way. Where
+/// PDFium reads a file back, the test runs once per reading engine (PDFium in the developer
+/// build only); where PDFium's own results are the expectation, every build compares with them
+/// as committed goldens (<see cref="PdfiumGoldens"/>), which the developer build checks against PDFium.
 /// </summary>
 public class NativeDocumentServicesViewerTests : IDisposable
 {
@@ -72,6 +77,27 @@ public class NativeDocumentServicesViewerTests : IDisposable
     [InlineData(0)]
     [InlineData(90)]
     [InlineData(270)]
+    public async Task AnnotationsSavedNatively_ReadBackTheSame(int rotation)
+    {
+        string source = TestPdfBuilder.CreateSimplePdf(P($"src{rotation}.pdf"), 2, "Tok", rotation);
+        string saved = P($"saved{rotation}.pdf");
+        using (var service = Native())
+        {
+            await service.OpenDocumentAsync(source);
+            Assert.True(service.IsVectorDocumentOpen);
+            await service.SaveAnnotatedDocumentAsync(saved, AnnotationSaveMode.Embedded, Samples(2), source);
+        }
+        using var native = Native();
+        await native.OpenDocumentAsync(saved);
+        SameAnnotations(Samples(2), native.LoadExistingAnnotations());
+    }
+
+#if PDFIUM_RENDERER
+    // PDFium reading the file the vector engine wrote: an interoperability check only PDFium can make.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(270)]
     public async Task AnnotationsSavedNatively_ReadTheSameInPdfium_AndBack(int rotation)
     {
         string source = TestPdfBuilder.CreateSimplePdf(P($"src{rotation}.pdf"), 2, "Tok", rotation);
@@ -94,6 +120,92 @@ public class NativeDocumentServicesViewerTests : IDisposable
         SameAnnotations(Samples(2), byPdfium.Select(a => { a.Author = a.Author == "Author" ? Environment.UserName : a.Author; return a; }).ToList(), colours: false);
         SameAnnotations(Samples(2), byNative);
         Assert.Equal(byPdfium.Select(a => (a.Type, a.Contents)).OrderBy(x => x.ToString()), byNative.Select(a => (a.Type, a.Contents)).OrderBy(x => x.ToString()));
+    }
+#endif
+
+    /// <summary>An annotation as a reader loaded it, for the goldens.</summary>
+    public sealed record LoadedAnnotation(AnnotationType Type, int PageNumber, double X, double Y, double Width, double Height,
+        string ColorHex, double Opacity, string? Contents, string? Author, string? Title, DateTime CreationDate,
+        double StrokeThickness, List<int> InkStrokes, int Quads)
+    {
+        public static LoadedAnnotation Of(AnnotationModel a) => new(a.Type, a.PageNumber, a.X, a.Y, a.Width, a.Height, a.ColorHex, a.Opacity,
+            a.Contents, a.Author, a.Title, a.CreationDate, a.StrokeThickness, a.InkStrokes.Select(s => s.Count).ToList(), a.Quads.Count);
+    }
+
+    private static void SameAsLoaded(IReadOnlyList<LoadedAnnotation> expected, IReadOnlyList<AnnotationModel> actual)
+    {
+        Assert.Equal(expected.Count, actual.Count);
+        for (int i = 0; i < expected.Count; i++)
+        {
+            Assert.Equal(expected[i].Type, actual[i].Type);
+            Assert.Equal(expected[i].PageNumber, actual[i].PageNumber);
+            Assert.Equal(expected[i].X, actual[i].X, 4);
+            Assert.Equal(expected[i].Y, actual[i].Y, 4);
+            Assert.Equal(expected[i].Width, actual[i].Width, 4);
+            Assert.Equal(expected[i].Height, actual[i].Height, 4);
+            Assert.Equal(expected[i].ColorHex, actual[i].ColorHex);
+            Assert.Equal(expected[i].Opacity, actual[i].Opacity, 2);
+            Assert.Equal(expected[i].Contents, actual[i].Contents);
+            Assert.Equal(expected[i].Author, actual[i].Author);
+            Assert.Equal(expected[i].Title, actual[i].Title);
+            Assert.Equal(expected[i].CreationDate, actual[i].CreationDate);
+            Assert.Equal(expected[i].StrokeThickness, actual[i].StrokeThickness, 2);
+            Assert.Equal(expected[i].InkStrokes, actual[i].InkStrokes.Select(s => s.Count));
+            Assert.Equal(expected[i].Quads, actual[i].Quads.Count);
+        }
+    }
+
+    /// <summary>
+    /// The samples with a fixed author and date, for the file PDFium writes for the goldens (the
+    /// defaults are the user's name and the time, which would end up in a committed file).
+    /// </summary>
+    private static List<AnnotationModel> FixedSamples(int pages)
+    {
+        var samples = Samples(pages);
+        foreach (var a in samples)
+        {
+            if (a.Author == Environment.UserName) a.Author = "Reviewer";
+            a.CreationDate = new DateTime(2026, 3, 4, 5, 6, 7);
+        }
+        return samples;
+    }
+
+    private const string PdfiumAnnotated = "NativeServices_AnnotatedByPdfium.pdf";
+
+    /// <summary>
+    /// A file PDFium annotated (committed, so the PDFium-free build has one): the native service
+    /// loads what PDFium loads from it, as the developer build checks live below.
+    /// </summary>
+    [Fact]
+    public async Task AnnotationsSavedByPdfium_AreLoadedAsPdfiumLoadsThem()
+    {
+        string saved = P("pdfium_saved.pdf");
+        await File.WriteAllBytesAsync(saved, PdfiumGoldens.LoadFile(PdfiumAnnotated));
+        using var native = Native();
+        await native.OpenDocumentAsync(saved);
+        SameAsLoaded(PdfiumGoldens.Load<List<LoadedAnnotation>>("NativeServices_AnnotatedByPdfium"), native.LoadExistingAnnotations());
+    }
+
+#if PDFIUM_RENDERER
+    [Fact]
+    [Trait("Category", PdfiumGoldens.Trait)]
+    public async Task AnnotationsSavedByPdfium_TheCommittedCopyReadsAsPdfiumReadsIt()
+    {
+        if (PdfiumGoldens.Updating)
+        {
+            string source = TestPdfBuilder.CreateSimplePdf(P("fixed.pdf"), 2, "Tok");
+            using var writer = new PdfiumDocumentService();
+            await writer.OpenDocumentAsync(source);
+            await writer.SaveAnnotatedDocumentAsync(P("fixed_saved.pdf"), AnnotationSaveMode.Embedded, FixedSamples(2), source);
+            PdfiumGoldens.SaveFile(PdfiumAnnotated, await File.ReadAllBytesAsync(P("fixed_saved.pdf")));
+        }
+        string saved = P("pdfium_saved.pdf");
+        await File.WriteAllBytesAsync(saved, PdfiumGoldens.LoadFile(PdfiumAnnotated));
+        using var oracle = new PdfiumDocumentService();
+        await oracle.OpenDocumentAsync(saved);
+        var loaded = oracle.LoadExistingAnnotations();
+        Assert.Equal(Samples(2).Count, loaded.Count);
+        PdfiumGoldens.Verify("NativeServices_AnnotatedByPdfium", loaded.Select(LoadedAnnotation.Of).ToList());
     }
 
     [Fact]
@@ -132,6 +244,7 @@ public class NativeDocumentServicesViewerTests : IDisposable
             Assert.Equal(expected[i].Quads.Count, actual[i].Quads.Count);
         }
     }
+#endif
 
     [Fact]
     public async Task UnchangedAnnotations_KeepWhatTheViewerDoesNotModel()
@@ -203,8 +316,9 @@ public class NativeDocumentServicesViewerTests : IDisposable
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(bytes, "%%EOF"));
     }
 
-    [Fact]
-    public async Task SignedDocument_GetsAnIncrementalUpdate()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task SignedDocument_GetsAnIncrementalUpdate(string reader)
     {
         string path = P("signed.pdf");
         TestPdfBuilder.CreateSimplePdf(path, 1, "Tok");
@@ -239,13 +353,14 @@ public class NativeDocumentServicesViewerTests : IDisposable
         await service.SaveAnnotatedDocumentAsync(saved, AnnotationSaveMode.Embedded, Samples(1), path);
         byte[] output = await File.ReadAllBytesAsync(saved);
         Assert.True(output.AsSpan(0, signedBytes.Length).SequenceEqual(signedBytes), "the signed revision must be kept byte for byte");
-        using var pdfium = new PdfiumDocumentService();
-        await pdfium.OpenDocumentAsync(saved);
-        Assert.Equal(Samples(1).Count, pdfium.LoadExistingAnnotations().Count);
+        using var check = TestEngines.CreateService(reader);
+        await check.OpenDocumentAsync(saved);
+        Assert.Equal(Samples(1).Count, check.LoadExistingAnnotations().Count);
     }
 
-    [Fact]
-    public async Task PasswordProtectedDocument_SavesAnnotationsNatively()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task PasswordProtectedDocument_SavesAnnotationsNatively(string reader)
     {
         string plain = TestPdfBuilder.CreateSimplePdf(P("plain.pdf"), 1, "Tok");
         using (var doc = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(await File.ReadAllBytesAsync(plain)))
@@ -257,14 +372,15 @@ public class NativeDocumentServicesViewerTests : IDisposable
         await service.OpenDocumentAsync(P("locked.pdf"), "user");
         await service.SaveAnnotatedDocumentAsync(P("locked_saved.pdf"), AnnotationSaveMode.Embedded, Samples(1), P("locked.pdf"));
 
-        using var pdfium = new PdfiumDocumentService();
-        await pdfium.OpenDocumentAsync(P("locked_saved.pdf"), "user");
-        Assert.True(pdfium.GetMetadata()!.IsEncrypted);
-        Assert.Equal(Samples(1).Select(a => a.Contents).OrderBy(c => c), pdfium.LoadExistingAnnotations().Select(a => a.Contents).OrderBy(c => c));
+        using var check = TestEngines.CreateService(reader);
+        await check.OpenDocumentAsync(P("locked_saved.pdf"), "user");
+        Assert.True(check.GetMetadata()!.IsEncrypted);
+        Assert.Equal(Samples(1).Select(a => a.Contents).OrderBy(c => c), check.LoadExistingAnnotations().Select(a => a.Contents).OrderBy(c => c));
     }
 
-    [Fact]
-    public async Task FlattenedSave_DrawsTheAnnotationsIntoThePages()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task FlattenedSave_DrawsTheAnnotationsIntoThePages(string reader)
     {
         string source = TestPdfBuilder.CreateSimplePdf(P("flat.pdf"), 1, "Tok");
         using var service = Native();
@@ -272,10 +388,10 @@ public class NativeDocumentServicesViewerTests : IDisposable
         await service.SaveAnnotatedDocumentAsync(P("embedded.pdf"), AnnotationSaveMode.Embedded, Samples(1), source);
         await service.SaveAnnotatedDocumentAsync(P("flattened.pdf"), AnnotationSaveMode.Flattened, Samples(1), source);
 
-        using var flat = new PdfiumDocumentService();
+        using var flat = TestEngines.CreateService(reader);
         await flat.OpenDocumentAsync(P("flattened.pdf"));
         Assert.Empty(flat.LoadExistingAnnotations());
-        using var embedded = new PdfiumDocumentService();
+        using var embedded = TestEngines.CreateService(reader);
         await embedded.OpenDocumentAsync(P("embedded.pdf"));
         var a = embedded.RenderPage(1, 72)!;
         var b = flat.RenderPage(1, 72)!;
@@ -296,50 +412,120 @@ public class NativeDocumentServicesViewerTests : IDisposable
         return (double)total / pa.Length;
     }
 
+
+    // ------------------------------------------------------------------ document information
+
+    /// <summary>The document information the viewer shows, for the goldens.</summary>
+    public sealed record Information(string Title, string Author, string Subject, string Keywords, string Creator, string Producer,
+        DateTime? CreationDate, DateTime? ModDate, string PdfFormatVersion, int PageCount, bool IsEncrypted,
+        double DefaultPageWidthPt, double DefaultPageHeightPt, long FileSizeBytes,
+        List<Mark> Bookmarks, PdfEngine.Documents.PdfDocumentPermissions Permissions);
+
+    public sealed record Mark(int Depth, string Title, int Page);
+
+    private static Information Read(DocumentMetadata m, IPdfDocumentService service)
+    {
+        static IEnumerable<Mark> Flat(IEnumerable<BookmarkItem> items, int d = 0) =>
+            items.SelectMany(b => new[] { new Mark(d, b.Title, b.TargetPageNumber) }.Concat(Flat(b.Children, d + 1)));
+        return new Information(m.Title, m.Author, m.Subject, m.Keywords, m.Creator, m.Producer, m.CreationDate, m.ModDate,
+            m.PdfFormatVersion, m.PageCount, m.IsEncrypted, m.DefaultPageWidthPt, m.DefaultPageHeightPt, m.FileSizeBytes,
+            Flat(service.ExtractBookmarks()).ToList(), service.Permissions);
+    }
+
+    private static void SameInformation(Information expected, Information actual)
+    {
+        Assert.Equal(expected.Title, actual.Title);
+        Assert.Equal(expected.Author, actual.Author);
+        Assert.Equal(expected.Subject, actual.Subject);
+        Assert.Equal(expected.Keywords, actual.Keywords);
+        Assert.Equal(expected.Creator, actual.Creator);
+        Assert.Equal(expected.Producer, actual.Producer);
+        Assert.Equal(expected.CreationDate, actual.CreationDate);
+        Assert.Equal(expected.ModDate, actual.ModDate);
+        Assert.Equal(expected.PdfFormatVersion, actual.PdfFormatVersion);
+        Assert.Equal(expected.PageCount, actual.PageCount);
+        Assert.Equal(expected.IsEncrypted, actual.IsEncrypted);
+        Assert.Equal(expected.DefaultPageWidthPt, actual.DefaultPageWidthPt, 2);
+        Assert.Equal(expected.DefaultPageHeightPt, actual.DefaultPageHeightPt, 2);
+        Assert.Equal(expected.FileSizeBytes, actual.FileSizeBytes);
+        Assert.Equal(expected.Bookmarks, actual.Bookmarks);
+        Assert.Equal(expected.Permissions, actual.Permissions);
+    }
+
+    /// <summary>The native service's information, from opening the document and from asking for it afterwards.</summary>
+    private async Task<Information[]> NativeInformation(string path)
+    {
+        using var native = Native();
+        var opened = await native.OpenDocumentAsync(path);
+        Assert.True(native.IsVectorDocumentOpen);
+        return new[] { Read(opened, native), Read(native.GetMetadata()!, native) };
+    }
+
     [Fact]
+    public async Task MetadataAndBookmarks_MatchWhatPdfiumGave()
+    {
+        var expected = PdfiumGoldens.Load<Information>("NativeServices_Showcase");
+        foreach (var actual in await NativeInformation(TestPdfBuilder.CreateEngineShowcasePdf(P("showcase.pdf"))))
+            SameInformation(expected, actual);
+    }
+
+#if PDFIUM_RENDERER
+    [Fact]
+    [Trait("Category", PdfiumGoldens.Trait)]
     public async Task MetadataAndBookmarks_MatchThePdfiumService()
     {
         string path = TestPdfBuilder.CreateEngineShowcasePdf(P("showcase.pdf"));
-        using var pdfium = new PdfiumDocumentService();
-        var expected = await pdfium.OpenDocumentAsync(path);
-        using var native = Native();
-        var actual = await native.OpenDocumentAsync(path);
-        Assert.True(native.IsVectorDocumentOpen);
-        foreach (var m in new[] { actual, native.GetMetadata()! })
-        {
-            Assert.Equal(expected.Title, m.Title);
-            Assert.Equal(expected.Author, m.Author);
-            Assert.Equal(expected.Subject, m.Subject);
-            Assert.Equal(expected.Keywords, m.Keywords);
-            Assert.Equal(expected.Creator, m.Creator);
-            Assert.Equal(expected.Producer, m.Producer);
-            Assert.Equal(expected.CreationDate, m.CreationDate);
-            Assert.Equal(expected.ModDate, m.ModDate);
-            Assert.Equal(expected.PdfFormatVersion, m.PdfFormatVersion);
-            Assert.Equal(expected.PageCount, m.PageCount);
-            Assert.Equal(expected.IsEncrypted, m.IsEncrypted);
-            Assert.Equal(expected.DefaultPageWidthPt, m.DefaultPageWidthPt, 2);
-            Assert.Equal(expected.DefaultPageHeightPt, m.DefaultPageHeightPt, 2);
-            Assert.Equal(expected.FileSizeBytes, m.FileSizeBytes);
-        }
-        static IEnumerable<(int, string, int)> Flat(IEnumerable<BookmarkItem> items, int d = 0) =>
-            items.SelectMany(b => new[] { (d, b.Title, b.TargetPageNumber) }.Concat(Flat(b.Children, d + 1)));
-        Assert.Equal(Flat(pdfium.ExtractBookmarks()), Flat(native.ExtractBookmarks()));
-        Assert.Equal(pdfium.Permissions, native.Permissions);
+        Information expected;
+        using (var pdfium = new PdfiumDocumentService())
+            expected = Read(await pdfium.OpenDocumentAsync(path), pdfium);
+        PdfiumGoldens.Verify("NativeServices_Showcase", expected);
+        foreach (var actual in await NativeInformation(path))
+            SameInformation(expected, actual);
     }
+#endif
 
     // ------------------------------------------------------------------ page organisation and attachments
 
+    private static readonly PageArrangementEntry[] Arrangement =
+        { new(3, PageRotation.Rotate90), new(1), new(4, PageRotation.Rotate180), new(1) };
+
+    public sealed record ArrangedPage(PdfEngine.Documents.PageInfo Info, string Text);
+
+    private static async Task<List<ArrangedPage>> Pages(IPdfEngine reader, string path)
+    {
+        await using var doc = await reader.OpenDocumentAsync(path);
+        var pages = new List<ArrangedPage>();
+        for (int i = 1; i <= doc.PageCount; i++)
+            pages.Add(new ArrangedPage(await doc.GetPageInfoAsync(i), await reader.TextService.ExtractPageTextAsync(doc, i)));
+        return pages;
+    }
+
+    /// <summary>Arranges the pages with the native organizer: each page as PDFium arranged them (read natively), and the outline.</summary>
     [Fact]
+    public async Task ArrangePages_Natively_MatchesWhatPdfiumWrote()
+    {
+        string source = TestPdfBuilder.CreateSimplePdf(P("arrange.pdf"), 4, "Tok");
+        await using (var doc = await PdfNativeDocument.OpenAsync(source))
+            await new PdfNativePageOrganizerService().ArrangePagesAsync(doc, Arrangement, P("by_native.pdf"));
+        using var native = TestEngines.Create(TestEngines.Native);
+        Assert.Equal(PdfiumGoldens.Load<List<ArrangedPage>>("NativeServices_ArrangedByPdfium"), await Pages(native, P("by_native.pdf")));
+        await using var b = await native.OpenDocumentAsync(P("by_native.pdf"));
+        Assert.Equal(new[] { 3, 2, 1 }, (await b.GetBookmarksAsync()).Select(x => x.TargetPageNumber).OrderByDescending(n => n));
+    }
+
+#if PDFIUM_RENDERER
+    [Fact]
+    [Trait("Category", PdfiumGoldens.Trait)]
     public async Task ArrangePages_Natively_MatchesWhatPdfiumWrites()
     {
         string source = TestPdfBuilder.CreateSimplePdf(P("arrange.pdf"), 4, "Tok");
-        var arrangement = new[] { new PageArrangementEntry(3, PageRotation.Rotate90), new PageArrangementEntry(1), new PageArrangementEntry(4, PageRotation.Rotate180), new PageArrangementEntry(1) };
+        var arrangement = Arrangement;
         using IPdfEngine pdfium = new PdfiumEngine();
         await using (var doc = await pdfium.OpenDocumentAsync(source))
             await pdfium.PageOrganizer.ArrangePagesAsync(doc, arrangement, P("by_pdfium.pdf"));
         await using (var doc = await PdfNativeDocument.OpenAsync(source))
             await new PdfNativePageOrganizerService().ArrangePagesAsync(doc, arrangement, P("by_native.pdf"));
+        PdfiumGoldens.Verify("NativeServices_ArrangedByPdfium", await Pages(pdfium, P("by_pdfium.pdf")));
 
         await using var a = await pdfium.OpenDocumentAsync(P("by_pdfium.pdf"));
         await using var b = await pdfium.OpenDocumentAsync(P("by_native.pdf"));
@@ -352,19 +538,22 @@ public class NativeDocumentServicesViewerTests : IDisposable
         // Unlike FPDF_ImportPages, the outline items whose pages were taken come along.
         Assert.Equal(new[] { 3, 2, 1 }, (await b.GetBookmarksAsync()).Select(x => x.TargetPageNumber).OrderByDescending(n => n));
     }
+#endif
 
-    [Fact]
-    public async Task MergeSplitAndExtract_Natively_OpenInPdfium()
+    /// <summary>Merges, splits and extracts natively, and opens the results with each reading engine.</summary>
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task MergeSplitAndExtract_Natively_OpenInEachEngine(string reader)
     {
         string a = TestPdfBuilder.CreateSimplePdf(P("a.pdf"), 2, "Alpha");
         string b = TestPdfBuilder.CreateSimplePdf(P("b.pdf"), 3, "Beta");
         var organizer = new PdfNativePageOrganizerService();
         await organizer.MergeDocumentsAsync(new[] { a, b }, P("merged.pdf"));
-        using IPdfEngine pdfium = new PdfiumEngine();
-        await using (var merged = await pdfium.OpenDocumentAsync(P("merged.pdf")))
+        using IPdfEngine check = TestEngines.Create(reader);
+        await using (var merged = await check.OpenDocumentAsync(P("merged.pdf")))
         {
             Assert.Equal(5, merged.PageCount);
-            Assert.Contains("Beta", await pdfium.TextService.ExtractPageTextAsync(merged, 3));
+            Assert.Contains("Beta", await check.TextService.ExtractPageTextAsync(merged, 3));
             var outline = await merged.GetBookmarksAsync();
             Assert.Equal(new[] { "a", "b" }, outline.Select(o => o.Title));
             Assert.Equal(new[] { 1, 3 }, outline.Select(o => o.TargetPageNumber));
@@ -373,17 +562,39 @@ public class NativeDocumentServicesViewerTests : IDisposable
         await using var doc = await PdfNativeDocument.OpenAsync(P("merged.pdf"));
         await organizer.SplitDocumentAsync(doc, new[] { 2, 3 }, P("split"), "part");
         await organizer.ExtractPagesAsync(doc, new[] { 5, 1 }, P("extract.pdf"));
-        await using (var first = await pdfium.OpenDocumentAsync(Path.Combine(P("split"), "part_part001.pdf")))
+        await using (var first = await check.OpenDocumentAsync(Path.Combine(P("split"), "part_part001.pdf")))
             Assert.Equal(2, first.PageCount);
-        await using (var second = await pdfium.OpenDocumentAsync(Path.Combine(P("split"), "part_part002.pdf")))
+        await using (var second = await check.OpenDocumentAsync(Path.Combine(P("split"), "part_part002.pdf")))
             Assert.Equal(3, second.PageCount);
-        await using var extract = await pdfium.OpenDocumentAsync(P("extract.pdf"));
+        await using var extract = await check.OpenDocumentAsync(P("extract.pdf"));
         Assert.Equal(2, extract.PageCount);
-        Assert.Contains("Beta", await pdfium.TextService.ExtractPageTextAsync(extract, 1));
-        Assert.Contains("Alpha", await pdfium.TextService.ExtractPageTextAsync(extract, 2));
+        Assert.Contains("Beta", await check.TextService.ExtractPageTextAsync(extract, 1));
+        Assert.Contains("Alpha", await check.TextService.ExtractPageTextAsync(extract, 2));
     }
 
+    private static readonly string[] ExecutableNameSamples = { "invoice.pdf.exe", "payload.exe . ", "notes.txt", "script.PS1" };
+
+    /// <summary>What PDFium's attachment service reports and extracts, for the goldens.</summary>
+    public sealed record Attachments(List<PdfEngine.Safety.EmbeddedFileInfo> Files, byte[] FirstFile, List<bool> ExecutableNames);
+
     [Fact]
+    public async Task Attachments_Natively_ListAndExtractAsPdfiumDid()
+    {
+        var expected = PdfiumGoldens.Load<Attachments>("NativeServices_Attachments");
+        string path = TestPdfBuilder.CreateAttachmentPdf(P("att.pdf"), "the payload");
+        await using var ndoc = await PdfNativeDocument.OpenAsync(path);
+        var service = new PdfNativeAttachmentService();
+        Assert.Equal(expected.Files, await service.GetAttachmentsAsync(ndoc));
+        long written = await service.ExtractAttachmentAsync(ndoc, 0, P("out.bin"));
+        Assert.Equal(expected.FirstFile, await File.ReadAllBytesAsync(P("out.bin")));
+        Assert.Equal(written, new FileInfo(P("out.bin")).Length);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await service.ExtractAttachmentAsync(ndoc, 5, P("none.bin")));
+        Assert.Equal(expected.ExecutableNames, ExecutableNameSamples.Select(PdfNativeAttachmentService.IsExecutableName));
+    }
+
+#if PDFIUM_RENDERER
+    [Fact]
+    [Trait("Category", PdfiumGoldens.Trait)]
     public async Task Attachments_Natively_ListAndExtractAsPdfiumDoes()
     {
         string path = TestPdfBuilder.CreateAttachmentPdf(P("att.pdf"), "the payload");
@@ -400,7 +611,11 @@ public class NativeDocumentServicesViewerTests : IDisposable
         Assert.Equal(written, new FileInfo(P("out.bin")).Length);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await service.ExtractAttachmentAsync(ndoc, 5, P("none.bin")));
 
-        foreach (var (name, executable) in new[] { ("invoice.pdf.exe", true), ("payload.exe . ", true), ("notes.txt", false), ("script.PS1", true) })
+        foreach (var name in ExecutableNameSamples)
             Assert.Equal(PdfiumAttachmentService.IsExecutableName(name), PdfNativeAttachmentService.IsExecutableName(name));
+
+        PdfiumGoldens.Verify("NativeServices_Attachments", new Attachments(expected.ToList(), await File.ReadAllBytesAsync(P("out_pdfium.bin")),
+            ExecutableNameSamples.Select(PdfiumAttachmentService.IsExecutableName).ToList()));
     }
+#endif
 }

@@ -1,0 +1,17 @@
+{
+  "Files": [
+    {
+      "Index": 0,
+      "Name": "payload.txt",
+      "SizeBytes": 11,
+      "HasExecutableExtension": false
+    }
+  ],
+  "FirstFile": "dGhlIHBheWxvYWQ=",
+  "ExecutableNames": [
+    true,
+    true,
+    false,
+    true
+  ]
+}
