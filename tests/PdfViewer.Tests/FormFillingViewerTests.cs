@@ -47,7 +47,7 @@ public class FormFillingViewerTests : IDisposable
     [Fact]
     public async Task OpeningAForm_PlacesEveryWidgetOnItsPage()
     {
-        var vm = await Open(WriteForm());
+        using var vm = await Open(WriteForm());
         Assert.True(vm.HasForm);
         Assert.Null(vm.FormReadOnlyReason);
         var fields = vm.AllFormFields;
@@ -66,7 +66,7 @@ public class FormFillingViewerTests : IDisposable
     {
         string path = WriteForm();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
         Assert.True(await vm.CommitFormFieldAsync(name, new PdfFieldChange("person.name", Text: "Grace Hopper")));
         Assert.Equal("Grace Hopper", name.Value);
@@ -83,7 +83,7 @@ public class FormFillingViewerTests : IDisposable
         Assert.True(saved.AsSpan(0, original.Length).SequenceEqual(original), "the original revision is untouched");
         Assert.True(saved.Length > original.Length);
 
-        var reopened = await Open(path);
+        using var reopened = await Open(path);
         Assert.Equal("Grace Hopper", reopened.AllFormFields.Single(f => f.FullName == "person.name").Value);
         Assert.Equal("Blue", reopened.AllFormFields.First(f => f.FullName == "colour").Value);
     }
@@ -91,7 +91,7 @@ public class FormFillingViewerTests : IDisposable
     [Fact]
     public async Task FormLayer_CreatesNativeEditorsWithAccessibleNames()
     {
-        var vm = await Open(WriteForm());
+        using var vm = await Open(WriteForm());
         Exception? error = null;
         var thread = new Thread(() =>
         {

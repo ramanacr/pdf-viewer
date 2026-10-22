@@ -47,7 +47,7 @@ public class ExportOfficeViewerTests : IDisposable
     {
         string target = Path.Combine(_dir, "out.xlsx");
         string? suggested = null, opened = null, asked = null;
-        var vm = new MainViewModel
+        using var vm = new MainViewModel
         {
             ShowMessageBoxAction = (_, _, _, _) => { },
             ChooseExcelTargetFunc = s => { suggested = s; return target; },
@@ -77,7 +77,7 @@ public class ExportOfficeViewerTests : IDisposable
     {
         string target = Path.Combine(_dir, "out.pptx");
         string? suggested = null, opened = null;
-        var vm = new MainViewModel
+        using var vm = new MainViewModel
         {
             ShowMessageBoxAction = (_, _, _, _) => { },
             ChoosePowerPointTargetFunc = s => { suggested = s; return target; },
@@ -97,7 +97,7 @@ public class ExportOfficeViewerTests : IDisposable
     [Fact]
     public async Task Export_Cancelled_WritesNothing()
     {
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { }, ChooseExcelTargetFunc = _ => null, ChoosePowerPointTargetFunc = _ => null };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { }, ChooseExcelTargetFunc = _ => null, ChoosePowerPointTargetFunc = _ => null };
         await vm.LoadDocumentAsync(Document());
         await vm.ExportExcelCommand.ExecuteAsync(null);
         await vm.ExportPowerPointCommand.ExecuteAsync(null);

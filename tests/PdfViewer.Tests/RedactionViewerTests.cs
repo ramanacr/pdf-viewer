@@ -58,7 +58,7 @@ public class RedactionViewerTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         vm.SearchQuery = "Jane Roe";
         await vm.ExecuteSearchAsync();
         Assert.Equal(3, vm.SearchMatches.Count);
@@ -85,7 +85,7 @@ public class RedactionViewerTests : IDisposable
     public async Task AnArea_RemovesWhateverIsUnderIt()
     {
         string path = Document();
-        var vm = await Open(path);
+        using var vm = await Open(path);
         // The red box (40..240 x 500..580 on a 612 x 792 page), in normalized top-left coordinates.
         vm.AddRedactionMark(1, new Rect(30 / 612.0, 1 - 590 / 792.0, 230 / 612.0, 100 / 792.0));
         Assert.Equal(1, vm.RedactionMarkCount);
@@ -102,7 +102,7 @@ public class RedactionViewerTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         string? alert = null;
         vm.ShowMessageBoxAction = (m, _, _, _) => alert = m;
         vm.AddRedactionMark(1, new Rect(0.1, 0.1, 0.2, 0.05));
@@ -116,7 +116,7 @@ public class RedactionViewerTests : IDisposable
     [Fact]
     public async Task MarkingModes_AreExclusive_AndApplyingNeedsMarks()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         string? alert = null;
         vm.ShowMessageBoxAction = (m, _, _, _) => alert = m;
         await vm.ApplyRedactionsCommand.ExecuteAsync(null);
@@ -133,7 +133,7 @@ public class RedactionViewerTests : IDisposable
     [Fact]
     public async Task MarksLayer_ShowsEachMark()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         vm.AddRedactionMark(1, new Rect(0.1, 0.2, 0.3, 0.05));
         vm.AddRedactionMark(1, new Rect(0.5, 0.6, 0.1, 0.1));
         Exception? error = null;

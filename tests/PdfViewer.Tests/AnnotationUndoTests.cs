@@ -63,6 +63,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task UndoingAnAdd_RemovesIt_AndRedoPutsTheSameAnnotationBack()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         Assert.False(vm.CanUndo);
         Assert.False(vm.UndoCommand.CanExecute(null));
         Assert.Equal("_Undo", vm.UndoHeader);
@@ -93,6 +94,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task UndoingADelete_PutsItBackWhereItWas_InTheListAndInTheStackingOrder()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         var bottom = Markup(AnnotationType.Rectangle);
         var middle = Markup(AnnotationType.Ellipse, contents: "middle");
         var top = Markup(AnnotationType.Note);
@@ -120,6 +122,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task MovingResizingAndRestyling_AreEachOneStep_UndoneExactly()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         var annot = Markup(AnnotationType.Highlight);
         annot.SetQuads(new[] { new Rect(0.1, 0.2, 0.3, 0.02), new Rect(0.1, 0.23, 0.2, 0.02) });
         vm.AddAnnotation(annot);
@@ -164,6 +167,7 @@ public class AnnotationUndoTests : IDisposable
     {
         // The comment dialog changes the annotation itself and then reports the edit.
         var (vm, _) = await Open();
+        using var vmScope = vm;
         var note = Markup(AnnotationType.Note, contents: "first draft");
         vm.AddAnnotation(note);
 
@@ -190,6 +194,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task UndoingClearAll_BringsEveryAnnotationBackInOrder()
     {
         var (vm, _) = await Open(pages: 3);
+        using var vmScope = vm;
         var a = Markup(page: 1);
         var b = Markup(AnnotationType.Ink, page: 3);
         var c = Markup(AnnotationType.FreeText, page: 1);
@@ -210,6 +215,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task ANewChange_AfterUndo_ClearsRedo()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         vm.AddAnnotation(Markup(AnnotationType.Underline));
         await vm.UndoAsync();
         Assert.True(vm.CanRedo);
@@ -226,6 +232,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task UndoingBackToWhatWasSaved_ClearsTheUnsavedFlag_AndPastItSetsItAgain()
     {
         var (vm, path) = await Open();
+        using var vmScope = vm;
         var kept = Markup(contents: "kept");
         vm.AddAnnotation(kept);
         await vm.SaveAsync();
@@ -252,10 +259,11 @@ public class AnnotationUndoTests : IDisposable
     public async Task UndoingAChangeToALoadedAnnotation_KeepsItAsTheFileHasIt()
     {
         var (first, path) = await Open();
+        using var firstScope = first;
         first.AddAnnotation(Markup(contents: "from the file"));
         await first.SaveAsync();
 
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await vm.LoadDocumentAsync(path);
         var loaded = Assert.Single(vm.AllAnnotations);
         string asLoaded = NativeDocumentServices.Fingerprint(loaded);
@@ -275,6 +283,7 @@ public class AnnotationUndoTests : IDisposable
     public async Task UndoWorksOutsideEditTextAndImages()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         Assert.False(vm.IsEditingContent);
         vm.AddAnnotation(Markup());
 
@@ -293,7 +302,7 @@ public class AnnotationUndoTests : IDisposable
         b.AddPage("BT /F1 14 Tf 40 700 Td (Invoice total: 120 dollars) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>", mediaBox: "[0 0 612 792]");
         string path = Path.Combine(_dir, "edit.pdf");
         File.WriteAllBytes(path, b.Build());
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await vm.LoadDocumentAsync(path);
         byte[] opened = vm.CurrentDocumentBytes()!;
 
@@ -344,7 +353,7 @@ public class AnnotationUndoTests : IDisposable
     [Fact]
     public async Task ClosingWithDiscardedAnnotations_IsQuick_AndWritesNothing()
     {
-        var shell = new ShellViewModel();
+        using var shell = new ShellViewModel();
         string path = TestPdfBuilder.CreateSimplePdf(Path.Combine(_dir, "close.pdf"), 12, "CloseToken");
         byte[] original = File.ReadAllBytes(path);
         var stamp = File.GetLastWriteTimeUtc(path);

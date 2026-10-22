@@ -45,7 +45,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestContinuousLayoutPutsOnePagePerRow()
     {
-        var vm = await LoadedViewModel(4);
+        using var vm = await LoadedViewModel(4);
         vm.SetViewMode(ViewLayoutMode.Continuous);
 
         var rows = vm.BuildPageRows();
@@ -65,7 +65,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestFacingLayoutPairsPagesAfterTheCover()
     {
-        var vm = await LoadedViewModel(6);
+        using var vm = await LoadedViewModel(6);
         vm.SetViewMode(ViewLayoutMode.Facing);
         vm.ShowCoverPageAlone = true;
 
@@ -82,7 +82,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestFacingLayoutPairsFromTheFirstPageWhenTheCoverIsNotSeparate()
     {
-        var vm = await LoadedViewModel(6);
+        using var vm = await LoadedViewModel(6);
         vm.SetViewMode(ViewLayoutMode.Facing);
         vm.ShowCoverPageAlone = false;
 
@@ -101,7 +101,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestPageOffsetFollowsTheLayout()
     {
-        var vm = await LoadedViewModel(6);
+        using var vm = await LoadedViewModel(6);
 
         vm.SetViewMode(ViewLayoutMode.Continuous);
         double continuousOffsetOfPage5 = vm.GetPageOffset(5);
@@ -123,7 +123,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestOffsetAndPageLookupAgreeWithEachOther()
     {
-        var vm = await LoadedViewModel(7);
+        using var vm = await LoadedViewModel(7);
 
         foreach (var mode in new[] { ViewLayoutMode.Continuous, ViewLayoutMode.Facing })
         {
@@ -153,7 +153,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestOffsetsOutsideTheDocumentClampToRealPages()
     {
-        var vm = await LoadedViewModel(5);
+        using var vm = await LoadedViewModel(5);
         vm.SetViewMode(ViewLayoutMode.Continuous);
 
         Assert.Equal(1, vm.GetPageAtOffset(-500));
@@ -171,7 +171,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestFitWidthAccountsForBothPagesWhenFacing()
     {
-        var vm = await LoadedViewModel(4);
+        using var vm = await LoadedViewModel(4);
         vm.GetViewportSizeFunc = () => (1000, 800);
 
         vm.SetViewMode(ViewLayoutMode.Continuous);
@@ -198,7 +198,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestRenderedRowsMatchTheMeasuredRows()
     {
-        var vm = await LoadedViewModel(7);
+        using var vm = await LoadedViewModel(7);
 
         foreach (var mode in new[] { ViewLayoutMode.Continuous, ViewLayoutMode.Facing })
         {
@@ -229,7 +229,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestFacingModeDrawsTwoPagesInARow()
     {
-        var vm = await LoadedViewModel(5);
+        using var vm = await LoadedViewModel(5);
         vm.SetViewMode(ViewLayoutMode.Facing);
         vm.ShowCoverPageAlone = true;
 
@@ -248,7 +248,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestSinglePageModeIsNotAScrollingLayout()
     {
-        var vm = await LoadedViewModel(3);
+        using var vm = await LoadedViewModel(3);
 
         vm.SetViewMode(ViewLayoutMode.SinglePage);
         Assert.False(vm.IsMultiPageLayout);
@@ -263,7 +263,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestToggleCyclesThroughEveryLayout()
     {
-        var vm = await LoadedViewModel(2);
+        using var vm = await LoadedViewModel(2);
         Assert.Equal(ViewLayoutMode.Continuous, vm.ViewMode);
 
         vm.ToggleViewMode();
@@ -279,7 +279,7 @@ public class PageLayoutTests : IDisposable
     [Fact]
     public async Task TestASinglePageDocumentStillLaysOutInFacingMode()
     {
-        var vm = await LoadedViewModel(1);
+        using var vm = await LoadedViewModel(1);
         vm.SetViewMode(ViewLayoutMode.Facing);
 
         var rows = vm.BuildPageRows();

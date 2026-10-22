@@ -21,7 +21,7 @@ namespace PdfViewer.ViewModels;
 /// shared budget is re-divided whenever a tab opens or closes rather than each tab helping
 /// itself to the whole thing.
 /// </summary>
-public partial class ShellViewModel : ObservableObject
+public partial class ShellViewModel : ObservableObject, IDisposable
 {
     /// <summary>
     /// Beyond this, opening another document replaces the least recently used tab instead of
@@ -148,6 +148,7 @@ public partial class ShellViewModel : ObservableObject
             int index = Documents.IndexOf(tab);
             Documents.Remove(tab);
             ActiveDocument = Documents[Math.Min(index, Documents.Count - 1)];
+            tab.Dispose();
             return null;
         }
 
@@ -214,6 +215,8 @@ public partial class ShellViewModel : ObservableObject
             ActiveDocument = Documents[Math.Min(index, Documents.Count - 1)];
         }
 
+        // A removed tab is gone for good: release its document service and render thread.
+        document.Dispose();
         return true;
     }
 
@@ -263,12 +266,14 @@ public partial class ShellViewModel : ObservableObject
         return true;
     }
 
+    /// <summary>Releases every tab, with its document service and render thread, when the window closes.</summary>
     public void ShutdownAll()
     {
         foreach (var document in Documents.ToList())
         {
-            document.ShutdownReadAloud();
-            document.CloseDocument();
+            document.Dispose();
         }
     }
+
+    public void Dispose() => ShutdownAll();
 }

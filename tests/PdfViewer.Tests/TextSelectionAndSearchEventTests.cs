@@ -48,7 +48,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestSearchQueryAndMatchNavigationUserEvents()
     {
         string pdfPath = CreateSamplePdf("search_nav.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         // User enters search query and presses Enter / Search button
@@ -88,7 +88,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestSearchMatchDirectSelectionFromSidebar()
     {
         string pdfPath = CreateSamplePdf("search_sidebar.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         vm.SearchQuery = "SearchableToken";
@@ -111,7 +111,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestTextSelectionAndClearUserEvents()
     {
         string pdfPath = CreateSamplePdf("text_sel.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var page = vm.Pages[0];
@@ -146,7 +146,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
     public async Task TestConvertSelectionToHighlightUserEvents()
     {
         string pdfPath = CreateSamplePdf("sel_to_highlight.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         var page = vm.Pages[0];

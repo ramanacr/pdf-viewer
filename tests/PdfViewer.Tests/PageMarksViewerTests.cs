@@ -48,7 +48,7 @@ public class PageMarksViewerTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         vm.ShowPageMarkDialogFunc = dialog =>
         {
             var hf = Assert.IsType<HeaderFooterViewModel>(dialog);
@@ -79,7 +79,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Update_StartsFromTheDocumentsSettings_AndRemoveTakesTheMarksAway()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         Assert.True(await vm.ApplyPageMarksAsync(new PageMarkRequest(PdfMarkAction.Add, PdfMarkKind.HeaderFooter, new PdfHeaderFooter { TopLeft = "Draft <<1>>" }, null)));
 
         var dialog = Assert.IsType<HeaderFooterViewModel>(await vm.CreatePageMarkViewModelAsync(PdfMarkKind.HeaderFooter));
@@ -105,7 +105,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Preview_DrawsTheCurrentPage_WithoutChangingTheDocument()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         byte[] before = vm.CurrentDocumentBytes()!;
         var dialog = Assert.IsType<WatermarkViewModel>(await vm.CreatePageMarkViewModelAsync(PdfMarkKind.Watermark));
         dialog.Text = "SAMPLE";
@@ -118,7 +118,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Bates_NumbersTheRange_FromTheDialog()
     {
-        var vm = await Open(Document(3));
+        using var vm = await Open(Document(3));
         var dialog = Assert.IsType<BatesNumberingViewModel>(await vm.CreatePageMarkViewModelAsync(PdfMarkKind.Bates));
         dialog.Prefix = "SMITH";
         dialog.Start = 7;
@@ -192,7 +192,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Watermark_FromTheDialog_IsDrawnAndRemoved()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         vm.ShowPageMarkDialogFunc = dialog =>
         {
             var wm = Assert.IsType<WatermarkViewModel>(dialog);

@@ -47,7 +47,7 @@ public class NavigationAndOrganizerUiTests : IDisposable
     [Fact]
     public async Task TestBackAndForwardRetraceDeliberateJumps()
     {
-        var vm = await LoadedViewModel(10);
+        using var vm = await LoadedViewModel(10);
 
         Assert.False(vm.CanGoBack);
         Assert.False(vm.CanGoForward);
@@ -82,7 +82,7 @@ public class NavigationAndOrganizerUiTests : IDisposable
     [Fact]
     public async Task TestANewJumpClearsTheForwardTrail()
     {
-        var vm = await LoadedViewModel(10);
+        using var vm = await LoadedViewModel(10);
 
         vm.NavigateToPage(4);
         vm.NavigateToPage(8);
@@ -103,7 +103,7 @@ public class NavigationAndOrganizerUiTests : IDisposable
     [Fact]
     public async Task TestScrollingDoesNotFillTheHistory()
     {
-        var vm = await LoadedViewModel(10);
+        using var vm = await LoadedViewModel(10);
 
         vm.CurrentPageNumber = 4;
         vm.CurrentPageNumber = 5;
@@ -115,7 +115,7 @@ public class NavigationAndOrganizerUiTests : IDisposable
     [Fact]
     public async Task TestHistoryDoesNotSurviveClosingTheDocument()
     {
-        var vm = await LoadedViewModel(6);
+        using var vm = await LoadedViewModel(6);
 
         vm.NavigateToPage(4);
         Assert.True(vm.CanGoBack);
@@ -129,7 +129,7 @@ public class NavigationAndOrganizerUiTests : IDisposable
     [Fact]
     public async Task TestNavigatingNowhereIsNotRecorded()
     {
-        var vm = await LoadedViewModel(5);
+        using var vm = await LoadedViewModel(5);
 
         vm.NavigateToPage(3);
         vm.NavigateToPage(3);

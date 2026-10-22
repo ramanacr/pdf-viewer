@@ -68,7 +68,7 @@ public class SearchableScanTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await vm.LoadDocumentAsync(path);
         var ocr = new FakeOcr();
         vm.OcrEngineOverride = ocr;
@@ -86,7 +86,7 @@ public class SearchableScanTests : IDisposable
         await vm.SaveAsync();
         byte[] saved = File.ReadAllBytes(path);
         Assert.True(saved.AsSpan(0, original.Length).SequenceEqual(original), "saved as an incremental update");
-        var reopened = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var reopened = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await reopened.LoadDocumentAsync(path);
         reopened.SearchQuery = "Scanned2";
         await reopened.ExecuteSearchAsync();
@@ -97,7 +97,7 @@ public class SearchableScanTests : IDisposable
     public async Task Stopping_ChangesNothing()
     {
         string path = Document();
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await vm.LoadDocumentAsync(path);
         vm.OcrEngineOverride = new FakeOcr { Before = async page => { if (page == 3) await vm.MakeSearchableAsync(); } }; // "run again to stop"
         await vm.MakeSearchableAsync();
@@ -114,7 +114,7 @@ public class SearchableScanTests : IDisposable
         b.AddPage("BT /F1 14 Tf 40 700 Td (All typed) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>");
         string path = Path.Combine(_dir, "typed.pdf");
         File.WriteAllBytes(path, b.Build());
-        var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var vm = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await vm.LoadDocumentAsync(path);
         var ocr = new FakeOcr();
         vm.OcrEngineOverride = ocr;

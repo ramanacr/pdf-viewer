@@ -54,7 +54,7 @@ public enum PageFitMode
     FitPage
 }
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IPdfDocumentService _docService;
     public IPdfDocumentService DocumentService => _docService;
@@ -648,6 +648,23 @@ public partial class MainViewModel : ObservableObject
         WindowTitle = "PDF Viewer";
         StatusText = "Ready";
         UpdateCurrentPageEngineStatus();
+    }
+
+    private bool _disposed;
+
+    /// <summary>
+    /// Releases the tab for good: the document, Read Aloud and the document service with its
+    /// render thread and native resources. Each tab owns one service, so a tab that is closed
+    /// without this keeps a render thread alive until the process ends.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        ShutdownReadAloud();
+        CloseDocument();
+        _docService.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     #endregion

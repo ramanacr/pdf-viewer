@@ -74,7 +74,7 @@ public class EngineModeAndDiagnosticsTests
     [Fact]
     public void MainViewModel_EngineModePropertiesAndCommands_ToggleCorrectly()
     {
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         Assert.Equal(PdfEngineMode.Auto, vm.CurrentEngineMode);
         Assert.True(vm.IsAutoEngineMode);
