@@ -1,5 +1,7 @@
 # Native Windows PDF Viewer
 
+[![CI](https://github.com/ramanacr/pdf-viewer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ramanacr/pdf-viewer/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/ramanacr/pdf-viewer)](https://github.com/ramanacr/pdf-viewer/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4.svg)](https://dotnet.microsoft.com/download/dotnet/9.0) [![Good first issues](https://img.shields.io/github/issues/ramanacr/pdf-viewer/good%20first%20issue)](https://github.com/ramanacr/pdf-viewer/labels/good%20first%20issue)
+
 A high-performance, feature-rich Windows desktop native PDF Viewer application built with **C# / WPF on .NET 9** and powered by its own PDF engine, **`PdfEngine.Vector`**, drawn by Direct2D/DirectWrite (x64). The published application contains no PDFium; developer and test builds keep Google PDFium as the reference the engine is compared with.
 
 The solution is structured using the modern XML-based **`.slnx`** solution format, asynchronous background page rendering with an in-memory **LRU cache**, zero intermediate PNG encoding overhead, comprehensive text searching and selection, vector and ink annotations, bookmark tree exploration, high-DPI image export, native Windows printing, and Light/Dark themes.
