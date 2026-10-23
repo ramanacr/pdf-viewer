@@ -33,6 +33,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Comprehensive Keyboard Shortcuts](#comprehensive-keyboard-shortcuts)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
 - [Code signing policy](#code-signing-policy)
+- [Contributing](#contributing)
 - [License & Third-Party Notices](#license--third-party-notices)
 
 ---
@@ -525,6 +526,12 @@ Yes. Open `PdfViewer.slnx` in **Visual Studio 2022 (v17.12 or newer)**. Visual S
 Release binaries are Authenticode-signed, built only by this repository's release workflow from tagged source. Who commits, reviews and approves releases, how to check a download's signature, and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
 
 Releases are signed with the project's own self-signed certificate for now. The privacy policy is also published at https://ramanacr.github.io/pdf-viewer/privacy/.
+
+---
+
+## Contributing
+
+Contributions are welcome: bug reports, test files you may share, documentation and code. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the set-up, the project rules and how to run the tests. Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
 ---
 
