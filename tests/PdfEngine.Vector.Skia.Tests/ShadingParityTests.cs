@@ -66,6 +66,17 @@ public class ShadingParityTests
         })(), 1.5, 0.01);
 
     [Fact]
+    public Task ShadingAsStrokePattern_ClipsToTheStrokeOutline() =>
+        _parity.AssertMatches("shading-stroke", new Func<byte[]>(() =>
+        {
+            var b = new VectorPdfBuilder();
+            int sh = b.Add($"<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] {Function} /Extend [true true] >>");
+            int pat = b.Add($"<< /Type /Pattern /PatternType 2 /Shading {sh} 0 R >>");
+            b.AddPage("/Pattern CS /P1 SCN 12 w 1 j [30 10] 0 d 20 20 m 100 180 l 180 20 l h S", $"<< /Pattern << /P1 {pat} 0 R >> >>");
+            return b.Build();
+        })(), 1.5, 0.01);
+
+    [Fact]
     public Task FunctionBased_Type1()
     {
         // f(x, y) = (x, y, x·y) over the unit square, mapped to 160 pt at (20, 20).

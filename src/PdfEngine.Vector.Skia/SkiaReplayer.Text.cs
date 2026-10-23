@@ -244,40 +244,49 @@ internal sealed partial class SkiaReplayer
         return outline;
     }
 
+    // Glyph outlines per run, in pieces of one horizontal scale: built once, reused by every render.
+    private readonly Dictionary<DrawGlyphRun, (SKPath Outline, Matrix3x2 PieceToText)[]> _glyphOutlines = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The run's glyph outlines, each piece with its glyph space → text space transform.</summary>
+    private (SKPath Outline, Matrix3x2 PieceToText)[] RunOutlines(DrawGlyphRun cmd, ResolvedRun r)
+    {
+        if (_glyphOutlines.TryGetValue(cmd, out var cached))
+            return cached;
+        var run = cmd.Run;
+        float em = (float)Math.Abs(run.FontSize);
+        var (glyphMatrix, positions) = GlyphFrame(run.Face, em, r.Offsets);
+        var glyphToText = GlyphToText(run, glyphMatrix);
+        using var font = r.Face.CreateFont(em);
+        var pieces = ScaledPieces(r.Indices, positions, r.Scales)
+            .Select(p => (GlyphOutlines(font, p.Indices, p.Positions), Matrix3x2.CreateScale(p.Scale, 1) * glyphToText))
+            .ToArray();
+        _glyphOutlines[cmd] = pieces;
+        return pieces;
+    }
+
+    /// <summary>
+    /// Draws a glyph run as filled outlines, as the Direct2D backend's outline rendering mode does
+    /// (no hinting, no glyph-cache gamma): text then has the same weight and position as there.
+    /// </summary>
     private void DrawText(SKCanvas canvas, DrawGlyphRun cmd, Matrix3x2 full)
     {
         var run = cmd.Run;
         if (ResolveText(run) is not { } r || r.Indices.Length == 0 || run.FontSize == 0)
             return;
-        float em = (float)Math.Abs(run.FontSize);
-        var (glyphMatrix, positions) = GlyphFrame(run.Face, em, r.Offsets);
-        var glyphToText = GlyphToText(run, glyphMatrix);
         var textMatrix = M(run.TextMatrix);
-
         int mode = run.RenderingMode;
         bool fill = mode is 0 or 2 or 4 or 6, stroke = mode is 1 or 2 or 5 or 6;
-        using var font = r.Face.CreateFont(em);
-        foreach (var (indices, piecePositions, scale) in ScaledPieces(r.Indices, positions, r.Scales))
+        foreach (var (outline, pieceToText) in RunOutlines(cmd, r))
         {
-            var pieceToText = Matrix3x2.CreateScale(scale, 1) * glyphToText;
             var pieceTransform = pieceToText * textMatrix * full;
             if (fill)
             {
-                using var builder = new SKTextBlobBuilder();
-                var buffer = builder.AllocatePositionedRun(font, indices.Length);
-                buffer.SetGlyphs(indices);
-                buffer.SetPositions(piecePositions);
-                using var blob = builder.Build();
-                if (blob != null)
-                {
-                    using var paint = FillPaint(cmd.Paint.Color, cmd.Paint.Alpha);
-                    canvas.SetMatrix(ToSk(pieceTransform));
-                    canvas.DrawText(blob, 0, 0, paint);
-                }
+                using var paint = FillPaint(cmd.Paint.Color, cmd.Paint.Alpha);
+                canvas.SetMatrix(ToSk(pieceTransform));
+                canvas.DrawPath(outline, paint);
             }
             if (stroke && run.StrokePaint is PdfPaint sp && run.Stroke is PdfStroke st)
             {
-                using var outline = GlyphOutlines(font, indices, piecePositions);
                 // Stroke width is user space: express it in glyph space.
                 float textScale = MathF.Sqrt(MathF.Abs((pieceToText * textMatrix).GetDeterminant()));
                 Stroke(canvas, outline, Color(sp.Color, sp.Alpha), st with { Width = st.Width / Math.Max(textScale, 1e-6), DashArray = null }, pieceTransform);

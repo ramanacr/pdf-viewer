@@ -112,6 +112,9 @@ internal sealed partial class SkiaReplayer : IDisposable
         _strokeOutlines.Clear();
         foreach (var p in _textOutlines.Values) p.Dispose();
         _textOutlines.Clear();
+        foreach (var pieces in _glyphOutlines.Values)
+            foreach (var (outline, _) in pieces) outline.Dispose();
+        _glyphOutlines.Clear();
         foreach (var (image, _) in _uncachedImages.Values) image.Dispose();
         _uncachedImages.Clear();
     }
@@ -494,13 +497,24 @@ internal sealed partial class SkiaReplayer : IDisposable
     {
         float scale = MathF.Sqrt(MathF.Abs(full.GetDeterminant()));
         bool hairline = stroke.Width * scale < 1.0;
+        float width = hairline ? 0f : (float)stroke.Width;
+        if (!hairline)
+        {
+            // Skia draws a stroke at most one device pixel wide on both axes as a hairline, which
+            // puts a 45° line of exactly one pixel through the pixel centres and nothing beside
+            // it. Direct2D (and PDF) cover the true one-pixel band, so such a stroke is widened by
+            // 0.2 % to stay geometric.
+            float axis = MathF.Max(MathF.Sqrt(full.M11 * full.M11 + full.M12 * full.M12), MathF.Sqrt(full.M21 * full.M21 + full.M22 * full.M22));
+            if (axis > 0 && width * axis <= 1.001f)
+                width = 1.002f / axis;
+        }
         using var dash = Dash(stroke);
         using var paint = new SKPaint
         {
             Color = color,
             IsAntialias = true,
             Style = SKPaintStyle.Stroke,
-            StrokeWidth = hairline ? 0f : (float)stroke.Width,
+            StrokeWidth = width,
             StrokeCap = Cap(stroke.Cap),
             StrokeJoin = Join(stroke.Join),
             StrokeMiter = (float)Math.Max(1, stroke.MiterLimit),
