@@ -533,6 +533,8 @@ Releases are signed with the project's own self-signed certificate for now. The 
 
 Contributions are welcome: bug reports, test files you may share, documentation and code. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the set-up, the project rules and how to run the tests. Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
+---
+
 ## License & Third-Party Notices
 
 - **PDF Viewer Application**: Licensed under the [MIT License](LICENSE).
