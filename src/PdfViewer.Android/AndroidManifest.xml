@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No permissions at all: no INTERNET (nothing is sent anywhere) and no storage permission (a file
+  comes through the system document picker, which grants access to the one file the user picks).
+  Backups are off, so nothing about opened documents leaves the device.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application
+      android:label="PDF Viewer (preview)"
+      android:theme="@style/AppTheme"
+      android:allowBackup="false"
+      android:supportsRtl="true"
+      android:usesCleartextTraffic="false" />
+</manifest>
