@@ -134,7 +134,11 @@ the app (one more step in the workflow) or move the demo to a subfolder of it.
    still finds it, because text extraction does not need the font file. In Chrome and Edge the
    page can ask to read the device's fonts (Local Font Access); the substitutes then come from
    there, through the same `SystemFontCatalog` matching as on Windows. Other browsers have no
-   such API. Bundling an open font family (for example Liberation or Noto, under the SIL Open
+   such API. This is the largest gap in practice: five of six government reports sampled from
+   the test corpus use at least one non-embedded font. (The device-font path was verified in
+   headless Chrome with the API stubbed to hand over one installed face, because a headless or
+   embedded browser does not grant the permission; the substitute text then draws.) Bundling
+   an open font family (for example Liberation or Noto, under the SIL Open
    Font License) would close the gap at the cost of several megabytes.
 2. **CMYK and YCCK JPEG images** are not decoded by the Skia backend (see its README) and stay
    blank. The page says so.
@@ -142,9 +146,12 @@ the app (one more step in the workflow) or move the demo to a subfolder of it.
 4. **Size.** The site is about 15 MB uncompressed, about 6.6 MB over the wire with gzip, cached
    by the browser after the first visit. Largest pieces: `dotnet.native.wasm` with Skia 5.8 MB,
    the engine `PdfEngine.Vector.wasm` 3.0 MB, `System.Private.CoreLib` 1.7 MB.
-5. **Speed.** The engine runs in the .NET interpreter (no AOT), so interpreting a page into a
-   display list is several times slower than on the desktop; Skia's drawing is native code. See
-   the measurements below.
+5. **Speed.** The engine runs in the .NET interpreter, so interpreting a page into a display
+   list is slower than on the desktop; Skia's drawing is native code. See the measurements
+   below. Trimming is on (the Blazor default for publish) and works. AOT is not enabled: an AOT
+   publish could not be completed on the development machine (the AOT step failed on Windows
+   path-length and intermediate-file errors under the deep worktree path), so its size and speed
+   are unmeasured.
 6. **Single thread.** A long page blocks the tab while it is interpreted. Pages are drawn one at
    a time, and the UI yields between them.
 7. **Not in the demo:** annotations, forms, printing, text selection and copy, thumbnails, tiled
@@ -169,12 +176,13 @@ for its password, refuses a wrong one, opens with the right one, renders and is 
 
 ### Measurements
 
-Measured on the development machine (Windows 11, Chromium-based browser pane, loopback static
-server with gzip), Release build, interpreter (no AOT):
+Measured on the development machine (Windows 11; Chromium, both the desktop app's browser pane
+and headless Chrome; loopback static server with gzip), Release build, interpreter (no AOT):
 
 | What | Result |
 |---|---|
-| First load, empty cache | 72 requests, 6.6 MB transferred (15.2 MB decoded), viewer ready in 0.8 s on loopback |
+| First load, empty cache | 72 requests, 6.6 MB transferred (15.2 MB decoded), viewer ready in 0.8 to 0.9 s on loopback |
+| Six government reports from the local test corpus (24 to 59 pages, 0.2 to 1.4 MB) | open in 11 to 82 ms; pages at 968 × 1253 px in 13 to 430 ms, interpret 10 to 50 ms, draw 3 to 400 ms (image-heavy pages draw longest) |
 | Open the engine tour (4 pages, generated in the tab) | 26 ms |
 | Tour page 1, first render at 992 × 1284 px (includes runtime warm-up) | 457 ms: interpret 366 ms, draw 91 ms |
 | Tour pages 2 to 4 at 697 × 902 px | 159 to 216 ms each: interpret 93 to 129 ms, draw 66 to 83 ms |
