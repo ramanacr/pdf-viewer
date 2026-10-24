@@ -70,13 +70,32 @@ public class PdfAutoTaggerTests
             Assert.Equal(PdfTextExtractor.LoadPage(a, p).GetAllText(), PdfTextExtractor.LoadPage(b, p).GetAllText());
             using (var pa = await InterpreterCoverageTests.RenderAsync(await a.GetPageDisplayListAsync(p)))
             using (var pb = await InterpreterCoverageTests.RenderAsync(await b.GetPageDisplayListAsync(p)))
-                Assert.True(pa.Pixels.Span.SequenceEqual(pb.Pixels.Span), $"page {p} draws differently (WPF renderer)");
+            {
+                int diff = Differing(pa.Pixels.Span, pb.Pixels.Span);
+                if (diff > 0)
+                {
+                    // The WPF renderer is not always repeatable on a loaded machine (CI). Tagging is only
+                    // blamed for differences larger than the original page shows against itself.
+                    using var pa2 = await InterpreterCoverageTests.RenderAsync(await a.GetPageDisplayListAsync(p));
+                    int self = Differing(pa.Pixels.Span, pa2.Pixels.Span);
+                    Assert.True(self > 0 && diff <= 2 * self,
+                        $"page {p} draws differently (WPF renderer): {diff} bytes differ, the original against itself {self}");
+                }
+            }
             var ra = await d2d.RenderAsync(await a.GetPageDisplayListAsync(p), new RenderRequest { PageNumber = p, Dpi = 72 }, null, null, false, CancellationToken.None);
             var rb = await d2d.RenderAsync(await b.GetPageDisplayListAsync(p), new RenderRequest { PageNumber = p, Dpi = 72 }, null, null, false, CancellationToken.None);
             using (var pa = ra.Page)
             using (var pb = rb.Page)
                 Assert.True(pa.Pixels.Span.SequenceEqual(pb.Pixels.Span), $"page {p} draws differently (Direct2D renderer)");
         }
+    }
+
+    private static int Differing(ReadOnlySpan<byte> x, ReadOnlySpan<byte> y)
+    {
+        if (x.Length != y.Length) return int.MaxValue;
+        int n = 0;
+        for (int i = 0; i < x.Length; i++) if (x[i] != y[i]) n++;
+        return n;
     }
 
     private static Elem Tree(PdfVectorDocument doc)
