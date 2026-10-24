@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
 
 namespace PdfEngine.Vector.Text;
@@ -26,6 +27,8 @@ internal static class TextPrefetcher
 
     public static void Enqueue(PdfVectorDocument document, int page)
     {
+        // Single-threaded WebAssembly cannot start the worker: the page's text is built when it is asked for.
+        if (!PdfPlatform.CanStartThreads) return;
         lock (Sync)
         {
             int generation = Generations.GetValue(document, _ => new StrongBox<int>()).Value;
