@@ -1673,7 +1673,9 @@ internal sealed partial class Replayer : IDisposable
                     ctx.DrawGlyphRun(Vector2.Zero, glyphRun, description.Value, brush, MeasuringMode.Natural);
                 else if (_describeText)
                     ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural); // printing: glyphs stay text
-                else if (!DrawFromAtlas(ctx, glyphRun, pieceTransform, Color(cmd.Paint.Color, cmd.Paint.Alpha)))
+                // Only plain filled text (mode 0) comes from the atlas: its whole-pixel baseline would
+                // not line up with a stroke or a clip drawn from the exact outlines.
+                else if (mode != 0 || !DrawFromAtlas(ctx, glyphRun, pieceTransform, Color(cmd.Paint.Color, cmd.Paint.Alpha)))
                 {
                     // Glyphs the atlas does not take (large, translucent): Direct2D's outline text
                     // rendering, which is quick for large glyphs (filling their outlines as paths
