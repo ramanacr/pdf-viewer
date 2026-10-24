@@ -41,6 +41,16 @@ jobs:
       with:
         dotnet-version: '9.0.x'
 
+    # The runner image also has a newer SDK, which would be chosen by default and asks for a
+    # different workload (wasm-tools-net9). Pin this job to the 9.0 SDK installed above.
+    - name: Pin the .NET 9 SDK
+      shell: bash
+      run: |
+        sdk=$(dotnet --list-sdks | awk '/^9\./ {print $1}' | sort -V | tail -1)
+        test -n "$sdk"
+        echo "{ \"sdk\": { \"version\": \"$sdk\", \"rollForward\": \"latestPatch\" } }" > global.json
+        dotnet --version
+
     # Skia's native library is linked into the WebAssembly runtime, which needs Emscripten.
     - name: Install the wasm-tools workload
       run: dotnet workload install wasm-tools
