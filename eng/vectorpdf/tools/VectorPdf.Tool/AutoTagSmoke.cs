@@ -35,6 +35,7 @@ public static class AutoTagSmoke
 
         int files = 0, notOpened = 0, alreadyTagged = 0, encrypted = 0;
         var statuses = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        int unstable = 0, flaky = 0;
         int crashes = 0, textChecked = 0, textSame = 0, renderChecked = 0, renderSame = 0, onlyHuman = 0, compliantWithClaim = 0;
         var checkpoints = new SortedDictionary<string, (int Docs, PdfAutoTagIssueKind Kind)>(StringComparer.Ordinal);
         var summaryTotals = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -87,6 +88,12 @@ public static class AutoTagSmoke
                         textChecked++;
                         if (sameText == true) textSame++;
                         samePixels = await SamePixels(doc, after, renderer, renderPages);
+                        if (samePixels == false)
+                        {
+                            // Is it the tags, or does the renderer itself vary from one drawing to the next?
+                            if (!await SamePixels(doc, doc, renderer, renderPages)) { unstable++; detail = "the original itself renders differently each time"; }
+                            else if (await SamePixels(doc, after, renderer, renderPages)) { flaky++; detail = "equal when drawn again"; }
+                        }
                         renderChecked++;
                         if (samePixels == true) renderSame++;
                     }
@@ -117,7 +124,7 @@ public static class AutoTagSmoke
         Console.WriteLine($"\n{files} {(retag ? "tagged files re-tagged" : "untagged files")} ({pages} pages tagged) in {clock.Elapsed.TotalSeconds:F0} s; seen {alreadyTagged} already tagged; {notOpened} that do not open; {encrypted} encrypted");
         Console.WriteLine("status: " + string.Join(", ", statuses.Select(s => $"{s.Key} {s.Value}")));
         Console.WriteLine($"success {tagged}/{files} ({Pct(tagged, files)}), crashes {crashes}");
-        Console.WriteLine($"text equal {textSame}/{textChecked} ({Pct(textSame, textChecked)}), pixels equal (first {renderPages} pages) {renderSame}/{renderChecked} ({Pct(renderSame, renderChecked)})");
+        Console.WriteLine($"text equal {textSame}/{textChecked} ({Pct(textSame, textChecked)}), pixels equal (first {renderPages} pages) {renderSame}/{renderChecked} ({Pct(renderSame, renderChecked)}); of the others: {flaky} equal when drawn again, {unstable} whose original varies itself");
         Console.WriteLine($"only human-judgement or non-tagging checks left: {onlyHuman}/{tagged} ({Pct(onlyHuman, tagged)}); every machine check passes but the claim: {compliantWithClaim}/{tagged}");
         Console.WriteLine("found: " + string.Join(", ", summaryTotals.OrderBy(k => k.Key).Select(k => $"{k.Key} {k.Value}")));
         Console.WriteLine("\nremaining failures (documents per checkpoint):");

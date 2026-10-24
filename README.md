@@ -291,7 +291,8 @@ oracle the engine is tested against; the published application does not contain 
   - **Combine Files**: PDFs, pictures and Office files in one PDF, in the order you drag them to, with a bookmark for each file.
 - **Reduce File Size**: recompresses images, removes unused objects and subsets fonts. Encrypted documents keep their passwords and permissions.
 - **PDF/A** (*Tools → PDF/A: Check and Convert*): validates and converts to PDF/A-1b, 2b and 3b, flattening transparency for PDF/A-1b.
-- **Accessibility Check** (*Tools → Accessibility Check*): checks PDF/UA-1, lists each issue with its Matterhorn checkpoint and shows where it is on the page.
+- **Accessibility Check** (*Tools → Accessibility → Accessibility Check*): checks PDF/UA-1, lists each issue with its Matterhorn checkpoint and shows where it is on the page.
+- **Make Accessible** (*Tools → Accessibility → Make Accessible*): tags an untagged PDF in a new copy. It finds headings, paragraphs, lists, simple grid tables, figures (with placeholder alternate text to review), links, and headers and footers as artifacts, in reading order (columns and turned pages included). The pages read and draw exactly as before. It then reports the PDF/UA checks that still need a person.
 - **Colour Management**: ICC profiles in the document are honoured, and CMYK colour is shown the way Acrobat shows it.
 - **Document Tabs**: several documents open at once (`Ctrl+Tab` / `Ctrl+Shift+Tab` to switch, `Ctrl+W` to close).
 - **Memory-Budgeted Rendering**: a priority scheduler and byte-limited caches keep memory bounded on very large documents.
