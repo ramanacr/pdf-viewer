@@ -83,7 +83,7 @@ public class PdfiumFreeGateTests : IDisposable
         string path = TestPdfBuilder.CreateSimplePdf(P("text.pdf"), 3, "GateToken");
         using var scope = NoPdfium.Scope();
 
-        var vm = await Open(path);
+        using var vm = await Open(path);
         Assert.Equal(3, vm.PageCount);
         Assert.NotNull(vm.DocumentSafety);
         Assert.False(vm.DocumentSafety!.InspectionWasLimited, vm.DocumentSafety.LimitationReason);
@@ -128,7 +128,7 @@ public class PdfiumFreeGateTests : IDisposable
         File.WriteAllBytes(path, FormPdfFixture.Build());
         using var scope = NoPdfium.Scope();
 
-        var vm = await Open(path);
+        using var vm = await Open(path);
         Assert.True(vm.HasForm);
         var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
         Assert.True(await vm.CommitFormFieldAsync(name, new PdfFieldChange("person.name", Text: "Ada Lovelace")));

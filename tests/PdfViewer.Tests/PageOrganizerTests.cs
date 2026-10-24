@@ -3,7 +3,6 @@ using System.Threading.Tasks;
 using PdfEngine;
 using PdfEngine.Documents;
 using PdfEngine.Pages;
-using PdfEngine.Pdfium;
 using PdfEngine.Rendering;
 using PdfViewer.Core.Commands;
 using PdfViewer.Core.Session;
@@ -20,11 +19,12 @@ public class PageOrganizerTests
         return path;
     }
 
-    [Fact]
-    public async Task TestRotatePage()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRotatePage(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Rotate_Test.pdf", 3);
-        using IPdfEngine engine = new PdfiumEngine();
+        string samplePdf = CreateSamplePdf($"Rotate_Test_{engineName}.pdf", 3);
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var infoBefore = await doc.GetPageInfoAsync(1);
@@ -36,11 +36,12 @@ public class PageOrganizerTests
         Assert.Equal(90, infoAfter.RotationDegrees);
     }
 
-    [Fact]
-    public async Task TestDeletePage()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestDeletePage(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Delete_Test.pdf", 4);
-        using IPdfEngine engine = new PdfiumEngine();
+        string samplePdf = CreateSamplePdf($"Delete_Test_{engineName}.pdf", 4);
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         Assert.Equal(4, doc.PageCount);
@@ -51,11 +52,12 @@ public class PageOrganizerTests
         Assert.NotNull(info);
     }
 
-    [Fact]
-    public async Task TestInsertBlankPage()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestInsertBlankPage(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Insert_Test.pdf", 2);
-        using IPdfEngine engine = new PdfiumEngine();
+        string samplePdf = CreateSamplePdf($"Insert_Test_{engineName}.pdf", 2);
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         await engine.PageOrganizer.InsertBlankPageAsync(doc, 1, 612, 792);
@@ -65,14 +67,15 @@ public class PageOrganizerTests
         Assert.Equal(2, page.PageNumber);
     }
 
-    [Fact]
-    public async Task TestExtractPages()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExtractPages(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Extract_Source.pdf", 4);
-        string extractedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Extracted_Out.pdf");
+        string samplePdf = CreateSamplePdf($"Extract_Source_{engineName}.pdf", 4);
+        string extractedPdf = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Extracted_Out_{engineName}.pdf");
         if (File.Exists(extractedPdf)) File.Delete(extractedPdf);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         await engine.PageOrganizer.ExtractPagesAsync(doc, new[] { 1, 3 }, extractedPdf);
@@ -82,15 +85,16 @@ public class PageOrganizerTests
         Assert.Equal(2, extractedDoc.PageCount);
     }
 
-    [Fact]
-    public async Task TestMergeDocuments()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestMergeDocuments(string engineName)
     {
-        string pdf1 = CreateSamplePdf("Merge_Doc1.pdf", 2);
-        string pdf2 = CreateSamplePdf("Merge_Doc2.pdf", 3);
-        string mergedOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Merged_Result.pdf");
+        string pdf1 = CreateSamplePdf($"Merge_Doc1_{engineName}.pdf", 2);
+        string pdf2 = CreateSamplePdf($"Merge_Doc2_{engineName}.pdf", 3);
+        string mergedOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Merged_Result_{engineName}.pdf");
         if (File.Exists(mergedOut)) File.Delete(mergedOut);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         double progressVal = 0;
         var progress = new Progress<double>(p => progressVal = p);
 
@@ -103,14 +107,15 @@ public class PageOrganizerTests
         Assert.Equal(5, mergedDoc.PageCount);
     }
 
-    [Fact]
-    public async Task TestSplitDocument()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSplitDocument(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Split_Source.pdf", 5);
-        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Split_Out");
+        string samplePdf = CreateSamplePdf($"Split_Source_{engineName}.pdf", 5);
+        string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Split_Out_{engineName}");
         if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         // Split into [2 pages, 2 pages, 1 page]
@@ -121,11 +126,12 @@ public class PageOrganizerTests
         Assert.Equal(3, files.Length);
     }
 
-    [Fact]
-    public async Task TestUndoRedoRotateCommand()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestUndoRedoRotateCommand(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Undo_Rotate_Test.pdf", 2);
-        using IPdfEngine engine = new PdfiumEngine();
+        string samplePdf = CreateSamplePdf($"Undo_Rotate_Test_{engineName}.pdf", 2);
+        using IPdfEngine engine = TestEngines.Create(engineName);
         var doc = await engine.OpenDocumentAsync(samplePdf);
 
         using var session = new DocumentSession();

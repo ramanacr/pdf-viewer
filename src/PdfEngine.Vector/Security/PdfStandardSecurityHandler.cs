@@ -135,18 +135,17 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
 
     private static byte[] ComputeKey(byte[] password, byte[] o, int p, byte[] id0, int r, int keyLength, bool encryptMetadata)
     {
-        using var md5 = MD5.Create();
         var input = new List<byte>(128);
         input.AddRange(Pad(password));
         input.AddRange(o.AsSpan(0, 32).ToArray());
         input.AddRange(BitConverter.GetBytes(p)); // little-endian low-order byte first
         input.AddRange(id0);
         if (r >= 4 && !encryptMetadata) input.AddRange(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
-        byte[] hash = md5.ComputeHash(input.ToArray());
+        byte[] hash = PortableCrypto.Md5(input.ToArray());
         int n = r == 2 ? 5 : keyLength;
         if (r >= 3)
             for (int i = 0; i < 50; i++)
-                hash = md5.ComputeHash(hash, 0, n);
+                hash = PortableCrypto.Md5(hash.AsSpan(0, n));
         return hash[..n];
     }
 
@@ -156,8 +155,7 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
         byte[] key = ComputeKey(password);
         if (_r == 2)
             return Rc4(key, Padding).AsSpan().SequenceEqual(_u.AsSpan(0, 32)) ? key : null;
-        using var md5 = MD5.Create();
-        byte[] hash = md5.ComputeHash(Padding.Concat(_id0).ToArray());
+        byte[] hash = PortableCrypto.Md5(Padding.Concat(_id0).ToArray());
         byte[] x = Rc4(key, hash);
         for (int i = 1; i <= 19; i++)
             x = Rc4(XorKey(key, i), x);
@@ -167,12 +165,11 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
     /// <summary>Algorithm 7: recover the user password from /O with the owner password, then authenticate as user.</summary>
     private byte[]? TryOwner(byte[] password)
     {
-        using var md5 = MD5.Create();
-        byte[] hash = md5.ComputeHash(Pad(password));
+        byte[] hash = PortableCrypto.Md5(Pad(password));
         int n = _r == 2 ? 5 : _keyLength;
         if (_r >= 3)
             for (int i = 0; i < 50; i++)
-                hash = md5.ComputeHash(hash);
+                hash = PortableCrypto.Md5(hash);
         byte[] key = hash[..n];
         byte[] user = _o.AsSpan(0, 32).ToArray();
         if (_r == 2)
@@ -265,15 +262,14 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
     internal static (byte[] O, byte[] U) CreateR4Entries(byte[] owner, byte[] user, int p, byte[] id0, bool encryptMetadata)
     {
         const int keyLength = 16;
-        using var md5 = MD5.Create();
-        byte[] hash = md5.ComputeHash(Pad(owner.Length > 0 ? owner : user));
-        for (int i = 0; i < 50; i++) hash = md5.ComputeHash(hash);
+        byte[] hash = PortableCrypto.Md5(Pad(owner.Length > 0 ? owner : user));
+        for (int i = 0; i < 50; i++) hash = PortableCrypto.Md5(hash);
         byte[] ownerKey = hash[..keyLength];
         byte[] o = Rc4(ownerKey, Pad(user));
         for (int i = 1; i <= 19; i++) o = Rc4(XorKey(ownerKey, i), o);
 
         byte[] fileKey = ComputeKey(user, o, p, id0, 4, keyLength, encryptMetadata);
-        byte[] x = Rc4(fileKey, md5.ComputeHash(Padding.Concat(id0).ToArray()));
+        byte[] x = Rc4(fileKey, PortableCrypto.Md5(Padding.Concat(id0).ToArray()));
         for (int i = 1; i <= 19; i++) x = Rc4(XorKey(fileKey, i), x);
         var u = new byte[32];
         Array.Copy(x, u, 16);

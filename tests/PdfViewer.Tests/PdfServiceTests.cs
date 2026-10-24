@@ -23,7 +23,9 @@ public class PdfServiceTests : IDisposable
     {
         _testDir = Path.Combine(Path.GetTempPath(), "PdfViewerTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_testDir);
+#if PDFIUM_RENDERER
         PdfiumNativeBridge.EnsureInitialized();
+#endif
     }
 
     public void Dispose()
@@ -38,6 +40,8 @@ public class PdfServiceTests : IDisposable
         catch { }
     }
 
+#if PDFIUM_RENDERER
+    // Tests the PDFium library's start-up and the PDFium-mode service, which exist only in this build.
     [Fact]
     public void TestPdfiumEngineInitialization()
     {
@@ -46,6 +50,7 @@ public class PdfServiceTests : IDisposable
         Assert.NotNull(service);
         Assert.False(service.IsDocumentLoaded);
     }
+#endif
 
     private string CreateSamplePdf(string name = "sample.pdf", int pageCount = 3)
     {
@@ -53,12 +58,13 @@ public class PdfServiceTests : IDisposable
         return TestPdfBuilder.CreateSimplePdf(filePath, pageCount, "SearchableToken");
     }
 
-    [Fact]
-    public async Task TestDocumentLoadingAndMetadata()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestDocumentLoadingAndMetadata(string engineName)
     {
         string pdfPath = CreateSamplePdf("metadata_test.pdf", 3);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         var meta = await service.OpenDocumentAsync(pdfPath);
 
         Assert.NotNull(meta);
@@ -71,12 +77,13 @@ public class PdfServiceTests : IDisposable
         Assert.Equal("Test Author", meta.Author);
     }
 
-    [Fact]
-    public async Task TestBookmarksExtraction()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestBookmarksExtraction(string engineName)
     {
         string pdfPath = CreateSamplePdf("bookmarks_test.pdf", 4);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
         var bookmarks = service.ExtractBookmarks();
 
@@ -88,12 +95,13 @@ public class PdfServiceTests : IDisposable
         Assert.Equal(4, bookmarks[3].TargetPageNumber);
     }
 
-    [Fact]
-    public async Task TestTextSearch()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestTextSearch(string engineName)
     {
         string pdfPath = CreateSamplePdf("search_test.pdf", 3);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         var matches = await service.SearchTextAsync("SearchableToken_2");
@@ -101,12 +109,13 @@ public class PdfServiceTests : IDisposable
         Assert.Contains(matches, m => m.PageNumber == 2 && m.Text.Contains("SearchableToken_2"));
     }
 
-    [Fact]
-    public async Task TestTextSearchCaseSensitivity()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestTextSearchCaseSensitivity(string engineName)
     {
         string pdfPath = CreateSamplePdf("search_case_test.pdf", 2);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         // Case insensitive should find
@@ -118,12 +127,13 @@ public class PdfServiceTests : IDisposable
         Assert.Empty(matchesSensitive);
     }
 
-    [Fact]
-    public async Task TestPageRendering()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPageRendering(string engineName)
     {
         string pdfPath = CreateSamplePdf("render_test.pdf", 2);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         var bitmap = await service.RenderPageAsync(1, dpi: 150, rotationAngle: 0);
@@ -133,12 +143,13 @@ public class PdfServiceTests : IDisposable
         Assert.True(bitmap.IsFrozen);
     }
 
-    [Fact]
-    public async Task TestPageRenderingAllRotations()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPageRenderingAllRotations(string engineName)
     {
         string pdfPath = CreateSamplePdf("render_rot_test.pdf", 1);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         foreach (int angle in new[] { 0, 90, 180, 270 })
@@ -150,12 +161,13 @@ public class PdfServiceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task TestMultiPageRenderingBeyondFourPages()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestMultiPageRenderingBeyondFourPages(string engineName)
     {
         string pdfPath = CreateSamplePdf("multipage_test.pdf", 10);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         Assert.Equal(10, service.PageCount);
@@ -168,12 +180,13 @@ public class PdfServiceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task TestLruPageCache()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestLruPageCache(string engineName)
     {
         var cache = new LruPageCache(capacity: 3);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         string pdfPath = CreateSamplePdf("cache_test.pdf", 4);
         await service.OpenDocumentAsync(pdfPath);
 
@@ -200,13 +213,14 @@ public class PdfServiceTests : IDisposable
         Assert.True(cache.TryGet(4, 150, 0, out _));
     }
 
-    [Fact]
-    public async Task TestExportPagesToImages()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExportPagesToImages(string engineName)
     {
         string pdfPath = CreateSamplePdf("export_test.pdf", 2);
         string exportDir = Path.Combine(_testDir, "exported_images");
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         await service.ExportPagesToImagesAsync(
@@ -225,13 +239,14 @@ public class PdfServiceTests : IDisposable
         Assert.True(new FileInfo(page1File).Length > 0);
     }
 
-    [Fact]
-    public async Task TestCorruptedPdfHandlingSafely()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestCorruptedPdfHandlingSafely(string engineName)
     {
         string corruptPath = Path.Combine(_testDir, "corrupt.pdf");
         TestPdfBuilder.CreateCorruptPdf(corruptPath);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
             await service.OpenDocumentAsync(corruptPath);
@@ -297,7 +312,7 @@ public class PdfServiceTests : IDisposable
     [Fact]
     public void TestAutoIncrementedVersion()
     {
-        var asm = typeof(PdfiumDocumentService).Assembly;
+        var asm = typeof(HybridVectorDocumentService).Assembly;
         var version = asm.GetName().Version;
 
         Assert.NotNull(version);
@@ -325,7 +340,7 @@ public class PdfServiceTests : IDisposable
         }
 
         var expected = UpdateService.ParseVersion(tag);
-        var actual = typeof(PdfiumDocumentService).Assembly.GetName().Version;
+        var actual = typeof(HybridVectorDocumentService).Assembly.GetName().Version;
 
         Assert.NotNull(actual);
         Assert.Equal(expected.Major, actual!.Major);
@@ -393,11 +408,12 @@ public class PdfServiceTests : IDisposable
         Assert.False(infoNewer.IsUpdateAvailable);
     }
 
-    [Fact]
-    public async Task TestSearchHighlightCoordinatesAndNormalization()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSearchHighlightCoordinatesAndNormalization(string engineName)
     {
         string samplePdf = CreateSamplePdf("Highlight_Coordinates_Test.pdf");
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var matches = await service.SearchTextAsync("SearchableToken");
@@ -413,8 +429,9 @@ public class PdfServiceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task TestCompareSearchAndTextSegmentCoordinates()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestCompareSearchAndTextSegmentCoordinates(string engineName)
     {
         var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
         string samplePdf = "";
@@ -426,7 +443,7 @@ public class PdfServiceTests : IDisposable
         }
         if (string.IsNullOrEmpty(samplePdf)) samplePdf = CreateSamplePdf("Coord_Compare_Test.pdf", 1);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var segments = await service.ExtractPageTextSegmentsAsync(1);
@@ -451,7 +468,7 @@ public class PdfServiceTests : IDisposable
     public async Task TestSearchSelectionAndScrollNavigation()
     {
         string samplePdf = CreateSamplePdf("Search_Nav_Test.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         int scrolledPage = 0;
         double scrolledNormX = -1;
@@ -493,11 +510,12 @@ public class PdfServiceTests : IDisposable
         Assert.True(vm.SearchMatches[2].IsCurrentMatch);
     }
 
-    [Fact]
-    public async Task TestSaveAnnotatedEmbedded()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSaveAnnotatedEmbedded(string engineName)
     {
         string samplePdf = CreateSamplePdf("Annotation_Embedding_Test.pdf");
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var annotations = new List<AnnotationModel>
@@ -533,7 +551,7 @@ public class PdfServiceTests : IDisposable
         Assert.True(new FileInfo(targetPdf).Length > 100);
 
         // Load the saved PDF and verify annotations are present
-        using var verifyService = new PdfiumDocumentService();
+        using var verifyService = TestEngines.CreateService(engineName);
         await verifyService.OpenDocumentAsync(targetPdf);
         var loadedAnnots = verifyService.LoadExistingAnnotations();
 
@@ -541,11 +559,12 @@ public class PdfServiceTests : IDisposable
         Assert.Contains(loadedAnnots, a => a.Type == AnnotationType.Highlight || a.Type == AnnotationType.Note);
     }
 
-    [Fact]
-    public async Task TestSaveAnnotatedFlattened()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSaveAnnotatedFlattened(string engineName)
     {
         string samplePdf = CreateSamplePdf("Annotation_Flattening_Test.pdf");
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var annotations = new List<AnnotationModel>
@@ -569,18 +588,19 @@ public class PdfServiceTests : IDisposable
         Assert.True(File.Exists(targetPdf));
 
         // Load the flattened PDF — annotations should now be baked graphics (0 comment objects)
-        using var verifyService = new PdfiumDocumentService();
+        using var verifyService = TestEngines.CreateService(engineName);
         await verifyService.OpenDocumentAsync(targetPdf);
         var loadedAnnots = verifyService.LoadExistingAnnotations();
 
         Assert.Empty(loadedAnnots);
     }
 
-    [Fact]
-    public async Task TestExportAnnotationsToXfdf()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExportAnnotationsToXfdf(string engineName)
     {
         string samplePdf = CreateSamplePdf("XFDF_Export_Test.pdf");
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var annotations = new List<AnnotationModel>
@@ -612,11 +632,12 @@ public class PdfServiceTests : IDisposable
         Assert.Contains("TestReviewer", xmlContent);
     }
 
-    [Fact]
-    public async Task TestPreventOverwriteOriginalDocument()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPreventOverwriteOriginalDocument(string engineName)
     {
         string samplePdf = CreateSamplePdf("Overwrite_Prevention_Test.pdf");
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var annotations = new List<AnnotationModel>();
@@ -627,12 +648,13 @@ public class PdfServiceTests : IDisposable
         });
     }
 
-    [Fact]
-    public async Task TestExtractPageTextSegmentsAsync()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExtractPageTextSegmentsAsync(string engineName)
     {
         string samplePdf = CreateSamplePdf("TextSegmentsTest.pdf", 1);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var segments = await service.ExtractPageTextSegmentsAsync(1);
@@ -653,12 +675,13 @@ public class PdfServiceTests : IDisposable
         Assert.Contains("Keyword", combinedText);
     }
 
-    [Fact]
-    public async Task TestPageViewModelSelectionAndExtraction()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPageViewModelSelectionAndExtraction(string engineName)
     {
         string samplePdf = CreateSamplePdf("PageViewModelSelectionTest.pdf", 1);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var pageVm = new PageViewModel(1, 612, 792);
@@ -695,7 +718,7 @@ public class PdfServiceTests : IDisposable
     {
         string samplePdf = CreateSamplePdf("MainVmSelectionTest.pdf", 1);
 
-        var mainVm = new MainViewModel();
+        using var mainVm = new MainViewModel();
         await mainVm.LoadDocumentAsync(samplePdf);
 
         var firstPage = mainVm.Pages[0];
@@ -721,12 +744,13 @@ public class PdfServiceTests : IDisposable
         Assert.Equal(string.Empty, mainVm.SelectedText);
     }
 
-    [Fact]
-    public async Task TestPageViewModelReRendersOnDpiChange()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPageViewModelReRendersOnDpiChange(string engineName)
     {
         string pdfPath = CreateSamplePdf("dpi_change_test.pdf", 1);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         var cache = new LruPageCache(10);
@@ -782,7 +806,7 @@ public class PdfServiceTests : IDisposable
     {
         string samplePdf = CreateSamplePdf("ThumbnailRotationTest.pdf", 1);
 
-        var mainVm = new MainViewModel();
+        using var mainVm = new MainViewModel();
         await mainVm.LoadDocumentAsync(samplePdf);
 
         var thumb = mainVm.Thumbnails[0];
@@ -797,12 +821,13 @@ public class PdfServiceTests : IDisposable
         Assert.Null(thumb.ThumbnailImage);
     }
 
-    [Fact]
-    public async Task TestPrintPaginatorForwardsRotationToRenderPage()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPrintPaginatorForwardsRotationToRenderPage(string engineName)
     {
         string pdfPath = CreateSamplePdf("print_rotation_test.pdf", 1);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         var unrotated = new PageImagePaginator(service, 1, 1, 850, 1100, rotationAngle: 0);
@@ -820,13 +845,14 @@ public class PdfServiceTests : IDisposable
         Assert.NotNull(rotatedPage);
     }
 
-    [Fact]
-    public async Task TestRapidDocumentOpeningAndClosing()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRapidDocumentOpeningAndClosing(string engineName)
     {
         string pdfPath1 = CreateSamplePdf("rapid_1.pdf", 3);
         string pdfPath2 = CreateSamplePdf("rapid_2.pdf", 3);
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
 
         for (int i = 0; i < 10; i++)
         {
@@ -883,22 +909,29 @@ public class PdfServiceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task TestPdfiumEncryptedDocumentRequiresPasswordAndOpens()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestEncryptedDocumentRequiresPasswordAndOpens(string engineName)
     {
         string encPath = FixtureGenerator.GetEncryptedPdfPath();
         Assert.True(File.Exists(encPath), $"Encrypted fixture not found at {encPath}");
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
 
-        // 1. Opening without password must fail with UnauthorizedAccessException
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        // Each service has its own password exception: the PDFium-mode service throws
+        // UnauthorizedAccessException, the native one PdfPasswordRequiredException.
+        Type passwordError = engineName == TestEngines.Pdfium
+            ? typeof(UnauthorizedAccessException)
+            : typeof(PdfEngine.Exceptions.PdfPasswordRequiredException);
+
+        // 1. Opening without password must fail with the password exception
+        await Assert.ThrowsAsync(passwordError, async () =>
         {
             await service.OpenDocumentAsync(encPath);
         });
 
-        // 2. Opening with wrong password must fail with UnauthorizedAccessException
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
+        // 2. Opening with wrong password must fail with the password exception
+        await Assert.ThrowsAsync(passwordError, async () =>
         {
             await service.OpenDocumentAsync(encPath, "wrongpassword");
         });
@@ -914,11 +947,12 @@ public class PdfServiceTests : IDisposable
         Assert.NotEmpty(matches);
     }
 
-    [Fact]
-    public async Task TestPdfiumMultiThreadedRenderingSafety()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestMultiThreadedRenderingSafety(string engineName)
     {
         string pdfPath = CreateSamplePdf("multithread_test.pdf", 10);
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         // Render multiple pages simultaneously across threads
@@ -932,13 +966,14 @@ public class PdfServiceTests : IDisposable
         await Task.WhenAll(tasks);
     }
 
-    [Fact]
-    public async Task TestPdfiumLarge500PageDocumentPerformance()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestLarge500PageDocumentPerformance(string engineName)
     {
         string pdfPath = Path.Combine(_testDir, "large_500_pages.pdf");
         TestPdfBuilder.CreateSimplePdf(pdfPath, 500, "LargeDocKeyword");
 
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         var meta = await service.OpenDocumentAsync(pdfPath);
 
         Assert.Equal(500, meta.PageCount);
@@ -959,11 +994,12 @@ public class PdfServiceTests : IDisposable
         Assert.Equal(500, matches[0].PageNumber);
     }
 
-    [Fact]
-    public async Task TestPdfiumArbitraryDpiScaling()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestArbitraryDpiScaling(string engineName)
     {
         string pdfPath = CreateSamplePdf("dpi_scaling_test.pdf", 1);
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(pdfPath);
 
         int[] dpis = { 72, 96, 150, 300 };
@@ -978,11 +1014,12 @@ public class PdfServiceTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task TestPdfiumInkAnnotationRoundtrip()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestInkAnnotationRoundtrip(string engineName)
     {
         string samplePdf = CreateSamplePdf("Ink_Annotation_Test.pdf", 1);
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var annotations = new List<AnnotationModel>
@@ -1012,7 +1049,7 @@ public class PdfServiceTests : IDisposable
         string savedPdf = Path.Combine(_testDir, "SavedInk.pdf");
         await service.SaveAnnotatedDocumentAsync(savedPdf, AnnotationSaveMode.Embedded, annotations, samplePdf);
 
-        using var verifyService = new PdfiumDocumentService();
+        using var verifyService = TestEngines.CreateService(engineName);
         await verifyService.OpenDocumentAsync(savedPdf);
         var loadedAnnots = verifyService.LoadExistingAnnotations();
 
@@ -1023,11 +1060,12 @@ public class PdfServiceTests : IDisposable
         Assert.True(loadedInk.InkStrokes.Single().Count >= 4);
     }
 
-    [Fact]
-    public async Task TestPrintPreviewViewModelOperations()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPrintPreviewViewModelOperations(string engineName)
     {
         string samplePdf = CreateSamplePdf("print_test.pdf", 5);
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var vm = new PrintPreviewViewModel(service, 2);
@@ -1057,11 +1095,12 @@ public class PdfServiceTests : IDisposable
         Assert.Equal(PrintColorMode.Grayscale, vm.ColorMode);
     }
 
-    [Fact]
-    public async Task TestPrintPreviewDialogInstantiation()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPrintPreviewDialogInstantiation(string engineName)
     {
         string samplePdf = CreateSamplePdf("print_dlg_test.pdf", 2);
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engineName);
         await service.OpenDocumentAsync(samplePdf);
 
         var vm = new PrintPreviewViewModel(service, 1);

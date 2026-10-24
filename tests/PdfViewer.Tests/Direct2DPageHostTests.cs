@@ -363,9 +363,14 @@ public class Direct2DPageHostTests : IDisposable
         content.Append("0.2 0.5 0.9 rg -100 300 m 300 -300 900 1100 700 400 c h f\n");
         string pdf = Pdf("curves.pdf", content.ToString(), "[0 0 612 792]");
 
+        // One service, so one Direct3D device, for both tiles: a second service could get WARP when
+        // the GPU is busy (as in a full test run), and WARP's antialiasing differs from the GPU's.
+        // The document is opened again for each tile, so the prepared one starts with nothing cached.
+        using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+
         async Task<byte[]> TileAsync(bool prepare)
         {
-            using var service = new HybridVectorDocumentService(PdfSecurityPolicy.DefaultStrict, PdfEngineMode.Auto);
+            service.CloseDocument();
             await service.OpenDocumentAsync(pdf);
             var proxy = DispatchProxy.Create<IPdfDocumentService, PrepareRecorder>();
             ((PrepareRecorder)(object)proxy).Inner = service;

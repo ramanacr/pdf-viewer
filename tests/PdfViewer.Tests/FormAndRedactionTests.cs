@@ -3,7 +3,6 @@ using System.Threading.Tasks;
 using PdfEngine;
 using PdfEngine.Forms;
 using PdfEngine.Geometry;
-using PdfEngine.Pdfium;
 using PdfEngine.Redaction;
 using PdfEngine.Signatures;
 using Xunit;
@@ -19,11 +18,12 @@ public class FormAndRedactionTests
         return path;
     }
 
-    [Fact]
-    public async Task TestPendingRedactionRegistration()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestPendingRedactionRegistration(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Redact_Reg_Doc.pdf");
-        using IPdfEngine engine = new PdfiumEngine();
+        string samplePdf = CreateSamplePdf($"Redact_Reg_Doc_{engineName}.pdf");
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var area = new RedactionArea
@@ -41,14 +41,15 @@ public class FormAndRedactionTests
         Assert.Equal("CONFIDENTIAL", pending[0].OverlayText);
     }
 
-    [Fact]
-    public async Task TestApplyPermanentRedaction()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestApplyPermanentRedaction(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Redact_Apply_Doc.pdf");
-        string redactedOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redacted_Result.pdf");
+        string samplePdf = CreateSamplePdf($"Redact_Apply_Doc_{engineName}.pdf");
+        string redactedOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Redacted_Result_{engineName}.pdf");
         if (File.Exists(redactedOut)) File.Delete(redactedOut);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var redactions = new[]
@@ -68,14 +69,15 @@ public class FormAndRedactionTests
         Assert.Equal(doc.PageCount, redactedDoc.PageCount);
     }
 
-    [Fact]
-    public async Task TestFormFieldsDiscoveryAndExportXfdf()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestFormFieldsDiscoveryAndExportXfdf(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Form_Test_Doc.pdf");
-        string xfdfOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "FormData_Export.xfdf");
+        string samplePdf = CreateSamplePdf($"Form_Test_Doc_{engineName}.pdf");
+        string xfdfOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"FormData_Export_{engineName}.xfdf");
         if (File.Exists(xfdfOut)) File.Delete(xfdfOut);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var fields = await engine.FormService.GetFormFieldsAsync(doc, 1);
@@ -88,14 +90,15 @@ public class FormAndRedactionTests
         Assert.Contains("<xfdf", xfdfText);
     }
 
-    [Fact]
-    public async Task TestFlattenFormFields()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestFlattenFormFields(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Form_Flatten_Source.pdf");
-        string flattenedOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Form_Flattened.pdf");
+        string samplePdf = CreateSamplePdf($"Form_Flatten_Source_{engineName}.pdf");
+        string flattenedOut = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"Form_Flattened_{engineName}.pdf");
         if (File.Exists(flattenedOut)) File.Delete(flattenedOut);
 
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         await engine.FormService.FlattenFormFieldsAsync(doc, flattenedOut);
@@ -105,11 +108,12 @@ public class FormAndRedactionTests
         Assert.Equal(doc.PageCount, fltDoc.PageCount);
     }
 
-    [Fact]
-    public async Task TestSignaturesDiscovery()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestSignaturesDiscovery(string engineName)
     {
-        string samplePdf = CreateSamplePdf("Sig_Discovery_Doc.pdf");
-        using IPdfEngine engine = new PdfiumEngine();
+        string samplePdf = CreateSamplePdf($"Sig_Discovery_Doc_{engineName}.pdf");
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
         var sigs = await engine.SignatureService.GetSignaturesAsync(doc);

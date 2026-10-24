@@ -55,7 +55,8 @@ public class TextSelectionEndToEndTests : IDisposable
     [Fact]
     public async Task TheLayout_HasCharactersSpacesAndALineBreak()
     {
-        var (_, page) = await Open(TwoLinePdf());
+        var (vm, page) = await Open(TwoLinePdf());
+        using var vmScope = vm;
         var layout = page.TextLayout;
         Assert.Equal(2, layout.Lines.Count);
         Assert.Equal("The quick brown fox," + Environment.NewLine + "jumps over the lazy dog.", layout.GetText(0, layout.Length));
@@ -69,6 +70,7 @@ public class TextSelectionEndToEndTests : IDisposable
     public async Task DoubleClick_SelectsOnlyTheWord_WithoutPunctuationOrSpace()
     {
         var (vm, page) = await Open(TwoLinePdf());
+        using var vmScope = vm;
         int fox = page.TextLayout.GetText(0, page.TextLayout.Length).IndexOf("fox", StringComparison.Ordinal);
         vm.TextSelection.PointerDown(page, CenterOf(page, fox + 1), 2, false, false);
         Assert.Equal("fox", vm.SelectedText);
@@ -79,6 +81,7 @@ public class TextSelectionEndToEndTests : IDisposable
     {
         string path = TwoLinePdf();
         var (vm, page) = await Open(path);
+        using var vmScope = vm;
         string all = page.TextLayout.GetText(0, page.TextLayout.Length);
         int brown = all.IndexOf("brown", StringComparison.Ordinal);
         int over = all.IndexOf("over", StringComparison.Ordinal) - Environment.NewLine.Length + 1; // glyph index (break is one glyph)
@@ -98,6 +101,7 @@ public class TextSelectionEndToEndTests : IDisposable
         // Saved as two quads and read back as two.
         await vm.SaveAsync();
         var (reopened, _) = await Open(path);
+        using var reopenedScope = reopened;
         var loaded = Assert.Single(reopened.AllAnnotations);
         Assert.Equal(2, loaded.Quads.Count);
         for (int i = 0; i < 2; i++)

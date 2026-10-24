@@ -19,8 +19,13 @@ namespace VectorPdf.Tool;
 /// vectorpdf bench  [--pages N]               vector vs PDFium timings on a generated document
 /// vectorpdf corpus &lt;dir&gt; [--out file.jsonl] [--diff]   per-file open/fallback/diff report
 /// vectorpdf docx &lt;dir&gt; [--limit N] [--keep dir]   export to Word: package check and text coverage
+/// vectorpdf xlsx|pptx &lt;dir&gt; [--limit N] [--keep dir] [--office]   export to Excel or PowerPoint: package check, counts, opened in Office
+/// vectorpdf officecheck &lt;dir&gt;   opens every .xlsx and .pptx read-only in Excel or PowerPoint, counting repairs
 /// vectorpdf docservices &lt;dir&gt; [--limit N] [--roundtrip N]   native document services against PDFium
 /// vectorpdf services &lt;dir&gt; [--limit N] [--clean N]   native forms, safety and clean copy against PDFium
+/// vectorpdf textbench &lt;dir&gt; [--profile] [--alloc]   first text load per page, native against PDFium
+/// vectorpdf textsearch &lt;file.pdf&gt; [--query q]   whole-document search, native against PDFium
+/// vectorpdf texthash &lt;dir&gt; --out f.txt   per-page fingerprint of the native text pages (to compare builds)
 /// </summary>
 public static class Program
 {
@@ -46,10 +51,15 @@ public static class Program
             "optimize" => await OptimizeSmoke.RunAsync(args),
             "pdfa" => await PdfASmoke.RunAsync(args),
             "docx" => await DocxSmoke.RunAsync(args),
+            "xlsx" or "pptx" => await OfficeSmoke.RunAsync(args),
+            "officecheck" => OfficeSmoke.Check(args),
             "pdfa-convert" => await PdfASmoke.ConvertAsync(args),
             "pdfua" => await PdfUaSmoke.RunAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),
             "text" => await TextParity.RunAsync(args),
+            "textbench" => await TextBench.RunAsync(args),
+            "textsearch" => await TextBench.SearchAsync(args),
+            "texthash" => await TextBench.HashAsync(args),
             "docservices" => await DocServicesSmoke.RunAsync(args),
             "services" => await ServicesSmoke.RunAsync(args),
             _ => 2,

@@ -36,7 +36,7 @@ internal sealed partial class PageReader
     private readonly PdfVectorDocument _doc;
     private readonly StructureTree? _tags;
     private readonly IReadOnlyList<int>? _pageObjects;
-    private readonly DocxPackage _package;
+    private readonly IExportMedia _package;
     private readonly List<string> _hyperlinks;
     private readonly Dictionary<string, int> _hyperlinkIndex = new(StringComparer.Ordinal);
     private readonly Dictionary<object, (string Family, bool Bold, bool Italic)> _fonts = new(ReferenceEqualityComparer.Instance);
@@ -65,10 +65,10 @@ internal sealed partial class PageReader
     private readonly IPdfVectorRenderer? _renderer;
     private readonly double _graphicsDpi;
 
-    public PageReader(PdfVectorDocument doc, StructureTree? tags, IReadOnlyList<int>? pageObjects, DocxPackage package, List<string> hyperlinks, DocxExportOptions? options = null)
+    public PageReader(PdfVectorDocument doc, StructureTree? tags, IReadOnlyList<int>? pageObjects, IExportMedia package, List<string> hyperlinks, IPdfVectorRenderer? renderer = null, double graphicsDpi = 150)
     {
-        _renderer = options?.Renderer;
-        _graphicsDpi = Math.Clamp(options?.GraphicsDpi ?? 150, 72, 300);
+        _renderer = renderer;
+        _graphicsDpi = Math.Clamp(graphicsDpi, 72, 300);
         _doc = doc;
         _tags = tags;
         _pageObjects = pageObjects;
@@ -93,6 +93,7 @@ internal sealed partial class PageReader
         // page's text too: it is exported, except where visible text already says it.
         var hidden = glyphs.Where(g => g.Style.RenderMode == 3 && g.Style.FontResource.Length > 0 && g.Text.Trim().Length > 0).ToList();
         bool recognized = hidden.Count > visible.Count;
+        page.Recognized = recognized;
         if (hidden.Count > 0)
         {
             var shownBoxes = visible.Select(g => _display.Transform(TextBlocks.GlyphBox(g))).Select(ToBox).ToList();

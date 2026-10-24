@@ -110,7 +110,7 @@ public sealed class PdfImageSource : IPdfImageSource
                 }
                 : null;
             // Adobe CMYK JPEGs store inverted components; a /Decode [1 0 …] flips them back.
-            return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, FromStartOfImage(decoded.Data), alpha,
+            return new PdfDecodedImage(width, height, PdfDecodedImageFormat.Jpeg, ValidJpeg(decoded.Data), alpha,
                 InvertCmykJpeg: cmyk && !invert, MapJpegComponents: map) { JpegMask = jpegMask, JpegIsSelfContained = selfContained };
         }
         if (decoded.ImageFilter == "JPXDecode" && !isMask)
@@ -137,7 +137,7 @@ public sealed class PdfImageSource : IPdfImageSource
         var md = smask.Dictionary;
         int mw = checked((int)(md.GetInteger("Width") ?? 0)), mh = checked((int)(md.GetInteger("Height") ?? 0));
         if (mw <= 0 || mh <= 0 || (long)mw * mh > _limits.MaxImagePixels) return null;
-        return decoded.ImageFilter == "DCTDecode" ? new PdfJpegMask(FromStartOfImage(decoded.Data), mw, mh, IsInvertedDecode(md, 1)) : null;
+        return decoded.ImageFilter == "DCTDecode" ? new PdfJpegMask(ValidJpeg(decoded.Data), mw, mh, IsInvertedDecode(md, 1)) : null;
     }
 
     /// <summary>
@@ -371,6 +371,48 @@ public sealed class PdfImageSource : IPdfImageSource
                 return i == 0 ? data : data.AsSpan(i).ToArray();
         }
         return data;
+    }
+
+    /// <summary>
+    /// JPEG data from its SOI marker, refused (a typed ImageDecode failure) when it holds no image:
+    /// no frame header (SOF) and scan (SOS) before its end. Such data never reaches a backend codec,
+    /// whose native error recovery (libjpeg's "JPEG datastream contains no image" inside WIC) would
+    /// otherwise run on every render of the page.
+    /// </summary>
+    internal static byte[] ValidJpeg(byte[] data)
+    {
+        var jpeg = FromStartOfImage(data);
+        if (!HasFrameAndScan(jpeg))
+            throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG data has no frame (SOF) and scan (SOS) before its end.");
+        return jpeg;
+    }
+
+    /// <summary>
+    /// Walks the JPEG markers from SOI the way libjpeg reads them (stray bytes between segments are
+    /// skipped) and tells whether a frame header comes before the first scan.
+    /// </summary>
+    internal static bool HasFrameAndScan(ReadOnlySpan<byte> jpeg)
+    {
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8)
+            return false;
+        bool frame = false;
+        int i = 2;
+        while (i < jpeg.Length)
+        {
+            if (jpeg[i] != 0xFF) { i++; continue; } // extraneous data before a marker
+            while (i < jpeg.Length && jpeg[i] == 0xFF) i++; // fill bytes
+            if (i >= jpeg.Length) return false;
+            byte marker = jpeg[i++];
+            if (marker == 0x00 || marker == 0x01 || marker is >= 0xD0 and <= 0xD8) continue; // no length
+            if (marker == 0xD9) return false; // EOI before any scan
+            if (marker == 0xDA) return frame;
+            if (marker is >= 0xC0 and <= 0xCF and not (0xC4 or 0xC8 or 0xCC)) frame = true;
+            if (i + 1 >= jpeg.Length) return false;
+            int length = (jpeg[i] << 8) | jpeg[i + 1];
+            if (length < 2) return false;
+            i += length;
+        }
+        return false;
     }
 
     private bool ReadBool(PdfDictionary? parms, string key, bool fallback) =>

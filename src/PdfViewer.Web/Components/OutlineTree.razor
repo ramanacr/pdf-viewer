@@ -1,0 +1,30 @@
+@using PdfViewer.Web.Engine
+@* The document outline as a nested list of buttons; entries without a target in this document are shown as plain text. *@
+<ul class="outline" role="@(Level == 0 ? "tree" : "group")" aria-label="@(Level == 0 ? "Document outline" : null)">
+    @foreach (var item in Items)
+    {
+        <li role="treeitem" aria-level="@(Level + 1)" aria-expanded="@(item.Children.Count > 0 ? "true" : null)">
+            @if (item.Page is int target)
+            {
+                <button type="button" class="outline-entry@(target == CurrentPage ? " current" : "")" @onclick="() => OnSelect.InvokeAsync(target)">
+                    <span class="outline-title">@item.Title</span><span class="outline-page">@target</span>
+                </button>
+            }
+            else
+            {
+                <span class="outline-entry disabled">@item.Title</span>
+            }
+            @if (item.Children.Count > 0)
+            {
+                <OutlineTree Items="item.Children" Level="Level + 1" CurrentPage="CurrentPage" OnSelect="OnSelect" />
+            }
+        </li>
+    }
+</ul>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ViewerOutlineItem> Items { get; set; } = [];
+    [Parameter] public int Level { get; set; }
+    [Parameter] public int CurrentPage { get; set; }
+    [Parameter] public EventCallback<int> OnSelect { get; set; }
+}

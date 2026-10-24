@@ -5,8 +5,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using PdfEngine.Vector.Document;
-using PdfEngine.Vector.Objects;
-using PdfEngine.Vector.Redaction;
 
 namespace PdfEngine.Vector.Export;
 
@@ -60,21 +58,8 @@ public static class DocxExporter
         ArgumentNullException.ThrowIfNull(output);
         var hyperlinks = new List<string>();
         var warnings = new List<string>();
-        StructureTree? tags = null;
-        try { tags = StructureTree.Read(document); }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            warnings.Add($"The document's tags could not be read ({ex.GetType().Name}); its layout is used instead.");
-        }
-        List<int>? pageObjects = null;
-        if (tags != null && document.XrefTable.Trailer is { } trailer && document.Resolver.Resolve(trailer["Root"]) is PdfDictionary root)
-        {
-            pageObjects = PdfRedactor.PageObjectNumbers(root, document.Resolver);
-            if (pageObjects.Count != document.PageCount) pageObjects = null;
-        }
-
         using var package = new DocxPackage(output);
-        var reader = new PageReader(document, pageObjects != null ? tags : null, pageObjects, package, hyperlinks, options);
+        var reader = ExportSource.Reader(document, package, hyperlinks, options?.Renderer, options?.GraphicsDpi ?? 150, warnings, out bool usedTags);
         var pages = new List<DocPage>(document.PageCount);
         for (int n = 1; n <= document.PageCount; n++)
         {
@@ -102,7 +87,7 @@ public static class DocxExporter
             Sections = doc.Sections.Count,
             Hyperlinks = hyperlinks.Count,
             HasHeaderOrFooter = doc.Headers.Count + doc.Footers.Count > 0,
-            UsedTags = pageObjects != null && tags != null,
+            UsedTags = usedTags,
             Warnings = warnings.Distinct().Take(50).ToList(),
         };
     }
@@ -112,22 +97,6 @@ public static class DocxExporter
         ExportAsync(document, path, null, progress, cancellationToken);
 
     /// <summary>Writes the .docx to a file with <paramref name="options"/>: complete, or not at all.</summary>
-    public static async Task<DocxExportResult> ExportAsync(PdfVectorDocument document, string path, DocxExportOptions? options, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
-    {
-        string temp = path + ".partial";
-        try
-        {
-            DocxExportResult result;
-            await using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-                result = await ExportAsync(document, stream, options, progress, cancellationToken).ConfigureAwait(false);
-            File.Move(temp, path, overwrite: true);
-            return result;
-        }
-        finally
-        {
-            try { if (File.Exists(temp)) File.Delete(temp); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-    }
+    public static Task<DocxExportResult> ExportAsync(PdfVectorDocument document, string path, DocxExportOptions? options, IProgress<int>? progress = null, CancellationToken cancellationToken = default) =>
+        ExportSource.ToFileAsync(path, stream => ExportAsync(document, stream, options, progress, cancellationToken));
 }

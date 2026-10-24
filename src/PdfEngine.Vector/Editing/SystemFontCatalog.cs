@@ -50,9 +50,17 @@ public sealed class SystemFontCatalog
         });
     }
 
-    /// <summary>The fonts installed for everyone on this machine (Windows\Fonts), read once.</summary>
+    /// <summary>
+    /// The fonts installed for everyone on this machine (Windows\Fonts), read once. Empty in a
+    /// browser, which has no font folder: a web host passes its own catalog (<see cref="ForDirectory"/>).
+    /// </summary>
     public static SystemFontCatalog Installed =>
-        ForDirectory(Environment.GetFolderPath(Environment.SpecialFolder.Fonts));
+        PdfEngine.Vector.Diagnostics.PdfPlatform.HasInstalledFonts
+            ? ForDirectory(Environment.GetFolderPath(Environment.SpecialFolder.Fonts))
+            : None;
+
+    /// <summary>A catalog without faces.</summary>
+    private static readonly SystemFontCatalog None = new(Array.Empty<SystemFontFace>());
 
     public static SystemFontCatalog ForDirectory(string directory) => Catalogs.GetOrAdd(directory, Scan);
 

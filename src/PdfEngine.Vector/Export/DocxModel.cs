@@ -237,6 +237,8 @@ internal sealed class DocPage
     public List<DocShape> Shapes = new();
     /// <summary>Most of its text is written in columns top to bottom (East Asian vertical writing).</summary>
     public bool VerticalWriting;
+    /// <summary>Its text is recognized text over a scan (invisible on the page); the scan is left out.</summary>
+    public bool Recognized;
     /// <summary>Header and footer paragraphs taken out of the page (they repeat on many pages).</summary>
     public List<DocParagraph> Header = new(), Footer = new();
     /// <summary>Which of the document's headers and footers the page has (-1: none).</summary>

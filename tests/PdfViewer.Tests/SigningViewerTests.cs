@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using PdfEngine.Pdfium;
 using PdfEngine.Signatures;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Forms;
@@ -80,7 +79,7 @@ public class SigningViewerTests : IDisposable
 
     private static async Task<System.Collections.Generic.IReadOnlyList<SignatureInfo>> Verify(string path)
     {
-        using var engine = new PdfiumEngine();
+        using var engine = TestEngines.Create(TestEngines.Native);
         await using var doc = await engine.OpenDocumentAsync(path);
         return await engine.SignatureService.GetSignaturesAsync(doc);
     }
@@ -90,7 +89,7 @@ public class SigningViewerTests : IDisposable
     {
         string path = Write("contract.pdf", FormPdfFixture.Build());
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         using var cert = Certificate("Ada Lovelace");
 
         bool ok = await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
@@ -120,7 +119,7 @@ public class SigningViewerTests : IDisposable
     public async Task FilledFields_AreSignedWithTheDocument()
     {
         string path = Write("form.pdf", FormPdfFixture.Build());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
         Assert.True(await vm.CommitFormFieldAsync(name, new PdfFieldChange("person.name", Text: "Grace Hopper")));
         Assert.True(vm.HasUnsavedChanges);
@@ -133,7 +132,7 @@ public class SigningViewerTests : IDisposable
 
         var info = Assert.Single(await Verify(output));
         Assert.True(info.Status == SignatureStatus.Untrusted, info.StatusMessage);
-        var reopened = await Open(output);
+        using var reopened = await Open(output);
         Assert.Equal("Grace Hopper", reopened.AllFormFields.Single(f => f.FullName == "person.name").Value);
         Assert.Equal(output, reopened.Metadata!.FilePath);
         Assert.True(File.Exists(path) && File.ReadAllBytes(path).Length < File.ReadAllBytes(output).Length, "the original file is left as it was");
@@ -143,7 +142,7 @@ public class SigningViewerTests : IDisposable
     public async Task CommentingOnASignedDocument_KeepsItsSignatureValid()
     {
         string path = Write("signed-then-commented.pdf", FormPdfFixture.Build());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         using var cert = Certificate("Ada Lovelace");
         Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
             new SignatureOptions(cert, null, null, null, null, path)), vm.StatusText);
@@ -158,14 +157,15 @@ public class SigningViewerTests : IDisposable
         var check = Assert.Single(await PdfEngine.Vector.Signatures.PdfSignatureValidator.ValidateAsync(saved));
         Assert.True(check.Verdict == PdfEngine.Vector.Signatures.PdfSignatureVerdict.ValidWithPermittedChanges, check.Summary);
         Assert.True(check.LaterChanges.HasFlag(PdfEngine.Vector.Signatures.PdfLaterChanges.Annotations), check.LaterChanges.ToString());
-        Assert.Single((await Open(path)).AllAnnotations);
+        using var reopened = await Open(path);
+        Assert.Single(reopened.AllAnnotations);
     }
 
     [Fact]
     public async Task SignaturePanel_ShowsEachSignaturesVerdict()
     {
         string path = Write("panel.pdf", FormPdfFixture.Build());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         Assert.False(vm.HasSignatures);
         using var cert = Certificate("Ada Lovelace");
         Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
@@ -200,7 +200,7 @@ public class SigningViewerTests : IDisposable
     public async Task CertifiedWithNoChangesAllowed_FlagsALaterFill()
     {
         string path = Write("certified.pdf", FormPdfFixture.Build());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         Assert.True(vm.CanCertify);
         using var cert = Certificate("Author");
         Assert.True(await vm.SignAsync(new SignaturePlacement(1, new Rect(0.1, 0.8, 0.5, 0.12)),
@@ -224,7 +224,7 @@ public class SigningViewerTests : IDisposable
     public async Task UnsavedAnnotations_MustBeSavedFirst()
     {
         string path = Write("notes.pdf", FormPdfFixture.Build());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         string? alert = null;
         vm.ShowMessageBoxAction = (m, _, _, _) => alert = m;
         vm.AddAnnotation(new AnnotationModel { PageNumber = 1, Type = AnnotationType.Rectangle, X = 0.1, Y = 0.1, Width = 0.2, Height = 0.1 });
@@ -241,7 +241,7 @@ public class SigningViewerTests : IDisposable
     public async Task EmptySignatureField_IsOfferedAndSigned()
     {
         string path = Write("approval.pdf", SignatureFieldPdf());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         Assert.True(vm.HasForm);
         var field = Assert.Single(vm.EmptySignatureFields);
         Assert.Equal("Approver", field.FullName);
@@ -262,7 +262,7 @@ public class SigningViewerTests : IDisposable
     {
         string path = Write("keep.pdf", FormPdfFixture.Build());
         byte[] before = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         vm.ShowSignDialogFunc = (_, _) => null;
         vm.BeginSignatureCommand.Execute(null);
         Assert.True(vm.IsPlacingSignature);
@@ -274,7 +274,7 @@ public class SigningViewerTests : IDisposable
     [Fact]
     public async Task PlacingASignature_AndDrawingAnnotations_AreExclusive()
     {
-        var vm = await Open(Write("modes.pdf", FormPdfFixture.Build()));
+        using var vm = await Open(Write("modes.pdf", FormPdfFixture.Build()));
         vm.BeginSignatureCommand.Execute(null);
         Assert.True(vm.IsPlacingSignature);
         vm.ActiveAnnotationTool = AnnotationType.Rectangle;
@@ -342,7 +342,7 @@ public class SigningViewerTests : IDisposable
     [Fact]
     public async Task FormLayer_OffersSignHere_ForEmptySignatureFields()
     {
-        var vm = await Open(Write("layer.pdf", SignatureFieldPdf()));
+        using var vm = await Open(Write("layer.pdf", SignatureFieldPdf()));
         Exception? error = null;
         var thread = new Thread(() =>
         {

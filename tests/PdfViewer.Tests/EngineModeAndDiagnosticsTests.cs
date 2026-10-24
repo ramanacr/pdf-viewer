@@ -74,7 +74,7 @@ public class EngineModeAndDiagnosticsTests
     [Fact]
     public void MainViewModel_EngineModePropertiesAndCommands_ToggleCorrectly()
     {
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         Assert.Equal(PdfEngineMode.Auto, vm.CurrentEngineMode);
         Assert.True(vm.IsAutoEngineMode);
@@ -188,6 +188,7 @@ public class EngineModeAndDiagnosticsTests
     }
 
     [Fact]
+    [Trait("Category", PdfiumGoldens.Trait)]
     public async Task HybridVectorDocumentService_ExtractPageTextSegments_ReturnsPerCharacterSegmentsInVectorMode()
     {
         string samplePath = ShowcasePath();
@@ -222,10 +223,17 @@ public class EngineModeAndDiagnosticsTests
         var pdfiumSegments = await pdfiumService.ExtractPageTextSegmentsAsync(1);
 
         Assert.NotEmpty(pdfiumSegments);
+        PdfiumGoldens.Verify("EngineMode_ShowcaseWordSegments", pdfiumSegments.Count);
 
         // Vector char segments should be >= PDFium word segments (finer granularity)
         Assert.True(vectorSegments.Count >= pdfiumSegments.Count,
             $"Expected vector char segments ({vectorSegments.Count}) >= PDFium word segments ({pdfiumSegments.Count})");
 #endif
+
+        // Vector char segments should be >= PDFium's word segments (finer granularity): PDFium's count
+        // as committed (PdfiumGoldens), in every build; the developer build also checks it live above.
+        int pdfiumWordCount = PdfiumGoldens.Load<int>("EngineMode_ShowcaseWordSegments");
+        Assert.True(vectorSegments.Count >= pdfiumWordCount,
+            $"Expected vector char segments ({vectorSegments.Count}) >= PDFium word segments ({pdfiumWordCount})");
     }
 }

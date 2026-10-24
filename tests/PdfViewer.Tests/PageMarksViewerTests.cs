@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using PdfEngine.Pdfium;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.ViewModels;
@@ -42,19 +41,14 @@ public class PageMarksViewerTests : IDisposable
         return vm;
     }
 
-    private static async Task<string> Text(byte[] pdf, int page = 1)
-    {
-        using var engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(pdf, null);
-        return await engine.TextService.ExtractPageTextAsync(doc, page);
-    }
+    private static Task<string> Text(byte[] pdf, int page = 1) => NativeReadBack.TextAsync(pdf, page);
 
     [Fact]
     public async Task HeaderFooter_Add_IsARevisionThatUndoesAndSaves()
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         vm.ShowPageMarkDialogFunc = dialog =>
         {
             var hf = Assert.IsType<HeaderFooterViewModel>(dialog);
@@ -72,9 +66,9 @@ public class PageMarksViewerTests : IDisposable
         Assert.Contains("Page 2 of 2", text);
         Assert.Contains("contract.pdf", text);
 
-        await vm.UndoContentEditAsync();
+        await vm.UndoAsync();
         Assert.DoesNotContain("Page 2 of 2", await Text(vm.CurrentDocumentBytes()!, 2));
-        await vm.RedoContentEditAsync();
+        await vm.RedoAsync();
 
         await vm.SaveAsync();
         byte[] saved = File.ReadAllBytes(path);
@@ -85,7 +79,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Update_StartsFromTheDocumentsSettings_AndRemoveTakesTheMarksAway()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         Assert.True(await vm.ApplyPageMarksAsync(new PageMarkRequest(PdfMarkAction.Add, PdfMarkKind.HeaderFooter, new PdfHeaderFooter { TopLeft = "Draft <<1>>" }, null)));
 
         var dialog = Assert.IsType<HeaderFooterViewModel>(await vm.CreatePageMarkViewModelAsync(PdfMarkKind.HeaderFooter));
@@ -111,7 +105,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Preview_DrawsTheCurrentPage_WithoutChangingTheDocument()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         byte[] before = vm.CurrentDocumentBytes()!;
         var dialog = Assert.IsType<WatermarkViewModel>(await vm.CreatePageMarkViewModelAsync(PdfMarkKind.Watermark));
         dialog.Text = "SAMPLE";
@@ -124,7 +118,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Bates_NumbersTheRange_FromTheDialog()
     {
-        var vm = await Open(Document(3));
+        using var vm = await Open(Document(3));
         var dialog = Assert.IsType<BatesNumberingViewModel>(await vm.CreatePageMarkViewModelAsync(PdfMarkKind.Bates));
         dialog.Prefix = "SMITH";
         dialog.Start = 7;
@@ -198,7 +192,7 @@ public class PageMarksViewerTests : IDisposable
     [Fact]
     public async Task Watermark_FromTheDialog_IsDrawnAndRemoved()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         vm.ShowPageMarkDialogFunc = dialog =>
         {
             var wm = Assert.IsType<WatermarkViewModel>(dialog);

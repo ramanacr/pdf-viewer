@@ -25,6 +25,21 @@ internal sealed class WpfImageCache
         get { lock (_lru) return _bytes; }
     }
 
+    /// <summary>
+    /// A decode failure the renderer classifies (the image becomes a fallback region) rather than
+    /// lets through. Damaged data, unsupported features and limits all land here.
+    /// </summary>
+    internal static bool IsDecodeFailure(Exception ex) =>
+        ex is Diagnostics.PdfVectorException or InvalidDataException or IOException or NotSupportedException
+           or FileFormatException or ArgumentException or OverflowException;
+
+    // Images that failed to decode, by source, with the fallback reason. Like the Direct2D replayer,
+    // this cache decodes a damaged image once and remembers the failure, instead of decoding it
+    // again on every render, so a codec's native error path (libjpeg's error recovery inside WIC)
+    // does not run again for each page it is drawn on.
+    private readonly Dictionary<string, PdfFallbackReason> _failed = new(StringComparer.Ordinal);
+    private const int MaxFailedEntries = 4096;
+
     public BitmapSource GetOrDecode(IPdfImageSource source, System.Threading.CancellationToken ct, bool invert = false)
     {
         string key = invert ? source.CacheKey + "|inverted" : source.CacheKey;
@@ -36,10 +51,29 @@ internal sealed class WpfImageCache
                 _lru.AddFirst(node);
                 return node.Value.Bitmap;
             }
+            if (_failed.TryGetValue(source.CacheKey, out var failedReason))
+                throw new Diagnostics.PdfUnsupportedFeatureException(failedReason, "The image failed to decode before.");
         }
 
-        var decoded = source.Decode(ct);
-        var bitmap = ToBitmap(decoded);
+        BitmapSource bitmap;
+        try
+        {
+            var decoded = source.Decode(ct);
+            bitmap = ToBitmap(decoded);
+        }
+        catch (Exception ex) when (IsDecodeFailure(ex))
+        {
+            var reason = ex is Diagnostics.PdfUnsupportedFeatureException u ? u.Reason
+                       : ex is Diagnostics.PdfResourceLimitException ? PdfFallbackReason.ResourceLimit
+                       : PdfFallbackReason.ImageDecode;
+            lock (_lru)
+            {
+                if (_failed.Count >= MaxFailedEntries)
+                    _failed.Clear();
+                _failed[source.CacheKey] = reason;
+            }
+            throw;
+        }
         if (invert)
             bitmap = Invert(bitmap);
         long bytes = (long)bitmap.PixelWidth * bitmap.PixelHeight * 4;
@@ -92,6 +126,7 @@ internal sealed class WpfImageCache
         {
             _lru.Clear();
             _map.Clear();
+            _failed.Clear();
             _bytes = 0;
         }
     }

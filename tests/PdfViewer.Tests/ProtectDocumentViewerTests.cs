@@ -66,7 +66,7 @@ public class ProtectDocumentViewerTests : IDisposable
         byte[] original = File.ReadAllBytes(path);
         string output = Path.Combine(_dir, "report_protected.pdf");
         var options = Options();
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.ShowProtectDialogFunc = name => { Assert.Equal("report.pdf", name); return options; };
         string? suggested = null;
         vm.PickSavePathFunc = (s, _) => { suggested = s; return output; };
@@ -101,7 +101,7 @@ public class ProtectDocumentViewerTests : IDisposable
         string path = Write("inplace.pdf");
         byte[] original = File.ReadAllBytes(path);
 
-        var declined = NewViewModel(confirm: false);
+        using var declined = NewViewModel(confirm: false);
         declined.ShowProtectDialogFunc = _ => Options();
         declined.PickSavePathFunc = (_, _) => path;
         await declined.LoadDocumentAsync(path);
@@ -109,7 +109,7 @@ public class ProtectDocumentViewerTests : IDisposable
         Assert.Contains(_confirmations, c => c.Contains("Replace the original"));
         Assert.Equal(original, File.ReadAllBytes(path));
 
-        var accepted = NewViewModel();
+        using var accepted = NewViewModel();
         accepted.ShowProtectDialogFunc = _ => Options();
         accepted.PickSavePathFunc = (_, _) => path;
         string? asked = null;
@@ -131,13 +131,13 @@ public class ProtectDocumentViewerTests : IDisposable
         string path = Write("signed.pdf", signed: true);
         string output = Path.Combine(_dir, "signed_protected.pdf");
 
-        var declined = NewViewModel(confirm: false);
+        using var declined = NewViewModel(confirm: false);
         await declined.LoadDocumentAsync(path);
         Assert.False(await declined.ProtectToAsync(Options(), output));
         Assert.Contains(_confirmations, c => c.Contains("1 digital signature(s)") && c.Contains("no longer be valid"));
         Assert.False(File.Exists(output));
 
-        var accepted = NewViewModel();
+        using var accepted = NewViewModel();
         await accepted.LoadDocumentAsync(path);
         Assert.True(await accepted.ProtectToAsync(Options(), output));
         Assert.Contains(_alerts, a => a.Contains("1 signature(s) in the copy are no longer valid"));
@@ -150,7 +150,7 @@ public class ProtectDocumentViewerTests : IDisposable
     {
         string path = Write("locked.pdf", new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "user", "owner", permissions: NoPrintNoCopy.ToFlags()));
         string output = Path.Combine(_dir, "locked_protected.pdf");
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.RequestPasswordFunc = _ => Task.FromResult<string?>("user");
         vm.ShowProtectDialogFunc = _ => Options("new", "newowner", PdfPermissionSet.All);
         vm.PickSavePathFunc = (_, _) => output;
@@ -174,13 +174,13 @@ public class ProtectDocumentViewerTests : IDisposable
         string path = Write("secret.pdf", new PdfTestEncryption(TestEncryptionKind.Aes256_R6, "user", "owner", permissions: NoPrintNoCopy.ToFlags()));
         string output = Path.Combine(_dir, "secret_unsecured.pdf");
 
-        var reader = NewViewModel();
+        using var reader = NewViewModel();
         reader.RequestPasswordFunc = _ => Task.FromResult<string?>("user");
         await reader.LoadDocumentAsync(path);
         Assert.True(reader.DocumentPermissions.IsEncrypted);
         Assert.False(reader.CanRemoveSecurity);
 
-        var author = NewViewModel();
+        using var author = NewViewModel();
         author.RequestPasswordFunc = _ => Task.FromResult<string?>("owner");
         author.PickSavePathFunc = (_, _) => output;
         await author.LoadDocumentAsync(path);
@@ -206,7 +206,7 @@ public class ProtectDocumentViewerTests : IDisposable
     {
         string path = Write("open.pdf", new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "", "owner", permissions: NoPrintNoCopy.ToFlags()));
         string output = Path.Combine(_dir, "open_unsecured.pdf");
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         vm.PickSavePathFunc = (_, _) => output;
         await vm.LoadDocumentAsync(path);
         Assert.False(vm.IsOwnerPasswordKnown);
@@ -230,7 +230,7 @@ public class ProtectDocumentViewerTests : IDisposable
     public async Task DocumentProperties_ShowTheSecurityMethodAndPermissions()
     {
         string path = Write("props.pdf", new PdfTestEncryption(TestEncryptionKind.Aes256_R6, "", "owner", permissions: NoPrintNoCopy.ToFlags()));
-        var vm = NewViewModel();
+        using var vm = NewViewModel();
         DocumentMetadata? shown = null;
         vm.ShowPropertiesAction = m => shown = m;
         await vm.LoadDocumentAsync(path);
@@ -242,7 +242,7 @@ public class ProtectDocumentViewerTests : IDisposable
         Assert.Contains("Commenting: Allowed", shown.SecurityPermissions);
         Assert.Contains("Page assembly: Allowed", shown.SecurityPermissions);
 
-        var plain = NewViewModel();
+        using var plain = NewViewModel();
         plain.ShowPropertiesAction = m => shown = m;
         await plain.LoadDocumentAsync(Write("plain.pdf"));
         plain.ShowProperties();

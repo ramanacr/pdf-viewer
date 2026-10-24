@@ -39,16 +39,30 @@ jobs:
     # The viewer as it is published (M10): built with -p:PdfiumRenderer=false, so PdfEngine.Pdfium
     # is not referenced and the PDFium-free gate tests run against the build that ships. It goes to
     # its own bin\nopdfium and obj\nopdfium folders, so the Release build above is untouched. The
-    # test files that need PDFium (the oracle, PDFium mode) are listed as PdfiumOnlyTest in
-    # tests/PdfViewer.Tests/PdfViewer.Tests.csproj and left out; the list goes to the job summary.
+    # test files that need PDFium (the PDFium adapter, PDFium mode) are listed as PdfiumOnlyTest in
+    # tests/PdfViewer.Tests/PdfViewer.Tests.csproj and left out; the list, with each file's reason,
+    # and the single tests behind #if PDFIUM_RENDERER go to the job summary.
     - name: Run Viewer Suite Without PDFium (published configuration)
       shell: pwsh
       run: |
         $project = [xml](Get-Content tests/PdfViewer.Tests/PdfViewer.Tests.csproj -Raw)
-        $excluded = @($project.Project.ItemGroup.PdfiumOnlyTest | Where-Object { $_ } | ForEach-Object { $_.Include })
+        $excluded = @($project.Project.ItemGroup.PdfiumOnlyTest | Where-Object { $_ })
+        # Single tests compiled only with PDFium: a test method inside an #if PDFIUM_RENDERER block.
+        $guarded = foreach ($file in Get-ChildItem tests/PdfViewer.Tests -Filter *.cs) {
+          $inside = $false; $test = $false
+          foreach ($line in Get-Content $file.FullName) {
+            if ($line -match '^#if PDFIUM_RENDERER') { $inside = $true }
+            elseif ($line -match '^#(else|endif)') { $inside = $false }
+            elseif ($inside -and $line -match '^\s+\[(Fact|Theory)') { $test = $true }
+            elseif ($test -and $line -match '^\s+public (async Task|void) (\w+)\(') { "$($file.Name): $($Matches[2])"; $test = $false }
+          }
+        }
         if ($env:GITHUB_STEP_SUMMARY) {
           "### Viewer tests without PDFium: $($excluded.Count) PDFium-only test file(s) left out" >> $env:GITHUB_STEP_SUMMARY
-          $excluded | ForEach-Object { "- $_" } >> $env:GITHUB_STEP_SUMMARY
+          $excluded | ForEach-Object { "- $($_.Include): $($_.Reason)" } >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "$(@($guarded).Count) PDFium-only test(s) in shared files (#if PDFIUM_RENDERER: PDFium mode, the PDFium adapter, or the live oracle comparison behind a committed golden):" >> $env:GITHUB_STEP_SUMMARY
+          $guarded | ForEach-Object { "- $_" } >> $env:GITHUB_STEP_SUMMARY
         }
         dotnet test tests/PdfViewer.Tests/PdfViewer.Tests.csproj --configuration Release -p:PdfiumRenderer=false --verbosity normal
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -58,6 +72,12 @@ jobs:
       env:
         VECTOR_FUZZ_ITERATIONS: ${{ github.event_name == 'schedule' && '100000' || '2000' }}
       run: dotnet test tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj --configuration Release --no-build --verbosity normal
+
+    # Portable Skia backend (src/PdfEngine.Vector.Skia): every fixture rendered with Skia and with
+    # Direct2D, compared within a per-test pixel budget. The corpus parity report in that project
+    # runs only when SKIA_PARITY_CORPUS points at a corpus checkout, so it is skipped here.
+    - name: Run Skia Backend Suite
+      run: dotnet test tests/PdfEngine.Vector.Skia.Tests/PdfEngine.Vector.Skia.Tests.csproj --configuration Release --no-build --verbosity normal
 
     # Local-only corpus report (no document leaves the runner). Extend by pointing at a
     # rights-cleared corpus checkout; see eng/vectorpdf/corpus/README.md.

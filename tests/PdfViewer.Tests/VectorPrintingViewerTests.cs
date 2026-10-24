@@ -6,7 +6,6 @@ using System.Printing;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
-using PdfEngine.Pdfium;
 using PdfEngine.Vector;
 using PdfEngine.Vector.Direct2D;
 using PdfEngine.Vector.Tests.Fixtures;
@@ -90,10 +89,10 @@ public class VectorPrintingViewerTests : IDisposable
         Assert.Contains("150 dpi", DocumentPrinter.DescribeMethod(service, false));
     }
 
-    [Fact]
-    public async Task ImagePaginator_PlacesPagesByTheSameLayout()
+    [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task ImagePaginator_PlacesPagesByTheSameLayout(string engine)
     {
-        using var service = new PdfiumDocumentService();
+        using var service = TestEngines.CreateService(engine);
         await service.OpenDocumentAsync(WriteDocument("paginate.pdf", 2));
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -173,12 +172,11 @@ public class VectorPrintingViewerTests : IDisposable
     private async Task AssertPrintedAsync(string output, params int[] sourcePages)
     {
         byte[] printed = WaitForPdf(output);
-        using var engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(printed);
+        using var doc = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(printed);
         Assert.Equal(sourcePages.Length, doc.PageCount);
         for (int i = 0; i < sourcePages.Length; i++)
         {
-            string text = await engine.TextService.ExtractPageTextAsync(doc, i + 1);
+            string text = await NativeReadBack.TextAsync(printed, i + 1);
             _output.WriteLine($"output page {i + 1}: {text.Trim()}");
             Assert.Contains($"Printed page {sourcePages[i]}", text);
         }
@@ -204,6 +202,8 @@ public class VectorPrintingViewerTests : IDisposable
         await AssertPrintedAsync(output, 3, 1);
     }
 
+#if PDFIUM_RENDERER
+    // PDFium mode exists only in the developer build.
     [Fact]
     public async Task PagesThePdfiumEngineRenders_GoOutAsImagesInTheSameJob()
     {
@@ -221,10 +221,11 @@ public class VectorPrintingViewerTests : IDisposable
         Assert.Equal(2, outcome.ImagePages);
 
         byte[] printed = WaitForPdf(output);
-        using var engine = new PdfiumEngine();
+        using var engine = new PdfEngine.Pdfium.PdfiumEngine();
         await using var doc = await engine.OpenDocumentAsync(printed);
         Assert.Equal(2, doc.PageCount);
     }
+#endif
 
     [Fact]
     public async Task CancelledJob_StopsWithoutPrinting()
@@ -264,7 +265,7 @@ public class VectorPrintingViewerTests : IDisposable
             _output.WriteLine($"{PdfPrinter} is not installed: skipped.");
             return;
         }
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(WriteDocument("vm.pdf", 2));
         string output = Path.Combine(_dir, "vm-out.pdf");
         Assert.False(vm.CancelPrintCommand.CanExecute(null));

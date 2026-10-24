@@ -307,7 +307,7 @@ public abstract class PdfSecurityHandler
         input[p++] = (byte)num; input[p++] = (byte)(num >> 8); input[p++] = (byte)(num >> 16);
         input[p++] = (byte)gen; input[p++] = (byte)(gen >> 8);
         if (method == PdfCryptMethod.AesV2) { input[p++] = 0x73; input[p++] = 0x41; input[p++] = 0x6C; input[p] = 0x54; } // "sAlT"
-        byte[] hash = MD5.HashData(input);
+        byte[] hash = PortableCrypto.Md5(input);
         return hash[..Math.Min(fileKey.Length + 5, 16)];
     }
 
@@ -331,12 +331,9 @@ public abstract class PdfSecurityHandler
         return output;
     }
 
+    /// <summary>AES-CBC without padding: the platform's AES, or the managed one where the platform has none (browser).</summary>
     internal static byte[] AesCbcNoPadding(byte[] key, byte[] iv, byte[] data, bool decrypt)
     {
-        using var aes = Aes.Create();
-        aes.Key = key;
-        return decrypt
-            ? aes.DecryptCbc(data, iv, PaddingMode.None)
-            : aes.EncryptCbc(data, iv, PaddingMode.None);
+        return PortableCrypto.AesCbcNoPadding(key, iv, data, decrypt);
     }
 }

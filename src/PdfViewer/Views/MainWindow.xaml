@@ -42,6 +42,7 @@
         <KeyBinding Key="Escape" Command="{Binding ActiveDocument.ClearSelectionCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="F" Command="{Binding ActiveDocument.ToggleSearchCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="D" Command="{Binding ActiveDocument.ShowPropertiesCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="E" Command="{Binding ActiveDocument.ToggleContentEditingCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="OemPlus" Command="{Binding ActiveDocument.ZoomInCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="Add" Command="{Binding ActiveDocument.ZoomInCommand}" />
         <KeyBinding Modifiers="Ctrl" Key="OemMinus" Command="{Binding ActiveDocument.ZoomOutCommand}" />
@@ -164,6 +165,17 @@
                         </Style>
                     </MenuItem.ItemContainerStyle>
                 </MenuItem>
+                <MenuItem Header="Create P_DF"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreatePdf}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="From _Images..." Command="{Binding CreatePdfFromImagesCommand}"
+                              ToolTip="Makes a PDF from pictures (JPEG, PNG, TIFF, BMP, GIF and any other kind Windows can read), a page each. JPEGs keep their quality. Everything happens on this computer."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreateFromImages}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="From _Scanner..." Command="{Binding CreatePdfFromScannerCommand}"
+                              ToolTip="Scans pages with Windows Image Acquisition, from the glass or the document feeder, into a new PDF, searchable if you like."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreateFromScanner}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="From _File..." Command="{Binding CreatePdfFromFileCommand}"
+                              ToolTip="Converts a Word, Excel or PowerPoint file, a text, RTF or HTML file, or a picture to PDF on this computer (Office files need Microsoft Office). Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreateFromFile}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <Separator />
+                    <MenuItem Header="_Combine Files..." Command="{Binding CombineFilesCommand}"
+                              ToolTip="Puts PDFs, pictures and Office files together in one PDF, in the order you choose, with a bookmark for each file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CombineFiles}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                </MenuItem>
                 <Separator />
                 <MenuItem Header="_Close Document"
                           Command="{Binding DataContext.CloseActiveDocumentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -176,7 +188,11 @@
                 <MenuItem Header="Export _Text..." Command="{Binding ExportTextCommand}" IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Writes the document's text layer to a plain text file."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ExportText}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="E_xport"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Export}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon><MenuItem Header="_Word Document (.docx)..." Command="{Binding ExportWordCommand}" IsEnabled="{Binding IsDocumentLoaded}"
-                          ToolTip="Saves an editable Word document whose text flows, keeping the layout. Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.WordDocument}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem></MenuItem>
+                          ToolTip="Saves an editable Word document whose text flows, keeping the layout. Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.WordDocument}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Excel Workbook (.xlsx)..." Command="{Binding ExportExcelCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Saves the tables as an Excel workbook, a sheet a table, with numbers and dates as values. Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ExcelWorkbook}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_PowerPoint Presentation (.pptx)..." Command="{Binding ExportPowerPointCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                          ToolTip="Saves a slide a page, with the text in editable text boxes where it is, and the pictures, shapes and tables. Choose it again while it runs to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.PowerPointPresentation}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem></MenuItem>
                 <MenuItem Header="_Organize Pages..." Command="{Binding OrganizePagesCommand}" IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Reorder, rotate or leave out pages and save the result as a new document."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.OrganizePages}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Embedded _Files..." Command="{Binding ShowAttachmentsCommand}" IsEnabled="{Binding IsDocumentLoaded}"
@@ -189,6 +205,9 @@
             </MenuItem>
 
             <MenuItem Header="_Edit">
+                <MenuItem Header="{Binding UndoHeader}" Command="{Binding UndoCommand}" InputGestureText="Ctrl+Z"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="{Binding RedoHeader}" Command="{Binding RedoCommand}" InputGestureText="Ctrl+Y"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <Separator />
                 <MenuItem Header="_Copy Selected Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Copy}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Highlight Selection" Command="{Binding HighlightSelectedTextCommand}" IsEnabled="{Binding HasTextSelection}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Highlight}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
@@ -224,8 +243,6 @@
                     <MenuItem Header="_Background..." Command="{Binding ShowBackgroundCommand}" ToolTip="Adds, updates or removes a colour, picture or PDF page behind the pages."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Background}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                     <MenuItem Header="Bates _Numbering..." Command="{Binding ShowBatesNumberingCommand}" ToolTip="Adds, updates or removes sequence numbers for legal documents."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.BatesNumbering}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
-                <MenuItem Header="_Undo Edit" Command="{Binding UndoContentEditCommand}" IsEnabled="{Binding CanUndoContentEdit}" InputGestureText="Ctrl+Z"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="Red_o Edit" Command="{Binding RedoContentEditCommand}" IsEnabled="{Binding CanRedoContentEdit}" InputGestureText="Ctrl+Y"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
             </MenuItem>
 
             <MenuItem Header="_View">

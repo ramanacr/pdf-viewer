@@ -41,7 +41,7 @@ public class PdfAViewerTests : IDisposable
     [Fact]
     public async Task Checking_ListsTheRequirementsNotMet()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         var pdfa = vm.CreatePdfAViewModel()!;
         Assert.Null(pdfa.Claimed);
         Assert.Equal("PDF/A-2b", pdfa.SelectedFlavour);
@@ -62,7 +62,7 @@ public class PdfAViewerTests : IDisposable
     [Fact]
     public async Task ConvertingToPdfA1b_SavesACopyThatPassesTheCheck()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         var pdfa = vm.CreatePdfAViewModel()!;
         pdfa.SelectedFlavour = "PDF/A-1b";
         string output = Path.Combine(_dir, "minutes_PDFA1.pdf");
@@ -80,7 +80,7 @@ public class PdfAViewerTests : IDisposable
         b.AddPage("/G1 gs 0 0 1 rg 50 50 200 200 re f", $"<< /ExtGState << /G1 {gs} 0 R >> >>", mediaBox: "[0 0 612 792]");
         string path = Path.Combine(_dir, "translucent.pdf");
         File.WriteAllBytes(path, b.Build());
-        var vm = await Open(path);
+        using var vm = await Open(path);
         var pdfa = vm.CreatePdfAViewModel()!;
         pdfa.SelectedFlavour = "PDF/A-1b";
         string output = Path.Combine(_dir, "translucent_PDFA.pdf");
@@ -98,7 +98,7 @@ public class PdfAViewerTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         var pdfa = vm.CreatePdfAViewModel()!;
         Assert.False(await pdfa.ConvertAsync(path)); // never over the original
         Assert.Equal(original, File.ReadAllBytes(path));
@@ -111,7 +111,7 @@ public class PdfAViewerTests : IDisposable
         Assert.Contains(pdfa.Changes, c => c.Contains("Embedded", StringComparison.Ordinal));
         Assert.Equal(output, pdfa.ConvertedPath);
 
-        var converted = await Open(output);
+        using var converted = await Open(output);
         for (int i = 0; i < 100 && converted.PdfAClaim == null; i++) await Task.Delay(20);
         Assert.Equal("PDF/A-2b", converted.PdfAClaim);
         Assert.True(converted.HasPdfAClaim);

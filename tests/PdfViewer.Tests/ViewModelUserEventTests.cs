@@ -48,7 +48,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestDocumentOpenAndCloseUserEvents()
     {
         string pdfPath = CreateSamplePdf("open_close.pdf", 4);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         Assert.False(vm.IsDocumentLoaded);
         Assert.Equal(0, vm.PageCount);
@@ -79,7 +79,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestPageNavigationUserEvents()
     {
         string pdfPath = CreateSamplePdf("navigation.pdf", 5);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         Assert.Equal(1, vm.CurrentPageNumber);
@@ -128,7 +128,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestZoomAndFitUserEvents()
     {
         string pdfPath = CreateSamplePdf("zoom.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         double initialZoom = vm.ZoomLevel;
@@ -182,7 +182,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestPageRotationUserEvents()
     {
         string pdfPath = CreateSamplePdf("rotate.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         Assert.Equal(0, vm.RotationAngle);
@@ -212,7 +212,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestViewModeToggleUserEvents()
     {
         string pdfPath = CreateSamplePdf("viewmode.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         Assert.Equal(ViewLayoutMode.Continuous, vm.ViewMode);
@@ -233,7 +233,7 @@ public class ViewModelUserEventTests : IDisposable
     [Fact]
     public async Task TestSidebarToggleUserEvents()
     {
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         Assert.True(vm.IsSidebarOpen);
 
@@ -249,7 +249,7 @@ public class ViewModelUserEventTests : IDisposable
     [Fact]
     public async Task TestPanToolUserEvents()
     {
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         Assert.False(vm.IsPanningEnabled);
 
@@ -266,7 +266,7 @@ public class ViewModelUserEventTests : IDisposable
     [Fact]
     public void TestThemeSwitchingUserEvents()
     {
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
 
         ThemeManager.SetTheme(AppTheme.Light);
         Assert.Equal(AppTheme.Light, ThemeManager.CurrentTheme);
@@ -284,7 +284,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestDocumentPropertiesUserEvents()
     {
         string pdfPath = CreateSamplePdf("props.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         bool propertiesDialogShown = false;
@@ -309,7 +309,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestExportImagesUserEvents()
     {
         string pdfPath = CreateSamplePdf("export.pdf", 3);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         string exportOutDir = Path.Combine(_testDir, "exported_imgs");
@@ -334,7 +334,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestSaveAnnotatedUserEvents()
     {
         string pdfPath = CreateSamplePdf("save_annot.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         string targetSavedPdf = Path.Combine(_testDir, "annotated_out.pdf");
@@ -372,7 +372,7 @@ public class ViewModelUserEventTests : IDisposable
     public async Task TestPrintCommandUserEvents()
     {
         string pdfPath = CreateSamplePdf("print_cmd.pdf", 2);
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(pdfPath);
 
         bool printDialogInvoked = false;

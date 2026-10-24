@@ -167,7 +167,7 @@ public class NightModeTests : IDisposable
         string path = TestPdfBuilder.CreateSimplePdf(
             Path.Combine(_testDir, "night.pdf"), 2, "NightToken");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         Assert.False(vm.IsNightMode);
@@ -233,7 +233,7 @@ public class NightModeTests : IDisposable
         string path = TestPdfBuilder.CreateSimplePdf(
             Path.Combine(_testDir, "reload.pdf"), 2, "NightToken");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         await vm.RenderVisiblePagesAsync();
 

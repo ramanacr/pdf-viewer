@@ -24,6 +24,11 @@ public static class IconGlyphs
     public static readonly FontFamily IconFont = new(FontFamilyName);
 
     // File
+    public const string CreatePdf = "";
+    public const string CreateFromImages = "";
+    public const string CreateFromScanner = "";
+    public const string CreateFromFile = "";
+    public const string CombineFiles = "";
     public const string Open = "";
     public const string OpenSample = "";
     public const string Recent = "";
@@ -34,6 +39,8 @@ public static class IconGlyphs
     public const string ExportImages = "";
     public const string ExportText = "";
     public const string WordDocument = "";
+    public const string ExcelWorkbook = "";
+    public const string PowerPointPresentation = "";
     public const string OrganizePages = "";
     public const string Attachments = "";
     public const string Print = "";

@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work, renders wrong, or crashes.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. For a security problem, do not use this form: follow SECURITY.md.
+        Do not attach a document that contains personal or confidential data.
+  - type: input
+    id: version
+    attributes:
+      label: Viewer version
+      description: Help → About, or the release you installed (for example v4.0.1).
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the attached file
+        2. Zoom to 400 %
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: Sample PDF
+      description: Attach a PDF that shows the problem, if you are allowed to share it. A small file is best. A screenshot also helps.
+  - type: textarea
+    id: compare
+    attributes:
+      label: Other viewers
+      description: Does the file look right in another viewer (Acrobat, Edge, Chrome)? Optional.

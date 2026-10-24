@@ -77,7 +77,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("multiply.pdf");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(Highlight());
         await vm.SaveAsync();
@@ -87,7 +87,7 @@ public class AnnotationFidelityTests : IDisposable
         // Reopen and save again without touching anything, three times over.
         for (int round = 0; round < 3; round++)
         {
-            var reopened = new MainViewModel();
+            using var reopened = new MainViewModel();
             await reopened.LoadDocumentAsync(path);
 
             // Exactly what the previous round left behind - no copies of it.
@@ -110,7 +110,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("delete.pdf");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(Highlight(1, "keep me"));
         vm.AddAnnotation(Highlight(1, "delete me"));
@@ -118,7 +118,7 @@ public class AnnotationFidelityTests : IDisposable
 
         Assert.Equal(2, (await ReadBack(path)).Count);
 
-        var reopened = new MainViewModel();
+        using var reopened = new MainViewModel();
         await reopened.LoadDocumentAsync(path);
 
         var doomed = reopened.AllAnnotations.Single(a => a.Contents == "delete me");
@@ -135,14 +135,14 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("clear.pdf");
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(Highlight(1));
         vm.AddAnnotation(Highlight(2));
         await vm.SaveAsync();
         Assert.Equal(2, (await ReadBack(path)).Count);
 
-        var reopened = new MainViewModel();
+        using var reopened = new MainViewModel();
         await reopened.LoadDocumentAsync(path);
         reopened.ClearAllAnnotations();
         await reopened.SaveAsync();
@@ -167,7 +167,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf($"quads_{type}.pdf", 1);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         var annot = Highlight();
@@ -190,7 +190,7 @@ public class AnnotationFidelityTests : IDisposable
         string path = NewPdf("dates.pdf", 1);
         var when = new DateTime(2021, 3, 4, 9, 30, 15, DateTimeKind.Local);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         var annot = Highlight();
@@ -229,7 +229,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("ink.pdf", 1);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         vm.AddAnnotation(new AnnotationModel
@@ -264,7 +264,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("thickness.pdf", 1);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(new AnnotationModel
         {
@@ -294,7 +294,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("edit.pdf", 1);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(Highlight(1, "first draft"));
         await vm.SaveAsync();
@@ -333,7 +333,7 @@ public class AnnotationFidelityTests : IDisposable
         string before = Encoding.Latin1.GetString(await File.ReadAllBytesAsync(path));
         Assert.Contains("/Link", before);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(Highlight());
         await vm.SaveAsync();
@@ -363,7 +363,7 @@ public class AnnotationFidelityTests : IDisposable
         string path = Path.Combine(_testDir, $"rotate_{rotation}.pdf");
         TestPdfBuilder.CreateRotatedPdf(path, rotation);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
         vm.AddAnnotation(Highlight());
         await vm.SaveAsync();
@@ -374,7 +374,7 @@ public class AnnotationFidelityTests : IDisposable
         // conversions shows up here as drift, not as a one-off rounding difference.
         for (int round = 0; round < 3; round++)
         {
-            var reopened = new MainViewModel();
+            using var reopened = new MainViewModel();
             await reopened.LoadDocumentAsync(path);
 
             var current = Assert.Single(reopened.AllAnnotations);
@@ -405,7 +405,7 @@ public class AnnotationFidelityTests : IDisposable
         string path = Path.Combine(_testDir, $"overtext_{rotation}.pdf");
         TestPdfBuilder.CreateRotatedPdf(path, rotation);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         var page = vm.Pages[0];
@@ -426,7 +426,7 @@ public class AnnotationFidelityTests : IDisposable
         });
         await vm.SaveAsync();
 
-        var reopened = new MainViewModel();
+        using var reopened = new MainViewModel();
         await reopened.LoadDocumentAsync(path);
 
         var reloadedPage = reopened.Pages[0];
@@ -455,7 +455,7 @@ public class AnnotationFidelityTests : IDisposable
     {
         string path = NewPdf("alpha.pdf", 1);
 
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         await vm.LoadDocumentAsync(path);
 
         var annot = Highlight();

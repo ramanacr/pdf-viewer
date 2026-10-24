@@ -1,0 +1,22 @@
+[
+  {
+    "Role": "Heading1",
+    "Text": "Main Title",
+    "AltText": null
+  },
+  {
+    "Role": "Paragraph",
+    "Text": "First paragraph text.",
+    "AltText": null
+  },
+  {
+    "Role": "Figure",
+    "Text": "",
+    "AltText": "A blue box"
+  },
+  {
+    "Role": "Paragraph",
+    "Text": "Replacement words",
+    "AltText": null
+  }
+]

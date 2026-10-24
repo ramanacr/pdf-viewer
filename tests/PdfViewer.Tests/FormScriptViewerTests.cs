@@ -42,6 +42,7 @@ public class FormScriptViewerTests : IDisposable
     public async Task Commit_RecalculatesDependentFields()
     {
         var (vm, path) = await Open();
+        using var vmScope = vm;
         Assert.True(await vm.CommitFormFieldAsync(F(vm, "qty"), new PdfFieldChange("qty", Text: "3")));
         Assert.True(await vm.CommitFormFieldAsync(F(vm, "price"), new PdfFieldChange("price", Text: "$19.99")));
         Assert.Equal("19.99", F(vm, "price").Value);
@@ -49,7 +50,7 @@ public class FormScriptViewerTests : IDisposable
         Assert.Equal("69.97", F(vm, "subtotal").Value);
 
         await vm.SaveAsync();
-        var reopened = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var reopened = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await reopened.LoadDocumentAsync(path);
         Assert.Equal("59.97", F(reopened, "total").Value);
     }
@@ -58,6 +59,7 @@ public class FormScriptViewerTests : IDisposable
     public async Task RefusedValue_IsExplained_AndNotWritten()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         string? alert = null;
         vm.ShowMessageBoxAction = (m, _, _, _) => alert = m;
         bool reverted = false;
@@ -74,6 +76,7 @@ public class FormScriptViewerTests : IDisposable
     public async Task NumberEditor_KeepsLettersOut()
     {
         var (vm, _) = await Open();
+        using var vmScope = vm;
         Exception? error = null;
         var thread = new Thread(() =>
         {

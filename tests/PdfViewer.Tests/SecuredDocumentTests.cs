@@ -87,7 +87,7 @@ public class SecuredDocumentTests : IDisposable
     public async Task ViewModel_RefusesRestrictedActions_AndExplains()
     {
         string path = Write("vm-restricted.pdf", new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "", "owner", permissions: Restricted));
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         var alerts = new List<string>();
         vm.ShowMessageBoxAction = (message, _, _, _) => alerts.Add(message);
         bool printDialogShown = false;
@@ -110,7 +110,7 @@ public class SecuredDocumentTests : IDisposable
     public async Task ViewModel_OwnerPassword_AllowsEverything()
     {
         string path = Write("vm-owner.pdf", new PdfTestEncryption(TestEncryptionKind.Aes256_R6, "user", "owner", permissions: Restricted));
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         vm.ShowMessageBoxAction = (_, _, _, _) => { };
         bool printDialogShown = false;
         vm.ShowPrintDialogFunc = (_, _) => printDialogShown = true;
@@ -159,7 +159,7 @@ public class SecuredDocumentTests : IDisposable
         var cert = PdfTestEncryption.CreateCertificate("Editor");
         PdfPublicKeySecurityHandler.CertificateSource = () => new[] { cert };
         string path = Write("pubsec-save.pdf", new PdfTestEncryption(TestEncryptionKind.PubSecS5Aes256, new[] { cert }, -1));
-        var vm = new MainViewModel();
+        using var vm = new MainViewModel();
         vm.ShowMessageBoxAction = (_, _, _, _) => { };
         await vm.LoadDocumentAsync(path);
         Assert.True(vm.IsDocumentLoaded);

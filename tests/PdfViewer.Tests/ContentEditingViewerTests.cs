@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using PdfEngine.Pdfium;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.Services;
 using PdfViewer.ViewModels;
@@ -53,17 +52,12 @@ public class ContentEditingViewerTests : IDisposable
         return vm;
     }
 
-    private static async Task<string> Text(byte[] pdf)
-    {
-        using var engine = new PdfiumEngine();
-        await using var doc = await engine.OpenDocumentAsync(pdf, null);
-        return await engine.TextService.ExtractPageTextAsync(doc, 1);
-    }
+    private static Task<string> Text(byte[] pdf) => NativeReadBack.TextAsync(pdf);
 
     [Fact]
     public async Task EditMode_OffersThePagesParagraphsAndImages_WhereTheyAre()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         var items = vm.Pages[0].EditItems;
         var text = Assert.Single(items, i => i.Kind == ContentEditKind.Text);
         Assert.Equal("Invoice total: 120 dollars", text.Text);
@@ -81,7 +75,7 @@ public class ContentEditingViewerTests : IDisposable
     {
         string path = Document();
         byte[] original = File.ReadAllBytes(path);
-        var vm = await Open(path);
+        using var vm = await Open(path);
         var text = vm.Pages[0].EditItems.Single(i => i.Kind == ContentEditKind.Text);
         Assert.True(await vm.CommitTextEditAsync(text, "Invoice total: 150 dollars"));
         Assert.True(vm.HasUnsavedChanges);
@@ -89,9 +83,9 @@ public class ContentEditingViewerTests : IDisposable
         // The page's items were read again from the new revision.
         Assert.Equal("Invoice total: 150 dollars", vm.Pages[0].EditItems.Single(i => i.Kind == ContentEditKind.Text).Text);
 
-        await vm.UndoContentEditAsync();
+        await vm.UndoAsync();
         Assert.Contains("120 dollars", await Text(vm.CurrentDocumentBytes()));
-        await vm.RedoContentEditAsync();
+        await vm.RedoAsync();
         Assert.Contains("150 dollars", await Text(vm.CurrentDocumentBytes()));
 
         await vm.SaveAsync();
@@ -103,7 +97,7 @@ public class ContentEditingViewerTests : IDisposable
     [Fact]
     public async Task Images_Move_Resize_Turn_AndGo()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         ContentEditItem Image() => vm.Pages[0].EditItems.Single(i => i.Kind == ContentEditKind.Image);
         var before = Image().Bounds;
         Assert.True(await vm.MoveEditItemAsync(Image(), new Vector(0.1, 0.05)));
@@ -127,7 +121,7 @@ public class ContentEditingViewerTests : IDisposable
     [Fact]
     public async Task NewText_IsUpright_OnARotatedPage()
     {
-        var vm = await Open(Document(rotate: 90));
+        using var vm = await Open(Document(rotate: 90));
         Assert.True(await vm.AddTextAtAsync(1, new Point(0.2, 0.2), "Approved"));
         var added = vm.Pages[0].EditItems.Single(i => i.Kind == ContentEditKind.Text && i.Text == "Approved");
         Assert.Equal(90, added.AngleDegrees, 1); // runs along the page's rotation, so it reads upright
@@ -153,7 +147,7 @@ public class ContentEditingViewerTests : IDisposable
         Assert.Equal(PdfEngine.Vector.Editing.PdfImageEncoding.Jpeg, jpeg.Encoding);
         Assert.Equal(File.ReadAllBytes(jpg), jpeg.Data); // embedded unchanged: no second compression
 
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         Assert.True(await vm.AddImageFromFileAsync(1, png));
         Assert.Equal(2, vm.Pages[0].EditItems.Count(i => i.Kind == ContentEditKind.Image));
         var first = vm.Pages[0].EditItems.First(i => i.Kind == ContentEditKind.Image);
@@ -163,20 +157,17 @@ public class ContentEditingViewerTests : IDisposable
     [Fact]
     public async Task TheEditLayer_OutlinesItems_ShowsHandles_AndEditsInPlace()
     {
-        var vm = await Open(Document());
+        using var vm = await Open(Document());
         var page = vm.Pages[0];
         var image = page.EditItems.Single(i => i.Kind == ContentEditKind.Image);
         var text = page.EditItems.Single(i => i.Kind == ContentEditKind.Text);
         vm.SelectedEditItem = image;
         byte[]? pageImage = null;
         int pw = 0, ph = 0, stride = 0;
-        using (var engine = new PdfiumEngine())
-        await using (var doc = await engine.OpenDocumentAsync(vm.CurrentDocumentBytes()!, null))
+        using (var rendered = await NativeReadBack.RenderAsync(vm.CurrentDocumentBytes()!, new PdfEngine.Rendering.RenderRequest { PageNumber = 1, Dpi = 72 * page.DisplayScale }))
         {
-            var rendered = await engine.Renderer.RenderPageAsync(doc, new PdfEngine.Rendering.RenderRequest { PageNumber = 1, Dpi = 72 * page.DisplayScale });
             pageImage = rendered.Pixels.ToArray();
             (pw, ph, stride) = (rendered.WidthPixels, rendered.HeightPixels, rendered.Stride);
-            rendered.Dispose();
         }
         Exception? error = null;
         var thread = new Thread(() =>

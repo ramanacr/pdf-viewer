@@ -1,0 +1,42 @@
+[
+  {
+    "Info": {
+      "PageNumber": 1,
+      "WidthPoints": 792,
+      "HeightPoints": 612,
+      "RotationDegrees": 90,
+      "AspectRatio": 1.2941176470588236
+    },
+    "Text": "This is page number 3 of the test document. Keyword: Tok_3"
+  },
+  {
+    "Info": {
+      "PageNumber": 2,
+      "WidthPoints": 612,
+      "HeightPoints": 792,
+      "RotationDegrees": 0,
+      "AspectRatio": 0.7727272727272727
+    },
+    "Text": "This is page number 1 of the test document. Keyword: Tok_1"
+  },
+  {
+    "Info": {
+      "PageNumber": 3,
+      "WidthPoints": 612,
+      "HeightPoints": 792,
+      "RotationDegrees": 180,
+      "AspectRatio": 0.7727272727272727
+    },
+    "Text": "This is page number 4 of the test document. Keyword: Tok_4"
+  },
+  {
+    "Info": {
+      "PageNumber": 4,
+      "WidthPoints": 612,
+      "HeightPoints": 792,
+      "RotationDegrees": 0,
+      "AspectRatio": 0.7727272727272727
+    },
+    "Text": "This is page number 1 of the test document. Keyword: Tok_1"
+  }
+]

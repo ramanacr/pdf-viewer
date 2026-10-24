@@ -138,10 +138,13 @@ public partial class MainViewModel
             StatusText = result.Warnings.FirstOrDefault() ?? "Nothing changed.";
             return false;
         }
-        _editUndo.Push(before);
-        if (_editUndo.Count > MaxEditUndo) TrimUndo();
-        _editRedo.Clear();
-        await ShowRevisionAsync(result.Bytes, null);
+        string undoName = request.Action switch
+        {
+            PdfMarkAction.Add => $"Add {title}",
+            PdfMarkAction.Update => $"Update {title}",
+            _ => $"Remove {title}",
+        };
+        await RecordRevisionAsync(undoName, before, result.Bytes, null);
         string done = request.Action switch
         {
             PdfMarkAction.Add => $"Added the {title.ToLowerInvariant()}.",

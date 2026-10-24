@@ -4,11 +4,14 @@
   <Project Path="src/PdfEngine.Vector/PdfEngine.Vector.csproj" />
   <Project Path="src/PdfEngine.Vector.Windows/PdfEngine.Vector.Windows.csproj" />
   <Project Path="src/PdfEngine.Vector.Direct2D/PdfEngine.Vector.Direct2D.csproj" />
+  <Project Path="src/PdfEngine.Vector.Skia/PdfEngine.Vector.Skia.csproj" />
+  <Project Path="src/PdfViewer.Web.Engine/PdfViewer.Web.Engine.csproj" />
   <Project Path="src/PdfViewer.Core/PdfViewer.Core.csproj" />
   <Project Path="src/PdfViewer/PdfViewer.csproj" />
   <Project Path="src/Installer/PdfViewerInstaller.csproj" />
   <Project Path="tests/PdfViewer.Tests/PdfViewer.Tests.csproj" />
   <Project Path="tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj" />
+  <Project Path="tests/PdfEngine.Vector.Skia.Tests/PdfEngine.Vector.Skia.Tests.csproj" />
   <Project Path="benchmarks/PdfViewer.Benchmarks/PdfViewer.Benchmarks.csproj" />
   <Project Path="eng/vectorpdf/tools/VectorPdf.Tool/VectorPdf.Tool.csproj" />
   <Project Path="eng/releasegate/ReleaseGate.Tool/ReleaseGate.Tool.csproj" />

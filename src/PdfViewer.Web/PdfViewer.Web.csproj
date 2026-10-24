@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <!--
+      The browser demo: a standalone Blazor WebAssembly app that runs the engine itself in the
+      page. No server code, no upload, no telemetry. Building it needs the wasm-tools workload,
+      because Skia's native library is linked into dotnet.native.wasm.
+    -->
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PdfViewer.Web</RootNamespace>
+    <AssemblyName>PdfViewer.Web</AssemblyName>
+    <!-- [JSImport] interop hands rendered pixels to the canvas without a copy through JSON. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Size: invariant globalization (the engine formats with the invariant culture), no ICU data. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <BlazorWebAssemblyLoadAllGlobalizationData>false</BlazorWebAssemblyLoadAllGlobalizationData>
+    <!--
+      Link Skia's static library into the runtime. SkiaSharp's package sets this too, but too late
+      for the workload check, which then skips the link with only a warning.
+    -->
+    <WasmBuildNative>true</WasmBuildNative>
+    <!-- Native SIMD and exception handling are in every browser the demo targets. -->
+    <WasmEnableSIMD>true</WasmEnableSIMD>
+    <WasmEnableExceptionHandling>true</WasmEnableExceptionHandling>
+    <!-- No telemetry, and no Blazor debugging proxy hooks in the published site. -->
+    <DebuggerSupport Condition="'$(Configuration)' == 'Release'">false</DebuggerSupport>
+    <EventSourceSupport>false</EventSourceSupport>
+    <UseSystemResourceKeys Condition="'$(Configuration)' == 'Release'">true</UseSystemResourceKeys>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="9.0.21" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="9.0.21" PrivateAssets="all" />
+    <!-- Skia's native library built for WebAssembly; the same pinned version as SkiaSharp in PdfEngine.Vector.Skia. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="3.116.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector.Skia\PdfEngine.Vector.Skia.csproj" />
+    <ProjectReference Include="..\PdfViewer.Web.Engine\PdfViewer.Web.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

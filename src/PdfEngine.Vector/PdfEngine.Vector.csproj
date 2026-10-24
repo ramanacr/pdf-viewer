@@ -23,6 +23,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
     <InternalsVisibleTo Include="PdfViewer.Tests" />
+    <!-- The developer tool times the phases of native text extraction (vectorpdf textbench). -->
+    <InternalsVisibleTo Include="vectorpdf" />
   </ItemGroup>
 
   <ItemGroup>

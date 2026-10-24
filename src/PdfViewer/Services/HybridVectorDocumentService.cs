@@ -206,6 +206,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         try
         {
             displayList = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+            PrefetchText(doc, pageNumber);
         }
         catch (Exception ex) when (_mode != PdfEngineMode.Vector && ex is not OperationCanceledException)
         {
@@ -638,6 +639,13 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
     public Task<BitmapSource?> RenderPageInvertedAsync(int pageNumber, int dpi, int rotationAngle, CancellationToken ct = default) =>
         RenderPageCoreAsync(pageNumber, dpi, rotationAngle, invert: true, ct);
 
+    /// <summary>
+    /// A page being drawn has its text built in the background (low priority, bounded, after the
+    /// drawing), so that selecting, copying or searching on it does not wait for the text.
+    /// </summary>
+    private static void PrefetchText(PdfVectorDocument doc, int pageNumber) =>
+        PdfEngine.Vector.Text.PdfTextExtractor.Prefetch(doc, pageNumber);
+
     private async Task<BitmapSource?> RenderPageCoreAsync(int pageNumber, int dpi, int rotationAngle, bool invert, CancellationToken ct)
     {
         await EnsureVectorDocumentAsync(ct).ConfigureAwait(false);
@@ -664,6 +672,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         try
         {
             displayList = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+            PrefetchText(doc, pageNumber);
         }
         catch (Exception ex) when (_mode != PdfEngineMode.Vector && ex is not OperationCanceledException)
         {
@@ -787,6 +796,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             return null; // the page bitmap stays: no detail tiles without Direct2D or a readable page
 
         var list = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        PrefetchText(doc, pageNumber);
         var request = new RenderRequest
         {
             PageNumber = pageNumber,
@@ -808,6 +818,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
             return null;
         var list = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        PrefetchText(doc, pageNumber);
         _securityPolicy.EnsureRenderDimensionsAllowed(width, height);
         var request = new RenderRequest
         {
@@ -829,6 +840,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount)
             return;
         var list = await doc.GetPageDisplayListAsync(pageNumber, ct).ConfigureAwait(false);
+        PrefetchText(doc, pageNumber);
         _securityPolicy.EnsureRenderDimensionsAllowed(width, height);
         var request = new RenderRequest
         {

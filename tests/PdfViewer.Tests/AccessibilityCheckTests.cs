@@ -76,7 +76,8 @@ public class AccessibilityCheckTests : IDisposable
     [Fact]
     public async Task UntaggedDocument_FailsWithTheIssuesGroupedByCategory()
     {
-        var (_, check) = await Open(Untagged());
+        var (main, check) = await Open(Untagged());
+        using var mainScope = main;
         Assert.False(check.IsCompliant);
         Assert.StartsWith("The document fails the accessibility check", check.Summary);
         Assert.Equal("The document does not claim PDF/UA conformance.", check.ClaimText);
@@ -102,6 +103,7 @@ public class AccessibilityCheckTests : IDisposable
     public async Task SelectingAnIssue_GoesToItsPageAndHighlightsTheElement()
     {
         var (main, check) = await Open(Tagged(secondAlt: false));
+        using var mainScope = main;
         var figure = Assert.Single(check.Groups.Single(g => g.Category == PdfUaCategory.AlternateText).Issues);
         Assert.Equal("13-004", figure.Checkpoint);
         Assert.Equal(2, figure.Page);
@@ -127,7 +129,7 @@ public class AccessibilityCheckTests : IDisposable
     [Fact]
     public async Task Window_IsNavigableAndNamedForScreenReaders()
     {
-        var main = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
+        using var main = new MainViewModel { ShowMessageBoxAction = (_, _, _, _) => { } };
         await main.LoadDocumentAsync(Tagged(secondAlt: false));
         Exception? error = null;
         var thread = new Thread(() =>
@@ -180,6 +182,7 @@ public class AccessibilityCheckTests : IDisposable
     public async Task AccessibleDocument_PassesEveryCategory()
     {
         var (main, check) = await Open(Tagged(secondAlt: true));
+        using var mainScope = main;
         Assert.True(check.IsCompliant, string.Join("; ", check.AllIssues.Select(i => i.Checkpoint + " " + i.Message)));
         Assert.StartsWith("No accessibility failures found", check.Summary);
         Assert.Equal("The document claims PDF/UA-1 conformance.", check.ClaimText);
