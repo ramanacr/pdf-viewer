@@ -8,7 +8,9 @@ namespace PdfEngine.Vector.Skia;
 /// the installed fonts (<see cref="SystemFontCatalog.Installed"/>, the catalog the Direct2D backend,
 /// editing and PDF/A choose from), then asks Skia's font manager by family name. A host without
 /// installed fonts, such as a browser, passes a catalog of the fonts it bundles
-/// (<see cref="SystemFontCatalog.ForDirectory"/>) or overrides the two loaders.
+/// (<see cref="SystemFontCatalog.ForDirectory"/>) or overrides the two loaders. On Android the
+/// installed catalog is <c>/system/fonts</c> with Android's stand-ins for the Windows families
+/// (<see cref="SystemFontCatalog.ForAndroid"/>), so the default works there as it is.
 /// </summary>
 public class SkiaFontSource
 {
@@ -25,10 +27,21 @@ public class SkiaFontSource
     /// <summary>Loads a face of <see cref="Catalog"/>; null when it cannot be read.</summary>
     public virtual SKTypeface? Load(SystemFontFace face) => SKTypeface.FromFile(face.Path, face.Index);
 
-    /// <summary>A face of the named family nearest the style asked for; null when the family is not available.</summary>
-    public virtual SKTypeface? MatchFamily(string family, bool bold, bool italic) =>
-        SKFontManager.Default.MatchFamily(family, new SKFontStyle(bold ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal,
+    /// <summary>
+    /// A face of the named family nearest the style asked for, from Skia's font manager; else the face
+    /// that stands in for the family by the catalog's aliases (Android: Roboto for Arial); null when
+    /// neither has it.
+    /// </summary>
+    public virtual SKTypeface? MatchFamily(string family, bool bold, bool italic)
+    {
+        var typeface = SKFontManager.Default.MatchFamily(family, new SKFontStyle(bold ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal,
             SKFontStyleWidth.Normal, italic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright));
+        // The font manager answers with its nearest family, not null, on some platforms: keep only the family asked for.
+        if (typeface != null && string.Equals(typeface.FamilyName, family, StringComparison.OrdinalIgnoreCase))
+            return typeface;
+        typeface?.Dispose();
+        return Catalog.FindAliasedFamily(family, bold ? 700 : 400, italic) is { } standIn ? Load(standIn) : null;
+    }
 }
 
 /// <summary>A typeface plus the style Skia must simulate because the face lacks it (as DirectWrite's font simulations do).</summary>
@@ -127,9 +140,9 @@ internal sealed class SkiaResources : IDisposable
             if (_systemFaces.TryGetValue(key, out var cached))
                 return cached;
             SkiaFace? result = null;
+            // The source answers only for the family asked for, or a stand-in it chose on purpose.
             var typeface = Fonts.MatchFamily(family, bold, italic);
-            // The font manager answers with its nearest family, not null, on some platforms: keep only the family asked for.
-            if (typeface != null && typeface.GlyphCount > 0 && string.Equals(typeface.FamilyName, family, StringComparison.OrdinalIgnoreCase))
+            if (typeface != null && typeface.GlyphCount > 0)
             {
                 var style = typeface.FontStyle;
                 result = new SkiaFace(typeface, bold && style.Weight < (int)SKFontStyleWeight.SemiBold,
