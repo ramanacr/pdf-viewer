@@ -193,20 +193,23 @@ internal static class PerfProfile
         if (args.Contains("--realize-all")) renderer.DrawSmallGeometriesDirectly = false;
         if (args.Contains("--no-atlas")) renderer.UseGlyphAtlas = false;
         using var doc = await PdfVectorDocument.OpenAsync(bytes);
-        var list = await doc.GetPageDisplayListAsync(1);
+        int pageNumber = int.TryParse(Program.Option(args, "--page"), out int pn) ? pn : 1;
+        var list = await doc.GetPageDisplayListAsync(pageNumber);
         using var engine = new PdfiumEngine();
         await using var pdoc = await engine.OpenDocumentAsync(bytes);
-        var request = new RenderRequest { PageNumber = 1, Dpi = 72 };
+        var request = new RenderRequest { PageNumber = pageNumber, Dpi = 72 };
         var stages = renderer.Stages;
         var rows = new List<double[]>();
         var pdfium = new List<double>();
-        for (int i = 0; i < 220; i++)
+        int iterations = int.TryParse(Program.Option(args, "--iterations"), out int it) ? Math.Max(2, it) : 220;
+        int warmup = Math.Min(20, iterations / 4);
+        for (int i = 0; i < iterations; i++)
         {
             if (args.Contains("--cold"))
             {
                 // A new display list each time: nothing the renderer keeps per page is reused.
                 using var fresh = await PdfVectorDocument.OpenAsync(bytes);
-                list = await fresh.GetPageDisplayListAsync(1);
+                list = await fresh.GetPageDisplayListAsync(pageNumber);
             }
             var before = stages.Snapshot();
             var clock = Stopwatch.StartNew();
@@ -215,7 +218,7 @@ internal static class PerfProfile
             var after = stages.Snapshot();
             clock.Restart();
             using (await engine.Renderer.RenderPageAsync(pdoc, request)) { }
-            if (i < 20) continue; // warm-up
+            if (i < warmup) continue;
             pdfium.Add(clock.Elapsed.TotalMilliseconds);
             rows.Add([total, RenderStages.Ms(after.Replay - before.Replay), RenderStages.Ms(after.Flush - before.Flush),
                 RenderStages.Ms(after.ReadbackWait - before.ReadbackWait), RenderStages.Ms(after.Readback - before.Readback - (after.ReadbackWait - before.ReadbackWait)),
