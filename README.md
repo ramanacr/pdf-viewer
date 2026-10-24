@@ -11,6 +11,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 ## Table of Contents
 
 - [Privacy & Safety](#privacy--safety)
+- [Browser Demo (WebAssembly)](#browser-demo-webassembly)
 - [Optional Components](#optional-components)
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
@@ -61,6 +62,24 @@ exactly those features. This viewer takes the opposite position from the mainstr
 
 The claims shown in **Help → Privacy & Safety** are derived from the installation at runtime,
 not hard-coded, so they cannot quietly stop being true.
+
+---
+
+## Browser Demo (WebAssembly)
+
+**Live demo: coming soon** (it goes live at `https://ramanacr.github.io/pdf-viewer/` once GitHub Pages is switched to GitHub Actions).
+
+The same engine, `PdfEngine.Vector`, also runs **inside a web browser**: [`src/PdfViewer.Web`](src/PdfViewer.Web/README.md)
+is a Blazor WebAssembly app that parses, renders (with the portable Skia backend) and searches
+PDFs entirely in the tab. A file you open is never uploaded, there are no analytics or cookies,
+and document JavaScript never runs. It has continuous scrolling, zoom, search with highlights,
+the outline, password-protected PDFs, night pages and a dark theme, and a built-in engine tour
+document generated in the browser.
+
+Its limits are stated plainly in its README: a browser has no installed fonts, so text in fonts
+a PDF does not embed is drawn only when Chrome or Edge lend the page the device's fonts; CMYK
+JPEG images are not decoded yet; the engine runs in the .NET interpreter. Run it locally with
+`dotnet workload install wasm-tools` and `dotnet run --project src/PdfViewer.Web`.
 
 ---
 
@@ -338,6 +357,7 @@ d:\Practice\pdf-viewer\
 │   ├── pdfium/                    # PDFium for developer and test builds (the oracle): pin, headers, licences
 │   ├── releasegate/               # Startup, payload-size and PDFium-free release gates
 │   ├── signing/                   # Code-signing scripts and notes
+│   ├── webdemo/                   # Static server for trying the published web demo locally
 │   └── vectorpdf/                 # Corpus tooling (vectorpdf), baselines and the git-ignored test corpus
 ├── publish/                       # Output folder for distribution (Setup & Portable EXE, SBOM)
 ├── samples/                       # Multi-page test documents
@@ -349,14 +369,18 @@ d:\Practice\pdf-viewer\
 │   ├── PdfEngine.Abstractions/    # UI-neutral domain models, geometry, exceptions & contracts
 │   ├── PdfEngine.Vector/          # The PDF engine: parser, fonts, text, forms, signatures, editing, export
 │   ├── PdfEngine.Vector.Direct2D/ # Direct2D/DirectWrite renderer and printing
+│   ├── PdfEngine.Vector.Skia/     # Portable Skia renderer (web, later Android)
 │   ├── PdfEngine.Vector.Windows/  # WPF fallback renderer
 │   ├── PdfEngine.Pdfium/          # PDFium interop, the oracle of developer and test builds (not shipped)
 │   ├── PdfViewer.Core/            # DocumentSession, RenderPriorityScheduler, MultiTierCache & Undo/Redo
 │   ├── PdfViewer/                 # Modern WPF MVVM application with Light/Dark themes
+│   ├── PdfViewer.Web.Engine/      # UI-free engine layer of the browser viewer (open, render, search)
+│   ├── PdfViewer.Web/             # Browser demo: Blazor WebAssembly, the engine running in the tab
 │   └── Installer/                 # Windows Graphical Setup Installer & Uninstaller
 │
 └── tests/
     ├── PdfEngine.Vector.Tests/    # Engine tests: unit, fixtures, PDFium-differential and fuzz (about 1,060)
+    ├── PdfEngine.Vector.Skia.Tests/ # Skia backend against Direct2D; the web engine layer
     └── PdfViewer.Tests/           # Viewer tests: view models, windows, services, release gates (about 590)
 ```
 

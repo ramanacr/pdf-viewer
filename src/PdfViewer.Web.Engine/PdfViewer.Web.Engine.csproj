@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      The engine-facing layer of the web demo (src/PdfViewer.Web): open, render, search and outline
+      with no UI or browser API, so that an embeddable SDK or a test can use it as it is.
+    -->
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PdfViewer.Web.Engine</RootNamespace>
+    <AssemblyName>PdfViewer.Web.Engine</AssemblyName>
+    <Description>Engine-facing layer of the browser viewer: documents, rendering, search and outline over PdfEngine.Vector and its Skia backend.</Description>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector.Skia\PdfEngine.Vector.Skia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfEngine.Vector.Skia.Tests" />
+  </ItemGroup>
+
+</Project>

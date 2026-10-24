@@ -596,6 +596,7 @@ internal sealed class TextFontInfo
             var index = new Dictionary<string, List<(string, bool, bool)>>();
             try
             {
+                if (!PdfEngine.Vector.Diagnostics.PdfPlatform.HasInstalledFonts) return index; // a browser has no font folder
                 string dir = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
                 if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return index;
                 // Opening hundreds of files is slow (each is scanned on open): the name tables are
@@ -699,6 +700,7 @@ internal sealed class TextFontInfo
         {
             try
             {
+                if (!PdfEngine.Vector.Diagnostics.PdfPlatform.HasInstalledFonts) return null;
                 string dir = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
                 if (string.IsNullOrEmpty(dir)) return null;
                 string path = Path.Combine(dir, file);
