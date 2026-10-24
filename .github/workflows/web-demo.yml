@@ -21,13 +21,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: web-demo-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A newer push makes an unfinished build redundant.
+    concurrency:
+      group: web-demo-build-${{ github.ref }}
+      cancel-in-progress: true
     timeout-minutes: 30
 
     steps:
@@ -93,6 +93,10 @@ jobs:
     # Only from main, and only after the owner switched Pages to GitHub Actions (see the top).
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WEB_DEMO_PAGES == 'true'
     runs-on: ubuntu-latest
+    # Deployments queue and are never cancelled: a half-finished one can leave Pages inconsistent.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write

@@ -13,7 +13,9 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { createGzip } from 'node:zlib';
 
 const args = process.argv.slice(2);
-const root = resolve(args.find(a => !a.startsWith('--') && !/^\d+$/.test(a)) ?? '.');
+// The root is the first argument that is neither a flag nor the value of a flag that takes one.
+const valued = new Set(['--port', '--base']);
+const root = resolve(args.find((a, i) => !a.startsWith('--') && !valued.has(args[i - 1])) ?? '.');
 const option = (name, fallback) => {
     const i = args.indexOf(name);
     return i >= 0 && i + 1 < args.length ? args[i + 1] : fallback;
