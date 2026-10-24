@@ -42,6 +42,7 @@ public static class Program
             "bench" => await Bench.RunAsync(args),
             "corpus" => await Corpus.RunAsync(args),
             "perf" => await PerfProfile.RunAsync(args),
+            "sample" => await PerfSample.RunAsync(args),
             "live" => LiveBench.Run(args),
             "tiles" => await TileBench.RunAsync(args),
             "gen" when args.Length >= 2 => Gen(args),

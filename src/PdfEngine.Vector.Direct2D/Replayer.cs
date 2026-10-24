@@ -1675,18 +1675,12 @@ internal sealed partial class Replayer : IDisposable
                     ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural); // printing: glyphs stay text
                 else if (!DrawFromAtlas(ctx, glyphRun, pieceTransform, Color(cmd.Paint.Color, cmd.Paint.Alpha)))
                 {
-                    // Glyphs the atlas does not take (large, translucent): their outlines filled as
-                    // the atlas fills them, so all text has the same weight.
+                    // Glyphs the atlas does not take (large, translucent): Direct2D's outline text
+                    // rendering, which is quick for large glyphs (filling their outlines as paths
+                    // was several times slower at deep zoom) and as light as the atlas there.
                     FlushSprites();
                     ctx.Transform = pieceTransform;
-                    using var outline = _res.Factory.CreatePathGeometry();
-                    using (var sink = outline.Open())
-                    {
-                        sink.SetFillMode(FillMode.Winding);
-                        r.Face.GetGlyphRunOutline(glyphRun.FontEmSize, glyphRun.Indices, glyphRun.Advances, glyphRun.Offsets, false, false, sink);
-                        sink.Close();
-                    }
-                    ctx.FillGeometry(outline, brush);
+                    ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural);
                 }
             }
             if (stroke && run.StrokePaint is PdfPaint sp && run.Stroke is PdfStroke st)

@@ -21,8 +21,12 @@ namespace PdfEngine.Vector.Direct2D;
 internal sealed class GlyphAtlas : IDisposable
 {
     public const int Size = 2048;
-    /// <summary>Glyphs larger than this (device pixels, either side) are drawn from their outlines.</summary>
-    public const int MaxGlyphPixels = 160;
+    /// <summary>
+    /// Glyphs larger than this (device pixels, either side) are drawn from their outlines: past body
+    /// text sizes a glyph is rarely drawn twice in a tile (deep zoom), and rasterizing it costs more
+    /// than Direct2D drawing it once.
+    /// </summary>
+    public const int MaxGlyphPixels = 64;
 
     /// <summary>Glyph positions are kept to a quarter of a device pixel across.</summary>
     public const int SubpixelSteps = 4;
