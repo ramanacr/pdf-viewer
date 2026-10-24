@@ -3,7 +3,8 @@
 A portable renderer for the vector engine's display list (`IPdfDisplayList`), built on
 [SkiaSharp](https://github.com/mono/SkiaSharp) 3.116.1 (MIT). It targets plain `net9.0` and draws on
 Skia's CPU raster canvas, so it has no dependency on Windows, Direct2D or a GPU. It is step 1 of a
-web viewer (Blazor WebAssembly) and a later Android app. The WPF application does not use it yet.
+web viewer (Blazor WebAssembly) and of the Android proof of concept (src/PdfViewer.Android). The WPF
+application does not use it yet.
 
 The reference is the Direct2D backend (`src/PdfEngine.Vector.Direct2D`). The Skia backend replays
 the same display list with the same semantics, and its tests compare every fixture with a

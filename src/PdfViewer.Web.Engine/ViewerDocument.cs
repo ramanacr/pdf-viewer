@@ -141,7 +141,7 @@ public sealed class ViewerDocument : IAsyncDisposable
         catch (PdfEncryptedDocumentException ex) when (ex.CertificateRequired)
         {
             throw new ViewerOpenException(ViewerOpenFailure.CertificateRequired,
-                "This PDF is encrypted for specific recipients' certificates. A browser cannot use certificates, so it cannot be opened here.", ex);
+                "This PDF is encrypted for specific recipients' certificates. This viewer cannot use certificates, so it cannot be opened here.", ex);
         }
         catch (PdfEncryptedDocumentException ex) when (ex.PasswordRequired)
         {
@@ -156,7 +156,7 @@ public sealed class ViewerDocument : IAsyncDisposable
             // MD5 and AES where the runtime has none; what remains is certificate (public-key)
             // encryption, which needs RSA and a certificate store.
             throw new ViewerOpenException(ViewerOpenFailure.EncryptionNotSupportedHere,
-                "This PDF is encrypted with a method this browser's .NET runtime cannot decrypt. The desktop viewer opens it.", ex);
+                "This PDF is encrypted with a method this platform's .NET runtime cannot decrypt. The desktop viewer opens it.", ex);
         }
         catch (PdfEncryptedDocumentException ex)
         {

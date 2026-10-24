@@ -1,0 +1,94 @@
+name: Android (proof of concept)
+
+# Builds the Android viewer (src/PdfViewer.Android) and uploads the APK as an artifact. A separate
+# workflow so the main CI job is not slowed down; it runs only when the app or the code it is built
+# from changes. The APK is signed with the runner's throwaway debug key (no keystore in the
+# repository): install it with `adb install`, it is not a store release.
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "src/PdfViewer.Android/**"
+      - "src/PdfViewer.Web.Engine/**"
+      - "src/PdfEngine.Vector/**"
+      - "src/PdfEngine.Vector.Skia/**"
+      - "src/PdfEngine.Abstractions/**"
+      - "Directory.Build.props"
+      - ".github/workflows/android.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "src/PdfViewer.Android/**"
+      - "src/PdfViewer.Web.Engine/**"
+      - "src/PdfEngine.Vector/**"
+      - "src/PdfEngine.Vector.Skia/**"
+      - "src/PdfEngine.Abstractions/**"
+      - "Directory.Build.props"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Ubuntu runners come with the Android SDK and JDK 17 installed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        fetch-depth: 0   # the version comes from the latest release tag (Directory.Build.props)
+
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      with:
+        dotnet-version: '9.0.x'
+
+    # Runners also have SDK 10, which would pick the net10 android workload; the app is net9.0-android.
+    - name: Pin the .NET 9 SDK
+      shell: bash
+      run: |
+        sdk=$(dotnet --list-sdks | awk '/^9\./ {print $1}' | sort -V | tail -1)
+        test -n "$sdk"
+        echo "{ \"sdk\": { \"version\": \"$sdk\", \"rollForward\": \"latestPatch\" } }" > global.json
+        dotnet --version
+
+    - name: Install the android workload
+      run: dotnet workload install android
+
+    - name: Build the APK
+      shell: bash
+      run: |
+        dotnet build src/PdfViewer.Android/PdfViewer.Android.csproj -f net9.0-android -c Release \
+          -p:AndroidSdkDirectory="$ANDROID_SDK_ROOT" -p:JavaSdkDirectory="$JAVA_HOME_17_X64"
+
+    - name: Check the package
+      shell: bash
+      run: |
+        apk=$(ls src/PdfViewer.Android/bin/Release/net9.0-android/*-Signed.apk)
+        manifest=src/PdfViewer.Android/obj/Release/net9.0-android/android/AndroidManifest.xml
+        # The app asks for no permission at all: no INTERNET, no storage.
+        if grep -q "uses-permission" "$manifest"; then grep "uses-permission" "$manifest"; exit 1; fi
+        {
+          echo "### Android APK"
+          echo "| | |"
+          echo "|---|---|"
+          echo "| APK (arm64 and x86-64) | $(du -h --apparent-size "$apk" | cut -f1) |"
+          echo "| Permissions | none |"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the APK
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: pdf-viewer-android-apk
+        path: src/PdfViewer.Android/bin/Release/net9.0-android/*-Signed.apk
+        if-no-files-found: error
+        retention-days: 14

@@ -597,7 +597,7 @@ internal sealed class TextFontInfo
             try
             {
                 if (!PdfEngine.Vector.Diagnostics.PdfPlatform.HasInstalledFonts) return index; // a browser has no font folder
-                string dir = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+                string? dir = PdfEngine.Vector.Diagnostics.PdfPlatform.InstalledFontDirectory;
                 if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return index;
                 // Opening hundreds of files is slow (each is scanned on open): the name tables are
                 // read in parallel, then indexed in the order the files are listed, as before.
@@ -701,7 +701,7 @@ internal sealed class TextFontInfo
             try
             {
                 if (!PdfEngine.Vector.Diagnostics.PdfPlatform.HasInstalledFonts) return null;
-                string dir = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+                string? dir = PdfEngine.Vector.Diagnostics.PdfPlatform.InstalledFontDirectory;
                 if (string.IsNullOrEmpty(dir)) return null;
                 string path = Path.Combine(dir, file);
                 if (!File.Exists(path)) return null;
