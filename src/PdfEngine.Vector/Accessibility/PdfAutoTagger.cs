@@ -75,6 +75,9 @@ public sealed record PdfAutoTagRemainingIssue(string Checkpoint, string Clause, 
 /// <remarks>Bounds are in the page's default user space.</remarks>
 public sealed record PdfAutoTagFigure(int Page, PdfRect Bounds);
 
+/// <summary>A top-level element the tagger made (H1 to H6, P, L, Table, Figure, ...), with what it covers in the page's default user space.</summary>
+public sealed record PdfAutoTagElement(int Page, string Type, PdfRect Bounds);
+
 /// <summary>What the tagger found and tagged.</summary>
 public sealed record PdfAutoTagSummary
 {
@@ -115,6 +118,8 @@ public sealed class PdfAutoTagResult
     public IReadOnlyList<string> Review { get; init; } = Array.Empty<string>();
     /// <summary>Figures whose alternate text is a placeholder (or missing).</summary>
     public IReadOnlyList<PdfAutoTagFigure> FiguresNeedingAlt { get; init; } = Array.Empty<PdfAutoTagFigure>();
+    /// <summary>The top-level elements in reading order, with their bounds (for showing the tags over the pages).</summary>
+    public IReadOnlyList<PdfAutoTagElement> Elements { get; init; } = Array.Empty<PdfAutoTagElement>();
     /// <summary>The language written into the catalog.</summary>
     public string? Language { get; init; }
     /// <summary>Every page's extracted text was compared with the original's and is the same (null when not checked).</summary>
@@ -182,7 +187,7 @@ public static class PdfAutoTagger
         return new PdfAutoTagResult
         {
             Status = PdfAutoTagStatus.Tagged, Bytes = bytes, Summary = summary, Report = report, Remaining = remaining,
-            Review = run.Review(remaining), FiguresNeedingAlt = run.FiguresNeedingAlt, Language = run.Language, TextPreserved = textPreserved,
+            Review = run.Review(remaining), FiguresNeedingAlt = run.FiguresNeedingAlt, Elements = run.Elements(), Language = run.Language, TextPreserved = textPreserved,
             Message = remaining.Count == 0
                 ? "Tagged. The copy passes every machine check of PDF/UA-1; a person should still review it."
                 : remaining.All(r => r.Kind != PdfAutoTagIssueKind.NotFixed)

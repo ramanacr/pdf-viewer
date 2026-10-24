@@ -28,7 +28,8 @@ namespace PdfEngine.Vector.Tests;
 public class PdfAutoTaggerTests
 {
     private const string Fonts = "/Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> " +
-                                 "/F2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> >>";
+                                 "/F2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> " +
+                                 "/F3 << /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >> >>";
 
     private static string T(string font, double size, double x, double y, string text) =>
         FormattableString.Invariant($"BT /{font} {size} Tf {x} {y} Td ({text}) Tj ET\n");
@@ -274,6 +275,45 @@ public class PdfAutoTaggerTests
         using var _ = tagged;
         Assert.Equal(new[] { "H1: Turned heading", "P: Body text below the heading." }, Outline(tagged, Tree(tagged)));
         Assert.Equal(1, result.Summary.RotatedPages);
+    }
+
+    [Fact]
+    public async Task TitleOverTwoColumns_WithParagraphGapsThatLineUp_ReadsColumnByColumn()
+    {
+        // The title crosses the gutter; below it the columns' paragraph gaps are level with each other.
+        string content = T("F2", 20, 72, 740, "A title wide enough to cross the gutter")
+                         + T("F1", 10, 72, 700, "Left column first paragraph") + T("F1", 10, 330, 700, "Right column first paragraph")
+                         + T("F1", 10, 72, 688, "ends on this line.") + T("F1", 10, 330, 688, "ends on this line too.")
+                         + T("F1", 10, 72, 650, "Left column second one.") + T("F1", 10, 330, 650, "Right column second one.");
+        var (_, tagged) = await Tag(Page(content));
+        using var __ = tagged;
+        Assert.Equal(new[]
+        {
+            "H1: A title wide enough to cross the gutter",
+            "P: Left column first paragraphends on this line.", "P: Left column second one.",
+            "P: Right column first paragraphends on this line too.", "P: Right column second one.",
+        }, Outline(tagged, Tree(tagged)));
+    }
+
+    [Fact]
+    public async Task IndentedFirstLines_NoteMarkers_AndHangingIndents_JoinTheirParagraphs()
+    {
+        // Courier: every glyph is 6 points wide at 10 points, so the lines' right edges are exact.
+        string content = T("F3", 10, 120, 700, "An indented first line of") + T("F3", 10, 72, 688, "a paragraph wrapping onto a third")
+                         + T("F3", 10, 72, 676, "line of its own.")
+                         + T("F3", 10, 72, 640, "This sentence has a note") + "BT /F3 6 Tf 217 644 Td (1) Tj ET\n"
+                         + T("F2", 10, 72, 600, "Why it matters")
+                         + T("F1", 10, 72, 586, @"\225 First line of a bullet item") + T("F1", 10, 82, 572, "that wraps under its text")
+                         + T("F1", 10, 82, 558, "and ends here.") + T("F1", 10, 72, 544, @"\225 Second item");
+        var (_, tagged) = await Tag(Page(content));
+        using var __ = tagged;
+        Assert.Equal(new[]
+        {
+            "P: An indented first line ofa paragraph wrapping onto a thirdline of its own.",
+            "P: This sentence has a note1",
+            "H1: Why it matters",
+            "L", "  LI", "    LBody: • First line of a bullet itemthat wraps under its textand ends here.", "  LI", "    LBody: • Second item",
+        }, Outline(tagged, Tree(tagged)));
     }
 
     // ------------------------------------------------------------------ tables

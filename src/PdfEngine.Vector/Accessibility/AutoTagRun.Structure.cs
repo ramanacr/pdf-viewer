@@ -120,6 +120,7 @@ internal sealed partial class AutoTagRun
             var heading = HeadingClass(item.Lines);
             var node = new TagNode(heading != null ? "H" : "P", page.Index) { HeadingClass = heading };
             if (heading != null) node.HeadingText = string.Join(" ", item.Lines.Select(l => l.Text)).Trim();
+            node.Bounds = item.Lines.Select(l => page.LineBounds[l]).Aggregate(Union);
             foreach (var line in item.Lines)
             {
                 page.LineOwner[line] = node;
@@ -166,6 +167,7 @@ internal sealed partial class AutoTagRun
                     page.ListItems++;
                 }
             page.Lists++;
+            list.Bounds = pending.SelectMany(p => p.Segments).SelectMany(s => s.MarkerLine != null ? s.Lines.Append(s.MarkerLine) : s.Lines).Select(l => page.LineBounds[l]).Aggregate(Union);
             page.Top.Add(list);
             pending.Clear();
         }
@@ -199,7 +201,8 @@ internal sealed partial class AutoTagRun
             {
                 var last = pending[^1].Segments[^1].Label;
                 var next = segments[0].Label;
-                if (last.Family != next.Family || (last.Number is int n && next.Number != n + 1)) Flush();
+                // Another kind of label, a number out of sequence, or the next column: another list.
+                if (last.Family != next.Family || (last.Number is int n && next.Number != n + 1) || item.D.Y < pending[^1].Item.D.Y) Flush();
             }
             pending.Add((item, segments));
         }
@@ -426,6 +429,8 @@ internal sealed partial class AutoTagRun
             && Enumerable.Range(0, cols).All(c => cell(0, c) is var l && l.Count > 0 && l.All(LineBold))
             && Enumerable.Range(1, rows - 1).Any(r => Enumerable.Range(0, cols).Any(c => cell(r, c).Any(l => !LineBold(l))));
         var table = new TagNode("Table", page.Index);
+        var all = Enumerable.Range(0, rows).SelectMany(r => Enumerable.Range(0, cols).SelectMany(c => cell(r, c))).ToList();
+        if (all.Count > 0) table.Bounds = all.Select(l => page.LineBounds[l]).Aggregate(Union);
         var item = new Item { D = box, Node = table, Cells = new() };
         for (int r = 0; r < rows; r++)
         {

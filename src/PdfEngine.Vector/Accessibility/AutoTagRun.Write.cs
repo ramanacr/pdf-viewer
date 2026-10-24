@@ -441,6 +441,9 @@ internal sealed partial class AutoTagRun
 
     // ------------------------------------------------------------------ what was done
 
+    public IReadOnlyList<PdfAutoTagElement> Elements() =>
+        _document.Children.Where(n => n.Bounds != null).Select(n => new PdfAutoTagElement(n.Page + 1, n.Type, n.Bounds!.Value)).ToList();
+
     public PdfAutoTagSummary Summary() => new()
     {
         Pages = _pages.Count,

@@ -310,7 +310,7 @@ internal sealed partial class AutoTagRun
     // ------------------------------------------------------------------ page furniture
 
     private static readonly Regex Digits = new(@"\d+", RegexOptions.CultureInvariant);
-    private static readonly Regex PageNumber = new(@"^[\s\-–—\[\(]*((page|p\.|seite|pagina|página|page no\.?)\s*)?(#|[ivxlcdm]{1,6})(\s*(of|/|von|de|sur)\s*#)?[\s\-–—\]\)]*$",
+    private static readonly Regex PageNumber = new(@"^[\s\-–—\[\(]*((page|p\.|seite|pagina|página|page no\.?)\s*)?(#([\-–.]#)?|[ivxlcdm]{1,6})(\s*(of|/|von|de|sur)\s*#)?[\s\-–—\]\)]*$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     /// <summary>
@@ -414,16 +414,123 @@ internal sealed partial class AutoTagRun
             var d = lines.Select(l => LineDisplay(page, l)).Aggregate(Union);
             items.Add(new Item { D = d, Block = block, Lines = lines });
         }
+        MergeFragments(page, items, markerOf);
         foreach (var (op, node) in figureOps)
             items.Add(new Item { D = Display(page, node.Bounds ?? default), Node = node });
 
         bool multi = false;
-        double gutter = Math.Max(6, 0.8 * _bodySize);
+        double gutter = Math.Max(4, 0.5 * _bodySize);
         var ordered = Cut(items, gutter, page, 0, ref multi);
         page.MultiColumn = multi;
         Place(page, ordered, markerOf);
         AssignOwners(page);
         TagAnnotations(page);
+    }
+
+    /// <summary>
+    /// Pieces the paragraph finder leaves apart that read as part of a paragraph: note markers and
+    /// superscripts (up to three characters touching a paragraph) and a first line set with an
+    /// indent (one line running to the right edge of the paragraph that follows it).
+    /// </summary>
+    private void MergeFragments(PageModel page, List<Item> items, Dictionary<TextLine, (TextLine Line, Match M)> markerOf)
+    {
+        bool Labelled(TextLine l) => _options.DetectLists && (markerOf.ContainsKey(l) || LabelOf(l.Text) != null);
+        // A list item's first line grouped with the line above it (a heading, an introduction) starts an item of its own.
+        foreach (var item in items.Where(i => i.Block != null).ToList())
+        {
+            int cut = item.Lines.FindIndex(1, l => Labelled(l));
+            if (cut <= 0 || item.Lines.Take(cut).Any(Labelled)) continue;
+            var rest = new Item { Block = item.Block, Lines = item.Lines.Skip(cut).ToList() };
+            item.Lines = item.Lines.Take(cut).ToList();
+            item.D = item.Lines.Select(l => LineDisplay(page, l)).Aggregate(Union);
+            rest.D = rest.Lines.Select(l => LineDisplay(page, l)).Aggregate(Union);
+            items.Insert(items.IndexOf(item) + 1, rest);
+        }
+        var texts = items.Where(i => i.Block != null).ToList();
+        void Into(Item host, Item piece)
+        {
+            var line = piece.Lines[0];
+            var d = LineDisplay(page, line);
+            int at = 0;
+            double best = double.MinValue;
+            for (int k = 0; k < host.Lines.Count; k++)
+            {
+                var hd = LineDisplay(page, host.Lines[k]);
+                double overlap = Math.Min(hd.Y + hd.Height, d.Y + d.Height) - Math.Max(hd.Y, d.Y);
+                if (overlap > best) { best = overlap; at = d.X < hd.X ? k : k + 1; }
+            }
+            if (best <= 0) at = d.Y < LineDisplay(page, host.Lines[0]).Y ? 0 : host.Lines.Count;
+            host.Lines.Insert(at, line);
+            host.D = Union(host.D, d);
+            items.Remove(piece);
+            texts.Remove(piece);
+        }
+
+        foreach (var small in texts.ToList())
+        {
+            if (small.Lines.Count != 1) continue;
+            var line = small.Lines[0];
+            int chars = line.Text.Count(c => !char.IsWhiteSpace(c));
+            if (chars == 0 || chars > 3) continue;
+            double pad = 0.6 * Math.Max(line.Size, 1);
+            Item? host = null;
+            double nearest = double.MaxValue;
+            foreach (var other in texts)
+            {
+                if (ReferenceEquals(other, small) || other.Lines.Sum(l => l.Text.Length) <= chars) continue;
+                var o = other.D;
+                if (small.D.X > o.X + o.Width + pad || small.D.X + small.D.Width < o.X - pad || small.D.Y > o.Y + o.Height + 0.3 * pad || small.D.Y + small.D.Height < o.Y - 0.3 * pad) continue;
+                double distance = Math.Abs((o.Y + o.Height / 2) - (small.D.Y + small.D.Height / 2));
+                if (distance < nearest) { nearest = distance; host = other; }
+            }
+            if (host != null) Into(host, small);
+        }
+
+        foreach (var first in texts.ToList())
+        {
+            // One line (with any note marker merged into it).
+            var line = first.Lines.OrderByDescending(l => l.Text.Length).First();
+            double size = Math.Max(line.Size, 1);
+            var a = first.D;
+            if (a.Height > 1.8 * size || HeadingClass(first.Lines) != null || first.Lines.Any(Labelled)) continue;
+            foreach (var next in texts)
+            {
+                if (ReferenceEquals(next, first) || Labelled(next.Lines[0])) continue;
+                var b = next.D;
+                var top = next.Lines[0];
+                double gap = b.Y - (a.Y + a.Height);
+                if (gap < -0.3 * size || gap > 0.9 * size) continue;
+                if (a.X < b.X + 0.5 * size || a.X - b.X > 8 * size || Math.Abs((a.X + a.Width) - (b.X + b.Width)) > 1.5 * size) continue;
+                if (top.Size / size is < 0.9 or > 1.1 || LineBold(top) != LineBold(line)) continue;
+                foreach (var piece in first.Lines.AsEnumerable().Reverse()) next.Lines.Insert(0, piece);
+                next.D = Union(next.D, a);
+                items.Remove(first);
+                texts.Remove(first);
+                break;
+            }
+        }
+
+        // A list item's lines after its first, set with a hanging indent (under its text, right of its label).
+        foreach (var head in texts.ToList())
+        {
+            if (!texts.Contains(head) || !Labelled(head.Lines[0])) continue;
+            var line = head.Lines[^1];
+            double size = Math.Max(line.Size, 1);
+            var a = head.D;
+            var under = texts.FirstOrDefault(next =>
+            {
+                if (ReferenceEquals(next, head) || next.Lines.Any(Labelled)) return false;
+                var b = next.D;
+                double gap = b.Y - (a.Y + a.Height);
+                return gap >= -0.3 * size && gap <= 0.9 * size && b.X > a.X + 0.3 * size && b.X - a.X < 4 * size
+                       && next.Lines[0].Size / size is >= 0.9 and <= 1.1 && LineBold(next.Lines[0]) == LineBold(line);
+            });
+            if (under == null) continue;
+            head.Lines.AddRange(under.Lines);
+            head.D = Union(head.D, under.D);
+            items.Remove(under);
+            texts.Remove(under);
+        }
     }
 
     // ------------------------------------------------------------------ figures
@@ -500,8 +607,40 @@ internal sealed partial class AutoTagRun
             bottom = Math.Max(bottom, byY[k].D.Y + byY[k].D.Height);
         }
         if (bands.Count == 1) return byY;
+        // Bands that share a gutter no item of theirs crosses are one region of columns (paragraph
+        // gaps that happen to line up across columns must not cut the columns into rows).
+        var regions = new List<(List<Item> Items, List<(double From, double To)> Gutters)>();
+        foreach (var band in bands)
+        {
+            if (regions.Count > 0 && regions[^1].Gutters.Count > 0)
+            {
+                var kept = regions[^1].Gutters.Where(g => band.All(i => i.D.X + i.D.Width <= g.From + 1 || i.D.X >= g.To - 1)).ToList();
+                if (kept.Count > 0)
+                {
+                    regions[^1].Items.AddRange(band);
+                    regions[^1] = (regions[^1].Items, kept);
+                    continue;
+                }
+            }
+            regions.Add((new List<Item>(band), Gaps(band, gutter)));
+        }
+        if (regions.Count == 1) return byY;
         var ordered = new List<Item>();
-        foreach (var band in bands) ordered.AddRange(Cut(band, gutter, page, depth + 1, ref multi));
+        foreach (var (region, _) in regions) ordered.AddRange(Cut(region, gutter, page, depth + 1, ref multi));
         return ordered;
+    }
+
+    /// <summary>The gaps at least <paramref name="gutter"/> wide between the items, across their whole height.</summary>
+    private static List<(double From, double To)> Gaps(List<Item> items, double gutter)
+    {
+        var gaps = new List<(double, double)>();
+        var byX = items.OrderBy(i => i.D.X).ToList();
+        double maxRight = byX[0].D.X + byX[0].D.Width;
+        for (int k = 1; k < byX.Count; k++)
+        {
+            if (byX[k].D.X - maxRight >= gutter) gaps.Add((maxRight, byX[k].D.X));
+            maxRight = Math.Max(maxRight, byX[k].D.X + byX[k].D.Width);
+        }
+        return gaps;
     }
 }
