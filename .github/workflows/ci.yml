@@ -73,6 +73,12 @@ jobs:
         VECTOR_FUZZ_ITERATIONS: ${{ github.event_name == 'schedule' && '100000' || '2000' }}
       run: dotnet test tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj --configuration Release --no-build --verbosity normal
 
+    # Portable Skia backend (src/PdfEngine.Vector.Skia): every fixture rendered with Skia and with
+    # Direct2D, compared within a per-test pixel budget. The corpus parity report in that project
+    # runs only when SKIA_PARITY_CORPUS points at a corpus checkout, so it is skipped here.
+    - name: Run Skia Backend Suite
+      run: dotnet test tests/PdfEngine.Vector.Skia.Tests/PdfEngine.Vector.Skia.Tests.csproj --configuration Release --no-build --verbosity normal
+
     # Local-only corpus report (no document leaves the runner). Extend by pointing at a
     # rights-cleared corpus checkout; see eng/vectorpdf/corpus/README.md.
     - name: Vector Corpus Report

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Portable on purpose: the web (Blazor WebAssembly) and Android viewers are to reuse this backend. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PdfEngine.Vector.Skia</RootNamespace>
+    <AssemblyName>PdfEngine.Vector.Skia</AssemblyName>
+    <Description>Portable Skia (CPU raster) renderer for the vector engine's display list.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      MIT-licensed SkiaSharp; pinned. Each host brings the native library for its platform (the
+      tests reference SkiaSharp.NativeAssets.Win32 at the same version).
+    -->
+    <PackageReference Include="SkiaSharp" Version="3.116.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfEngine.Vector.Skia.Tests" />
+  </ItemGroup>
+
+</Project>

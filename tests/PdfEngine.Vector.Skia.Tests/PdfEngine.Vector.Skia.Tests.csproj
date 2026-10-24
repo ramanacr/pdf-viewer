@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Windows: the Skia backend is portable, but its reference here is the Direct2D backend, which
+      every fixture is also rendered with and compared against.
+    -->
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!-- Skia's native library for the Windows test host; the same pinned version as SkiaSharp. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.116.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+    <ProjectReference Include="..\..\src\PdfEngine.Vector.Skia\PdfEngine.Vector.Skia.csproj" />
+    <ProjectReference Include="..\..\src\PdfEngine.Vector.Direct2D\PdfEngine.Vector.Direct2D.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The vector engine tests' fixture builders, shared rather than copied. -->
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\VectorPdfBuilder.cs" Link="Fixtures\VectorPdfBuilder.cs" />
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\PdfTestEncryption.cs" Link="Fixtures\PdfTestEncryption.cs" />
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\SyntheticCff.cs" Link="Fixtures\SyntheticCff.cs" />
+  </ItemGroup>
+
+</Project>
