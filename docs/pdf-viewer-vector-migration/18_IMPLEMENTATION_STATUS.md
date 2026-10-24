@@ -394,6 +394,24 @@ The document-level services no longer need PDFium (`PdfEngine.Vector/Services`).
 - `eng/vectorpdf/tools/VectorPdf.Tool`: `bench` (vector vs PDFium) and `corpus` (JSONL report); `docservices` compares the native document services with PDFium file by file (texts by hash only) and round-trips page edits and annotations. It shares `tests/PdfEngine.Vector.Tests/Oracle/PdfiumOracle.cs` with the tests.
 - CI runs the vector suite (2 000 fuzz iterations per PR, 100 000 nightly), the corpus report and the benchmark.
 
+### Performance
+Off-screen rendering (thumbnails, printing, export, cold open) was about twice PDFium's time. A profile of the corpus (`vectorpdf perf`: build, analysis, fonts, images, replay by command, Direct2D flush, readback) showed where: images decoded up to three times per render and converted pixel by pixel (CalRGB JPEGs, sRGB ICC images, CCITT fax), every glyph of every run tessellated again by Direct2D's outline text rendering, antialiased rectangular clips composited through GPU intermediates (a table with a clip per cell), and a page buffer of megabytes on the managed heap per render (a full garbage collection every few renders). What changed:
+- **Text** comes from a device-wide glyph atlas for body sizes (≤ 64 device pixels, plain fill): each glyph rasterized once per size and quarter-pixel position by exact area, baselines on whole pixels as PDFium places glyphs, runs drawn as sprite batches. Larger, stroked, clipping and translucent text keeps Direct2D's outline rendering; printing keeps glyph runs as text.
+- **Rectangular clips** take every pixel they touch, unantialiased (PDFium's outer pixel rectangle).
+- **Reuse**: a display list's analysis, each image's decode outcome (the pixels the analysis decoded go to the paint), glyph run resolution, one recoloured brush per replayer, tile surfaces across page sizes; page pixels in native memory, as PDFium's are.
+- **Core** (also used by the Skia backend): exact table-driven CalRGB/Lab conversion, row-wise and parallel 8-bit gray/RGB/indexed images, one decode of a soft mask, table-driven CCITT runs, a lexer without per-token builders, operands made from the token lexed, decoded forms and Type 3 procedures reused per page, the installed-font scan in parallel. Inline images are keyed by content stream as well as offset (two Type 3 glyphs with an inline image at the same offset showed the same image).
+
+Measured on one machine (Iris Xe GPU), one process, 189 pages of a corpus sample (41 GovDocs files at up to 4 pages, 40 veraPDF files), each page from a newly opened document (`vectorpdf sample`), three runs each, current main against this branch:
+
+| Per page | main median / p95 | branch median / p95 |
+|---|---|---|
+| Interpret (display-list build) | 2.20–2.25 / 12.7–15.7 ms | 2.50–2.72 / 13.4–14.6 ms |
+| Draw, whole page at 100 % | 8.7–9.5 / 123–129 ms | 7.1–7.4 / 57–60 ms |
+| Draw, 1024 × 1024 tile at 1600 % | 4.3–4.5 / 54–63 ms | 4.5–4.6 / 31–38 ms |
+| Sample totals (draw 100 % / 1600 %) | 4.3–4.6 s / 2.8–3.0 s | 2.8–2.9 s / 1.6–1.7 s |
+
+On 600 GovDocs pages the build is 15–20 % faster (median 1.71 against 1.96–2.06 ms, p95 15–17 against 20–21 ms, total 2.6–2.8 against 3.3–3.5 s); on the small sample its median is a few tenths of a millisecond slower, within the run-to-run spread of the totals. Against PDFium on the same 889-page sample (`vectorpdf corpus --diff-all`, 72 dpi, every page): render time 7.3 s against 7.2 s (main: 12.7 s against 7.4 s, 1.70×), and the mean difference from PDFium fell from 5.69 to 3.33/255 (worst page 15.8 to 12.9), mostly from the atlas text, whose exact-area coverage and whole-pixel baselines are what PDFium draws. A full-corpus profile before the merge with main gave a mean difference of 2.43 against 4.03/255 over 8 561 pages; its times were taken on a shared, fully loaded machine and are not quoted. The GPU round trip (about 2 ms flush, wait and copy per page at 72 dpi) remains the floor for small pages, where PDFium's whole render takes 1–3 ms; first-page latency of small documents stays above PDFium's for that reason.
+
 ---
 
 ## 3. Evidence

@@ -230,6 +230,53 @@ public sealed class PdfContentInterpreter
             public PdfFillRule ClipRule;
         }
 
+        /// <summary>
+        /// Tokens of a content stream with up to two read ahead (the lookahead for <c>num gen R</c>).
+        /// A token read ahead is only ever an operand or the operator ending the operands: after an
+        /// operator, nothing is buffered and the stream position is right after it, so operators that
+        /// read the stream themselves (inline images) see it as before.
+        /// </summary>
+        private sealed class TokenReader(MemoryByteSource src, PdfLexer lexer)
+        {
+            private PdfToken _t0, _t1;
+            private long _start0, _start1, _end0, _end1;
+            private int _count;
+
+            /// <summary>The next token; <paramref name="start"/> is where reading it began (before white space).</summary>
+            public PdfToken Take(out long start)
+            {
+                if (_count == 0)
+                {
+                    start = src.Position;
+                    return lexer.NextToken();
+                }
+                var token = _t0;
+                start = _start0;
+                src.Position = _end0;
+                _t0 = _t1; _start0 = _start1; _end0 = _end1;
+                _count--;
+                return token;
+            }
+
+            /// <summary>The token <paramref name="ahead"/> (0 or 1) after the last one taken, without taking it.</summary>
+            public PdfToken Peek(int ahead)
+            {
+                while (_count <= ahead)
+                {
+                    long saved = src.Position;
+                    if (_count == 1) src.Position = _end0;
+                    long start = src.Position;
+                    var token = lexer.NextToken();
+                    long end = src.Position;
+                    src.Position = saved;
+                    if (_count == 0) { _t0 = token; _start0 = start; _end0 = end; }
+                    else { _t1 = token; _start1 = start; _end1 = end; }
+                    _count++;
+                }
+                return ahead == 0 ? _t0 : _t1;
+            }
+        }
+
         private void Execute(ReadOnlyMemory<byte> content, PdfDictionary? resources, GraphicsState gs, ContentContext ctx)
         {
             resources ??= _page.Resources;
@@ -244,27 +291,62 @@ public sealed class PdfContentInterpreter
 
             using var src = new MemoryByteSource(content);
             var lexer = new PdfLexer(src, _limits);
+            var tokens = new TokenReader(src, lexer);
 
             while (true)
             {
-                long tokenPos = src.Position;
-                var token = lexer.NextToken();
+                var token = tokens.Take(out long tokenPos);
                 if (token.Type == PdfTokenType.EndOfFile)
                     break;
 
                 if (token.Type != PdfTokenType.Keyword)
                 {
-                    src.Position = tokenPos;
-                    var obj = _parser.ParseObject(lexer);
+                    // Simple operands are made from the token itself, as PdfParser.ParseObject makes
+                    // them, instead of lexing them again; arrays and dictionaries go to the parser.
+                    PdfObject? obj;
+                    switch (token.Type)
+                    {
+                        case PdfTokenType.Integer:
+                        {
+                            // num gen R is a reference (the parser's lookahead); the tokens read ahead
+                            // are kept for the next operands.
+                            var next1 = tokens.Peek(0);
+                            if (next1.Type == PdfTokenType.Integer && tokens.Peek(1) is { Type: PdfTokenType.Keyword, TextValue: "R" })
+                            {
+                                tokens.Take(out _);
+                                tokens.Take(out _);
+                                obj = new PdfIndirectRef((int)token.IntValue, (int)next1.IntValue);
+                            }
+                            else
+                            {
+                                obj = new PdfInteger(token.IntValue);
+                            }
+                            break;
+                        }
+                        case PdfTokenType.Real:
+                            obj = new PdfReal(token.RealValue);
+                            break;
+                        case PdfTokenType.Name:
+                            obj = new PdfName(token.TextValue);
+                            break;
+                        case PdfTokenType.String:
+                            obj = new PdfString(token.BinaryValue, IsHex: false);
+                            break;
+                        case PdfTokenType.HexString:
+                            obj = new PdfString(token.BinaryValue, IsHex: true);
+                            break;
+                        default:
+                            src.Position = tokenPos;
+                            obj = _parser.ParseObject(lexer);
+                            if (obj == null && src.Position == tokenPos)
+                                src.Position = tokenPos + 1; // never stall on an unparsable byte
+                            break;
+                    }
                     if (obj != null)
                     {
                         if (operands.Count >= 64)
                             operands.RemoveAt(0); // bounded recovery for runaway operand lists
                         operands.Add(obj);
-                    }
-                    else if (src.Position == tokenPos)
-                    {
-                        src.Position = tokenPos + 1; // never stall on an unparsable byte
                     }
                     continue;
                 }
@@ -563,7 +645,7 @@ public sealed class PdfContentInterpreter
 
                     case "BI":
                         operands.Clear();
-                        ReadInlineImage(src, lexer, resources, gs, hidden);
+                        ReadInlineImage(src, lexer, resources, gs, hidden, ContentId(content));
                         break;
 
                     // ---------------------------------------------------------- marked content
@@ -763,6 +845,20 @@ public sealed class PdfContentInterpreter
         /// A content stream's decoded bytes, or none when its data cannot be decoded (corrupt data,
         /// an unknown filter): PDFium draws nothing for such a stream and goes on with the page.
         /// </summary>
+        // Forms and Type 3 glyph procedures decoded on this page: a glyph or a form used again is not
+        // decoded again, and its inline images keep their keys (ContentId), so their bitmaps are reused.
+        private readonly Dictionary<PdfStream, byte[]> _reusedContent = new(ReferenceEqualityComparer.Instance);
+
+        private byte[] DecodeReused(PdfStream stream)
+        {
+            if (_reusedContent.TryGetValue(stream, out var known))
+                return known;
+            var decoded = DecodeContent(stream);
+            if (decoded.Length > 0) // a failed decode reports its recovery every time, as before
+                _reusedContent[stream] = decoded;
+            return decoded;
+        }
+
         private byte[] DecodeContent(PdfStream stream)
         {
             try
@@ -1694,7 +1790,7 @@ public sealed class PdfContentInterpreter
                     _commands.Add(new SaveState());
                     _commands.Add(new ConcatTransform(glyphToUser));
                     int before = _commands.Count;
-                    Execute(DecodeContent(proc), glyphResources, glyphState,
+                    Execute(DecodeReused(proc), glyphResources, glyphState,
                         ctx with { Type3Depth = ctx.Type3Depth + 1, UncoloredGlyph = false });
                     for (int i = before; i < _commands.Count; i++)
                     {
@@ -2102,7 +2198,7 @@ public sealed class PdfContentInterpreter
                         Recover(); // composited without the soft mask that could not be captured
                 }
 
-                byte[] content = DecodeContent(form);
+                byte[] content = DecodeReused(form);
                 var formResources = _resolver.Resolve(dict["Resources"]) as PdfDictionary ?? parentResources;
 
                 var inner = gs.Clone();
@@ -2371,7 +2467,24 @@ public sealed class PdfContentInterpreter
         };
 
         /// <summary>BI … ID &lt;data&gt; EI (8.9.7).</summary>
-        private void ReadInlineImage(MemoryByteSource src, PdfLexer lexer, PdfDictionary resources, GraphicsState gs, bool hidden)
+        // Content buffers executed on this page (page content, forms, Type 3 glyph procedures, pattern
+        // cells), numbered so an inline image is known by its buffer and offset: two glyph procedures
+        // with an inline image at the same offset are different images.
+        private readonly record struct ContentKey(byte[] Array, int Offset);
+        private readonly Dictionary<ContentKey, int> _contentIds = new();
+        private int _contentSerial;
+
+        private int ContentId(ReadOnlyMemory<byte> content)
+        {
+            if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(content, out var segment) || segment.Array == null)
+                return ++_contentSerial;
+            var key = new ContentKey(segment.Array, segment.Offset);
+            if (!_contentIds.TryGetValue(key, out int id))
+                _contentIds[key] = id = ++_contentSerial;
+            return id;
+        }
+
+        private void ReadInlineImage(MemoryByteSource src, PdfLexer lexer, PdfDictionary resources, GraphicsState gs, bool hidden, int contentId)
         {
             var entries = new Dictionary<string, PdfObject>(StringComparer.Ordinal);
             while (true)
@@ -2442,7 +2555,7 @@ public sealed class PdfContentInterpreter
                 return;
 
             var stream = new PdfStream(dict, 0, data.Length, null, data);
-            PaintImage(stream, dict, gs, resources, isInline: true, $"{_owner.DocumentKey}:inline:{_page.PageNumber}:{dataStart}");
+            PaintImage(stream, dict, gs, resources, isInline: true, $"{_owner.DocumentKey}:inline:{_page.PageNumber}:{contentId}:{dataStart}");
         }
 
         private int InlineComponents(PdfObject? csObj, PdfDictionary resources)

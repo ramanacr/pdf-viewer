@@ -77,6 +77,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
             UseRealizations = true,
             WindowedRealizations = WindowedRealizations,
             DrawSmallGeometriesDirectly = DrawSmallGeometriesDirectly,
+            UseGlyphAtlas = UseGlyphAtlas,
         };
         _replayers.AddFirst((key, replayer));
         while (_replayers.Count > ReplayerCacheCapacity)
@@ -104,6 +105,12 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     /// Applies to replayers created afterwards.
     /// </summary>
     internal bool DrawSmallGeometriesDirectly { get; set; } = true;
+
+    /// <summary>
+    /// Draw opaque text from the device's glyph atlas (tests turn it off to draw every run from its
+    /// outlines). Applies to replayers created afterwards.
+    /// </summary>
+    internal bool UseGlyphAtlas { get; set; } = true;
 
     /// <summary>Realizations built, windowed, and rebuilt for a region beyond their window, over the cached replayers (tests).</summary>
     internal (int Built, int Windowed, int Rebuilt) RealizationCounts
@@ -142,6 +149,9 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
 
     public long CachedBitmapBytes => _res.CachedBitmapBytes;
 
+    /// <summary>Time per render stage since the renderer was created (the corpus profiler).</summary>
+    internal RenderStages Stages => _res.Stages;
+
     /// <summary>Test hook: drops every device-dependent resource as a real device reset would.</summary>
     public void SimulateDeviceLoss()
     {
@@ -155,18 +165,32 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         CancellationToken cancellationToken = default) =>
         (await RenderAsync(displayList, request, fallbackProvider, cancellationToken).ConfigureAwait(false)).Page;
 
+    // Analysis per display list, kept as long as the list is. Guarded by _gate.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<IPdfDisplayList, IReadOnlyList<PdfFallbackToken>> _analyses = new();
+
     /// <summary>Regions this backend cannot draw faithfully (fonts it cannot load, glyphs a substitute lacks, undecodable images).</summary>
     public async Task<IReadOnlyList<PdfFallbackToken>> AnalyzeAsync(IPdfDisplayList displayList, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // A display list is immutable and its analysis depends on nothing device dependent, so
+            // every render of the page after the first (thumbnail, page, tiles, print) reuses it.
+            if (_analyses.TryGetValue(displayList, out var known))
+            {
+                _res.Stages.AnalysisCacheHits++;
+                return known;
+            }
+            long start = RenderStages.Now;
             var backend = new List<PdfFallbackToken>();
             var probe = new Replayer(_res, displayList, backend, analyzeOnly: true, cancellationToken);
             probe.Analyze();
             var all = new List<PdfFallbackToken>(displayList.FallbackTokens);
             all.AddRange(backend);
-            return all;
+            var result = all.AsReadOnly();
+            _analyses.AddOrUpdate(displayList, result);
+            _res.Stages.Analyze += RenderStages.Now - start;
+            return result;
         }
         finally
         {
@@ -221,18 +245,22 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
                 // tile, and is reused by the next render at this scale (the next viewport tile).
                 var pageToPixels = geometry.PageUserToPixels();
                 var replay = AcquireReplayer(list, D2D1.D2D1ComputeMaximumScaleFactor(ref pageToPixels), ct);
+                _res.Stages.Setup += clock.ElapsedTicks;
+                long tilesStart = RenderStages.Now;
                 await Task.Run(() =>
                 {
+                    _res.Stages.Hop += RenderStages.Now - tilesStart;
                     for (int ty = r.Y; ty < r.Y + r.Height; ty += TileSize)
                     {
                         for (int tx = r.X; tx < r.X + r.Width; tx += TileSize)
                         {
                             ct.ThrowIfCancellationRequested();
                             int w = Math.Min(TileSize, r.X + r.Width - tx), h = Math.Min(TileSize, r.Y + r.Height - ty);
-                            RenderTileWithRecovery(replay, list, geometry, overlays, tx, ty, w, h, owner.Array, stride, r.X, r.Y, invertColors, ct);
+                            RenderTileWithRecovery(replay, list, geometry, overlays, tx, ty, w, h, owner, stride, r.X, r.Y, invertColors, ct);
                         }
                     }
                 }, ct).ConfigureAwait(false);
+                _res.Stages.Tiles += RenderStages.Now - tilesStart;
 
                 int composited = overlays.Count(o => o.Pixels != null);
                 var page = new RenderedPage(list.PageNumber, r.Width, r.Height, stride, geometry.Dpi, request.Rotation, owner);
@@ -377,6 +405,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         var pageToDevice = g.PageUserToPixels() * Matrix3x2.CreateTranslation(-r.X, -r.Y);
         Matrix3x2.Invert(pageToDevice, out var deviceToPage);
         var visible = TransformRect(deviceToPage, new Vector2(0, 0), new Vector2(r.Width, r.Height));
+        if (UseGlyphAtlas) _res.PrepareAtlas();
         ctx.Target = _probeTarget;
         ctx.BeginDraw();
         try
@@ -464,7 +493,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     }
 
     private int RenderTileWithRecovery(Replayer replay, IPdfDisplayList list, PageGeometry g, List<(PdfFallbackToken, RenderedPage?)> overlays,
-        int tx, int ty, int w, int h, byte[] dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
+        int tx, int ty, int w, int h, PageBuffer dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
     {
         for (int attempt = 0; ; attempt++)
         {
@@ -489,18 +518,22 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     private ID2D1DeviceContext? _tileContext;
 
     /// <summary>
-    /// The target and CPU-readable staging bitmaps for a tile of this size, created once and
-    /// reused while the size stays the same. Creating a pair per render leaked: GPU drivers keep
-    /// released CPU-readable staging textures, so every 150 dpi page render held on to about
-    /// 8 MB of native memory for good (4 GB after three passes over 150 pages).
+    /// The target and CPU-readable staging bitmaps a tile of w × h is drawn in (its top-left
+    /// corner), created once and reused while they are large enough and not much larger. Creating
+    /// a pair per render leaked: GPU drivers keep released CPU-readable staging textures, so every
+    /// 150 dpi page render held on to about 8 MB of native memory for good (4 GB after three passes
+    /// over 150 pages). Sizes are rounded up to <see cref="SurfaceStep"/>, so pages of different
+    /// sizes (letter and A4, a landscape page) share one pair instead of creating their own.
     /// </summary>
     private (ID2D1Bitmap1 Target, ID2D1Bitmap1 Staging) TileSurfaces(int w, int h)
     {
         var ctx = _res.Context!;
-        if (_tileTarget == null || _tileStaging == null || !ReferenceEquals(_tileContext, ctx) || _tileSize.Width != w || _tileSize.Height != h)
+        bool fits = _tileSize.Width >= w && _tileSize.Height >= h
+                    && (long)_tileSize.Width * _tileSize.Height <= 4L * Step(w) * Step(h);
+        if (_tileTarget == null || _tileStaging == null || !ReferenceEquals(_tileContext, ctx) || !fits)
         {
             DisposeTileSurfaces();
-            var size = new SizeI(w, h);
+            var size = new SizeI(Math.Min(Step(w), TileSize), Math.Min(Step(h), TileSize));
             var targetProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target);
             var stagingProps = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied), 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw);
             _tileTarget = ctx.CreateBitmap(size, IntPtr.Zero, 0, targetProps);
@@ -510,6 +543,11 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         }
         return (_tileTarget, _tileStaging);
     }
+
+    /// <summary>Tile surfaces grow in steps of this many pixels.</summary>
+    private const int SurfaceStep = 256;
+
+    private static int Step(int v) => (v + SurfaceStep - 1) / SurfaceStep * SurfaceStep;
 
     private void DisposeTileSurfaces()
     {
@@ -528,22 +566,37 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     private static bool IsDeviceLost(uint hr) => hr is D2DERR_RECREATE_TARGET or DXGI_ERROR_DEVICE_REMOVED or DXGI_ERROR_DEVICE_RESET;
 
     private int RenderTile(Replayer replay, IPdfDisplayList list, PageGeometry g, List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays,
-        int tx, int ty, int w, int h, byte[] dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
+        int tx, int ty, int w, int h, PageBuffer dest, int destStride, int originX, int originY, bool invert, CancellationToken ct)
     {
+        long surfacesStart = RenderStages.Now;
         var (target, staging) = TileSurfaces(w, h);
+        _res.Stages.Surfaces += RenderStages.Now - surfacesStart;
 
         int composited = DrawTile(replay, list, g, overlays, tx, ty, w, h, target, invert);
 
-        staging.CopyFromBitmap(target);
+        long start = RenderStages.Now;
+        // Only the tile's corner of the (possibly larger) surfaces is copied and read.
+        staging.CopyFromBitmap(new System.Drawing.Point(0, 0), target, new System.Drawing.Rectangle(0, 0, w, h));
         var map = staging.Map(MapOptions.Read);
+        _res.Stages.ReadbackWait += RenderStages.Now - start;
         try
         {
-            for (int row = 0; row < h; row++)
-                Marshal.Copy(map.Bits + (int)(row * map.Pitch), dest, (ty - originY + row) * destStride + (tx - originX) * 4, w * 4);
+            int offset = (ty - originY) * destStride + (tx - originX) * 4;
+            var pixels = dest.GetSpan();
+            unsafe
+            {
+                var source = new ReadOnlySpan<byte>((void*)map.Bits, (int)(map.Pitch * (h - 1)) + w * 4);
+                if (map.Pitch == destStride && w * 4 == destStride)
+                    source[..(destStride * h)].CopyTo(pixels[offset..]); // whole rows: one copy
+                else
+                    for (int row = 0; row < h; row++)
+                        source.Slice((int)(row * map.Pitch), w * 4).CopyTo(pixels[(offset + row * destStride)..]);
+            }
         }
         finally
         {
             staging.Unmap();
+            _res.Stages.Readback += RenderStages.Now - start;
         }
         return composited;
     }
@@ -558,6 +611,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         Matrix3x2.Invert(pageToDevice, out var deviceToPage);
         var visible = TransformRect(deviceToPage, new Vector2(0, 0), new Vector2(w, h));
 
+        if (UseGlyphAtlas) _res.PrepareAtlas();
         // Night mode: the day tile goes to an offscreen bitmap first, then through the Invert effect.
         var dayTarget = invert ? NightSource(w, h) : target;
         ctx.Target = dayTarget;
@@ -571,14 +625,18 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
             ctx.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
             if (_res.DocumentTextParams != null) ctx.TextRenderingParams = _res.DocumentTextParams;
 
+            long replayStart = RenderStages.Now;
             replay.Draw(ctx, pageToDevice, visible);
 
             // Fallback regions last: provider pixels are the full truth for their region.
             composited = DrawOverlays(ctx, list, g.PagePointsToPixels() * Matrix3x2.CreateTranslation(-tx, -ty), overlays, OutlineUnsupportedRegions);
+            _res.Stages.Replay += RenderStages.Now - replayStart;
         }
         finally
         {
+            long flushStart = RenderStages.Now;
             var hr = ctx.EndDraw();
+            _res.Stages.Flush += RenderStages.Now - flushStart;
             ctx.Target = null;
             if (hr.Failure) throw new SharpGenException(hr);
         }
@@ -687,13 +745,53 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         finally { _gate.Release(); }
     }
 
-    /// <summary>Plain array-backed pixel owner for rendered pages.</summary>
-    private sealed class PageBuffer : System.Buffers.IMemoryOwner<byte>
+    /// <summary>
+    /// A rendered page's pixels in native memory, as PDFium's renders are (NativeMemoryOwner): pages
+    /// of several megabytes on the managed heap made the garbage collector run a full collection
+    /// every few renders. Freed on Dispose, or by the finalizer when a caller forgets; reading the
+    /// pixels after that throws instead of reading freed memory. Every byte is written by the
+    /// render, so the memory is not cleared first.
+    /// </summary>
+    internal sealed unsafe class PageBuffer : System.Buffers.MemoryManager<byte>
     {
-        public byte[] Array { get; }
-        public PageBuffer(int length) => Array = new byte[length];
-        public Memory<byte> Memory => Array;
-        public void Dispose() { }
+        private byte* _pointer;
+        private readonly int _length;
+
+        public PageBuffer(int length)
+        {
+            _length = length;
+            _pointer = (byte*)NativeMemory.Alloc((nuint)Math.Max(1, length));
+        }
+
+        ~PageBuffer() => Dispose(false);
+
+        public override Span<byte> GetSpan()
+        {
+            var p = _pointer;
+            if (p == null)
+                throw new ObjectDisposedException(nameof(PageBuffer), "The rendered page has already been disposed.");
+            return new Span<byte>(p, _length);
+        }
+
+        public override System.Buffers.MemoryHandle Pin(int elementIndex = 0)
+        {
+            var p = _pointer;
+            if (p == null)
+                throw new ObjectDisposedException(nameof(PageBuffer), "The rendered page has already been disposed.");
+            if ((uint)elementIndex > (uint)_length)
+                throw new ArgumentOutOfRangeException(nameof(elementIndex));
+            return new System.Buffers.MemoryHandle(p + elementIndex);
+        }
+
+        public override void Unpin() { }
+
+        protected override void Dispose(bool disposing)
+        {
+            var p = _pointer;
+            _pointer = null;
+            if (p != null)
+                NativeMemory.Free(p);
+        }
     }
 }
 

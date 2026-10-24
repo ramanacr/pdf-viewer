@@ -126,22 +126,30 @@ public sealed class SystemFontCatalog
         var faces = new List<SystemFontFace>();
         if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
         {
-            foreach (var path in Directory.EnumerateFiles(directory))
+            var paths = Directory.EnumerateFiles(directory)
+                .Where(p => System.IO.Path.GetExtension(p).ToLowerInvariant() is ".ttf" or ".ttc")
+                .ToArray();
+            // Names only: the renderer scans this on its first non-embedded font, which the first page
+            // waits for. Files are read in parallel (opening each one is most of the cost) and the
+            // faces kept in directory order, so matching does not depend on the scheduling.
+            var perFile = new List<SystemFontFace>?[paths.Length];
+            System.Threading.Tasks.Parallel.For(0, paths.Length, i =>
             {
-                string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
-                if (ext is not (".ttf" or ".ttc")) continue;
+                string path = paths[i];
+                var found = perFile[i] = new List<SystemFontFace>();
                 try
                 {
-                    if (new FileInfo(path).Length > 64L * 1024 * 1024) continue;
-                    // Names only: the renderer scans this on its first non-embedded font.
+                    if (new FileInfo(path).Length > 64L * 1024 * 1024) return;
                     using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
                     int count = TrueTypeFontFile.FontCount(stream);
-                    for (int i = 0; i < count; i++)
-                        if (TrueTypeFontFile.ReadNames(stream, i) is { } n && n.Family.Length > 0)
-                            faces.Add(new SystemFontFace(path, i, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily));
+                    for (int f = 0; f < count; f++)
+                        if (TrueTypeFontFile.ReadNames(stream, f) is { } n && n.Family.Length > 0)
+                            found.Add(new SystemFontFace(path, f, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily));
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
-            }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            });
+            foreach (var found in perFile)
+                if (found != null) faces.AddRange(found);
         }
         return new SystemFontCatalog(faces);
     }

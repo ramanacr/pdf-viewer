@@ -52,6 +52,14 @@ internal sealed partial class Replayer : IDisposable
         foreach (var r in _realizations.Values) r?.Dispose();
         _realizations.Clear();
         _realizationScale = -1;
+        _solid?.Dispose();
+        _solid = null;
+        _solidDevice = null;
+        _sprites?.Dispose();
+        _sprites = null;
+        _spritesContext3?.Dispose();
+        _spritesContext3 = null;
+        _spritesContext = null;
     }
     private readonly D2DResources _res;
     private readonly IPdfDisplayList _list;
@@ -98,7 +106,7 @@ internal sealed partial class Replayer : IDisposable
                         Report(cmd, PdfFallbackReason.UnsupportedFontType, _lastTextProblem);
                     break;
                 case DrawImage image:
-                    if (!TryDecode(image.Image, out _, out _, out _, out var reason))
+                    if (!CanDecode(image.Image, out var reason))
                         Report(cmd, reason, "Image could not be decoded by the Direct2D backend");
                     break;
                 case PushTextClip clip:
@@ -244,7 +252,7 @@ internal sealed partial class Replayer : IDisposable
         foreach (var cmd in _list.Commands)
         {
             if (cmd is DrawGlyphRun r && !r.Run.IsInvisible && ResolveText(r, out _) == null) _unsupportedRuns.Add(r);
-            if (cmd is DrawImage im && !TryDecode(im.Image, out _, out _, out _, out _)) _unsupportedImages.Add(im);
+            if (cmd is DrawImage im && !CanDecode(im.Image, out _)) _unsupportedImages.Add(im);
         }
         MatchGroups();
         MatchUnits();
@@ -344,6 +352,9 @@ internal sealed partial class Replayer : IDisposable
                 i = elementEnd - 1;
                 continue;
             }
+            long commandStart = RenderStages.Now;
+            if (_pendingSprites > 0 && cmd is not (DrawGlyphRun or SaveState or ConcatTransform))
+                FlushSprites();
             switch (cmd)
             {
                 case SaveState:
@@ -363,7 +374,7 @@ internal sealed partial class Replayer : IDisposable
                 case FillPath fp:
                     if (Geometry(fp.Path, fp.Rule) is { } fillGeom)
                     {
-                        using var brush = ctx.CreateSolidColorBrush(Color(fp.Paint.Color, fp.Paint.Alpha));
+                        var brush = Solid(ctx, Color(fp.Paint.Color, fp.Paint.Alpha));
                         ctx.Transform = full;
                         if (ctx1 != null && Realize(ctx1, cmd, fillGeom, full, null) is { } fillMesh)
                             ctx1.DrawGeometryRealization(fillMesh, brush);
@@ -374,7 +385,7 @@ internal sealed partial class Replayer : IDisposable
                 case StrokePath sp:
                     if (Geometry(sp.Path, PdfFillRule.NonZero) is { } strokeGeom)
                     {
-                        using var brush = ctx.CreateSolidColorBrush(Color(sp.Paint.Color, sp.Paint.Alpha));
+                        var brush = Solid(ctx, Color(sp.Paint.Color, sp.Paint.Alpha));
                         Stroke(ctx, strokeGeom, brush, sp.Stroke, full, ctx1, cmd);
                     }
                     break;
@@ -431,7 +442,23 @@ internal sealed partial class Replayer : IDisposable
                     if (surface.Layers.Count > baseLayers) PopLayer(surface);
                     break;
             }
+            // Time per kind of command for the profiler, on the page's own surface only (a group's
+            // time includes what it contains).
+            if (ReferenceEquals(surface, _root))
+            {
+                int kind = cmd switch
+                {
+                    FillPath or StrokePath => 0,
+                    PushClip or PushStrokeClip or PushTextClip or PopClip or RestoreState => 1,
+                    DrawGlyphRun => 2,
+                    DrawImage => 3,
+                    BeginCompositingGroup or BeginTransparencyGroup or EndTransparencyGroup => 4,
+                    _ => 5,
+                };
+                _res.Stages.Commands[kind] += RenderStages.Now - commandStart;
+            }
         }
+        FlushSprites();
         while (surface.Layers.Count > baseLayers) PopLayer(surface);
     }
 
@@ -946,6 +973,27 @@ internal sealed partial class Replayer : IDisposable
         return x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : PdfRect.Empty;
     }
 
+    // One solid brush per device, given each paint's colour: Direct2D takes a brush's colour when a
+    // drawing call is made, and creating a brush per fill, stroke and glyph run was a measurable part
+    // of replaying dense pages. Brushes are device resources, shared by every context of the device.
+    private ID2D1SolidColorBrush? _solid;
+    private ID2D1Device? _solidDevice;
+
+    private ID2D1SolidColorBrush Solid(ID2D1DeviceContext ctx, Color4 color)
+    {
+        if (_solid == null || !ReferenceEquals(_solidDevice, _res.Device))
+        {
+            _solid?.Dispose();
+            _solid = ctx.CreateSolidColorBrush(color);
+            _solidDevice = _res.Device;
+        }
+        else
+        {
+            _solid.Color = color;
+        }
+        return _solid;
+    }
+
     private Color4 Color(PdfColor c, double alpha) => _shapeMode
         ? new(0, 0, 0, alpha > 0 ? 1 : 0)
         : InvertColors
@@ -957,12 +1005,18 @@ internal sealed partial class Replayer : IDisposable
         // A rectangle under an axis-preserving transform is an axis-aligned clip: D2D clips it in
         // the rasterizer, while a geometric-mask layer renders its content to an offscreen surface
         // and composites it back (per nested clip, per tile — the dominant cost on text pages).
+        // The clip takes every pixel the rectangle touches, unantialiased, as PDFium clips to a
+        // rectangle (its outer pixel rectangle). An antialiased clip edge made Direct2D composite
+        // each clip through an intermediate on the GPU: a table with a clip per cell cost ten times
+        // PDFium's time for the page.
         RawRectF? device = rect is { } r && opacity >= 1f ? DeviceRect(r, full) : null;
         bool axis = device.HasValue;
         if (axis)
         {
+            var d = device!.Value;
             surface.Ctx.Transform = Matrix3x2.Identity;
-            surface.Ctx.PushAxisAlignedClip(device!.Value, AntialiasMode.PerPrimitive);
+            surface.Ctx.PushAxisAlignedClip(new RawRectF(MathF.Floor(d.Left), MathF.Floor(d.Top), MathF.Ceiling(d.Right), MathF.Ceiling(d.Bottom)),
+                AntialiasMode.Aliased);
         }
         else
         {
@@ -1278,6 +1332,26 @@ internal sealed partial class Replayer : IDisposable
     /// <summary>Font face and glyph indices for a run; null when the backend cannot draw it faithfully.</summary>
     private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
     {
+        long start = RenderStages.Now;
+        try
+        {
+            // A run resolves the same way every time: analysis, preparation, drawing and every later
+            // replayer of the page (another scale, the next tile) share the first answer.
+            if (!_res.ResolvedRuns.TryGetValue(cmd.Run, out var resolved))
+            {
+                var value = ResolveTextCore(cmd, out bool glyphIds);
+                resolved = new ResolvedRun(value, glyphIds, value == null ? _lastTextProblem : string.Empty);
+                _res.ResolvedRuns.AddOrUpdate(cmd.Run, resolved);
+            }
+            byGlyphId = resolved.ByGlyphId;
+            if (resolved.Value == null) _lastTextProblem = resolved.Problem;
+            return resolved.Value;
+        }
+        finally { _res.Stages.Fonts += RenderStages.Now - start; }
+    }
+
+    private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? ResolveTextCore(DrawGlyphRun cmd, out bool byGlyphId)
+    {
         var run = cmd.Run;
         byGlyphId = false;
         var face = run.Face;
@@ -1362,14 +1436,26 @@ internal sealed partial class Replayer : IDisposable
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
         var widths = new List<double>(run.Glyphs.Count);
-        foreach (var g in run.Glyphs)
+        // The code points of the drawable glyphs, looked up in one call instead of one per glyph.
+        var points = new uint[run.Glyphs.Count];
+        for (int k = 0; k < run.Glyphs.Count; k++)
         {
+            var g = run.Glyphs[k];
             string? text = g.Unicode;
             if (string.IsNullOrEmpty(text) || text == " " || text == " ")
                 continue;
             int unicode = char.ConvertToUtf32(text, 0);
-            uint cp = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)unicode;
-            ushort index = face.GetGlyphIndices(new[] { cp })[0];
+            points[k] = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)unicode;
+        }
+        var found = face.GetGlyphIndices(points);
+        for (int k = 0; k < run.Glyphs.Count; k++)
+        {
+            var g = run.Glyphs[k];
+            string? text = g.Unicode;
+            if (string.IsNullOrEmpty(text) || text == " " || text == " ")
+                continue;
+            int unicode = char.ConvertToUtf32(text, 0);
+            ushort index = found[k];
             // A re-encoded Symbol font shows its characters by codes of its own: find them by what they are.
             if (index == 0 && symbolCodes && Fonts.SymbolFontCodes.CodeFor(unicode) is int symbolCode)
                 index = face.GetGlyphIndices(new[] { (uint)(0xF000 + symbolCode) })[0];
@@ -1457,6 +1543,99 @@ internal sealed partial class Replayer : IDisposable
         return (installed, "Arial", bold, italic, false); // metric-compatible with Helvetica
     }
 
+    /// <summary>Draw opaque glyph runs from the device's glyph atlas (<see cref="GlyphAtlas"/>).</summary>
+    public bool UseGlyphAtlas { get; set; }
+    private ID2D1SpriteBatch? _sprites;
+    private ID2D1DeviceContext? _spritesContext;
+    private ID2D1DeviceContext3? _spritesContext3;
+    private RawRectF[] _spriteDest = new RawRectF[256];
+    private RawRect[] _spriteSource = new RawRect[256];
+    private Color4[] _spriteColors = new Color4[256];
+    // Sprites of consecutive runs drawn from the atlas, not yet handed to the context: one sprite
+    // batch draws them all (FlushSprites), before anything else is drawn on the context.
+    private int _pendingSprites;
+    private ID2D1DeviceContext? _pendingContext;
+
+    /// <summary>Draws the sprites collected so far; called before any other drawing on the context.</summary>
+    private void FlushSprites()
+    {
+        if (_pendingSprites == 0 || _pendingContext is not { } ctx || _spritesContext3 is not { } ctx3 || _res.Atlas is not { } atlas)
+        {
+            _pendingSprites = 0;
+            return;
+        }
+        _sprites ??= ctx3.CreateSpriteBatch();
+        _sprites.Clear();
+        _sprites.AddSprites((uint)_pendingSprites, _spriteDest, _spriteSource, _spriteColors, null!, 16, 16, 16, 0);
+        var mode = ctx.AntialiasMode;
+        ctx.Transform = Matrix3x2.Identity;
+        ctx.AntialiasMode = AntialiasMode.Aliased; // sprite batches draw only without antialiasing (whole-pixel quads)
+        ctx3.DrawSpriteBatch(_sprites, 0, (uint)_pendingSprites, atlas.Bitmap, Vortice.Direct2D1.BitmapInterpolationMode.NearestNeighbor, SpriteOptions.None);
+        ctx.AntialiasMode = mode;
+        _pendingSprites = 0;
+    }
+
+    /// <summary>
+    /// Draws the run's glyphs as sprites of their cells in the glyph atlas, each glyph origin rounded
+    /// to the nearest device pixel as PDFium places glyphs; false when the run is drawn from its
+    /// outlines instead (no atlas, a glyph too large or the atlas full, a translucent paint).
+    /// </summary>
+    private bool DrawFromAtlas(ID2D1DeviceContext ctx, GlyphRun run, Matrix3x2 transform, Color4 color)
+    {
+        if (!UseGlyphAtlas || _shapeMode || color.A < 1f || run.Indices is not { Length: > 0 } indices || run.FontFace is not { } face
+            || _res.Atlas is not { } atlas || !atlas.IsFor(_res.Device))
+            return false;
+        if (!ReferenceEquals(ctx, _spritesContext))
+        {
+            FlushSprites();
+            _spritesContext3?.Dispose();
+            _spritesContext3 = ctx.QueryInterfaceOrNull<ID2D1DeviceContext3>();
+            _spritesContext = ctx;
+        }
+        if (_spritesContext3 is null)
+            return false;
+
+        var linear = transform with { M31 = 0, M32 = 0 };
+        int n = indices.Length;
+        Span<GlyphAtlas.Cell> cells = n <= 128 ? stackalloc GlyphAtlas.Cell[n] : new GlyphAtlas.Cell[n];
+        Span<byte> bins = n <= 128 ? stackalloc byte[n] : new byte[n];
+        Span<(int X, int Y)> pixels = n <= 128 ? stackalloc (int, int)[n] : new (int, int)[n];
+        var offsets = run.Offsets;
+        for (int i = 0; i < n; i++)
+        {
+            // Glyph origin in device space, kept to a quarter pixel (GlyphAtlas.Snap).
+            var offset = offsets is { } o && i < o.Length ? o[i] : default;
+            var (x, y, bin) = GlyphAtlas.Snap(Vector2.Transform(new Vector2(offset.AdvanceOffset, -offset.AscenderOffset), transform));
+            pixels[i] = (x, y);
+            bins[i] = bin;
+        }
+        if (!atlas.TryGetCells(face, run.FontEmSize, indices, bins, linear, cells))
+            return false;
+
+        if (_spriteDest.Length < _pendingSprites + indices.Length)
+        {
+            int grown = Math.Max(_pendingSprites + indices.Length, _spriteDest.Length * 2);
+            Array.Resize(ref _spriteDest, grown);
+            Array.Resize(ref _spriteSource, grown);
+            Array.Resize(ref _spriteColors, grown);
+        }
+        int count = _pendingSprites;
+        for (int i = 0; i < n; i++)
+        {
+            var cell = cells[i];
+            if (cell.Empty) continue;
+            float x = pixels[i].X + cell.Dx, y = pixels[i].Y + cell.Dy;
+            var src = cell.Source;
+            _spriteDest[count] = new RawRectF(x, y, x + (src.Right - src.Left), y + (src.Bottom - src.Top));
+            _spriteSource[count] = src;
+            _spriteColors[count] = color;
+            count++;
+        }
+        _pendingSprites = count;
+        _pendingContext = ctx;
+        return true;
+    }
+
     private void DrawText(ID2D1DeviceContext ctx, DrawGlyphRun cmd, Matrix3x2 ctm, Matrix3x2 full)
     {
         var resolved = ResolveText(cmd, out _);
@@ -1488,12 +1667,23 @@ internal sealed partial class Replayer : IDisposable
             ctx.Transform = pieceTransform;
             if (fill)
             {
-                using var brush = ctx.CreateSolidColorBrush(Color(cmd.Paint.Color, cmd.Paint.Alpha));
+                var brush = Solid(ctx, Color(cmd.Paint.Color, cmd.Paint.Alpha));
                 using var description = _describeText ? Describe(run, r.Indices.Length, first, indices.Length) : null;
                 if (description != null)
                     ctx.DrawGlyphRun(Vector2.Zero, glyphRun, description.Value, brush, MeasuringMode.Natural);
-                else
+                else if (_describeText)
+                    ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural); // printing: glyphs stay text
+                // Only plain filled text (mode 0) comes from the atlas: its whole-pixel baseline would
+                // not line up with a stroke or a clip drawn from the exact outlines.
+                else if (mode != 0 || !DrawFromAtlas(ctx, glyphRun, pieceTransform, Color(cmd.Paint.Color, cmd.Paint.Alpha)))
+                {
+                    // Glyphs the atlas does not take (large, translucent): Direct2D's outline text
+                    // rendering, which is quick for large glyphs (filling their outlines as paths
+                    // was several times slower at deep zoom) and as light as the atlas there.
+                    FlushSprites();
+                    ctx.Transform = pieceTransform;
                     ctx.DrawGlyphRun(Vector2.Zero, glyphRun, brush, MeasuringMode.Natural);
+                }
             }
             if (stroke && run.StrokePaint is PdfPaint sp && run.Stroke is PdfStroke st)
             {
@@ -1503,7 +1693,7 @@ internal sealed partial class Replayer : IDisposable
                     r.Face.GetGlyphRunOutline(glyphRun.FontEmSize, glyphRun.Indices, glyphRun.Advances, glyphRun.Offsets, false, false, sink);
                     sink.Close();
                 }
-                using var brush = ctx.CreateSolidColorBrush(Color(sp.Color, sp.Alpha));
+                var brush = Solid(ctx, Color(sp.Color, sp.Alpha));
                 // Stroke width is user space: express it in glyph space.
                 float textScale = MathF.Sqrt(MathF.Abs((pieceToText * M(run.TextMatrix)).GetDeterminant()));
                 Stroke(ctx, outline, brush, st with { Width = st.Width / Math.Max(textScale, 1e-6), DashArray = null }, pieceTransform);
@@ -1516,12 +1706,46 @@ internal sealed partial class Replayer : IDisposable
 
     private bool TryDecode(PdfImageRef image, out byte[] pixels, out int width, out int height, out PdfFallbackReason reason)
     {
+        long start = RenderStages.Now;
+        try { return TryDecodeCore(image, out pixels, out width, out height, out reason); }
+        finally { _res.Stages.Images += RenderStages.Now - start; }
+    }
+
+    /// <summary>
+    /// Whether the image decodes, decoding it only the first time any replayer asks. The pixels of
+    /// that decode are kept for the paint that follows unless the device already has the bitmap.
+    /// </summary>
+    private bool CanDecode(PdfImageRef image, out PdfFallbackReason reason)
+    {
+        reason = PdfFallbackReason.ImageDecode;
+        if (image.Source == null)
+            return InlineDecodes(image);
+        string key = image.Source.CacheKey;
+        if (_res.TryGetImageOutcome(key, out var known))
+        {
+            _res.Stages.ImageDecodesSkipped++;
+            reason = known ?? reason;
+            return known == null;
+        }
+        if (!TryDecode(image, out var pixels, out int w, out int h, out reason))
+            return false;
+        if (_res.GetBitmap(key) == null)
+            _res.KeepDecoded(key, pixels, w, h);
+        return true;
+    }
+
+    private static bool InlineDecodes(PdfImageRef image) =>
+        !image.ImageData.IsEmpty && image.Width > 0 && image.Height > 0 && image.ImageData.Length >= (long)image.Width * image.Height * 3;
+
+    /// <summary>Decodes the image into straight BGRA the caller owns, and records whether it decodes.</summary>
+    private bool TryDecodeCore(PdfImageRef image, out byte[] pixels, out int width, out int height, out PdfFallbackReason reason)
+    {
         pixels = Array.Empty<byte>();
         width = height = 0;
         reason = PdfFallbackReason.ImageDecode;
         if (image.Source == null)
         {
-            if (!image.ImageData.IsEmpty && image.Width > 0 && image.Height > 0 && image.ImageData.Length >= (long)image.Width * image.Height * 3)
+            if (InlineDecodes(image))
             {
                 width = image.Width; height = image.Height;
                 pixels = new byte[width * height * 4];
@@ -1535,14 +1759,18 @@ internal sealed partial class Replayer : IDisposable
             return false;
         }
 
-        if (_decoded.TryGetValue(image.Source.CacheKey, out var cached))
+        string key = image.Source.CacheKey;
+        if (_res.TryGetImageOutcome(key, out var known) && known != null)
         {
-            (pixels, width, height) = cached;
-            return pixels.Length > 0;
+            reason = known.Value;
+            return false;
         }
+        if (_res.TakeDecoded(key, out pixels, out width, out height))
+            return true;
 
         try
         {
+            _res.Stages.ImagesDecoded++;
             var decoded = image.Source.Decode(_ct);
             width = decoded.Width;
             height = decoded.Height;
@@ -1555,7 +1783,7 @@ internal sealed partial class Replayer : IDisposable
                 var plane = (mask with { Width = mw, Height = mh }).ToAlpha(maskPixels, 4, mw * 4);
                 ApplyAlpha(pixels, width, height, plane, mw, mh);
             }
-            _decoded[image.Source.CacheKey] = (pixels, width, height);
+            _res.SetImageOutcome(key, null);
             return true;
         }
         catch (Exception ex) when (ex is PdfEngine.Vector.Diagnostics.PdfVectorException or SharpGenException or InvalidDataException or IOException
@@ -1564,13 +1792,12 @@ internal sealed partial class Replayer : IDisposable
             reason = ex is PdfEngine.Vector.Diagnostics.PdfUnsupportedFeatureException u ? u.Reason
                    : ex is PdfEngine.Vector.Diagnostics.PdfResourceLimitException ? PdfFallbackReason.ResourceLimit
                    : PdfFallbackReason.ImageDecode;
-            _decoded[image.Source.CacheKey] = (Array.Empty<byte>(), 0, 0);
+            _res.SetImageOutcome(key, reason);
+            pixels = Array.Empty<byte>();
+            width = height = 0;
             return false;
         }
     }
-
-    // Decoded pixels are shared by analysis and drawing within one replay; bitmaps are cached on the device.
-    private readonly Dictionary<string, (byte[] Pixels, int Width, int Height)> _decoded = new(StringComparer.Ordinal);
 
     private byte[] DecodeJpeg(PdfDecodedImage decoded, out int width, out int height) => WicJpeg.Decode(_res.Wic, decoded, out width, out height);
 
@@ -1611,7 +1838,6 @@ internal sealed partial class Replayer : IDisposable
                 return;
             if (InvertColors)
             {
-                pixels = (byte[])pixels.Clone();
                 for (int p = 0; p + 3 < pixels.Length; p += 4)
                 {
                     pixels[p] = (byte)(255 - pixels[p]);
@@ -1619,11 +1845,7 @@ internal sealed partial class Replayer : IDisposable
                     pixels[p + 2] = (byte)(255 - pixels[p + 2]);
                 }
             }
-            else
-            {
-                pixels = (byte[])pixels.Clone(); // the decoded copy is shared with analysis
-            }
-            // Direct2D draws premultiplied alpha.
+            // The decoded pixels are this paint's own: premultiplied in place (Direct2D draws premultiplied alpha).
             for (int p = 0; p < pixels.Length; p += 4)
             {
                 int a = pixels[p + 3];

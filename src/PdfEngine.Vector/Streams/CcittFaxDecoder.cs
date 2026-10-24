@@ -20,16 +20,20 @@ internal sealed class CcittFaxDecoder
 
     // ------------------------------------------------------------------ code tables (T.4 Tables 2, 3)
 
-    private static readonly Dictionary<int, int> White = new(), Black = new();
+    // Codes are at most 13 bits and prefix-free, so a table indexed by the next 13 bits finds each
+    // code in one step: every index that starts with a code holds (length << 16) | (run + 1), and 0
+    // where no code starts.
+    private const int MaxCodeBits = 13;
+    private static readonly int[] White = new int[1 << MaxCodeBits], Black = new int[1 << MaxCodeBits];
 
-    private static int Key(int length, int code) => (length << 16) | code;
-
-    private static void AddCodes(Dictionary<int, int> table, string codes, int firstRun, int step)
+    private static void AddCodes(int[] table, string codes, int firstRun, int step)
     {
         int run = firstRun;
         foreach (var bits in codes.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
-            table[Key(bits.Length, Convert.ToInt32(bits, 2))] = run;
+            int first = Convert.ToInt32(bits, 2) << (MaxCodeBits - bits.Length);
+            for (int i = 0; i < 1 << (MaxCodeBits - bits.Length); i++)
+                table[first + i] = (bits.Length << 16) | (run + 1);
             run += step;
         }
     }
@@ -82,15 +86,14 @@ internal sealed class CcittFaxDecoder
 
     private bool AtEnd => _bit >= _bits;
 
+    /// <summary>The next <paramref name="n"/> bits (at most 24); bits past the end read as zero.</summary>
     private int Peek(int n)
     {
-        int v = 0;
-        for (int i = 0; i < n; i++)
-        {
-            long b = _bit + i;
-            v = (v << 1) | (b < _bits ? (_data[b >> 3] >> (7 - (int)(b & 7))) & 1 : 0);
-        }
-        return v;
+        long index = _bit >> 3, end = _bits >> 3; // the end is a whole byte
+        uint w = 0;
+        for (int k = 0; k < 4; k++)
+            w = (w << 8) | (index + k < end ? _data[index + k] : 0u);
+        return (int)((w << (int)(_bit & 7)) >> (32 - n));
     }
 
     private int Read(int n)
@@ -111,14 +114,14 @@ internal sealed class CcittFaxDecoder
         int total = 0;
         while (true)
         {
-            int code = 0, found = -1;
-            for (int len = 1; len <= 13; len++)
+            int entry = table[Peek(MaxCodeBits)];
+            if (entry == 0)
             {
-                code = (code << 1) | Read(1);
-                if (table.TryGetValue(Key(len, code), out int run)) { found = run; break; }
-            }
-            if (found < 0)
+                _bit += MaxCodeBits; // as far as a bit-by-bit search would have read
                 throw new DecodeException();
+            }
+            _bit += entry >> 16;
+            int found = (entry & 0xFFFF) - 1;
             total += found;
             if (found < 64)
                 return total;
@@ -343,12 +346,23 @@ internal sealed class CcittFaxDecoder
 
     private static void SetSpan(byte[] output, int rowOffset, int from, int to, bool blackIs1)
     {
-        for (int x = from; x < to; x++)
+        int x = from;
+        // Leading bits up to a byte boundary, whole bytes, then the trailing bits.
+        for (; x < to && (x & 7) != 0; x++) SetBit(output, rowOffset, x, blackIs1);
+        if (to - x >= 8)
         {
-            int idx = rowOffset + (x >> 3);
-            byte mask = (byte)(0x80 >> (x & 7));
-            if (blackIs1) output[idx] |= mask;
-            else output[idx] &= (byte)~mask;
+            int whole = (to - x) >> 3;
+            output.AsSpan(rowOffset + (x >> 3), whole).Fill(blackIs1 ? (byte)0xFF : (byte)0x00);
+            x += whole << 3;
         }
+        for (; x < to; x++) SetBit(output, rowOffset, x, blackIs1);
+    }
+
+    private static void SetBit(byte[] output, int rowOffset, int x, bool blackIs1)
+    {
+        int idx = rowOffset + (x >> 3);
+        byte mask = (byte)(0x80 >> (x & 7));
+        if (blackIs1) output[idx] |= mask;
+        else output[idx] &= (byte)~mask;
     }
 }

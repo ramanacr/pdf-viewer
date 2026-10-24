@@ -41,6 +41,8 @@ public static class Program
         {
             "bench" => await Bench.RunAsync(args),
             "corpus" => await Corpus.RunAsync(args),
+            "perf" => await PerfProfile.RunAsync(args),
+            "sample" => await PerfSample.RunAsync(args),
             "live" => LiveBench.Run(args),
             "tiles" => await TileBench.RunAsync(args),
             "gen" when args.Length >= 2 => Gen(args),
@@ -78,7 +80,7 @@ public static class Program
         {
             "wpf" => new WindowsVectorRenderer(),
             // --software: WARP, as on a CI runner without a GPU (the nightly corpus baseline).
-            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(forceSoftware: args.Contains("--software")),
+            _ => new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer(forceSoftware: args.Contains("--software")) { UseGlyphAtlas = !args.Contains("--no-atlas") },
         };
 
     internal static string? Option(string[] args, string name) =>
@@ -212,6 +214,8 @@ internal static class Corpus
         // --diff-all also diffs pages with fallback regions, rendered with no fallback provider (what
         // the engine draws on its own), so the PDFium-free release gate can be measured.
         bool diffAll = args.Contains("--diff-all");
+        // --dpi: the resolution pages are diffed and timed at (72 by default, as the baselines).
+        double diffDpi = double.TryParse(Program.Option(args, "--dpi"), NumberStyles.Float, CultureInfo.InvariantCulture, out double dd) && dd > 0 ? dd : 72;
         double diffVectorSum = 0, diffFallbackSum = 0, vectorRenderMs = 0, pdfiumRenderMs = 0;
         int diffVectorPages = 0, diffFallbackPages = 0;
         var worstFallbackDiffs = new List<(double Diff, string File, int Page)>();
@@ -258,10 +262,13 @@ internal static class Corpus
                     pagesTotal++;
                     IPdfDisplayList list;
                     IReadOnlyList<PdfFallbackToken> tokens;
+                    double analyzeMs;
                     try
                     {
                         list = await doc.GetPageDisplayListAsync(page);
+                        var analyzeClock = Stopwatch.StartNew();
                         tokens = await renderer.AnalyzeAsync(list);
+                        analyzeMs = analyzeClock.Elapsed.TotalMilliseconds;
                     }
                     catch (Exception pex) when (pex is not OutOfMemoryException)
                     {
@@ -286,8 +293,10 @@ internal static class Corpus
 
                     if ((diff && tokens.Count == 0 || diffAll) && pdfiumPages >= page)
                     {
-                        var (d, vMs, pMs) = await DiffAsync(bytes, list, renderer, page);
-                        vectorRenderMs += vMs;
+                        var (d, vMs, pMs) = await DiffAsync(bytes, list, renderer, page, diffDpi);
+                        // The page's analysis is part of its first render (the renderer keeps it for
+                        // the render that follows), so it counts towards the render time.
+                        vectorRenderMs += vMs + analyzeMs;
                         pdfiumRenderMs += pMs;
                         if (tokens.Count == 0)
                         {
@@ -363,15 +372,15 @@ internal static class Corpus
     }
 
     /// <summary>Mean absolute channel difference against PDFium at 72 dpi, and both render times.</summary>
-    private static async Task<(double Diff, double VectorMs, double PdfiumMs)> DiffAsync(byte[] bytes, IPdfDisplayList list, IPdfVectorRenderer renderer, int page)
+    private static async Task<(double Diff, double VectorMs, double PdfiumMs)> DiffAsync(byte[] bytes, IPdfDisplayList list, IPdfVectorRenderer renderer, int page, double dpi)
     {
         var vClock = Stopwatch.StartNew();
-        using var v = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = page, Dpi = 72 });
+        using var v = await renderer.RenderDisplayListAsync(list, new RenderRequest { PageNumber = page, Dpi = dpi });
         vClock.Stop();
         using var engine = new PdfiumEngine();
         await using var pdoc = await engine.OpenDocumentAsync(bytes);
         var pClock = Stopwatch.StartNew();
-        using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = page, Dpi = 72 });
+        using var p = await engine.Renderer.RenderPageAsync(pdoc, new RenderRequest { PageNumber = page, Dpi = dpi });
         pClock.Stop();
         double vMs = vClock.Elapsed.TotalMilliseconds, pMs = pClock.Elapsed.TotalMilliseconds;
         if (v.WidthPixels != p.WidthPixels || v.HeightPixels != p.HeightPixels)
@@ -478,8 +487,16 @@ internal static class DiffPage
                 string outcome;
                 try
                 {
+                    var decodeClock = Stopwatch.StartNew();
                     var decoded = image.Image.Source?.Decode();
-                    outcome = decoded == null ? "inline" : $"{decoded.Format} {decoded.Width}x{decoded.Height}";
+                    outcome = decoded == null ? "inline"
+                        : $"{decoded.Format} {decoded.Width}x{decoded.Height} {image.Image.ColorSpaceName} mapped={decoded.MapJpegComponents != null} {decodeClock.Elapsed.TotalMilliseconds:F1} ms";
+                    if (decoded?.Format == PdfDecodedImageFormat.Jpeg)
+                    {
+                        decodeClock.Restart();
+                        PdfEngine.Vector.Direct2D.WicJpeg.TryDecode(decoded, out _, out _);
+                        outcome += $", WIC {decodeClock.Elapsed.TotalMilliseconds:F1} ms";
+                    }
                 }
                 catch (Exception ex)
                 {

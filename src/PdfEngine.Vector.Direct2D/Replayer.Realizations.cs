@@ -21,6 +21,7 @@ internal sealed partial class Replayer
     public bool DrawSmallGeometriesDirectly { get; set; } = true;
     private const float DirectDrawPixels = 1024f;
 
+
     /// <summary>Realizations built so far, how many of them windowed, and how many rebuilt for a region beyond their window.</summary>
     public int RealizationsBuilt { get; private set; }
     public int WindowedRealizationsBuilt { get; private set; }
