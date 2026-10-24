@@ -1,0 +1,264 @@
+@using PdfViewer.Web.Engine
+
+<div class="app @(_sidebarOpen && _doc != null ? "with-sidebar" : "")">
+    <header class="toolbar" role="toolbar" aria-label="Viewer controls">
+        <div class="group">
+            <button type="button" class="icon-button" title="Outline and results (O)" aria-label="Show or hide the side panel"
+                    aria-pressed="@(_sidebarOpen ? "true" : "false")" disabled="@(_doc == null)" @onclick="ToggleSidebar">
+                <Icon Name="sidebar" />
+            </button>
+            <span class="brand" title="PDF Viewer Native, web demo">PDF Viewer <span class="brand-tag">web demo</span></span>
+        </div>
+
+        <div class="group">
+            <button type="button" class="button" title="Open a PDF file (Ctrl+O)" @onclick="PickFile"><Icon Name="open" /><span class="label">Open</span></button>
+            <button type="button" class="button quiet" title="Open the built-in engine tour" @onclick="OpenSampleAsync"><Icon Name="sample" /><span class="label">Tour</span></button>
+        </div>
+
+        @if (_doc != null)
+        {
+            <div class="group" role="group" aria-label="Pages">
+                <button type="button" class="icon-button" title="Previous page (Left arrow)" aria-label="Previous page" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(_currentPage - 1)"><Icon Name="up" /></button>
+                <label class="page-box">
+                    <span class="visually-hidden">Page number</span>
+                    <input id="page-input" type="text" inputmode="numeric" value="@_currentPage" size="3" aria-describedby="page-count"
+                           @onchange="OnPageInput" @onfocus="SelectPageInput" />
+                    <span id="page-count" class="muted">of @_doc.PageCount</span>
+                </label>
+                <button type="button" class="icon-button" title="Next page (Right arrow)" aria-label="Next page" disabled="@(_currentPage >= _doc.PageCount)" @onclick="() => GoToPage(_currentPage + 1)"><Icon Name="down" /></button>
+            </div>
+
+            <div class="group" role="group" aria-label="Zoom">
+                <button type="button" class="icon-button" title="Zoom out (Ctrl+minus)" aria-label="Zoom out" @onclick="ZoomOut"><Icon Name="minus" /></button>
+                <label>
+                    <span class="visually-hidden">Zoom</span>
+                    <select class="zoom-select" @onchange="OnZoomSelect" aria-label="Zoom level">
+                        <option value="fit-width" selected="@(_zoomMode == ZoomMode.FitWidth)">Fit width</option>
+                        <option value="fit-page" selected="@(_zoomMode == ZoomMode.FitPage)">Fit page</option>
+                        @foreach (var preset in ZoomPresets)
+                        {
+                            <option value="@preset" selected="@(_zoomMode == ZoomMode.Custom && Math.Abs(_zoom - preset) < 0.001)">@Percent(preset)</option>
+                        }
+                        @if (_zoomMode != ZoomMode.Custom || !ZoomPresets.Any(p => Math.Abs(_zoom - p) < 0.001))
+                        {
+                            <option value="current" selected="@(_zoomMode == ZoomMode.Custom)" disabled>@Percent(_zoom)</option>
+                        }
+                    </select>
+                </label>
+                <button type="button" class="icon-button" title="Zoom in (Ctrl+plus)" aria-label="Zoom in" @onclick="ZoomIn"><Icon Name="plus" /></button>
+            </div>
+
+            <form class="group search" role="search" @onsubmit="SearchOrNextAsync" @onsubmit:preventDefault>
+                <label class="search-box">
+                    <Icon Name="search" />
+                    <span class="visually-hidden">Find in document</span>
+                    <input id="search-input" type="search" placeholder="Find in document" autocomplete="off" spellcheck="false"
+                           @bind="_query" @bind:event="oninput" @onkeydown="OnSearchKey" aria-describedby="search-status" />
+                </label>
+                <span id="search-status" class="muted search-count" aria-live="polite">@SearchStatus</span>
+                <button type="button" class="icon-button" title="Previous match (Shift+F3)" aria-label="Previous match" disabled="@(_hits.Count == 0)" @onclick="() => StepHit(-1)"><Icon Name="up" /></button>
+                <button type="button" class="icon-button" title="Next match (F3 or Enter)" aria-label="Next match" disabled="@(_hits.Count == 0)" @onclick="() => StepHit(1)"><Icon Name="down" /></button>
+                <label class="check" title="Match case"><input type="checkbox" @bind="_matchCase" @bind:after="RestartSearchAsync" /> <span>Aa</span><span class="visually-hidden">Match case</span></label>
+            </form>
+        }
+
+        <div class="group end">
+            <button type="button" class="icon-button" title="Night pages: invert page colours (I)" aria-label="Night pages" aria-pressed="@(_night ? "true" : "false")" @onclick="ToggleNight"><Icon Name="invert" /></button>
+            <button type="button" class="icon-button" title="@($"Theme: {_theme} (D)")" aria-label="@($"Colour theme: {_theme}")" @onclick="CycleTheme"><Icon Name="@ThemeIcon" /></button>
+            <button type="button" class="icon-button" title="Keyboard shortcuts and about (?)" aria-label="Help and about" @onclick="() => _dialog = Dialog.Help"><Icon Name="help" /></button>
+        </div>
+    </header>
+
+    <p class="privacy-bar"><Icon Name="shield" /> Everything runs in this browser tab. Files you open are never uploaded. No analytics, no cookies, no tracking.</p>
+
+    @if (_error != null)
+    {
+        <div class="banner error" role="alert">
+            <Icon Name="info" />
+            <p>@_error</p>
+            <button type="button" class="icon-button" aria-label="Dismiss" @onclick="() => _error = null"><Icon Name="close" /></button>
+        </div>
+    }
+    @if (_notice != null && _error == null)
+    {
+        <div class="banner notice" role="status">
+            <Icon Name="font" />
+            <p>@_notice</p>
+            @if (_canUseLocalFonts && !_localFontsLoaded && _noticeIsFonts)
+            {
+                <button type="button" class="button" @onclick="UseLocalFontsAsync">Use this device's fonts</button>
+            }
+            <button type="button" class="icon-button" aria-label="Dismiss" @onclick="DismissNotice"><Icon Name="close" /></button>
+        </div>
+    }
+
+    <div class="body">
+        @if (_doc != null && _sidebarOpen)
+        {
+            <aside class="sidebar" aria-label="Side panel">
+                <div class="tabs" role="tablist">
+                    <button type="button" role="tab" id="tab-outline" aria-selected="@(_panel == Panel.Outline ? "true" : "false")" aria-controls="panel-outline" @onclick="() => _panel = Panel.Outline">Outline</button>
+                    <button type="button" role="tab" id="tab-results" aria-selected="@(_panel == Panel.Results ? "true" : "false")" aria-controls="panel-results" @onclick="() => _panel = Panel.Results">Results @(_hits.Count > 0 ? $"({_hits.Count})" : "")</button>
+                </div>
+                @if (_panel == Panel.Outline)
+                {
+                    <div id="panel-outline" role="tabpanel" aria-labelledby="tab-outline" class="panel">
+                        @if (_outline.Count == 0)
+                        {
+                            <p class="muted empty">This document has no outline.</p>
+                        }
+                        else
+                        {
+                            <OutlineTree Items="_outline" CurrentPage="_currentPage" OnSelect="p => GoToPage(p)" />
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div id="panel-results" role="tabpanel" aria-labelledby="tab-results" class="panel">
+                        @if (_hits.Count == 0)
+                        {
+                            <p class="muted empty">@(string.IsNullOrWhiteSpace(_searchedFor) ? "Search with the box above (Ctrl+F)." : _searching ? "Searching…" : "No matches.")</p>
+                        }
+                        else
+                        {
+                            <ol class="results">
+                                @for (int i = 0; i < _hits.Count; i++)
+                                {
+                                    int index = i;
+                                    var hit = _hits[i];
+                                    <li>
+                                        <button type="button" class="result@(index == _currentHit ? " current" : "")" aria-current="@(index == _currentHit ? "true" : null)" @onclick="() => SelectHit(index)">
+                                            <span class="result-page">Page @hit.Page</span>
+                                            <span class="result-text">@hit.Before<mark>@hit.Match</mark>@hit.After</span>
+                                        </button>
+                                    </li>
+                                }
+                            </ol>
+                        }
+                    </div>
+                }
+            </aside>
+        }
+
+        <main id="pages" class="pages@(_night ? " night" : "")" tabindex="-1" aria-label="@(_doc == null ? "Start" : "Document pages")">
+            @if (_doc == null)
+            {
+                <section class="welcome" aria-labelledby="welcome-title">
+                    <h1 id="welcome-title">Open a PDF. It stays on your device.</h1>
+                    <p class="lead">This is the PDF engine of <a href="https://github.com/ramanacr/pdf-viewer" rel="noopener">PDF Viewer Native</a>, compiled to WebAssembly and running in this tab: parsing, rendering with Skia, and text search.</p>
+                    <div class="welcome-actions">
+                        <button type="button" class="button primary large" @onclick="PickFile"><Icon Name="open" /> Open a PDF file</button>
+                        <button type="button" class="button large" @onclick="OpenSampleAsync"><Icon Name="sample" /> Open the engine tour</button>
+                    </div>
+                    <p class="muted">or drop a PDF anywhere on this page</p>
+                    @if (_loading)
+                    {
+                        <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span> @_loadingText</p>
+                    }
+                    <div class="facts">
+                        <div>
+                            <h2>Private by construction</h2>
+                            <p>This site is static files only: there is no server code to send a file to. Your PDF is read into this tab's memory and forgotten when you close it. There are no analytics, cookies or trackers. The theme you pick is kept in this browser's local storage.</p>
+                        </div>
+                        <div>
+                            <h2>The real engine</h2>
+                            <p>The same C# engine as the Windows viewer, PdfEngine.Vector, with its portable Skia renderer. Document JavaScript is never run.</p>
+                        </div>
+                        <div>
+                            <h2>Limits of the demo</h2>
+                            <p>A browser has no installed fonts, so text in fonts a PDF does not embed is not drawn unless you allow this page to read your device's fonts. Certificate-encrypted PDFs and CMYK JPEG images are not supported here yet. <a href="https://github.com/ramanacr/pdf-viewer/tree/main/src/PdfViewer.Web#limits" rel="noopener">Details</a>.</p>
+                        </div>
+                    </div>
+                </section>
+            }
+            else
+            {
+                @foreach (var pv in _doc.Pages)
+                {
+                    var (w, h) = CssSize(pv);
+                    <div class="page" id="page-@pv.Number" data-page="@pv.Number" style="width:@Px(w);height:@Px(h)"
+                         role="img" aria-label="@($"Page {pv.Number} of {_doc.PageCount}")">
+                        <canvas></canvas>
+                        @if (_hitsByPage.TryGetValue(pv.Number, out var pageHits))
+                        {
+                            @foreach (var (hit, index) in pageHits)
+                            {
+                                @foreach (var r in hit.Rects)
+                                {
+                                    <span class="hit@(index == _currentHit ? " current" : "")" aria-hidden="true"
+                                          style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(r.Width / pv.Width);height:@Pct(r.Height / pv.Height)"></span>
+                                }
+                            }
+                        }
+                    </div>
+                }
+            }
+        </main>
+    </div>
+
+    <footer class="statusbar">
+        <span class="status-file" title="@_fileName">@(_doc == null ? "No document" : _fileName)</span>
+        <span aria-live="polite" class="status-main">@_status</span>
+        <span class="status-perf" title="Last page render: interpreting the page into a display list, then drawing it with Skia">@_perf</span>
+    </footer>
+
+    <div class="drop-overlay" aria-hidden="true"><div><Icon Name="open" /> Drop the PDF to open it here</div></div>
+    <input id="file-input" type="file" accept="application/pdf,.pdf" hidden />
+
+    @if (_dialog == Dialog.Help)
+    {
+        <div class="dialog-backdrop" @onclick="() => _dialog = Dialog.None"></div>
+        <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+            <header>
+                <h2 id="help-title">Keyboard shortcuts</h2>
+                <button type="button" class="icon-button" aria-label="Close" @onclick="() => _dialog = Dialog.None" id="dialog-close"><Icon Name="close" /></button>
+            </header>
+            <table class="shortcuts">
+                <tbody>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>O</kbd></td><td>Open a PDF file</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>F</kbd></td><td>Find in document</td></tr>
+                    <tr><td><kbd>Enter</kbd>, <kbd>F3</kbd> / <kbd>Shift</kbd> <kbd>F3</kbd></td><td>Next / previous match</td></tr>
+                    <tr><td><kbd>&rarr;</kbd> <kbd>&larr;</kbd>, <kbd>J</kbd> <kbd>K</kbd></td><td>Next / previous page</td></tr>
+                    <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>First / last page</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>Ctrl</kbd> <kbd>-</kbd></td><td>Zoom in / out</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>0</kbd> / <kbd>Ctrl</kbd> <kbd>9</kbd></td><td>Fit width / fit page</td></tr>
+                    <tr><td><kbd>O</kbd></td><td>Show or hide the side panel</td></tr>
+                    <tr><td><kbd>D</kbd></td><td>Colour theme: system, light, dark</td></tr>
+                    <tr><td><kbd>I</kbd></td><td>Night pages (inverted page colours)</td></tr>
+                    <tr><td><kbd>Esc</kbd></td><td>Close this dialog or clear the search</td></tr>
+                </tbody>
+            </table>
+            <h2>About this demo</h2>
+            <p>PDF Viewer Native's engine, running as .NET WebAssembly in this tab. Open source under the MIT License: <a href="https://github.com/ramanacr/pdf-viewer" rel="noopener">github.com/ramanacr/pdf-viewer</a>.</p>
+            <p class="muted">@_engineInfo</p>
+            <h2>Cryptography in this runtime</h2>
+            <table class="shortcuts">
+                <tbody>
+                    @foreach (var primitive in PlatformCrypto.Primitives)
+                    {
+                        <tr>
+                            <td>@primitive.Name</td>
+                            <td>@(primitive.Available ? "provided by the runtime" : primitive.EngineFallback ? $"missing here ({primitive.Failure}); the engine uses its own" : $"missing ({primitive.Failure})"): <span class="muted">@primitive.UsedFor</span></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p class="muted">@(PlatformCrypto.CanDecrypt ? "Password-protected PDFs open here. Certificate-encrypted ones need RSA and the certificate store, which a browser does not have." : "Encrypted PDFs cannot be opened here.")</p>
+        </div>
+    }
+
+    @if (_dialog == Dialog.Password)
+    {
+        <div class="dialog-backdrop"></div>
+        <form class="dialog" role="dialog" aria-modal="true" aria-labelledby="password-title" @onsubmit="SubmitPasswordAsync" @onsubmit:preventDefault>
+            <header><h2 id="password-title">Password required</h2></header>
+            <p>@_passwordPrompt</p>
+            <label class="field">Password <input id="password-input" type="password" autocomplete="off" @bind="_password" /></label>
+            <div class="dialog-actions">
+                <button type="button" class="button" @onclick="CancelPassword">Cancel</button>
+                <button type="submit" class="button primary">Open</button>
+            </div>
+        </form>
+    }
+</div>

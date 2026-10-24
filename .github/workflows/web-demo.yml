@@ -1,0 +1,96 @@
+name: Web Demo (Blazor WebAssembly)
+
+# Builds the browser demo (src/PdfViewer.Web) on every pull request and push to main, and
+# deploys it to GitHub Pages from main.
+#
+# One-time switch by the repository owner, before the deploy job can run:
+#   1. Settings > Pages > Build and deployment > Source: "GitHub Actions". (Today Pages serves
+#      main /docs; that site keeps working until this switch, and the workflow never touches it.)
+#   2. Settings > Secrets and variables > Actions > Variables: add WEB_DEMO_PAGES = true.
+# Until both are done, the deploy job is skipped and the workflow only builds and checks the site.
+# Note: once Pages serves from Actions, /docs is no longer published at the site root; see
+# src/PdfViewer.Web/README.md ("Publishing") for keeping both.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        fetch-depth: 0   # the version comes from the latest release tag (Directory.Build.props)
+
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      with:
+        dotnet-version: '9.0.x'
+
+    # Skia's native library is linked into the WebAssembly runtime, which needs Emscripten.
+    - name: Install the wasm-tools workload
+      run: dotnet workload install wasm-tools
+
+    - name: Publish
+      run: dotnet publish src/PdfViewer.Web/PdfViewer.Web.csproj --configuration Release --output publish/web
+
+    # A project site is served under /<repository>/: the app's base href must say so. The
+    # precompressed copies are dropped: GitHub Pages compresses by itself and never serves them.
+    - name: Prepare the site for GitHub Pages
+      shell: bash
+      run: |
+        site=publish/web/wwwroot
+        base="/${GITHUB_REPOSITORY#*/}/"
+        sed -i "s|<base href=\"/\" />|<base href=\"$base\" />|" "$site/index.html"
+        grep -q "<base href=\"$base\" />" "$site/index.html"
+        find "$site" -name '*.br' -delete
+        find "$site" -name '*.gz' -delete
+        touch "$site/.nojekyll"
+        {
+          echo "### Web demo"
+          echo "Base href: \`$base\`"
+          echo ""
+          echo "| | Size |"
+          echo "|---|---|"
+          echo "| Site (uncompressed) | $(du -sh --apparent-size "$site" | cut -f1) |"
+          echo "| Runtime with Skia (dotnet.native.wasm) | $(du -h --apparent-size "$site"/_framework/dotnet.native.*.wasm | cut -f1) |"
+          echo "| Engine (PdfEngine.Vector.wasm) | $(du -h --apparent-size "$site"/_framework/PdfEngine.Vector.*.wasm | cut -f1) |"
+          echo "| Site, gzip-compressed (about what Pages transfers) | $(tar -C "$site" -cf - . | gzip -6 | wc -c | numfmt --to=iec) |"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the Pages artifact
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+      with:
+        path: publish/web/wwwroot
+
+  deploy:
+    needs: build
+    # Only from main, and only after the owner switched Pages to GitHub Actions (see the top).
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WEB_DEMO_PAGES == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
