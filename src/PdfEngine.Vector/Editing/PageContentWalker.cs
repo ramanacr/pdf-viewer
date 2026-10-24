@@ -48,6 +48,8 @@ internal sealed class ContentGlyph
     public int Context;
     /// <summary>The marked-content span with /ActualText it is drawn in, if any (glyphs drawn out of reading order).</summary>
     public ContentSpan? Span;
+    /// <summary>Where the page's own content has the operator that draws it (its text-showing operator, or the Do of the form it is in): the lexer position of the operator keyword.</summary>
+    public long PageOp = -1;
     /// <summary>On a span's first glyph: the span's other glyphs, which read as nothing on their own (TextBlocks).</summary>
     public List<ContentGlyph>? Joined;
     /// <summary>A horizontal glyph turned sideways in a vertical column (TextBlocks): read as part of the column.</summary>
@@ -87,6 +89,8 @@ internal sealed class ContentImage
     /// <summary>The unit square of the image to user space.</summary>
     public PdfMatrix Placement;
     public int PixelWidth, PixelHeight;
+    /// <summary>Where the page's own content has the operator that draws it (as <see cref="ContentGlyph.PageOp"/>).</summary>
+    public long PageOp = -1;
 }
 
 /// <summary>
@@ -127,6 +131,8 @@ internal sealed class PageContentWalker
     private const int MaxFormDepth = 8;
     // Counted over the whole drawing (forms included), so every glyph and image has one identity.
     private int _showOp, _imageIndex, _contexts, _formNames;
+    // The page-level operator being drawn (its keyword's position): what glyphs and images of forms it draws belong to.
+    private long _pageOp = -1;
     private readonly HashSet<int> _activeForms = new();
     private FormCopies? _forms;
     // Open marked-content sequences (over forms too): the /ActualText span each opens, or null.
@@ -206,6 +212,7 @@ internal sealed class PageContentWalker
         Glyphs.Clear();
         Images.Clear();
         _showOp = _imageIndex = _contexts = _formNames = 0;
+        _pageOp = -1;
         _spans.Clear();
         _activeForms.Clear();
         AlternateTextsRemoved = 0;
@@ -311,6 +318,7 @@ internal sealed class PageContentWalker
 
             string op = token.TextValue;
             string verbatim = operandText + op;
+            if (context == 0) _pageOp = tokenPos;
             switch (op)
             {
                 case "q":
@@ -433,7 +441,7 @@ internal sealed class PageContentWalker
                     changedHere |= imageChanges?.ContainsKey(index) ?? false;
                     Images.Add(new ContentImage
                     {
-                        Index = index, ResourceName = xname.Value, Placement = gs.Ctm, ObjectNumber = (entry as PdfIndirectRef)?.ObjectNumber ?? -1,
+                        Index = index, ResourceName = xname.Value, Placement = gs.Ctm, ObjectNumber = (entry as PdfIndirectRef)?.ObjectNumber ?? -1, PageOp = _pageOp,
                         PixelWidth = (int)(xobject.Dictionary.GetInteger("Width") ?? 0), PixelHeight = (int)(xobject.Dictionary.GetInteger("Height") ?? 0),
                     });
                     Emit(ChangedImage(imageChanges, index, verbatim, "/" + PdfObjectWriter.EscapeName(xname.Value) + " Do"));
@@ -445,7 +453,7 @@ internal sealed class PageContentWalker
                     if (raw == null) break;
                     int index = _imageIndex++;
                     changedHere |= imageChanges?.ContainsKey(index) ?? false;
-                    Images.Add(new ContentImage { Index = index, Inline = true, Placement = gs.Ctm, PixelWidth = width, PixelHeight = height });
+                    Images.Add(new ContentImage { Index = index, Inline = true, Placement = gs.Ctm, PixelWidth = width, PixelHeight = height, PageOp = _pageOp });
                     Emit(ChangedImage(imageChanges, index, raw, null));
                     break;
                 }
@@ -638,7 +646,7 @@ internal sealed class PageContentWalker
                     var at = (vertical ? PdfMatrix.CreateTranslation(0, y) : PdfMatrix.CreateTranslation(x, 0)) * tm * gs.Ctm;
                     Glyphs.Add(new ContentGlyph
                     {
-                        Op = op, Index = index, Code = codeBytes, Style = style, Matrix = at, Width0 = w0, Advance = adv, IsWordSpace = wordSpace, Context = context, Span = CurrentSpan(),
+                        Op = op, Index = index, Code = codeBytes, Style = style, Matrix = at, Width0 = w0, Advance = adv, IsWordSpace = wordSpace, Context = context, Span = CurrentSpan(), PageOp = _pageOp,
                         Text = font?.MapToUnicode(code) ?? ((char)code).ToString(),
                     });
 
