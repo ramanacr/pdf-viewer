@@ -1,0 +1,91 @@
+<Window x:Class="PdfViewer.Views.Dialogs.MakeAccessibleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:PdfViewer.ViewModels"
+        Title="Make Accessible"
+        Width="820" Height="660"
+        MinWidth="560" MinHeight="460"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource SurfaceBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        ShowInTaskbar="False">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </Window.Resources>
+    <DockPanel Margin="18">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock Text="{Binding FileName}" FontSize="16" FontWeight="Bold" />
+            <TextBlock Text="{Binding TaggedText}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,12" />
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <Label Content="Document _language" Target="{Binding ElementName=LanguageBox}" Padding="0,0,8,0" VerticalAlignment="Center" />
+                <TextBox x:Name="LanguageBox" Width="120" Text="{Binding Language, UpdateSourceTrigger=PropertyChanged}"
+                         AutomationProperties.Name="Document language"
+                         AutomationProperties.HelpText="A language tag such as en, en-GB, fr or de-CH. Screen readers use it to pronounce the text."
+                         ToolTip="A language tag such as en, en-GB, fr or de-CH. Screen readers use it to pronounce the text." />
+                <TextBlock x:Name="LanguageErrorText" Text="{Binding LanguageError}" Foreground="{DynamicResource AccentBrush}" Margin="10,0,0,0" VerticalAlignment="Center"
+                           AutomationProperties.LiveSetting="Assertive" />
+            </StackPanel>
+            <CheckBox x:Name="RetagBox" Content="_Replace the existing tags" IsChecked="{Binding Retag}" IsEnabled="{Binding IsTagged}" Margin="0,6,0,10"
+                      ToolTip="Builds the tags again from the page layout. The tags the document has now are discarded." />
+            <TextBlock x:Name="SummaryText" Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,10"
+                       AutomationProperties.Name="{Binding Summary}" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="SaveButton" Content="Make Accessible and _Save As..." Padding="14,3" Click="Save_Click" IsEnabled="{Binding CanTag}" IsDefault="True"
+                    ToolTip="Tags a copy of the document and saves it under a new name. The original is not changed." />
+            <Button x:Name="OpenButton" Content="_Open and Check" Padding="14,3" Margin="8,0,0,0" Click="Open_Click"
+                    Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}"
+                    ToolTip="Opens the tagged copy and runs the accessibility check on it." />
+            <Button Content="Close" Padding="14,3" Margin="8,0,0,0" IsCancel="True" Click="Close_Click" />
+        </StackPanel>
+        <Grid Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Label Content="_What was tagged" Target="{Binding ElementName=FoundList}" Padding="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+            <ListBox x:Name="FoundList" Grid.Row="1" ItemsSource="{Binding Found}" AutomationProperties.Name="What was tagged" BorderThickness="1"
+                     BorderBrush="{DynamicResource BorderBrush}" Background="Transparent" />
+            <Label Grid.Column="2" Content="What a person should _review" Target="{Binding ElementName=ReviewList}" Padding="0,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+            <ListBox x:Name="ReviewList" Grid.Column="2" Grid.Row="1" ItemsSource="{Binding Review}" AutomationProperties.Name="What a person should review" BorderThickness="1"
+                     BorderBrush="{DynamicResource BorderBrush}" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <Label Grid.Row="2" Grid.ColumnSpan="3" Content="PDF/UA checks the _tagged copy still fails" Target="{Binding ElementName=RemainingList}" Padding="0,10,0,4"
+                   Foreground="{DynamicResource TextSecondaryBrush}" />
+            <ListView x:Name="RemainingList" Grid.Row="3" Grid.ColumnSpan="3" ItemsSource="{Binding Remaining}" AutomationProperties.Name="PDF/UA checks the tagged copy still fails"
+                      BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" Background="Transparent">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Checkpoint" Width="90" DisplayMemberBinding="{Binding Checkpoint}" />
+                        <GridViewColumn Header="Why" Width="110" DisplayMemberBinding="{Binding Kind}" />
+                        <GridViewColumn Header="What" Width="440">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate DataType="{x:Type vm:MakeAccessibleIssueItem}">
+                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap" MaxWidth="430" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Occurs" Width="80" DisplayMemberBinding="{Binding CountText}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Grid>
+    </DockPanel>
+</Window>
