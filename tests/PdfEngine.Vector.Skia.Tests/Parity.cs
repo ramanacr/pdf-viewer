@@ -100,7 +100,7 @@ public sealed class Parity
             var backend = pair.SkiaBackendFallbacks;
             Assert.True(backend.Count == 0, $"{name}: the Skia backend classified {string.Join(", ", backend.Select(t => t.Reason))}");
             _output.WriteLine($"skia vs d2d {name} @{dpi}: {pair.Diff}");
-            Dump(name, dpi, pair);
+            Dump(name, dpi, pair.Skia, pair.D2D);
             Assert.True(pair.Diff.Mean <= maxMean, $"{name} @{dpi}: mean {pair.Diff.Mean:F2} > {maxMean}");
             Assert.True(pair.Diff.Bad <= maxBad, $"{name} @{dpi}: {pair.Diff.Bad:P2} pixels off by > 64 (budget {maxBad:P2})");
             if (pair.Diff.Mean >= worst.Mean) worst = pair.Diff;
@@ -109,16 +109,17 @@ public sealed class Parity
     }
 
     /// <summary>
-    /// With SKIA_PARITY_DUMP set to a folder, writes both renders as PNG files there, to look at a
-    /// difference. Fixtures are synthetic, so the images hold no document content.
+    /// With SKIA_PARITY_DUMP set to a local folder, writes both renders as PNG files there, to look
+    /// at a difference. Corpus pages dumped this way show document content: keep the folder local.
     /// </summary>
-    private static void Dump(string name, double dpi, Pair pair)
+    internal static void Dump(string name, double dpi, RenderedPage skia, RenderedPage d2d)
     {
         string? dir = Environment.GetEnvironmentVariable("SKIA_PARITY_DUMP");
         if (string.IsNullOrEmpty(dir))
             return;
         Directory.CreateDirectory(dir);
-        foreach (var (page, backend) in new[] { (pair.Skia, "skia"), (pair.D2D, "d2d") })
+        name = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+        foreach (var (page, backend) in new[] { (skia, "skia"), (d2d, "d2d") })
         {
             var info = new SkiaSharp.SKImageInfo(page.WidthPixels, page.HeightPixels, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Premul);
             using var image = SkiaSharp.SKImage.FromPixelCopy(info, page.Pixels.Span, page.Stride);

@@ -154,7 +154,7 @@ public static class SkiaJpeg
         {
             return Decode(decoded, out width, out height);
         }
-        catch (InvalidDataException)
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
         {
             width = height = 0;
             return null;
@@ -164,13 +164,20 @@ public static class SkiaJpeg
     /// <summary>
     /// Decodes a JPEG to straight BGRA. With <see cref="PdfDecodedImage.MapJpegComponents"/> set,
     /// the raw gray or RGB components go to the core, which maps them through the image's colour
-    /// space. Skia hands back no raw CMYK: a four-component JPEG is Skia's own conversion of it.
+    /// space.
     /// </summary>
     /// <exception cref="InvalidDataException">The data is not a JPEG Skia can decode.</exception>
+    /// <exception cref="NotSupportedException">
+    /// A four-component (CMYK or YCCK) JPEG. Skia hands back no raw CMYK samples for the core to
+    /// map, and SkiaSharp 3.116.1 decodes the CMYK and YCCK JPEGs of the corpus as solid black,
+    /// so they are classified for fallback instead of drawn wrong.
+    /// </exception>
     public static byte[] Decode(PdfDecodedImage decoded, out int width, out int height)
     {
         var header = PdfEngine.Vector.Create.JpegHeader.TryRead(decoded.Data.Span);
         int components = header?.Components ?? 3;
+        if (components == 4)
+            throw new NotSupportedException("CMYK JPEG data is not decoded by the Skia backend.");
         if (decoded.MapJpegComponents is { } map && components is 1 or 3)
         {
             // Raw components (no colour management: no colour space on the destination) for the core.
@@ -187,8 +194,6 @@ public static class SkiaJpeg
             }
             return map(rgb, 3, width, height);
         }
-        // Four components: Skia reads every CMYK JPEG as Adobe-inverted CMYK and converts it with
-        // R = (1 − C)(1 − K) and so on; the core's CMYK conversion (and /Decode [1 0 …]) is not applied.
         return DecodePixels(decoded.Data, SKColorType.Bgra8888, out width, out height);
     }
 
