@@ -93,6 +93,12 @@ public partial class MainWindow : Window
         document.ShowPageMarkDialogFunc = vm => PageMarkDialogs.Show(vm, this);
         document.ShowPdfAAction = vm => new PdfAWindow(vm, path => document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path)) { Owner = this }.Show();
         document.ShowAccessibilityCheckAction = vm => new AccessibilityCheckWindow(vm, document.ClearAccessibilityHighlight) { Owner = this }.Show();
+        // The tagged copy opens (in its own tab) and is checked there.
+        document.ShowMakeAccessibleAction = vm => new MakeAccessibleWindow(vm, async path =>
+        {
+            await (document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path));
+            if (_shell.ActiveDocument is { IsDocumentLoaded: true } opened) opened.ShowAccessibilityCheck();
+        }) { Owner = this }.Show();
         document.ShowCreatePdfAction = vm => new CreatePdfWindow(vm) { Owner = this }.Show();
         document.ShowScanAction = vm => new ScanWindow(vm) { Owner = this }.Show();
         document.ShowReduceSizeAction =vm => new ReduceSizeWindow(vm, path => document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path)) { Owner = this }.ShowDialog();
