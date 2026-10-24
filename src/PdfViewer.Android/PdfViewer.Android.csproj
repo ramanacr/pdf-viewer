@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      The Android proof of concept: .NET for Android (no MAUI): one Android view that Skia draws into. It runs
+      the same engine (PdfEngine.Vector) and the same Skia renderer (PdfEngine.Vector.Skia) as the
+      web demo, through the same engine layer (PdfViewer.Web.Engine). Building it needs the android
+      workload. No INTERNET permission, no telemetry.
+    -->
+    <TargetFramework>net9.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PdfViewer.Android</RootNamespace>
+    <AssemblyName>PdfViewer.Android</AssemblyName>
+    <ApplicationId>io.github.ramanacr.pdfviewer</ApplicationId>
+    <ApplicationTitle>PDF Viewer (preview)</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+
+    <!-- An APK (not an app bundle) to install with adb; phones (arm64) and the x86-64 emulator only. -->
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+    <!-- The engine formats with the invariant culture: no ICU data in the package. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- No telemetry, and no debugger hooks in a release package. -->
+    <EventSourceSupport>false</EventSourceSupport>
+    <DebuggerSupport Condition="'$(Configuration)' == 'Release'">false</DebuggerSupport>
+    <!--
+      Signing: a build signs with the SDK's per-user debug key (outside the repository), which is
+      what `adb install` needs. No keystore is kept here; a store release would pass its own.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Android's SELinux policy denies apps file locks on /system/fonts (each font read logged an
+      'avc: denied { lock }'). The app never shares files it writes, so .NET's advisory locks are off.
+    -->
+    <RuntimeHostConfigurationOption Include="System.IO.DisableFileLocking" Value="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MIT-licensed SkiaSharp's native library for Android, the same pinned version as PdfEngine.Vector.Skia. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Android" Version="3.116.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector\PdfEngine.Vector.csproj" />
+    <ProjectReference Include="..\PdfEngine.Vector.Skia\PdfEngine.Vector.Skia.csproj" />
+    <ProjectReference Include="..\PdfViewer.Web.Engine\PdfViewer.Web.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

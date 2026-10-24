@@ -28,9 +28,17 @@ public sealed class SystemFontCatalog
     /// <summary>Faces by squashed family name, each flagged when that name is its legacy family.</summary>
     private readonly Lazy<Dictionary<string, List<(SystemFontFace Face, bool Legacy)>>> _byFamily;
 
-    private SystemFontCatalog(IReadOnlyList<SystemFontFace> faces)
+    /// <summary>Families looked up when a family is missing (squashed name → stand-ins in order), or null.</summary>
+    private readonly Dictionary<string, string[]>? _aliases;
+
+    private SystemFontCatalog(IReadOnlyList<SystemFontFace> faces, IReadOnlyDictionary<string, string[]>? aliases = null)
     {
         Faces = faces;
+        if (aliases != null)
+        {
+            _aliases = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            foreach (var (family, standIns) in aliases) _aliases[Squash(family)] = standIns;
+        }
         _byFamily = new Lazy<Dictionary<string, List<(SystemFontFace, bool)>>>(() =>
         {
             var map = new Dictionary<string, List<(SystemFontFace, bool)>>(StringComparer.Ordinal);
@@ -51,13 +59,62 @@ public sealed class SystemFontCatalog
     }
 
     /// <summary>
-    /// The fonts installed for everyone on this machine (Windows\Fonts), read once. Empty in a
-    /// browser, which has no font folder: a web host passes its own catalog (<see cref="ForDirectory"/>).
+    /// The fonts installed for everyone on this machine (Windows\Fonts), read once. On Android,
+    /// <c>/system/fonts</c> with <see cref="AndroidFamilyAliases"/> (<see cref="ForAndroid"/>). Empty
+    /// in a browser, which has no font folder: a web host passes its own catalog (<see cref="ForDirectory"/>).
     /// </summary>
     public static SystemFontCatalog Installed =>
-        PdfEngine.Vector.Diagnostics.PdfPlatform.HasInstalledFonts
-            ? ForDirectory(Environment.GetFolderPath(Environment.SpecialFolder.Fonts))
-            : None;
+        PdfEngine.Vector.Diagnostics.PdfPlatform.InstalledFontDirectory is not { } directory ? None
+        : PdfEngine.Vector.Diagnostics.PdfPlatform.IsAndroid ? ForAndroid(directory)
+        : ForDirectory(directory);
+
+    private static readonly ConcurrentDictionary<string, SystemFontCatalog> AndroidCatalogs = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The fonts of an Android font folder (<c>/system/fonts</c>), where the families that
+    /// substitution asks for by their Windows names stand in by <see cref="AndroidFamilyAliases"/>:
+    /// Arial and Helvetica are drawn with Roboto, Times with Noto Serif, Courier with Droid Sans Mono,
+    /// each glyph still placed by the document's widths.
+    /// </summary>
+    public static SystemFontCatalog ForAndroid(string directory = PdfEngine.Vector.Diagnostics.PdfPlatform.AndroidFontDirectory) =>
+        AndroidCatalogs.GetOrAdd(directory, d => ForDirectory(d).WithFamilyAliases(AndroidFamilyAliases));
+
+    /// <summary>This catalog's faces, where a missing family is looked up as the families <paramref name="aliases"/> maps it to, in order.</summary>
+    public SystemFontCatalog WithFamilyAliases(IReadOnlyDictionary<string, string[]> aliases) => new(Faces, aliases);
+
+    /// <summary>
+    /// The families substitution asks for (the Windows families of <see cref="Match"/>, <see cref="Fallbacks"/>
+    /// and the renderers' Unicode fallbacks) and the Android families that stand in for them. The
+    /// names are those in the fonts' name tables on Android 7 to 15; a family a device lacks is skipped.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string[]> AndroidFamilyAliases { get; } = BuildAndroidAliases();
+
+    private static Dictionary<string, string[]> BuildAndroidAliases()
+    {
+        string[] sans = { "Roboto", "Noto Sans", "Droid Sans" };
+        string[] serif = { "Noto Serif", "Droid Serif" };
+        string[] mono = { "Droid Sans Mono", "Cutive Mono" };
+        var map = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in new[] { "Arial", "Arial Narrow", "Helvetica", "Segoe UI", "Calibri", "Verdana", "Tahoma", "Century Gothic", "Gill Sans MT", "Lucida Sans Unicode", "Franklin Gothic" })
+            map[f] = sans;
+        foreach (var f in new[] { "Times New Roman", "Times", "Georgia", "Cambria", "Palatino Linotype", "Book Antiqua", "Garamond", "Century Schoolbook", "Bookman Old Style" })
+            map[f] = serif;
+        foreach (var f in new[] { "Courier New", "Courier", "Consolas", "Lucida Console" })
+            map[f] = mono;
+        foreach (var f in new[] { "Monotype Corsiva", "Segoe Script" })
+            map[f] = new[] { "Dancing Script" };
+        map["Segoe UI Symbol"] = new[] { "Noto Sans Symbols 2", "Noto Sans Symbols" };
+        map["Cambria Math"] = new[] { "Noto Sans Math" };
+        map["Microsoft YaHei"] = new[] { "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback" };
+        map["Microsoft JhengHei"] = new[] { "Noto Sans CJK TC", "Noto Sans TC", "Droid Sans Fallback" };
+        map["Yu Gothic"] = new[] { "Noto Sans CJK JP", "Noto Sans JP", "Droid Sans Fallback" };
+        map["Malgun Gothic"] = new[] { "Noto Sans CJK KR", "Noto Sans KR", "Droid Sans Fallback" };
+        map["Nirmala UI"] = new[] { "Noto Sans Devanagari" };
+        map["Leelawadee UI"] = new[] { "Noto Sans Thai" };
+        map["Ebrima"] = new[] { "Noto Sans Ethiopic" };
+        map["Segoe UI Historic"] = new[] { "Noto Sans" };
+        return map;
+    }
 
     /// <summary>A catalog without faces.</summary>
     private static readonly SystemFontCatalog None = new(Array.Empty<SystemFontFace>());
@@ -111,7 +168,23 @@ public sealed class SystemFontCatalog
     public SystemFontFace? FindFamily(string family, bool bold, bool italic) => FindFamily(family, bold ? 700 : 400, italic);
 
     /// <summary>The face of <paramref name="family"/> nearest to <paramref name="weight"/> (100–900) and the slant asked for.</summary>
-    public SystemFontFace? FindFamily(string family, int weight, bool italic)
+    public SystemFontFace? FindFamily(string family, int weight, bool italic) =>
+        FindOwnFamily(family, weight, italic) ?? FindAliasedFamily(family, weight, italic);
+
+    /// <summary>
+    /// The face that stands in for <paramref name="family"/> by this catalog's family aliases (Android:
+    /// Roboto for Arial), nearest to the weight and slant asked for; null when the catalog has no alias
+    /// for the family or none of its stand-ins is there.
+    /// </summary>
+    public SystemFontFace? FindAliasedFamily(string family, int weight, bool italic)
+    {
+        if (_aliases == null || !_aliases.TryGetValue(Squash(family), out var standIns)) return null;
+        foreach (var standIn in standIns)
+            if (FindOwnFamily(standIn, weight, italic) is { } face) return face;
+        return null;
+    }
+
+    private SystemFontFace? FindOwnFamily(string family, int weight, bool italic)
     {
         // Either name finds the family: "Arial Narrow" is a family of its own to older software but
         // only a width of "Arial" typographically, and "Segoe UI" has its Semibold only typographically.

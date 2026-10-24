@@ -12,6 +12,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 
 - [Privacy & Safety](#privacy--safety)
 - [Browser Demo (WebAssembly)](#browser-demo-webassembly)
+- [Android App (proof of concept)](#android-app-proof-of-concept)
 - [Optional Components](#optional-components)
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
@@ -80,6 +81,23 @@ Its limits are stated plainly in its README: a browser has no installed fonts, s
 a PDF does not embed is drawn only when Chrome or Edge lend the page the device's fonts; CMYK
 JPEG images are not decoded yet; the engine runs in the .NET interpreter. Run it locally with
 `dotnet workload install wasm-tools` and `dotnet run --project src/PdfViewer.Web`.
+
+---
+
+## Android App (proof of concept)
+
+**Status: proof of concept.** [`src/PdfViewer.Android`](src/PdfViewer.Android/README.md) runs the
+same C# engine and the same Skia renderer on Android, through the same UI-free engine layer as the
+browser demo: one pure-C# engine on Windows, in the browser and on Android. It is a .NET for
+Android app (no MAUI) that opens a PDF through the system document picker, scrolls, pinch- and
+double-tap-zooms, searches with highlights, opens password-protected PDFs, and has night pages
+and a dark theme. Text in fonts a PDF does not embed is drawn with the phone's own fonts
+(Roboto, Noto Serif, Droid Sans Mono, Noto CJK and others in `/system/fonts`).
+
+The app asks for **no permission at all**: no internet access, no storage access. There is no
+telemetry. It has been run on an Android 13 emulator; it has not yet been run on a physical
+phone. Build it with `dotnet workload install android` and
+`dotnet build src/PdfViewer.Android -f net9.0-android -c Release`; CI (`android.yml`) uploads the APK.
 
 ---
 
@@ -369,13 +387,14 @@ d:\Practice\pdf-viewer\
 │   ├── PdfEngine.Abstractions/    # UI-neutral domain models, geometry, exceptions & contracts
 │   ├── PdfEngine.Vector/          # The PDF engine: parser, fonts, text, forms, signatures, editing, export
 │   ├── PdfEngine.Vector.Direct2D/ # Direct2D/DirectWrite renderer and printing
-│   ├── PdfEngine.Vector.Skia/     # Portable Skia renderer (web, later Android)
+│   ├── PdfEngine.Vector.Skia/     # Portable Skia renderer (web and Android)
 │   ├── PdfEngine.Vector.Windows/  # WPF fallback renderer
 │   ├── PdfEngine.Pdfium/          # PDFium interop, the oracle of developer and test builds (not shipped)
 │   ├── PdfViewer.Core/            # DocumentSession, RenderPriorityScheduler, MultiTierCache & Undo/Redo
 │   ├── PdfViewer/                 # Modern WPF MVVM application with Light/Dark themes
-│   ├── PdfViewer.Web.Engine/      # UI-free engine layer of the browser viewer (open, render, search)
+│   ├── PdfViewer.Web.Engine/      # UI-free engine layer of the browser and Android viewers (open, render, search, layout)
 │   ├── PdfViewer.Web/             # Browser demo: Blazor WebAssembly, the engine running in the tab
+│   ├── PdfViewer.Android/         # Android proof of concept: .NET for Android, the same engine and Skia renderer
 │   └── Installer/                 # Windows Graphical Setup Installer & Uninstaller
 │
 └── tests/
