@@ -63,6 +63,13 @@ public static class AnnotationExchange
                 AnnotationType.Rectangle => "square",
                 AnnotationType.Ellipse => "circle",
                 AnnotationType.Ink => "ink",
+                AnnotationType.Stamp => "stamp",
+                AnnotationType.Measurement => a.MeasureKind switch
+                {
+                    PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance => "line",
+                    PdfEngine.Vector.Annotations.PdfMeasurementKind.Perimeter => "polyline",
+                    _ => "polygon",
+                },
                 _ => "highlight"
             };
 
@@ -103,11 +110,19 @@ public static class AnnotationExchange
                 writer.Write($" coords=\"{coords}\"");
             }
 
+            string Point(Point p) => string.Format(CultureInfo.InvariantCulture, "{0:F4},{1:F4}", ox + p.X * pw, oy + (1.0 - p.Y) * ph);
+            if (a.Type == AnnotationType.Measurement && a.MeasureKind == PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance && a.Vertices.Count >= 2)
+                writer.Write($" start=\"{Point(a.Vertices[0])}\" end=\"{Point(a.Vertices[^1])}\"");
+            if (a.Type == AnnotationType.Stamp)
+                writer.Write($" icon=\"{System.Security.SecurityElement.Escape(a.StampName)}\"");
+
             writer.WriteLine(">");
             if (!string.IsNullOrEmpty(a.Contents))
             {
                 writer.WriteLine($"      <contents>{System.Security.SecurityElement.Escape(a.Contents)}</contents>");
             }
+            if (a.Type == AnnotationType.Measurement && a.MeasureKind != PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance && a.Vertices.Count > 0)
+                writer.WriteLine($"      <vertices>{string.Join(";", a.Vertices.Select(Point))}</vertices>");
             writer.WriteLine($"    </{annotTag}>");
         }
 

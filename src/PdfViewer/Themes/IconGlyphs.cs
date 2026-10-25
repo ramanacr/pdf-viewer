@@ -138,6 +138,11 @@ public static class IconGlyphs
     public const string Ink = "";
     public const string Shape = "";
 
+    // Measuring and stamps
+    public const string Measure = "";   // Ruler
+    public const string Stamp = "";     // Tag
+    public const string Identity = "";  // Contact
+
     // Sidebar
     public const string Pages = "";
     public const string Bookmarks = "";
