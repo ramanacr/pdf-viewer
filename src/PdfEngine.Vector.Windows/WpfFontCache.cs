@@ -67,13 +67,13 @@ internal sealed class WpfFontCache : IDisposable
         return typeface;
     }
 
-    /// <summary>System substitute for a face; null when no honest substitute exists (e.g. dingbats).</summary>
+    /// <summary>System substitute for a face, as the Direct2D backend chooses it; null when WPF has no such face.</summary>
     public GlyphTypeface? GetSubstitute(PdfFontFace? face, string? fontName)
     {
         var (name, bold, italic) = StyleOf(face, fontName);
         string family;
         if (name.Contains("Dingbat", StringComparison.OrdinalIgnoreCase))
-            return null; // no metric- or glyph-compatible system font
+            return GetFamily("Segoe UI Symbol", false, false); // the Dingbats block, by the encoding's Unicode
         // The installed font of that name or design first, as the Direct2D backend chooses it.
         if (!name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase)
             && PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Match(name, bold, italic, face?.IsSerif == true, face?.IsFixedPitch == true, face?.IsScript == true) is { } catalogFace
