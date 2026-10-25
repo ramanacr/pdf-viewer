@@ -7,9 +7,18 @@ using SkiaSharp;
 namespace PdfEngine.Vector.Skia;
 
 /// <summary>Pixel window of a full-page output.</summary>
+/// <param name="X">The left edge in pixels of the full output.</param>
+/// <param name="Y">The top edge in pixels of the full output.</param>
+/// <param name="Width">The width in pixels.</param>
+/// <param name="Height">The height in pixels.</param>
 public readonly record struct SkiaPixelRegion(int X, int Y, int Width, int Height);
 
 /// <summary>Result of a Skia render, including every region that needed fallback.</summary>
+/// <param name="Page">The rendered pixels. Dispose it to release the buffer.</param>
+/// <param name="Fallbacks">Every region that needed fallback: the display list's tokens and the ones this backend found.</param>
+/// <param name="BackendFallbackCount">The number of fallback regions that only this backend found.</param>
+/// <param name="FallbackRegionsComposited">The number of fallback regions drawn from the provider's pixels.</param>
+/// <param name="Elapsed">The time the render took.</param>
 public sealed record SkiaRenderResult(
     RenderedPage Page,
     IReadOnlyList<PdfFallbackToken> Fallbacks,
@@ -43,6 +52,7 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
     private const int ReplayerCacheCapacity = 6;
     private readonly LinkedList<(IPdfDisplayList List, SkiaReplayer Replayer)> _replayers = new();
 
+    /// <summary>Creates a renderer. One instance can render many pages; keep it for the life of the document view and dispose it at the end.</summary>
     /// <param name="imageCacheBytes">Budget for decoded images kept across renders.</param>
     /// <param name="fonts">
     /// Where substitutes for non-embedded fonts come from; null uses <see cref="SkiaFontSource"/>
@@ -89,6 +99,7 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
         return replayer;
     }
 
+    /// <inheritdoc/>
     public async ValueTask<RenderedPage> RenderDisplayListAsync(
         IPdfDisplayList displayList, RenderRequest request, IPdfFallbackProvider? fallbackProvider = null,
         CancellationToken cancellationToken = default) =>
@@ -286,6 +297,7 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
         return new PdfRect(x0, y0, x1 - x0, y1 - y0);
     }
 
+    /// <summary>Releases the cached paths, images and typefaces.</summary>
     public void Dispose()
     {
         if (_disposed) return;

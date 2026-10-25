@@ -93,6 +93,10 @@ public class PdfSanitizationException : Exception
 /// </summary>
 public interface IPdfSanitizer
 {
+    /// <summary>Writes a copy of the document without its active content (see <see cref="SanitizedContentKind"/>).</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="targetPath">The file to write.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<SanitizationResult> SanitizeAsync(
         IPdfDocument document,
         string targetPath,

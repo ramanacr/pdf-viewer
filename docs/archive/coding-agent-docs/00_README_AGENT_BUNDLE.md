@@ -1,6 +1,6 @@
 > **Archived.** This bundle is an AI coding-agent brief from 2026-08-27, written when the viewer
 > still used PDFium. It is not maintained, and many facts in it are out of date. For the current
-> project, read the [README](../README.md) and [docs/](../docs/index.md).
+> project, read the [README](../../../README.md) and [docs/](../../index.md).
 
 # PDF Viewer — Commercialization & Engineering Roadmap Agent Bundle
 

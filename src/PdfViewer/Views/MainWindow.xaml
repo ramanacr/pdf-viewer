@@ -333,7 +333,7 @@
                 <MenuItem Header="Rotate _Clockwise" Command="{Binding RotateClockwiseCommand}" InputGestureText="Ctrl+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Rotate Counter-Clockwise" Command="{Binding RotateCounterClockwiseCommand}" InputGestureText="Ctrl+Shift+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MirroredMenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Sidebar}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Sidebar}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Theme}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Night Mode (Invert Pages)" Command="{Binding ToggleNightModeCommand}"
                           IsCheckable="True" IsChecked="{Binding IsNightMode, Mode=OneWay}"
@@ -746,6 +746,25 @@
                         IsEnabled="{Binding IsDocumentLoaded}"
                         ToolTip="Save Annotated PDF As... (Ctrl+Shift+S)">
                     <TextBlock Text="{x:Static themes:IconGlyphs.SaveAs}" Style="{StaticResource ToolbarGlyph}" Foreground="{DynamicResource IconAccentBrush}" />
+                </Button>
+
+                <!-- Undo and Redo, as in the Edit menu: one history for comments, content edits and page marks.
+                     The tooltip names the step; it shows on a disabled button too, so "Undo" says why nothing happens. -->
+                <Button x:Name="ToolbarUndoButton"
+                        Style="{StaticResource ToolbarIconButton}"
+                        Command="{Binding UndoCommand}"
+                        ToolTip="{Binding UndoToolTip}"
+                        ToolTipService.ShowOnDisabled="True"
+                        AutomationProperties.Name="{Binding UndoName}">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource ToolbarGlyph}" />
+                </Button>
+                <Button x:Name="ToolbarRedoButton"
+                        Style="{StaticResource ToolbarIconButton}"
+                        Command="{Binding RedoCommand}"
+                        ToolTip="{Binding RedoToolTip}"
+                        ToolTipService.ShowOnDisabled="True"
+                        AutomationProperties.Name="{Binding RedoName}">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource ToolbarGlyph}" />
                 </Button>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
@@ -1338,7 +1357,12 @@
                               PreviewMouseUp="DocumentScrollViewer_PreviewMouseUp"
                               ScrollChanged="DocumentScrollViewer_ScrollChanged">
 
-                    <Grid MinWidth="{Binding ViewportWidth, ElementName=DocumentScrollViewer}" HorizontalAlignment="Left" Margin="24">
+                    <!-- At least as wide as the viewport, so a narrower page centres in it with
+                         equal margins. The 24 px margin sits inside it, on the centred grid:
+                         on this grid it made the content 48 px wider than the viewport, which
+                         always showed a horizontal scroll bar and moved the page 24 px right. -->
+                    <Grid x:Name="PageAreaGrid" MinWidth="{Binding ViewportWidth, ElementName=DocumentScrollViewer}" HorizontalAlignment="Left">
+                    <Grid x:Name="PageArea" HorizontalAlignment="Center" Margin="24">
 
                         <!-- Mode 1: Continuous Scrolling Mode -->
                         <!-- Bound to rows, not to the flat page list: the grouping on screen is
@@ -2049,6 +2073,7 @@
                                 </Grid>
                             </Grid>
                         </Border>
+                    </Grid>
                     </Grid>
                 </ScrollViewer>
             </Grid>

@@ -25,12 +25,20 @@ public class SignatureInfo
     public PdfRect Bounds { get; set; }
 }
 
+/// <summary>Reads and verifies the digital signatures of a document.</summary>
 public interface IPdfSignatureService
 {
+    /// <summary>Lists the signature fields and their signatures.</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<IReadOnlyList<SignatureInfo>> GetSignaturesAsync(
         Documents.IPdfDocument document,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Verifies the signature in one field.</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="fieldName">The name of the signature field.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<SignatureStatus> VerifySignatureAsync(
         Documents.IPdfDocument document,
         string fieldName,

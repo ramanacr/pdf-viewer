@@ -6,6 +6,7 @@ namespace PdfEngine.Vector.Limits;
 /// </summary>
 public sealed class PdfSecurityLimits
 {
+    /// <summary>The default limits. Create an instance with <c>init</c> values to change some of them.</summary>
     public static readonly PdfSecurityLimits Default = new();
 
     /// <summary>Maximum indirect object count to resolve per document.</summary>

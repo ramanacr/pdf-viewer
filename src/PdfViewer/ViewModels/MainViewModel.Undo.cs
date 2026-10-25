@@ -29,6 +29,16 @@ public partial class MainViewModel
 
     public string RedoHeader => CommandHistory.NextRedoName is { } name ? $"Red_o {name}" : "Red_o";
 
+    /// <summary>The toolbar's Undo button name: the step it takes back, with no access key ("Undo Add Highlight").</summary>
+    public string UndoName => CommandHistory.NextUndoName is { } name ? $"Undo {name}" : "Undo";
+
+    public string RedoName => CommandHistory.NextRedoName is { } name ? $"Redo {name}" : "Redo";
+
+    /// <summary>The toolbar's Undo button tooltip: its name and its shortcut.</summary>
+    public string UndoToolTip => $"{UndoName} (Ctrl+Z)";
+
+    public string RedoToolTip => $"{RedoName} (Ctrl+Y)";
+
     // History operations run one at a time, in the order they were asked for, on the UI thread.
     // CommandHistory serializes them too, but a caller that has to wait for it resumes on a pool
     // thread, and these commands change bound collections.
@@ -103,6 +113,10 @@ public partial class MainViewModel
         OnPropertyChanged(nameof(CanRedo));
         OnPropertyChanged(nameof(UndoHeader));
         OnPropertyChanged(nameof(RedoHeader));
+        OnPropertyChanged(nameof(UndoName));
+        OnPropertyChanged(nameof(RedoName));
+        OnPropertyChanged(nameof(UndoToolTip));
+        OnPropertyChanged(nameof(RedoToolTip));
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         if (IsDocumentLoaded) HasUnsavedChanges = !IsAtSavedState();

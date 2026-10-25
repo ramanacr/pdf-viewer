@@ -74,6 +74,7 @@ public enum PdfTateChuYoko
     UpToThree,
 }
 
+/// <summary>Options for <see cref="PdfContentEditor.Apply"/>: where fonts for new characters come from, and vertical-text rules.</summary>
 public sealed class PdfContentEditOptions
 {
     /// <summary>Where fonts for new characters come from (the installed fonts by default).</summary>
@@ -83,8 +84,10 @@ public sealed class PdfContentEditOptions
     public PdfTateChuYoko TateChuYoko { get; init; } = PdfTateChuYoko.TwoDigits;
 }
 
+/// <summary>The result of a content edit: the new file and what the edit did.</summary>
 public sealed class PdfContentEditResult
 {
+    /// <summary>The complete new PDF file.</summary>
     public required byte[] Bytes { get; init; }
     /// <summary>Fonts embedded for characters the document's own fonts do not have.</summary>
     public IReadOnlyList<string> EmbeddedFonts { get; init; } = Array.Empty<string>();

@@ -65,7 +65,12 @@ public partial class MainViewModel
 
     partial void OnActiveAnnotationToolChanged(AnnotationType? value)
     {
-        if (value != null) { IsPlacingSignature = false; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null; }
+        if (value != null)
+        {
+            IsPlacingSignature = false; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null;
+            // Drawing starts a new action: the text selection ends, and the status with it.
+            if (HasTextSelection) ClearSelection();
+        }
     }
 
     /// <summary>Why the document cannot be signed right now, or null.</summary>

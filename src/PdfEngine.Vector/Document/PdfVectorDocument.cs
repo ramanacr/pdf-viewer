@@ -36,16 +36,23 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     internal SemaphoreSlim BuildGate => _buildGate;
     private bool _disposed;
 
+    /// <inheritdoc/>
     public string FilePath { get; }
+    /// <inheritdoc/>
     public DocumentMetadata Metadata { get; }
+    /// <inheritdoc/>
     public int PageCount => _pageTree.Count;
+    /// <inheritdoc/>
     public bool IsOpen => !_disposed;
 
+    /// <summary>Resolves indirect objects of the file (low-level access).</summary>
     public PdfObjectResolver Resolver => _resolver;
+    /// <summary>The cross-reference table of the file (low-level access).</summary>
     public PdfXrefTable XrefTable => _xrefTable;
 
     /// <summary>True when the xref was rebuilt by scanning a damaged file.</summary>
     public bool WasRepaired => _xrefTable.WasReconstructed;
+    /// <summary>The flattened page tree (low-level access).</summary>
     public PdfPageTree PageTree => _pageTree;
 
     /// <summary>True when the file is encrypted (and was opened with a valid password).</summary>
@@ -60,6 +67,16 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     /// <summary>The document catalog (/Root).</summary>
     public PdfDictionary Catalog => _catalog;
 
+    /// <summary>Reads a PDF file into memory and opens it.</summary>
+    /// <param name="filePath">The path of the PDF file.</param>
+    /// <param name="limits">Ceilings for hostile input; null uses <see cref="PdfSecurityLimits.Default"/>.</param>
+    /// <param name="cancellationToken">Cancels the file read.</param>
+    /// <param name="password">The user or owner password of an encrypted document, or null.</param>
+    /// <param name="certificates">For public-key encryption: certificates with private keys to try; null uses <see cref="PdfEngine.Vector.Security.PdfPublicKeySecurityHandler.CertificateSource"/> (the personal certificate stores).</param>
+    /// <returns>The open document. Dispose it when you no longer need it.</returns>
+    /// <exception cref="PdfSyntaxException">The file is not a PDF, or it is damaged beyond repair.</exception>
+    /// <exception cref="PdfEncryptedDocumentException">The password or certificate is missing or wrong, or the security handler is not supported.</exception>
+    /// <exception cref="PdfResourceLimitException">The file exceeds a limit of <paramref name="limits"/>.</exception>
     public static async ValueTask<PdfVectorDocument> OpenAsync(
         string filePath,
         PdfSecurityLimits? limits = null,
@@ -72,6 +89,17 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return OpenCore(memSource, filePath, limits, password, certificates);
     }
 
+    /// <summary>Opens a PDF from bytes in memory. The document keeps a reference to <paramref name="pdfBytes"/>; do not change the array.</summary>
+    /// <param name="pdfBytes">The complete PDF file.</param>
+    /// <param name="filePath">A name for the document, reported by <see cref="FilePath"/>.</param>
+    /// <param name="limits">Ceilings for hostile input; null uses <see cref="PdfSecurityLimits.Default"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation before parsing starts.</param>
+    /// <param name="password">The user or owner password of an encrypted document, or null.</param>
+    /// <param name="certificates">For public-key encryption: certificates with private keys to try; null uses <see cref="PdfEngine.Vector.Security.PdfPublicKeySecurityHandler.CertificateSource"/> (the personal certificate stores).</param>
+    /// <returns>The open document. Dispose it when you no longer need it.</returns>
+    /// <exception cref="PdfSyntaxException">The data is not a PDF, or it is damaged beyond repair.</exception>
+    /// <exception cref="PdfEncryptedDocumentException">The password or certificate is missing or wrong, or the security handler is not supported.</exception>
+    /// <exception cref="PdfResourceLimitException">The file exceeds a limit of <paramref name="limits"/>.</exception>
     public static async ValueTask<PdfVectorDocument> OpenAsync(
         byte[] pdfBytes,
         string filePath = "Memory.pdf",
@@ -84,6 +112,16 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return await Task.Run(() => OpenCore(memSource, filePath, limits, password, certificates), cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Opens a PDF from a byte source, synchronously. The document owns <paramref name="source"/> and disposes it.</summary>
+    /// <param name="source">The PDF data, for example a <see cref="MemoryByteSource"/> or a <see cref="FileByteSource"/>.</param>
+    /// <param name="filePath">A name for the document, reported by <see cref="FilePath"/>.</param>
+    /// <param name="limits">Ceilings for hostile input; null uses <see cref="PdfSecurityLimits.Default"/>.</param>
+    /// <param name="password">The user or owner password of an encrypted document, or null.</param>
+    /// <param name="certificates">For public-key encryption: certificates with private keys to try; null uses <see cref="PdfEngine.Vector.Security.PdfPublicKeySecurityHandler.CertificateSource"/> (the personal certificate stores).</param>
+    /// <returns>The open document. Dispose it when you no longer need it.</returns>
+    /// <exception cref="PdfSyntaxException">The data is not a PDF, or it is damaged beyond repair.</exception>
+    /// <exception cref="PdfEncryptedDocumentException">The password or certificate is missing or wrong, or the security handler is not supported.</exception>
+    /// <exception cref="PdfResourceLimitException">The file exceeds a limit of <paramref name="limits"/>.</exception>
     public static PdfVectorDocument Open(
         IPdfByteSource source,
         string filePath = "Source.pdf",
@@ -265,6 +303,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return hidden.Count > 0 ? hidden : null;
     }
 
+    /// <inheritdoc/>
     public ValueTask<PageInfo> GetPageInfoAsync(int pageNumber, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -285,6 +324,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return ValueTask.FromResult(info);
     }
 
+    /// <inheritdoc/>
     public ValueTask<IPdfPage> GetPageAsync(int pageNumber, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -496,6 +536,19 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return pages;
     }
 
+    /// <summary>
+    /// Interprets the page's content stream, annotations and form fields into an immutable display list,
+    /// on a worker thread. Recent lists are cached (see <see cref="PdfSecurityLimits.MaxCachedDisplayListCommands"/>),
+    /// so a second call for the same page is cheap.
+    /// </summary>
+    /// <param name="pageNumber">The page number, starting at 1.</param>
+    /// <param name="cancellationToken">Cancels the interpretation.</param>
+    /// <returns>
+    /// The display list, ready for a renderer such as <c>SkiaVectorRenderer</c>. Content that is damaged or
+    /// exceeds a per-page budget of <see cref="PdfSecurityLimits"/> does not throw: the list keeps what was
+    /// drawn before it and has <see cref="PdfFeatureSet.Recovered"/> in its features.
+    /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="pageNumber"/> is less than 1 or greater than <see cref="PageCount"/>.</exception>
     public async ValueTask<IPdfDisplayList> GetPageDisplayListAsync(int pageNumber, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -634,6 +687,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
             throw new ObjectDisposedException(nameof(PdfVectorDocument));
     }
 
+    /// <summary>Closes the document, clears its display-list cache and releases its byte source.</summary>
     public void Dispose()
     {
         if (!_disposed)
@@ -644,6 +698,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         }
     }
 
+    /// <summary>Closes the document; the same as <see cref="Dispose"/>.</summary>
     public ValueTask DisposeAsync()
     {
         Dispose();
@@ -656,10 +711,17 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
 /// </summary>
 public sealed class PdfVectorPage : IPdfPage
 {
+    /// <inheritdoc/>
     public int PageNumber { get; }
+    /// <inheritdoc/>
     public PageInfo Info { get; }
+    /// <summary>The document that the page belongs to.</summary>
     public PdfVectorDocument Document { get; }
 
+    /// <summary>Creates a page object. <see cref="PdfVectorDocument.GetPageAsync"/> creates pages; hosts rarely call this.</summary>
+    /// <param name="pageNumber">The page number, starting at 1.</param>
+    /// <param name="info">The size and rotation of the page.</param>
+    /// <param name="document">The document of the page.</param>
     public PdfVectorPage(int pageNumber, PageInfo info, PdfVectorDocument document)
     {
         PageNumber = pageNumber;
@@ -667,6 +729,8 @@ public sealed class PdfVectorPage : IPdfPage
         Document = document;
     }
 
+    /// <summary>Does nothing: a page holds no resources of its own.</summary>
     public void Dispose() { }
+    /// <summary>Does nothing: a page holds no resources of its own.</summary>
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
