@@ -335,6 +335,12 @@
                     <MenuItem Header="_Make Accessible..." Command="{Binding ShowMakeAccessibleCommand}" IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Tags a copy of the document for screen readers: headings, paragraphs, lists, tables, figures and links in reading order, with headers and footers as artifacts."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Accessibility}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 </MenuItem>
+                <MenuItem Header="Print Productio_n"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Print}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="_Output Preview..." Command="{Binding ShowOutputPreviewCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Shows the page's process and spot plates: turn plates on and off, simulate overprinting, highlight total ink over a limit and read the ink under the mouse."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Print}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Preflight..." Command="{Binding ShowPreflightCommand}" IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Checks the document for printing (Digital printing, PDF/X-1a readiness): fonts, image resolution, colour, total ink, hairlines, transparency and page boxes."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Check}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                </MenuItem>
                 <MenuItem Header="Reduce File _Size..."
                           Command="{Binding ShowReduceSizeCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"

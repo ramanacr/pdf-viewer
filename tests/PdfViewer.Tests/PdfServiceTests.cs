@@ -810,6 +810,12 @@ public class PdfServiceTests : IDisposable
         await mainVm.LoadDocumentAsync(samplePdf);
 
         var thumb = mainVm.Thumbnails[0];
+        // Opening renders thumbnails in the background; that render must be over before the test
+        // plants its own image, or it can land after the rotation and look like a kept thumbnail.
+        var wait = System.Diagnostics.Stopwatch.StartNew();
+        while (thumb.ThumbnailImage == null && wait.ElapsedMilliseconds < 10000)
+            await Task.Delay(20);
+        await Task.Delay(100);
         thumb.GetType().GetProperty(nameof(ThumbnailViewModel.ThumbnailImage))!
             .SetValue(thumb, System.Windows.Media.Imaging.BitmapSource.Create(
                 1, 1, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null, new byte[] { 0, 0, 0, 0 }, 4));

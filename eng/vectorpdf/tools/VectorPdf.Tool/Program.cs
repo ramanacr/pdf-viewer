@@ -57,6 +57,7 @@ public static class Program
             "officecheck" => OfficeSmoke.Check(args),
             "pdfa-convert" => await PdfASmoke.ConvertAsync(args),
             "pdfua" => await PdfUaSmoke.RunAsync(args),
+            "printprod" => await PrintSmoke.RunAsync(args),
             "fontdebug" => await FontDebug.RunAsync(args),
             "text" => await TextParity.RunAsync(args),
             "textbench" => await TextBench.RunAsync(args),

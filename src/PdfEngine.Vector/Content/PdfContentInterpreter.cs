@@ -18,6 +18,7 @@ using PdfEngine.Vector.Images;
 using PdfEngine.Vector.Limits;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
+using PdfEngine.Vector.PrintProduction;
 using PdfEngine.Vector.Streams;
 
 namespace PdfEngine.Vector.Content;
@@ -78,6 +79,18 @@ public sealed class PdfContentInterpreter
     {
         ArgumentNullException.ThrowIfNull(page);
         return new PageRun(this, page, cancellationToken, forPrinting).Build();
+    }
+
+    /// <summary>
+    /// A build for print production: with <paramref name="plate"/>, a display list whose colours are plate values
+    /// (see <see cref="PdfPlateRequest"/>); with <paramref name="observer"/>, every painting operation is reported.
+    /// Soft mask groups are neither separated nor reported: they shape what is painted, they print no ink.
+    /// </summary>
+    internal IPdfDisplayList BuildDisplayList(PdfPageNode page, CancellationToken cancellationToken, bool forPrinting,
+        PdfPlateRequest? plate, IPdfPaintObserver? observer)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        return new PageRun(this, page, cancellationToken, forPrinting, plate, observer).Build();
     }
 
     private sealed record PreparedFace(PdfFontFace Face, PreparedFontProgram? Program);
@@ -151,9 +164,12 @@ public sealed class PdfContentInterpreter
 
         private readonly bool _forPrinting;
 
-        public PageRun(PdfContentInterpreter owner, PdfPageNode page, CancellationToken ct, bool forPrinting = false)
+        public PageRun(PdfContentInterpreter owner, PdfPageNode page, CancellationToken ct, bool forPrinting = false,
+            PdfPlateRequest? plate = null, IPdfPaintObserver? observer = null)
         {
             _forPrinting = forPrinting;
+            _plateRequest = plate;
+            _observer = observer;
             _owner = owner;
             _page = page;
             _ct = ct;
@@ -164,9 +180,109 @@ public sealed class PdfContentInterpreter
 
         private PdfRect Crop => _page.CropBox;
 
+        // ------------------------------------------------------------------ print production
+
+        private readonly PdfPlateRequest? _plateRequest;
+        private readonly IPdfPaintObserver? _observer;
+        /// <summary>Above zero while a soft mask group is recorded: its colours shape the mask, they print no ink.</summary>
+        private int _printSuspended;
+        private readonly Dictionary<PdfColorSpace, PdfColorSpace> _plateSpaces = new(ReferenceEqualityComparer.Instance);
+        private PdfRect? _tilingPageBounds;
+        private PdfMatrix _cellToPage = PdfMatrix.Identity;
+
+        private PdfPlateRequest? Plate => _printSuspended == 0 ? _plateRequest : null;
+        private IPdfPaintObserver? Observer => _printSuspended == 0 ? _observer : null;
+
+        /// <summary>In a plate build, the space whose colours are plate values of <paramref name="cs"/>; else <paramref name="cs"/>.</summary>
+        private PdfColorSpace Plated(PdfColorSpace cs)
+        {
+            if (Plate is not { } plate || cs.IsPattern || cs is PlateColorSpace)
+                return cs;
+            if (!_plateSpaces.TryGetValue(cs, out var mapped))
+                _plateSpaces[cs] = mapped = new PlateColorSpace(cs, plate);
+            return mapped;
+        }
+
+        /// <summary>The colour painted for components of a space: its screen colour, or its plate values in a plate build.</summary>
+        private PdfColor ColorOf(PdfColorSpace cs, double[] comps, GraphicsState gs) =>
+            Plate != null ? Plated(cs).ToRgbColor(comps, 1f) : WithIntent(cs, gs.RenderingIntent).ToRgbColor(comps, 1f);
+
+        /// <summary>
+        /// In a plate build: true when the object leaves the plate as it is, so it is not drawn. A /None colour
+        /// never paints; otherwise only an overprinting object (overprint simulation on) leaves plates alone, those
+        /// its colour does not paint, and in overprint mode 1 also the zero components of a CMYK current colour.
+        /// </summary>
+        private bool LeavesPlate(GraphicsState gs, bool stroke, PdfColorSpace? space = null, bool currentColour = true)
+        {
+            if (Plate is not { } plate)
+                return false;
+            var cs = space ?? (stroke ? gs.StrokeColorSpace : gs.FillColorSpace);
+            if (cs.IsPattern)
+            {
+                if (cs.PatternBaseColorSpace is not { } patternBase)
+                    return false; // a coloured pattern: its cell decides
+                cs = patternBase;
+            }
+            if (cs.IsNone)
+                return true;
+            if (!plate.SimulateOverprint || !(stroke ? gs.OverprintStroke : gs.OverprintFill))
+                return false;
+            var comps = (currentColour ? (stroke ? gs.StrokeComponents : gs.FillComponents) : null) ?? cs.InitialComponents;
+            Span<double> inks = stackalloc double[plate.Model.ChannelCount];
+            ulong painted = plate.Model.Evaluate(cs, comps, inks);
+            if (currentColour && gs.OverprintMode == 1 && PdfInkModel.NonzeroMask(cs, comps) is ulong nonzero)
+                painted &= nonzero;
+            return (painted & plate.ChannelMask) == 0;
+        }
+
+        /// <summary>The initial colour, DeviceGray black (8.4.1), with its components; as plate values in a plate build.</summary>
+        private GraphicsState Initial(GraphicsState gs)
+        {
+            gs.FillComponents = [0.0];
+            gs.StrokeComponents = [0.0];
+            if (Plate != null)
+                gs.FillColor = gs.StrokeColor = ColorOf(PdfColorSpace.DeviceGray, [0.0], gs);
+            return gs;
+        }
+
+        private PdfPaint FillPaint(GraphicsState gs) => LeavesPlate(gs, false) ? new PdfPaint(gs.FillColor, 0) : gs.CreateFillPaint();
+
+        private PdfPaint StrokePaint(GraphicsState gs) => LeavesPlate(gs, true) ? new PdfPaint(gs.StrokeColor, 0) : gs.CreateStrokePaint();
+
+        /// <summary>The CTM to page space (inside a pattern cell the cell's CTM is in pattern space).</summary>
+        private PdfMatrix PageCtm(GraphicsState gs) => _tilingDepth > 0 ? gs.CTM * _cellToPage : gs.CTM;
+
+        private void Notify(PdfPaintEvent paint)
+        {
+            if (Observer is not { } observer)
+                return;
+            observer.OnPaint(_tilingDepth > 0 && _tilingPageBounds is PdfRect cell ? paint with { Bounds = cell } : paint);
+        }
+
+        private PdfPaintEvent Event(PdfPaintKind kind, PdfRect bounds, GraphicsState gs, bool stroke) => new(kind, bounds)
+        {
+            ColorSpace = stroke ? gs.StrokeColorSpace : gs.FillColorSpace,
+            Components = stroke ? gs.StrokeComponents : gs.FillComponents,
+            Alpha = stroke ? gs.StrokeAlpha : gs.FillAlpha,
+            Blend = gs.Blend,
+            SoftMask = gs.SoftMaskActive,
+            Overprint = stroke ? gs.OverprintStroke : gs.OverprintFill,
+            OverprintMode = gs.OverprintMode,
+            LineWidth = stroke ? gs.LineWidth * MinimumScale(PageCtm(gs)) : 0,
+        };
+
+        /// <summary>How much the matrix shrinks lengths in its thinnest direction (its smaller singular value).</summary>
+        private static double MinimumScale(PdfMatrix m)
+        {
+            double s = m.A * m.A + m.B * m.B + m.C * m.C + m.D * m.D;
+            double det = m.A * m.D - m.B * m.C;
+            double disc = Math.Max(0, s * s - 4 * det * det);
+            return Math.Sqrt(Math.Max(0, (s - Math.Sqrt(disc)) / 2));
+        }
+
         public IPdfDisplayList Build()
         {
-            var gs = new GraphicsState { ClipBoundsPage = Crop };
+            var gs = Initial(new GraphicsState { ClipBoundsPage = Crop });
 
             try
             {
@@ -739,6 +855,11 @@ public sealed class PdfContentInterpreter
             to.FillColorSpace = clone.FillColorSpace;
             to.FillPattern = clone.FillPattern;
             to.StrokePattern = clone.StrokePattern;
+            to.StrokeComponents = clone.StrokeComponents;
+            to.FillComponents = clone.FillComponents;
+            to.OverprintStroke = clone.OverprintStroke;
+            to.OverprintFill = clone.OverprintFill;
+            to.OverprintMode = clone.OverprintMode;
             to.StrokeAlpha = clone.StrokeAlpha;
             to.FillAlpha = clone.FillAlpha;
             to.BlendMode = clone.BlendMode;
@@ -792,6 +913,16 @@ public sealed class PdfContentInterpreter
             if (_resolver.Resolve(catObj) is not PdfDictionary cat || !cat.TryGetValue(name, out var entry))
                 return null;
             return _resolver.Resolve(entry);
+        }
+
+        /// <summary>The object number a resource refers to, or −1 when it is direct or missing.</summary>
+        private int ResourceObjectNumber(PdfDictionary? resources, string category, string name)
+        {
+            if (resources == null || !resources.TryGetValue(category, out var catObj))
+                return -1;
+            return _resolver.Resolve(catObj) is PdfDictionary cat && cat.TryGetValue(name, out var entry) && entry is PdfIndirectRef r
+                ? r.ObjectNumber
+                : -1;
         }
 
         // ------------------------------------------------------------------ bounds & fallback
@@ -945,6 +1076,10 @@ public sealed class PdfContentInterpreter
         private void PaintFill(PdfPath pdfPath, PdfFillRule rule, GraphicsState gs, PdfDictionary resources, PdfRect pageBounds)
         {
             NotePaintApproximation(gs, stroke: false);
+            if (!gs.FillColorSpace.IsPattern || gs.FillColorSpace.PatternBaseColorSpace != null)
+                Notify(Event(PdfPaintKind.Fill, pageBounds, gs, stroke: false));
+            if (LeavesPlate(gs, stroke: false))
+                return;
             bool composite = BeginComposite(gs, pageBounds);
             if (gs.FillColorSpace.IsPattern)
                 PaintPatternFill(pdfPath, rule, gs, pageBounds);
@@ -976,6 +1111,10 @@ public sealed class PdfContentInterpreter
         private void PaintStroke(PdfPath pdfPath, GraphicsState gs, PdfRect pageBounds)
         {
             NotePaintApproximation(gs, stroke: true);
+            var strokeEvent = Event(PdfPaintKind.Stroke, pageBounds, gs, stroke: true);
+            Notify(gs.StrokeColorSpace.IsPattern && gs.StrokeColorSpace.PatternBaseColorSpace == null ? strokeEvent with { ColorSpace = null } : strokeEvent);
+            if (LeavesPlate(gs, stroke: true))
+                return;
             bool composite = BeginComposite(gs, pageBounds);
             if (gs.StrokeColorSpace.IsPattern)
                 PaintPatternFill(pdfPath, PdfFillRule.NonZero, gs, pageBounds, gs.CreateStroke());
@@ -1013,7 +1152,7 @@ public sealed class PdfContentInterpreter
             long patternType = patternDict.GetInteger("PatternType") ?? 0;
             if (patternType == 1 && pattern is PdfStream tiling)
             {
-                PaintTilingFill(clip, gs, pageBounds, tiling, alpha, stroke != null ? gs.StrokeColor : gs.FillColor);
+                PaintTilingFill(clip, gs, pageBounds, tiling, alpha, stroke != null ? gs.StrokeColor : gs.FillColor, stroke != null);
                 return;
             }
             if (patternType != 2)
@@ -1035,6 +1174,15 @@ public sealed class PdfContentInterpreter
                 return;
             }
             _ = reason;
+
+            var shadingSpace = PdfColorSpace.Resolve(shadingDict["ColorSpace"], _resolver, _page.Resources);
+            Notify(new PdfPaintEvent(PdfPaintKind.Shading, pageBounds)
+            {
+                ColorSpace = shadingSpace, Alpha = alpha, Blend = gs.Blend, SoftMask = gs.SoftMaskActive,
+                Overprint = stroke != null ? gs.OverprintStroke : gs.OverprintFill,
+            });
+            if (LeavesPlate(gs, stroke != null, shadingSpace, currentColour: false))
+                return;
 
             // A shading pattern's own graphics state (rarely more than an opacity) is not applied;
             // the shading is painted with the current one.
@@ -1066,11 +1214,31 @@ public sealed class PdfContentInterpreter
         private int _tilingDepth;
         private const int MaxTilingDepth = 4;
 
-        private void PaintTilingFill(PdfDrawCommand clip, GraphicsState gs, PdfRect pageBounds, PdfStream patternStream, double alpha, PdfColor color)
+        private void PaintTilingFill(PdfDrawCommand clip, GraphicsState gs, PdfRect pageBounds, PdfStream patternStream, double alpha, PdfColor color,
+            bool stroke = false)
         {
             var d = patternStream.Dictionary;
             bool uncolored = (d.GetInteger("PaintType") ?? 1) == 2;
-            var tiling = CaptureTiling(patternStream, uncolored ? color : null);
+
+            // Pattern space maps to the default space of the pattern's parent stream (8.7.2), not the CTM.
+            var patternMatrix = ReadMatrix(d["Matrix"]) ?? PdfMatrix.Identity;
+            var target = patternMatrix * _currentPatternBase;
+
+            // Paints inside the cell are reported where the pattern is painted.
+            var (savedCell, savedBounds) = (_cellToPage, _tilingPageBounds);
+            if (_tilingDepth == 0)
+                (_cellToPage, _tilingPageBounds) = (target, pageBounds);
+            PdfTilingPattern? tiling;
+            try
+            {
+                var space = stroke ? gs.StrokeColorSpace : gs.FillColorSpace;
+                tiling = CaptureTiling(patternStream, uncolored ? color : null, uncolored ? space.PatternBaseColorSpace : null,
+                    uncolored ? (stroke ? gs.StrokeComponents : gs.FillComponents) : null);
+            }
+            finally
+            {
+                (_cellToPage, _tilingPageBounds) = (savedCell, savedBounds);
+            }
             if (tiling == null)
             {
                 // A pattern with a degenerate cell (a zero or near-zero step, an empty box) or one that
@@ -1079,9 +1247,6 @@ public sealed class PdfContentInterpreter
                 return;
             }
 
-            // Pattern space maps to the default space of the pattern's parent stream (8.7.2), not the CTM.
-            var patternMatrix = ReadMatrix(d["Matrix"]) ?? PdfMatrix.Identity;
-            var target = patternMatrix * _currentPatternBase;
             if (!gs.CTM.TryInvert(out var invCtm))
                 return;
 
@@ -1100,7 +1265,7 @@ public sealed class PdfContentInterpreter
         /// self-referencing or too deeply nested patterns. A cell whose content has fallback regions
         /// keeps what the engine draws of it.
         /// </summary>
-        private PdfTilingPattern? CaptureTiling(PdfStream patternStream, PdfColor? color)
+        private PdfTilingPattern? CaptureTiling(PdfStream patternStream, PdfColor? color, PdfColorSpace? uncoloredSpace = null, double[]? uncoloredComponents = null)
         {
             var key = (patternStream, color);
             if (_tilings.TryGetValue(key, out var cached))
@@ -1119,12 +1284,15 @@ public sealed class PdfContentInterpreter
                 _tilingDepth++;
                 try
                 {
-                    var cellState = new GraphicsState { CTM = PdfMatrix.Identity, ClipBoundsPage = bbox };
+                    var cellState = Initial(new GraphicsState { CTM = PdfMatrix.Identity, ClipBoundsPage = bbox });
                     if (color is PdfColor c)
                     {
-                        // Uncoloured pattern: the cell paints in the colour given with scn.
-                        cellState.FillColorSpace = PdfColorSpace.DeviceRgb;
-                        cellState.StrokeColorSpace = PdfColorSpace.DeviceRgb;
+                        // Uncoloured pattern: the cell paints in the colour given with scn (its space and
+                        // components are kept for print production; the colour operators of the cell are ignored).
+                        cellState.FillColorSpace = uncoloredSpace ?? PdfColorSpace.DeviceRgb;
+                        cellState.StrokeColorSpace = uncoloredSpace ?? PdfColorSpace.DeviceRgb;
+                        cellState.FillComponents = uncoloredComponents;
+                        cellState.StrokeComponents = uncoloredComponents;
                         cellState.FillColor = c;
                         cellState.StrokeColor = c;
                     }
@@ -1245,17 +1413,19 @@ public sealed class PdfContentInterpreter
                 return;
             }
             var initial = cs.InitialComponents;
-            var color = cs.IsPattern ? PdfColor.Black : WithIntent(cs, gs.RenderingIntent).ToRgbColor(initial, 1f);
+            var color = cs.IsPattern ? PdfColor.Black : ColorOf(cs, initial, gs);
             if (stroke)
             {
                 gs.StrokeColorSpace = cs;
                 gs.StrokeColor = color;
+                gs.StrokeComponents = cs.IsPattern ? null : initial;
                 gs.StrokePattern = null;
             }
             else
             {
                 gs.FillColorSpace = cs;
                 gs.FillColor = color;
+                gs.FillComponents = cs.IsPattern ? null : initial;
                 gs.FillPattern = null;
             }
         }
@@ -1284,8 +1454,9 @@ public sealed class PdfContentInterpreter
                         }
                         if (got == bn)
                         {
-                            var pc = WithIntent(baseCs, gs.RenderingIntent).ToRgbColor(bcomps, 1f);
-                            if (stroke) gs.StrokeColor = pc; else gs.FillColor = pc;
+                            var pc = ColorOf(baseCs, bcomps, gs);
+                            if (stroke) { gs.StrokeColor = pc; gs.StrokeComponents = bcomps; }
+                            else { gs.FillColor = pc; gs.FillComponents = bcomps; }
                         }
                     }
                 }
@@ -1304,23 +1475,26 @@ public sealed class PdfContentInterpreter
             if (available < n)
                 return; // malformed: keep the previous colour
 
-            var color = WithIntent(cs, gs.RenderingIntent).ToRgbColor(comps, 1f);
-            if (stroke) gs.StrokeColor = color; else gs.FillColor = color;
+            var color = ColorOf(cs, comps, gs);
+            if (stroke) { gs.StrokeColor = color; gs.StrokeComponents = comps; }
+            else { gs.FillColor = color; gs.FillComponents = comps; }
         }
 
-        private static void SetDeviceColor(GraphicsState gs, bool stroke, PdfColorSpace cs, double[] comps)
+        private void SetDeviceColor(GraphicsState gs, bool stroke, PdfColorSpace cs, double[] comps)
         {
-            var color = WithIntent(cs, gs.RenderingIntent).ToRgbColor(comps, 1f);
+            var color = ColorOf(cs, comps, gs);
             if (stroke)
             {
                 gs.StrokeColorSpace = cs;
                 gs.StrokeColor = color;
+                gs.StrokeComponents = comps;
                 gs.StrokePattern = null;
             }
             else
             {
                 gs.FillColorSpace = cs;
                 gs.FillColor = color;
+                gs.FillComponents = comps;
                 gs.FillPattern = null;
             }
         }
@@ -1400,6 +1574,20 @@ public sealed class PdfContentInterpreter
                         break;
                     case "AIS":
                         gs.AlphaIsShape = value.TryGetBoolean(out bool ais) && ais;
+                        break;
+                    case "OP":
+                        // /op defaults to /OP when the dictionary has none (8.6.7, Table 57).
+                        if (value.TryGetBoolean(out bool overprint))
+                        {
+                            gs.OverprintStroke = overprint;
+                            if (!d.ContainsKey("op")) gs.OverprintFill = overprint;
+                        }
+                        break;
+                    case "op":
+                        if (value.TryGetBoolean(out bool overprintFill)) gs.OverprintFill = overprintFill;
+                        break;
+                    case "OPM":
+                        if (value.TryGetInteger(out long opm)) gs.OverprintMode = opm == 1 ? 1 : 0;
                         break;
                     case "RI":
                         if (value is PdfName riName)
@@ -1502,6 +1690,7 @@ public sealed class PdfContentInterpreter
             _commands.Add(new SaveState());
             _commands.Add(new ConcatTransform(gs.CTM));
             var savedBase = _currentPatternBase;
+            _printSuspended++;
             try
             {
                 ExecuteForm(group, _page.Resources, maskState, new ContentContext(gs.CTM, 0, 0, false), hidden: false);
@@ -1509,6 +1698,7 @@ public sealed class PdfContentInterpreter
             finally
             {
                 _currentPatternBase = savedBase;
+                _printSuspended--;
             }
             _commands.Add(new RestoreState());
 
@@ -1687,13 +1877,31 @@ public sealed class PdfContentInterpreter
             {
                 TextToPage = textToPage,
                 Face = effectiveFace,
-                StrokePaint = strokes ? gs.CreateStrokePaint() : null,
+                StrokePaint = strokes ? StrokePaint(gs) : null,
                 Stroke = strokes ? gs.CreateStroke() : null,
             };
 
+            if (!hidden)
+            {
+                if (!paints)
+                {
+                    Notify(new PdfPaintEvent(PdfPaintKind.Text, pageBounds) { Font = font, Invisible = true });
+                }
+                else
+                {
+                    bool fillsText = mode is 0 or 2 or 4 or 6;
+                    if (fillsText)
+                        Notify(Event(PdfPaintKind.Text, pageBounds, gs, stroke: false) with { Font = font });
+                    if (strokes)
+                        Notify(Event(PdfPaintKind.Stroke, pageBounds, gs, stroke: true) with { Font = font });
+                    if (!fillsText)
+                        Notify(new PdfPaintEvent(PdfPaintKind.Text, pageBounds) { Font = font, ColorSpace = gs.StrokeColorSpace, Components = gs.StrokeComponents });
+                }
+            }
+
             // Invisible runs are kept: selection, search and copy work on them (OCR layers use mode 3).
             bool composite = (drawVisible || patternText) && BeginComposite(gs, pageBounds);
-            _commands.Add(new DrawGlyphRun(run, gs.CreateFillPaint(), pageBounds));
+            _commands.Add(new DrawGlyphRun(run, FillPaint(gs), pageBounds));
             if (patternText && !pageBounds.IsEmpty)
                 PaintPatternFill(null, PdfFillRule.NonZero, gs, pageBounds, clipOverride: new PushTextClip(new[] { run with { RenderingMode = 0 } }, pageBounds));
             EndComposite(composite);
@@ -1864,6 +2072,13 @@ public sealed class PdfContentInterpreter
                 return;
 
             NotePaintApproximation(gs, stroke: false);
+            var shadingSpace = PdfColorSpace.Resolve(shDict["ColorSpace"], _resolver, _page.Resources);
+            Notify(new PdfPaintEvent(PdfPaintKind.Shading, bounds)
+            {
+                ColorSpace = shadingSpace, Alpha = gs.FillAlpha, Blend = gs.Blend, SoftMask = gs.SoftMaskActive, Overprint = gs.OverprintFill,
+            });
+            if (LeavesPlate(gs, stroke: false, shadingSpace, currentColour: false))
+                return;
             if (BuildShading(shDict, out var reason, shObj as PdfStream) is not PdfShading shading)
             {
                 _ = reason;
@@ -1903,7 +2118,7 @@ public sealed class PdfContentInterpreter
             if (type is < 1 or > 7)
                 return null;
 
-            var cs = PdfColorSpace.Resolve(sh["ColorSpace"], _resolver, _page.Resources);
+            var cs = Plated(PdfColorSpace.Resolve(sh["ColorSpace"], _resolver, _page.Resources));
             if (cs.IsPattern || cs.UnsupportedReason != null)
             {
                 reason = cs.UnsupportedReason ?? PdfFallbackReason.Shading;
@@ -2151,7 +2366,7 @@ public sealed class PdfContentInterpreter
             {
                 case "Image":
                     if (!hidden)
-                        PaintImage(xobj, xobj.Dictionary, gs, resources, isInline: false, ImageKey(xobj));
+                        PaintImage(xobj, xobj.Dictionary, gs, resources, isInline: false, ImageKey(xobj), ResourceObjectNumber(resources, "XObject", name));
                     break;
                 case "Form":
                     ExecuteForm(xobj, resources, gs, ctx, hidden);
@@ -2192,6 +2407,7 @@ public sealed class PdfContentInterpreter
                 bool knockout = false;
                 if (isTransparencyGroup && !hidden)
                 {
+                    Notify(new PdfPaintEvent(PdfPaintKind.TransparencyGroup, formBounds) { Alpha = gs.FillAlpha, Blend = gs.Blend, SoftMask = gs.SoftMaskActive });
                     _features |= PdfFeatureSet.Transparency;
                     knockout = groupDict!.TryGetValue("K", out var k) && k != null && k.TryGetBoolean(out bool kb) && kb;
                     if (gs.SoftMaskActive && gs.SoftMask == null)
@@ -2315,7 +2531,8 @@ public sealed class PdfContentInterpreter
             "RunLengthDecode", "RL", "DCTDecode", "DCT", "Crypt", "JPXDecode", "CCITTFaxDecode", "CCF", "JBIG2Decode",
         };
 
-        private void PaintImage(PdfStream stream, PdfDictionary dict, GraphicsState gs, PdfDictionary resources, bool isInline, string key)
+        private void PaintImage(PdfStream stream, PdfDictionary dict, GraphicsState gs, PdfDictionary resources, bool isInline, string key,
+            int objectNumber = -1)
         {
             _features |= PdfFeatureSet.Images;
             var unit = new PdfRect(0, 0, 1, 1);
@@ -2395,6 +2612,34 @@ public sealed class PdfContentInterpreter
                 }
             }
 
+            if (Observer != null)
+            {
+                // Resolution as placed: pixels over the length of the image's unit square sides, in inches.
+                var placed = PageCtm(gs);
+                double wide = Math.Sqrt(placed.A * placed.A + placed.B * placed.B) / 72.0, high = Math.Sqrt(placed.C * placed.C + placed.D * placed.D) / 72.0;
+                double ppi = Math.Min(wide > 0 ? width / wide : double.PositiveInfinity, high > 0 ? height / high : double.PositiveInfinity);
+                Notify(new PdfPaintEvent(isMask ? PdfPaintKind.ImageMask : PdfPaintKind.Image, pageBounds)
+                {
+                    ColorSpace = isMask ? gs.FillColorSpace : cs,
+                    Components = isMask ? gs.FillComponents : null,
+                    Alpha = gs.FillAlpha, Blend = gs.Blend, SoftMask = gs.SoftMaskActive,
+                    Overprint = gs.OverprintFill, OverprintMode = gs.OverprintMode,
+                    ImageWidth = (int)width, ImageHeight = (int)height, ImagePpi = ppi,
+                    ImageSoftMask = _resolver.Resolve(dict["SMask"]) is PdfStream || (dict.GetInteger("SMaskInData") ?? 0) != 0,
+                    ObjectNumber = objectNumber,
+                });
+            }
+            if (isMask ? LeavesPlate(gs, stroke: false) : cs != null && LeavesPlate(gs, stroke: false, cs, currentColour: false))
+                return;
+            Func<PdfColorSpace, PdfColorSpace>? mapSpace = null;
+            if (Plate is { } plate)
+            {
+                // Plate pixels are not the image's colours: they are cached under their own key.
+                key += ":plate:" + plate.Key;
+                if (cs != null) cs = Plated(cs);
+                else mapSpace = Plated; // a JPEG 2000 image in its own colours: the decoder picks the space
+            }
+
             var source = new PdfImageSource(
                 key + (isMask ? $":mask:{gs.FillColor.R:F3},{gs.FillColor.G:F3},{gs.FillColor.B:F3}" : string.Empty),
                 stream,
@@ -2403,7 +2648,10 @@ public sealed class PdfContentInterpreter
                 _resolver,
                 _owner._streamDecoder,
                 _limits,
-                resources);
+                resources)
+            {
+                MapColorSpace = mapSpace,
+            };
 
             bool interpolate = _resolver.Resolve(dict["Interpolate"]) is PdfBoolean { Value: true };
             var imageRef = new PdfImageRef(
@@ -2685,7 +2933,7 @@ public sealed class PdfContentInterpreter
                     rect.Left - transformed.Left * rect.Width / transformed.Width,
                     rect.Top - transformed.Top * rect.Height / transformed.Height);
 
-                var gs = new GraphicsState { ClipBoundsPage = Crop, CTM = a };
+                var gs = Initial(new GraphicsState { ClipBoundsPage = Crop, CTM = a });
                 _commands.Add(new SaveState());
                 _commands.Add(new ConcatTransform(a));
                 ExecuteForm(appearance, _page.Resources, gs, new ContentContext(PdfMatrix.Identity, 0, 0, false), hidden);

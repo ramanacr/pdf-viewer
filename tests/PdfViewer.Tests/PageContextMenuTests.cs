@@ -140,6 +140,9 @@ public class PageContextMenuTests : IDisposable
         await vm.LoadDocumentAsync(path);
 
         var page = vm.Pages[0];
+        // The extraction started by opening must finish first: it runs on another thread and
+        // could otherwise replace these segments with the page's real text.
+        await page.LoadTextSegmentsAsync(vm.DocumentService);
         page.TextSegments.Clear();
         page.TextSegments.Add(new PageTextSegment
         {

@@ -153,6 +153,7 @@ public class TextSelectionAndSearchEventTests : IDisposable
         await vm.LoadDocumentAsync(pdfPath);
 
         var page = vm.Pages[0];
+        await page.LoadTextSegmentsAsync(vm.DocumentService); // let the opening extraction finish first
         page.TextSegments.Clear();
         page.IsTextExtracted = true; // stand in for extraction: it must not replace these segments
         page.TextSegments.Add(new PageTextSegment { Text = "Important", X = 0.2, Y = 0.3, Width = 0.3, Height = 0.05, SegmentIndex = 0 });
