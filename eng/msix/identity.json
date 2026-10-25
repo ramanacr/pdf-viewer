@@ -1,7 +1,7 @@
 {
   "_comment": "Copy these from Partner Center > your app > Product management > Product identity. Empty values stop scripts/build_msix.ps1 (docs/microsoft-store.md).",
-  "identityName": "",
-  "publisher": "",
-  "publisherDisplayName": "",
-  "displayName": ""
+  "identityName": "RRCLabs.PDFViewerNative",
+  "publisher": "CN=4BC6AFD6-49C8-46B2-A096-9AF3F2B78CB8",
+  "publisherDisplayName": "RRC Labs",
+  "displayName": "PDF Viewer Native"
 }
