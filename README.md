@@ -85,9 +85,9 @@ Hebrew, nine Indic scripts, math, symbols and dingbats, and Chinese, Japanese an
 into Unicode slices. The Noto files are not in the repository: the web demo workflow downloads
 the official releases pinned by SHA-256 in `eng/webdemo/noto-fonts.json` and publishes them
 with the demo. Every font comes from the demo's own site, never from Google Fonts, and only the
-files a page needs are fetched. Its limits are stated plainly in its README: Arabic and Indic
-text is drawn without shaping; CMYK JPEG images are not decoded yet; the engine runs in the
-.NET interpreter. Run it locally with
+files a page needs are fetched. Arabic and Indic text in a font that is not embedded is shaped
+as in the desktop app (the same engine code). Its limits are stated plainly in its README: CMYK
+JPEG images are not decoded yet; the engine runs in the .NET interpreter. Run it locally with
 `dotnet workload install wasm-tools` and `dotnet run --project src/PdfViewer.Web`.
 
 ---

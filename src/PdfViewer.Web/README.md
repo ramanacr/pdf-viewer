@@ -217,7 +217,8 @@ not embed:
    to right, so Arabic is taken as seen and put back in reading order before it is shaped
    (a word whose glyphs go right to left is in reading order already). Each shaped word is
    fitted to the space the PDF's `/Widths` give it, as single glyphs are. Embedded fonts are
-   drawn by their own glyphs, unshaped, as before.
+   drawn by their own glyphs, unshaped, as before. The desktop app's renderers (Direct2D and
+   WPF) shape with the same code, so a page looks the same in both.
 6. **Lazy loading.** The Noto index (`fonts/noto/index.json`, 140 KB, about 32 KB with gzip)
    is fetched the first time a character needs it, then only the files that hold the page's
    characters. Each CJK face is cut into slices: a core slice with the common characters of

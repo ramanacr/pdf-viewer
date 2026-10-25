@@ -45,7 +45,8 @@ the regions that this backend cannot draw.
    backend's substitute chain: `SystemFontCatalog.Match`, then the class family, then Unicode
    fallback families, with each glyph fitted to the document's `/Widths`. Such text reaches the
    backend as characters, so Arabic and Indic words are shaped with the substitute's GSUB and
-   GPOS (`SkiaReplayer.Shaping.cs`, with the editing shaper `TextShaper`): joining forms,
+   GPOS (`SubstituteShaper` in the engine, with the editing shaper `TextShaper`; the Direct2D
+   and WPF backends use the same code): joining forms,
    ligatures, marks, pre-base vowel signs, reph and conjuncts, each word fitted to its widths.
    Arabic is taken in the order it is seen and put back in reading order once before it is
    shaped. Embedded programs are not shaped. Glyphs are filled as
