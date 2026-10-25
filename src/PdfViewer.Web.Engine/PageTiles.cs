@@ -31,10 +31,10 @@ public static class PageTiles
     public static bool NeedsTiles(double baseScale, double scale) => baseScale < scale * 0.98;
 
     /// <summary>
-    /// The tiles of a page that a view shows: <paramref name="pageInView"/> is the page's rectangle
-    /// in view pixels (at <paramref name="scale"/>), the view is <paramref name="viewWidth"/> ×
-    /// <paramref name="viewHeight"/>, grown by <paramref name="margin"/> pixels on each side. Rows
-    /// from the top, nearest the view's centre first within the list's order (row by row).
+    /// The tiles at <paramref name="scale"/> of a page that a view shows, row by row:
+    /// <paramref name="pageInView"/> is the page's rectangle in view pixels (at the view's own
+    /// scale, which may differ while a pinch runs), the view is <paramref name="viewWidth"/> ×
+    /// <paramref name="viewHeight"/>, grown by <paramref name="margin"/> pixels on each side.
     /// </summary>
     public static IReadOnlyList<PageTile> Visible(ViewerPage page, double scale, LayoutRect pageInView, double viewWidth, double viewHeight,
         int tileSize = DefaultSize, double margin = 0)
@@ -42,9 +42,11 @@ public static class PageTiles
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(tileSize);
         var (w, h) = PixelSize(page, scale);
         var tiles = new List<PageTile>();
-        // The part of the view over the page, in page pixels.
-        double x0 = Math.Max(0, -margin - pageInView.X), y0 = Math.Max(0, -margin - pageInView.Y);
-        double x1 = Math.Min(w, viewWidth + margin - pageInView.X), y1 = Math.Min(h, viewHeight + margin - pageInView.Y);
+        if (!(pageInView.Width > 0) || !(pageInView.Height > 0)) return tiles;
+        // The part of the view over the page, in page pixels at the tiles' scale.
+        double kx = w / pageInView.Width, ky = h / pageInView.Height;
+        double x0 = Math.Max(0, (-margin - pageInView.X) * kx), y0 = Math.Max(0, (-margin - pageInView.Y) * ky);
+        double x1 = Math.Min(w, (viewWidth + margin - pageInView.X) * kx), y1 = Math.Min(h, (viewHeight + margin - pageInView.Y) * ky);
         if (x1 <= x0 || y1 <= y0) return tiles;
         int c0 = (int)(x0 / tileSize), c1 = (int)Math.Ceiling(x1 / tileSize) - 1;
         int r0 = (int)(y0 / tileSize), r1 = (int)Math.Ceiling(y1 / tileSize) - 1;

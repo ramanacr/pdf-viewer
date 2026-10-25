@@ -38,6 +38,12 @@ public class AndroidAppTests
         Assert.Equal((w - 16 * 512, h - 21 * 512), (last.Width, last.Height));
         Assert.Equal(new LayoutRect(1080 - w + 16 * 512, 1920 - h + 21 * 512, last.Width, last.Height), PageTiles.InView(last, Letter, scale, new LayoutRect(1080 - w, 1920 - h, w, h)));
 
+        // While a pinch runs, the page is drawn at another size: the tiles of the old scale still cover the view.
+        var half = new LayoutRect(-1500, -2500, w / 2.0, h / 2.0);
+        var stretched = PageTiles.Visible(Letter, scale, half, 1080, 1920);
+        Assert.True(stretched.Min(t => t.X) <= 3000 && stretched.Max(t => t.X + t.Width) >= 3000 + 2160);
+        Assert.All(stretched, t => Assert.True(PageTiles.InView(t, Letter, scale, half).Right > 0));
+
         // A page beside the view has no visible tiles.
         Assert.Empty(PageTiles.Visible(Letter, scale, new LayoutRect(0, 2000, w, h), 1080, 1920));
         Assert.NotEmpty(PageTiles.Visible(Letter, scale, new LayoutRect(0, 2000, w, h), 1080, 1920, margin: 100));
