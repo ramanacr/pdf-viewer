@@ -73,3 +73,9 @@ eng/vectorpdf/corpus/cache/
 
 # The web demo's Noto fonts: built by eng/webdemo/noto_fonts.py, never committed.
 src/PdfViewer.Web/wwwroot/fonts/noto/
+
+# MSIX packages and any signing certificate (docs/microsoft-store.md): never committed.
+*.msix
+*.appx
+*.msixbundle
+*.pfx

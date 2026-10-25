@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest of the Microsoft Store build (docs/microsoft-store.md).
+
+  scripts/build_msix.ps1 fills the {Tokens}. The identity values come from eng/msix/identity.json
+  (or the script's parameters) and must be the exact values Partner Center shows under
+  Product management > Product identity. Do not put invented values here.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap2 uap3 rescap">
+
+  <Identity
+    Name="{IdentityName}"
+    Publisher="{Publisher}"
+    Version="{Version}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>{DisplayName}</DisplayName>
+    <PublisherDisplayName>{PublisherDisplayName}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>A private, offline PDF viewer and editor for Windows.</Description>
+  </Properties>
+
+  <!-- 10.0.19041.0 matches SupportedOSPlatformVersion in src/PdfViewer/PdfViewer.csproj. -->
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="PdfViewer" Executable="PdfViewer.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="{DisplayName}"
+        Description="A private, offline PDF viewer and editor for Windows."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+            <uap:ShowOn Tile="wide310x150Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+      </uap:VisualElements>
+
+      <Extensions>
+        <!--
+          The .pdf association, the MSIX way. Windows adds it with the package and removes it
+          with the package; the application writes no HKCU\Software\Classes keys when packaged
+          (src/PdfViewer/Services/PackagedApp.cs). The verbs match what the installer registers.
+        -->
+        <uap3:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="pdf" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>PDF Document</uap:DisplayName>
+            <uap:Logo>Assets\PdfFile.png</uap:Logo>
+            <uap:InfoTip>PDF Document</uap:InfoTip>
+            <uap:SupportedFileTypes>
+              <uap:FileType ContentType="application/pdf">.pdf</uap:FileType>
+            </uap:SupportedFileTypes>
+            <uap2:SupportedVerbs>
+              <uap3:Verb Id="print" Parameters="/p &quot;%1&quot;">Print</uap3:Verb>
+            </uap2:SupportedVerbs>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- A WPF desktop application: it runs with full trust, like the installer build. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
