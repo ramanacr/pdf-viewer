@@ -38,6 +38,32 @@ internal sealed class NativeDocumentServices
     /// <summary>Where each loaded annotation came from, and what it looked like then, keyed by the model's id.</summary>
     private readonly Dictionary<Guid, (int Page, int Index, int ObjectNumber, string Fingerprint)> _loaded = new();
 
+    /// <summary>Where a loaded annotation came from (page, index in /Annots, object number), or null for one made here.</summary>
+    internal (int Page, int Index, int ObjectNumber)? Origin(Guid id) =>
+        _loaded.TryGetValue(id, out var o) ? (o.Page, o.Index, o.ObjectNumber) : null;
+
+    /// <summary>
+    /// The object numbers of the loaded annotations that <paramref name="annotations"/> has changed
+    /// or no longer has: the page's own drawing of them is out of date.
+    /// </summary>
+    internal IReadOnlyCollection<int> ChangedOrDeleted(IEnumerable<AnnotationModel> annotations)
+    {
+        var byId = new Dictionary<Guid, AnnotationModel>();
+        foreach (var m in annotations) byId.TryAdd(m.Id, m);
+        var numbers = new List<int>();
+        foreach (var (id, origin) in _loaded)
+        {
+            if (origin.ObjectNumber <= 0) continue;
+            if (!byId.TryGetValue(id, out var m) || m.PageNumber != origin.Page || Fingerprint(m) != origin.Fingerprint)
+                numbers.Add(origin.ObjectNumber);
+        }
+        return numbers;
+    }
+
+    /// <summary>The annotation is a loaded one, on its page and unchanged, so the page draws it from the file.</summary>
+    internal bool IsAsLoaded(AnnotationModel m) =>
+        _loaded.TryGetValue(m.Id, out var o) && o.Page == m.PageNumber && Fingerprint(m) == o.Fingerprint;
+
     // ------------------------------------------------------------------ metadata and bookmarks
 
     public static DocumentMetadata Metadata(PdfVectorDocument doc, string filePath)
@@ -201,7 +227,8 @@ internal sealed class NativeDocumentServices
         {
             model.StampName = a.Icon ?? "Draft";
             model.StampRotation = a.AppearanceRotation;
-            model.StampSize = new Size(rect.Width, rect.Height);
+            model.FileStampRotation = a.AppearanceRotation;
+            model.StampSize = a.AppearanceSize is { } upright ? new Size(upright.Width, upright.Height) : new Size(rect.Width, rect.Height);
             model.HasOwnAppearance = a.HasAppearance;
             model.Opacity = a.Opacity;
         }
@@ -406,8 +433,11 @@ internal sealed class NativeDocumentServices
         var colourBefore = existing.Color;
         if (m.Type == AnnotationType.Stamp)
         {
-            // Its appearance is kept: a new rectangle moves and sizes it, as 12.5.5 fits it.
+            // Its appearance is kept: a new rectangle moves and sizes it, as 12.5.5 fits it, and a
+            // new turn goes into its form's /Matrix.
             var width = existing.BorderWidth;
+            double turn = PdfStamps.NormalizeDegrees(m.StampRotation - existing.AppearanceRotation);
+            existing.AppearanceTurn = Math.Abs(turn) < 1e-3 || Math.Abs(turn - 360) < 1e-3 ? 0 : turn;
             Apply(existing, m, crop, geometryChanged);
             existing.Color = colourBefore;
             existing.BorderWidth = width;

@@ -111,7 +111,16 @@ public partial class AnnotationModel : ObservableObject
     /// opening someone else's multi-stroke drawing and saving threw away everything after
     /// the first stroke, silently.
     /// </summary>
-    public List<List<Point>> InkStrokes { get; set; } = new();
+    public List<List<Point>> InkStrokes
+    {
+        get => _inkStrokes;
+        set
+        {
+            _inkStrokes = value ?? new();
+            OnPropertyChanged();
+        }
+    }
+    private List<List<Point>> _inkStrokes = new();
 
     /// <summary>
     /// Text markup over several lines: one normalized rectangle per line (the PDF's /QuadPoints).
@@ -186,7 +195,30 @@ public partial class AnnotationModel : ObservableObject
     /// Read from the file with its own appearance, which the page already shows: the overlay only
     /// marks where it is. Measurements and stamps made here are drawn by the overlay.
     /// </summary>
-    public bool HasOwnAppearance { get; set; }
+    public bool HasOwnAppearance
+    {
+        get => _hasOwnAppearance;
+        set
+        {
+            _hasOwnAppearance = value;
+            IsDrawnByPage = value;
+        }
+    }
+    private bool _hasOwnAppearance;
+
+    /// <summary>
+    /// The page draws this annotation from the file: loaded with its own appearance and not
+    /// changed since. Once it is moved, sized, turned or edited the page leaves it out and the
+    /// overlay draws it instead.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isDrawnByPage;
+
+    /// <summary>A loaded stamp's turn as the file has it (its appearance is turned from there when saved); null for one made here.</summary>
+    public double? FileStampRotation { get; set; }
+
+    /// <summary>The turn and look <see cref="StampPreview"/> was drawn for, so a new turn draws it again.</summary>
+    internal (double Rotation, bool Kept)? StampPreviewKey { get; set; }
 
     partial void OnMeasureChanged(PdfEngine.Vector.Annotations.PdfMeasure? value) => OnPropertyChanged(nameof(MeasureGeometry));
 

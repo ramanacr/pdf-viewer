@@ -149,6 +149,7 @@ public partial class MainWindow : Window
         document.RequestStampIdentityFunc = initial => MeasureStampDialogs.AskText(this, "Name on Dynamic Stamps",
             "The name dynamic stamps show with the date and time. It is kept in this computer's settings and never sent anywhere.", initial);
         document.RequestStampNameFunc = initial => MeasureStampDialogs.AskText(this, "Custom Stamp", "A name for the stamp in the Stamp menu:", initial);
+        document.EditAnnotationAction = EditExistingAnnotation;
         document.PickStampPdfFunc = () =>
         {
             var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Choose the PDF whose page becomes a stamp", Filter = "PDF files|*.pdf" };
@@ -540,6 +541,12 @@ public partial class MainWindow : Window
     {
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
 
+        if (_shell.ActiveDocument != null && TryEditSelectedAnnotationWithKeyboard(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (TryExtendSelectionWithKeyboard(e))
         {
             e.Handled = true;
@@ -633,6 +640,68 @@ public partial class MainWindow : Window
                 break;
         }
     }
+
+    /// <summary>
+    /// Keys for the selected annotation: arrows nudge it (Shift: further), Delete removes it,
+    /// Enter opens its comment, Esc lets go of it (or puts back a drag in progress), Tab and
+    /// Shift+Tab go through the page's annotations. Tab also starts there when the page has
+    /// focus; past the last annotation it moves on through the window as usual.
+    /// </summary>
+    private bool TryEditSelectedAnnotationWithKeyboard(KeyEventArgs e)
+    {
+        // A tool in use has the keys (Enter finishes a measurement, Esc stops it).
+        if (_vm.IsMeasuring || _vm.IsPlacingStamp || _vm.IsEditingContent || _vm.ActiveAnnotationTool != null
+            || _vm.IsPlacingSignature || _vm.IsMarkingRedaction)
+        {
+            _vm.SelectedAnnotation = null;
+            return false;
+        }
+        var mods = Keyboard.Modifiers;
+        if (e.Key == Key.Tab && (mods & ~ModifierKeys.Shift) == ModifierKeys.None
+            && (_vm.SelectedAnnotation != null || IsDocumentFocused()))
+        {
+            bool found = _vm.SelectNextAnnotation(backwards: mods == ModifierKeys.Shift);
+            if (found && _vm.SelectedAnnotation is { } next)
+            {
+                if (next.PageNumber != _vm.CurrentPageNumber) ScrollToPage(next.PageNumber);
+                Keyboard.Focus(DocumentScrollViewer);
+            }
+            return found;
+        }
+        if (_vm.SelectedAnnotation == null) return false;
+        bool plain = mods == ModifierKeys.None, shift = mods == ModifierKeys.Shift;
+        switch (e.Key)
+        {
+            case Key.Escape:
+                if (_vm.IsDraggingAnnotation) _vm.CancelAnnotationDrag();
+                else _vm.SelectedAnnotation = null;
+                return true;
+            case Key.Delete when plain:
+                _vm.DeleteSelectedAnnotation();
+                return true;
+            case Key.Enter when plain:
+                _vm.EditSelectedAnnotation();
+                return true;
+            case Key.Left when plain || shift:
+                _vm.NudgeSelectedAnnotation(-1, 0, shift);
+                return true;
+            case Key.Right when plain || shift:
+                _vm.NudgeSelectedAnnotation(1, 0, shift);
+                return true;
+            case Key.Up when plain || shift:
+                _vm.NudgeSelectedAnnotation(0, -1, shift);
+                return true;
+            case Key.Down when plain || shift:
+                _vm.NudgeSelectedAnnotation(0, 1, shift);
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>The page area has keyboard focus (not a toolbar, panel or menu).</summary>
+    private bool IsDocumentFocused() =>
+        Keyboard.FocusedElement is DependencyObject focused
+        && (ReferenceEquals(focused, DocumentScrollViewer) || focused is Visual v && v.IsDescendantOf(DocumentScrollViewer));
 
     /// <summary>
     /// Shift+Left/Right (by character), Ctrl+Shift+Left/Right (by word), Shift+Up/Down (by line),
@@ -1072,6 +1141,9 @@ public partial class MainWindow : Window
     {
         if (e.LeftButton != MouseButtonState.Pressed) return;
         if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
+
+        // A click on the page, away from the selected annotation's handles, lets go of it.
+        _vm.SelectedAnnotation = null;
 
         // Placing a signature, or marking an area for redaction: drag a box.
         if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
@@ -1662,9 +1734,12 @@ public partial class MainWindow : Window
 
             if (_pendingAnnotationClick is { } annot)
             {
+                // A click on an annotation selects it: handles to move and resize it, keys to
+                // nudge or delete it; a double-click (or Enter) opens its comment.
                 _pendingAnnotationClick = null;
                 _vm.ClearSelection();
-                EditExistingAnnotation(annot);
+                _vm.SelectAnnotation(annot);
+                Keyboard.Focus(DocumentScrollViewer);
                 return;
             }
             _vm.UpdateSelectionFromPages();
@@ -1678,7 +1753,8 @@ public partial class MainWindow : Window
             // If user is currently drawing with an active tool, let canvas handle it
             if (_vm.ActiveAnnotationTool != null) return;
 
-            EditExistingAnnotation(annot);
+            _vm.SelectAnnotation(annot);
+            if (e.ClickCount == 2) EditExistingAnnotation(annot);
             e.Handled = true;
         }
     }
@@ -1689,6 +1765,7 @@ public partial class MainWindow : Window
         {
             _vm.CurrentPageNumber = annot.PageNumber;
             ScrollToPage(annot.PageNumber);
+            _vm.SelectAnnotation(annot);
             EditExistingAnnotation(annot);
             e.Handled = true;
         }
@@ -1700,6 +1777,7 @@ public partial class MainWindow : Window
         {
             _vm.CurrentPageNumber = annot.PageNumber;
             ScrollToPage(annot.PageNumber);
+            _vm.SelectAnnotation(annot);
             EditExistingAnnotation(annot);
             e.Handled = true;
         }

@@ -108,6 +108,20 @@ public sealed class PdfAnnotation
     /// <summary>The rotation of the normal appearance (/AP /N /Matrix), degrees counter-clockwise; 0 when it has none.</summary>
     public double AppearanceRotation { get; set; }
 
+    /// <summary>
+    /// The normal appearance's size before it is turned, in default user space as /Rect fits it
+    /// (12.5.5); null when it has no appearance stream. A turned stamp's /Rect is the turned box,
+    /// so this is the stamp's own width and height.
+    /// </summary>
+    public (double Width, double Height)? AppearanceSize { get; set; }
+
+    /// <summary>
+    /// For a changed stamp that keeps its own appearance: degrees counter-clockwise to turn that
+    /// appearance by, through its form's /Matrix (0 leaves it as it is). The editor writes the
+    /// turned form as a new object, so nothing else that shares the old one changes.
+    /// </summary>
+    public double AppearanceTurn { get; set; }
+
     /// <summary>For a file attachment: the file's name, and its bytes when creating one.</summary>
     public string? FileName { get; set; }
     public byte[]? FileData { get; set; }
@@ -229,8 +243,24 @@ public static class PdfAnnotationReader
             double degrees = Math.Round(Math.Atan2(m[1], m[0]) * 180 / Math.PI, 4);
             a.AppearanceRotation = degrees < 0 ? degrees + 360 : degrees;
         }
+        if (r.Resolve(d["AP"]) is PdfDictionary apSize && r.Resolve(apSize["N"]) is PdfStream form)
+            a.AppearanceSize = UprightSize(form, a.Rect, a.AppearanceRotation, r);
         if (a.Subtype == "FileAttachment")
             a.FileName = (nav?.Value)?.FileName(d["FS"]) ?? PdfTextStrings.Decode(r.Resolve(d["FS"]));
         return a;
+    }
+
+    /// <summary>The form's box with its turn taken out, scaled as /Rect fits the turned box (12.5.5).</summary>
+    private static (double Width, double Height)? UprightSize(PdfStream form, PdfRect rect, double degrees, PdfObjectResolver r)
+    {
+        if (PdfDocumentInfo.ReadRect(form.Dictionary["BBox"], r) is not { IsEmpty: false } bbox) return null;
+        var matrix = PdfDocumentInfo.Numbers(r.Resolve(form.Dictionary["Matrix"]), r) is { Length: 6 } m
+            ? new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5])
+            : PdfMatrix.Identity;
+        var turned = matrix.Transform(bbox);
+        var upright = matrix.Multiply(PdfMatrix.CreateRotation(-degrees * Math.PI / 180)).Transform(bbox);
+        if (turned.Width <= 0 || turned.Height <= 0 || upright.Width <= 0 || upright.Height <= 0) return null;
+        double scale = (rect.Width / turned.Width + rect.Height / turned.Height) / 2;
+        return (upright.Width * scale, upright.Height * scale);
     }
 }
