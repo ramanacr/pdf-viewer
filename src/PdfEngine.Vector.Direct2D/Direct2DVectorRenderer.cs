@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using PdfEngine.Geometry;
 using PdfEngine.Rendering;
+using PdfEngine.Vector.Diagnostics;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.DCommon;
@@ -43,6 +44,13 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     private const uint D2DERR_RECREATE_TARGET = 0x8899000C;
     private const uint DXGI_ERROR_DEVICE_REMOVED = 0x887A0005;
     private const uint DXGI_ERROR_DEVICE_RESET = 0x887A0007;
+
+    /// <summary>
+    /// Ceiling on one render's pixel count: past it the stride x height product leaves int range
+    /// and the buffer is refused with a typed error instead of an OverflowException in the
+    /// allocation. Far above any real viewport or export; zoomed-in views render regions.
+    /// </summary>
+    internal const long MaxRenderPixelCount = 1L << 30;
 
     private readonly D2DResources _res;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -217,6 +225,9 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
         var r = ClampRegion(region ?? new PixelRegion(0, 0, geometry.PixelWidth, geometry.PixelHeight), geometry);
         if (r.Width <= 0 || r.Height <= 0)
             throw new ArgumentOutOfRangeException(nameof(region), "Region lies outside the page.");
+        if ((long)r.Width * r.Height > MaxRenderPixelCount)
+            throw new PdfResourceLimitException(nameof(MaxRenderPixelCount),
+                $"Requested render of {r.Width} x {r.Height} pixels ({(long)r.Width * r.Height:N0}) exceeds the {MaxRenderPixelCount:N0}-pixel single-buffer limit; render a region instead.");
 
         // Page-space area of the region, to fetch fallback pixels only where they show.
         Matrix3x2.Invert(geometry.PageUserToPixels(), out var pixelsToPage);
