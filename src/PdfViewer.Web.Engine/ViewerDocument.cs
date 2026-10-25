@@ -78,13 +78,13 @@ public sealed class ViewerBitmap
     /// <summary>Time Skia spent drawing the display list.</summary>
     public TimeSpan RasterTime { get; }
 
-    /// <summary>Regions of the page this renderer cannot draw faithfully (for example a CMYK JPEG).</summary>
+    /// <summary>Regions of the page this renderer cannot draw faithfully (for example a font it cannot load).</summary>
     public int UnsupportedRegions { get; }
 
     /// <summary>Of those, text whose font is neither embedded nor available as a substitute (no installed fonts in a browser).</summary>
     public int TextRegionsWithoutFont { get; }
 
-    /// <summary>Of those, images that could not be decoded (four-component JPEG, damaged data).</summary>
+    /// <summary>Of those, images that could not be decoded (damaged data, arithmetic-coded JPEG).</summary>
     public int ImagesNotDecoded { get; }
 }
 

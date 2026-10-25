@@ -154,7 +154,7 @@ public static class SkiaJpeg
         {
             return Decode(decoded, out width, out height);
         }
-        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or OverflowException)
         {
             width = height = 0;
             return null;
@@ -167,17 +167,31 @@ public static class SkiaJpeg
     /// space.
     /// </summary>
     /// <exception cref="InvalidDataException">The data is not a JPEG Skia can decode.</exception>
-    /// <exception cref="NotSupportedException">
-    /// A four-component (CMYK or YCCK) JPEG. Skia hands back no raw CMYK samples for the core to
-    /// map, and SkiaSharp 3.116.1 decodes the CMYK and YCCK JPEGs of the corpus as solid black,
-    /// so they are classified for fallback instead of drawn wrong.
-    /// </exception>
+    /// <exception cref="NotSupportedException">A four-component JPEG with arithmetic coding or more than 8 bits per sample.</exception>
+    /// <remarks>
+    /// Four-component (CMYK or YCCK) JPEGs are decoded by <see cref="JpegComponentDecoder"/>: Skia's
+    /// codec converts them to RGB by itself (SkiaSharp 3.116.1 drew the corpus's as solid black) and
+    /// hands back no CMYK samples. They then take the Direct2D backend's path, so both backends show
+    /// the same colours. WIC returns the inverse of the stored samples (it undoes the Adobe
+    /// convention itself, with or without an APP14 marker), and <see cref="PdfDecodedImage.InvertCmykJpeg"/>
+    /// is set for that output; the stored samples are turned into WIC's first.
+    /// </remarks>
     public static byte[] Decode(PdfDecodedImage decoded, out int width, out int height)
     {
         var header = PdfEngine.Vector.Create.JpegHeader.TryRead(decoded.Data.Span);
         int components = header?.Components ?? 3;
         if (components == 4)
-            throw new NotSupportedException("CMYK JPEG data is not decoded by the Skia backend.");
+        {
+            var cmyk = JpegComponentDecoder.Decode(decoded.Data.Span, out width, out height, out int n);
+            if (n != 4) throw new InvalidDataException("JPEG frame does not have four components.");
+            // WIC's samples are 255 − stored, and the backend inverts them again for InvertCmykJpeg:
+            // the stored samples stay as they are exactly when InvertCmykJpeg is set.
+            if (!decoded.InvertCmykJpeg)
+                for (int i = 0; i < cmyk.Length; i++) cmyk[i] = (byte)(255 - cmyk[i]);
+            return decoded.MapJpegComponents is { } mapCmyk
+                ? mapCmyk(cmyk, 4, width, height)
+                : PdfEngine.Vector.Color.PdfColorConversion.CmykToBgra(cmyk, width * height, inverted: false);
+        }
         if (decoded.MapJpegComponents is { } map && components is 1 or 3)
         {
             // Raw components (no colour management: no colour space on the destination) for the core.

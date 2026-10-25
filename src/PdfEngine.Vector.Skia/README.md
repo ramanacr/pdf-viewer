@@ -84,7 +84,7 @@ the regions that this backend cannot draw.
 | `PushStrokeClip` | Yes: stroke outline from `SKPaint.GetFillPath` |
 | `PushTextClip` | Yes: union of glyph outlines; Type 3 glyphs add nothing |
 | `DrawGlyphRun` | Yes: embedded TrueType and CFF (with glyph matrix), substitutes, render modes 0 to 7 |
-| `DrawImage` | Yes, except four-component (CMYK, YCCK) JPEG data, which is classified (see gaps) |
+| `DrawImage` | Yes; four-component (CMYK, YCCK) JPEG data through a managed decoder (see gaps) |
 | `DrawShading` | Yes: axial, radial, two-circle radial, function, free-form, lattice, Coons and tensor meshes |
 | `DrawTilingPattern` | Yes: coloured and uncoloured, fills and strokes |
 | `BeginTransparencyGroup` / `End…` | Yes |
@@ -113,13 +113,13 @@ bad pixel. Each test states its own budget. By area:
 | Night mode | 0.18 | none |
 
 **Corpus sample** (`CorpusParityReport`, first page of 200 files of the local corpus checkout,
-seeded random sample, 96 dpi, one process): mean difference per page averages 0.26, median 0.01,
-95th percentile 1.41, largest 14.28. 185 pages have a mean of at most 1 and 196 of at most 3.
-Bad pixels average 0.14 % per page. The worst page (mean 14.28) holds a CMYK JPEG that this
-backend classifies for fallback, so with no fallback provider the image area stays blank. The next
-pages (means 1.5 to 3.8) are text pages, where the text-weight difference below shows. The Skia
-backend classified content on 4 of the 200 pages. Median render time per page: Skia 2.56 ms,
-Direct2D 6.00 ms (these pages are small; this is not a benchmark).
+seeded random sample, 96 dpi, one process, Release build, measured again after the CMYK JPEG
+decoder was added): mean difference per page averages 0.23, median 0.01, 95th percentile 1.87,
+largest 4.75. 187 pages have a mean of at most 1 and 197 of at most 3. Bad pixels average 0.06 %
+per page. The Skia backend classified content on none of the 200 pages (before the decoder: 4,
+and the worst page, mean 14.28, held a CMYK JPEG that stayed blank). The worst pages now are
+text pages, where the text-weight difference below shows. Median render time per page: Skia
+1.14 ms, Direct2D 2.98 ms (these pages are small; this is not a benchmark).
 
 To run the sample: set `SKIA_PARITY_CORPUS` to the corpus folder (`eng/vectorpdf/corpus/cache`),
 optionally `SKIA_PARITY_PAGES` (at most 200) and `SKIA_PARITY_OUT` (summary file), and run the
@@ -127,10 +127,14 @@ optionally `SKIA_PARITY_PAGES` (at most 200) and `SKIA_PARITY_OUT` (summary file
 
 ## Known gaps
 
-1. **CMYK and YCCK JPEG.** Skia gives no raw CMYK samples for the core's colour mapping, and
-   SkiaSharp 3.116.1 decoded the CMYK and YCCK JPEGs of the corpus as solid black. The backend
-   therefore classifies four-component JPEG data as `ImageDecode` fallback. A portable JPEG decoder
-   would close this gap.
+1. **CMYK and YCCK JPEG: a slower decoder.** Skia gives no raw CMYK samples (SkiaSharp 3.116.1
+   decoded the corpus's CMYK and YCCK JPEGs as solid black), so four-component JPEG data is
+   decoded by `JpegComponentDecoder`, a managed decoder for Huffman-coded baseline, extended and
+   progressive 8-bit frames. Its samples take the Direct2D path for WIC's CMYK output, so the
+   colours match (`CmykJpegTests`). Its inverse DCT is plain floating point, and subsampled
+   components are enlarged by replication (libjpeg smooths them). Arithmetic coding and 12-bit
+   data are still classified as `ImageDecode` fallback. AC refinement scans of progressive files
+   are implemented, but no test writes one.
 2. **Text weight.** Direct2D draws thin features with more ink than Skia: 26 % more on the
    body-text fixture at 96 dpi, and hairlines are heavier too. Large shapes match. Small text
    therefore differs by a level or two along stems (mean 2.05 at 96 dpi, 0.84 at 150 dpi).
