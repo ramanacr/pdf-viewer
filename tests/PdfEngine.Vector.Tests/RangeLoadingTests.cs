@@ -315,6 +315,9 @@ public class RangeLoadingTests
         var reader = new MemoryRangeReader(packed);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024 });
         Assert.Equal(15, ranged.Document.PageCount);
+        // The page dictionaries are packed in object streams and content streams wait for their
+        // page: opening is a handful of reads, whatever the number of pages.
+        Assert.True(reader.Requests <= 8, $"{reader.Requests} reads to open");
         string text = await ranged.RunAsync(9, (d, ct) => ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 9, ct).Text));
         Assert.Contains("Page 9 of 15", text);
         Assert.Null(ranged.FallbackReason);

@@ -52,8 +52,9 @@ public readonly record struct PdfRangeStatistics(long BytesFetched, int Requests
 /// Adobe's and pdf.js's viewers open a large file from a web server that answers range requests.
 /// <list type="number">
 /// <item>Opening fetches the end of the file (<see cref="PdfRangedOptions.TailBytes"/>) for the
-/// cross-reference data, then the objects of the document's structure: the catalog, the page tree,
-/// each page's dictionary and the ends of its content streams (<see cref="PdfClosureKind.Structure"/>).</item>
+/// cross-reference data, then the objects of the document's structure: the catalog, the page tree
+/// and each page's dictionary (<see cref="PdfClosureKind.Structure"/>); content streams are
+/// resolved when their page is drawn.</item>
 /// <item><see cref="RunAsync"/> fetches the objects one page needs, level by level from the page
 /// dictionary (<see cref="PdfClosureKind.Page"/>), then runs the operation (draw, read text) on the
 /// parsed document synchronously, over the fetched blocks (<see cref="PdfChunkedByteSource"/>).</item>
@@ -168,7 +169,7 @@ public sealed class PdfRangedDocument : IDisposable
                 await PrefetchStructureAsync(xref, cancellationToken).ConfigureAwait(false);
 
                 misses = _cache.MissCount;
-                opened = PdfVectorDocument.Open(new PdfChunkedByteSource(_cache), _name, _limits, _password);
+                opened = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password);
                 if (_cache.MissCount == misses && !opened.WasRepaired)
                 {
                     Document = opened;
@@ -309,7 +310,7 @@ public sealed class PdfRangedDocument : IDisposable
     private void Reparse()
     {
         var old = Document;
-        Document = PdfVectorDocument.Open(new PdfChunkedByteSource(_cache), _name, _limits, _password);
+        Document = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password);
         _planner = new PdfRangePlanner(Document.XrefTable, Length);
         old.Dispose();
     }

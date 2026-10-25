@@ -11,8 +11,9 @@ public enum PdfClosureKind
 {
     /// <summary>
     /// What opening a document reads: the trailer's /Root, /Info and /Encrypt, the page tree with
-    /// each page's boxes, its resource dictionary (not what it names) and the start and end of its
-    /// content streams, and the optional-content configuration.
+    /// each page's boxes and resource dictionary (not what it names), and the optional-content
+    /// configuration. Content streams are not read: a document opened by ranges resolves them
+    /// when the page is drawn.
     /// </summary>
     Structure,
 
@@ -143,22 +144,19 @@ public sealed class PdfRangePlanner
 /// or a page (<see cref="PdfClosureKind.Page"/>) needs, one level of references at a time:
 /// <see cref="PendingRanges"/> are the bytes of the objects found but not read yet; after they are
 /// fetched, <see cref="Advance"/> reads those objects and finds the next level. An object that
-/// cannot be read yet (its bytes were only partly fetched) is asked for whole in the next level.
+/// cannot be read yet (a reference the planner could not place, such as an indirect /Length past
+/// the object) is asked for again once, in the next level.
 /// </summary>
 public sealed class PdfObjectClosure
 {
-    /// <summary>A content stream larger than this is fetched as its first and last block when the document opens.</summary>
-    public const long PartialThreshold = 64 * 1024;
-
     private readonly PdfRangePlanner _planner;
     private readonly HashSet<int> _seen = new();
     private List<(int Number, Rule Rule)> _pending = new();
-    private readonly HashSet<int> _partial = new();
     private readonly HashSet<int> _retried = new();
     private readonly List<PdfDictionary> _directRoots = new();
     private long _bytes;
 
-    private enum Rule { Walk, Leaf, Contents }
+    private enum Rule { Walk, Leaf }
 
     // Links that leave the page: up the tree, to other pages, to the document's navigation.
     private static readonly HashSet<string> PageExcluded = new(StringComparer.Ordinal)
@@ -203,7 +201,6 @@ public sealed class PdfObjectClosure
     {
         if (number <= 0 || _seen.Count >= MaxObjects || !_seen.Add(number)) return;
         _pending.Add((number, rule));
-        if (rule == Rule.Contents) _partial.Add(number);
     }
 
     /// <summary>The bytes of the objects to read next, merged.</summary>
@@ -213,17 +210,7 @@ public sealed class PdfObjectClosure
         var ranges = new List<PdfByteRange>();
         foreach (var (number, _) in _pending)
         {
-            if (_planner.ExtentOf(number) is not { } extent) continue;
-            if (_partial.Contains(number) && extent.Length > PartialThreshold)
-            {
-                // The dictionary at the start, and the end of the data where "endstream" is checked.
-                ranges.Add(new PdfByteRange(extent.Start, extent.Start + 4096));
-                ranges.Add(new PdfByteRange(extent.End - 4096, extent.End));
-            }
-            else
-            {
-                ranges.Add(extent);
-            }
+            if (_planner.ExtentOf(number) is { } extent) ranges.Add(extent);
         }
         var merged = PdfRangePlanner.Merge(ranges);
         foreach (var r in merged) _bytes += r.Length;
@@ -233,7 +220,7 @@ public sealed class PdfObjectClosure
     /// <summary>
     /// Reads the pending objects with <paramref name="resolve"/> and queues what they refer to. An
     /// object whose bytes are not all there yet (<see cref="PdfDataNotLoadedException"/>) is queued
-    /// again, whole, once.
+    /// again, once.
     /// </summary>
     public void Advance(Func<int, PdfObject?> resolve)
     {
@@ -249,11 +236,7 @@ public sealed class PdfObjectClosure
             }
             catch (PdfDataNotLoadedException)
             {
-                if (_retried.Add(number))
-                {
-                    _partial.Remove(number);
-                    _pending.Add((number, rule));
-                }
+                if (_retried.Add(number)) _pending.Add((number, rule));
                 continue;
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
@@ -296,9 +279,8 @@ public sealed class PdfObjectClosure
     {
         foreach (var (k, v) in dict.Entries)
         {
-            if (rule == Rule.Contents && k != "Length") continue;
             if (Kind == PdfClosureKind.Page && PageExcluded.Contains(k)) continue;
-            if (Kind == PdfClosureKind.Structure && !StructureWalked.Contains(k) && k is not ("Resources" or "Contents" or "Info")) continue;
+            if (Kind == PdfClosureKind.Structure && !StructureWalked.Contains(k) && k is not ("Resources" or "Info")) continue;
             Walk(v, k, rule, depth + 1);
         }
     }
@@ -310,11 +292,6 @@ public sealed class PdfObjectClosure
             Add(number, Rule.Walk);
             return;
         }
-        Add(number, key switch
-        {
-            "Contents" => Rule.Contents,
-            "Resources" or "Info" => Rule.Leaf,
-            _ => Rule.Walk,
-        });
+        Add(number, key is "Resources" or "Info" ? Rule.Leaf : Rule.Walk);
     }
 }

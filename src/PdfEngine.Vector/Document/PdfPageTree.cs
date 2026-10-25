@@ -33,6 +33,12 @@ public sealed class PdfPageTree
     /// </summary>
     public IReadOnlyList<int[]> PageAncestors => _pageAncestors;
 
+    /// <summary>
+    /// Resolve each page's /Contents when it is first read instead of while loading (a document
+    /// opened by ranges: opening then needs only the page dictionaries, not their content streams).
+    /// </summary>
+    internal bool DeferContents { get; init; }
+
     public PdfPageTree(PdfObjectResolver resolver, PdfSecurityLimits? limits = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
@@ -95,8 +101,10 @@ public sealed class PdfPageTree
                 cropBox = x1 > x0 && y1 > y0 ? new PdfRect(x0, y0, x1 - x0, y1 - y0) : mediaBox;
             }
             int pageNum = _pages.Count + 1;
-            var contentsList = ResolveContents(node["Contents"]);
-            var page = new PdfPageNode(pageNum, node, mediaBox, cropBox, rotate, mergedResources, contentsList);
+            var contentsObj = node["Contents"];
+            var page = DeferContents
+                ? new PdfPageNode(pageNum, node, mediaBox, cropBox, rotate, mergedResources, () => ResolveContents(contentsObj))
+                : new PdfPageNode(pageNum, node, mediaBox, cropBox, rotate, mergedResources, ResolveContents(contentsObj));
             _pages.Add(page);
             _pageObjectNumbers.Add(selfNumber);
             _pageAncestors.Add(ancestors.ToArray());
