@@ -23,8 +23,14 @@ public static class ShellIntegrationService
     /// <summary>Test seam: writes the association under another HKCU key.</summary>
     internal static void SetClassesRootForTests(string root) => _classesRoot = root;
 
+    /// <summary>
+    /// Writes the .pdf association under HKCU. Does nothing in a packaged (Store) install: the
+    /// package manifest declares the association there, and Windows removes it with the package.
+    /// </summary>
     public static void RegisterShellAssociation(string? exePath = null)
     {
+        if (PackagedApp.IsPackaged) return;
+
         try
         {
             exePath ??= Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
@@ -109,6 +115,9 @@ public static class ShellIntegrationService
     /// </summary>
     public static bool UnregisterShellAssociation()
     {
+        // A packaged install wrote nothing, so there is nothing to remove.
+        if (PackagedApp.IsPackaged) return true;
+
         try
         {
             Registry.CurrentUser.DeleteSubKeyTree($@"{_classesRoot}\{ProgId}", throwOnMissingSubKey: false);

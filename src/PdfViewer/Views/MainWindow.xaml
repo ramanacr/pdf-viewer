@@ -380,7 +380,8 @@
                           Command="{Binding MakeSearchableCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           ToolTip="Recognizes the text of every scanned page and adds it invisibly over the page, so the document can be searched, selected and copied. Run again to stop."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.MakeSearchable}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
-                <MenuItem Header="_Read Aloud"
+                <MenuItem x:Name="ReadAloudMenuItem"
+                          Header="_Read Aloud"
                           Command="{Binding ToggleReadAloudCommand}"
                           IsEnabled="{Binding IsDocumentLoaded}"
                           IsCheckable="True"
@@ -465,8 +466,8 @@
             <MenuItem Header="_Help">
                 <MenuItem Header="_Privacy &amp; Safety..." Click="PrivacyMenuItem_Click"
                           ToolTip="What this application does and does not do with your documents, and the one network setting."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Privacy}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
-                <Separator />
-                <MenuItem Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CheckForUpdates}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <Separator x:Name="CheckForUpdatesSeparator" />
+                <MenuItem x:Name="CheckForUpdatesMenuItem" Header="_Check for Updates..." Click="CheckForUpdatesMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CheckForUpdates}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
                 <MenuItem Header="_GitHub Repository" Click="GitHubRepoMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.SourceCode}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="View _Releases..." Click="ViewReleasesMenuItem_Click"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Releases}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>

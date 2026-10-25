@@ -200,6 +200,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public async Task CheckForUpdatesInBackgroundAsync()
     {
+        // The Store updates a packaged install; GitHub is not asked.
+        if (PackagedApp.IsPackaged) return;
+
         try
         {
             var info = await UpdateService.CheckForUpdatesAsync();
@@ -2624,6 +2627,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (_reader != null) return true;
 
         var component = PdfViewer.Core.Components.OptionalComponents.ReadAloud;
+
+        // The Store package ships the component and its folder is read-only, so there is
+        // nothing to download. A missing or unusable file there is a broken package.
+        if (PackagedApp.IsPackaged)
+        {
+            StatusText = "Read Aloud could not be started.";
+            ShowAlert("Read Aloud is part of this package but could not be loaded. Repair or reinstall the application from Settings > Apps.",
+                "Read Aloud", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
 
         if (ConfirmComponentDownloadFunc?.Invoke(component) != true)
         {

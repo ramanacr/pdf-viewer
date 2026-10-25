@@ -319,6 +319,15 @@ public partial class MainWindow : Window
             await _shell.OpenDocumentAsync(App.StartupPdfPath);
         }
 
+        // The Store updates a packaged install: no update question, no update check, no menu item.
+        if (Services.PackagedApp.IsPackaged)
+        {
+            CheckForUpdatesMenuItem.Visibility = Visibility.Collapsed;
+            CheckForUpdatesSeparator.Visibility = Visibility.Collapsed;
+            ReadAloudMenuItem.ToolTip = "Reads the document from the current page.";
+            return;
+        }
+
         // The first launch asks before anything touches the network; afterwards the stored
         // answer is honoured. A privacy-first reader must not phone home unasked.
         if (Services.PrivacySettings.AutomaticUpdateChecksEnabled is null)
