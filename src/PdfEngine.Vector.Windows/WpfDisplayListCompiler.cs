@@ -666,6 +666,7 @@ internal sealed class WpfDisplayListCompiler
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Point>(run.Glyphs.Count);
         List<double>? scales = null; // each glyph's horizontal scale; null while all are 1
+        var widths = new List<double>(run.Glyphs.Count); // each glyph's /Widths width; 0 for a shaped glyph (fitted with its word)
         var map = typeface.CharacterToGlyphMap;
         var words = shapeWords && !symbolCodes ? SubstituteShaper.Words(run, only) : null;
         var shaping = words is { Count: > 0 } ? _fonts.GetShapingFont(typeface) : null;
@@ -688,6 +689,7 @@ internal sealed class WpfDisplayListCompiler
                         indices.Add(gid);
                         offsets.Add(new Point(offset.X, offset.Y));
                         scales?.Add(scale);
+                        widths.Add(0);
                     }
                     k = word.End - 1;
                     continue;
@@ -711,6 +713,21 @@ internal sealed class WpfDisplayListCompiler
             scales?.Add(1);
             // All positioning is absolute from the run origin: PDF glyph placement is authored (ADR-006).
             offsets.Add(new Point(glyph.OffsetX / th * sign, glyph.OffsetY * sign));
+            widths.Add(glyph.Width);
+        }
+
+        // Each glyph fitted to its /Widths width, as the Direct2D and Skia backends fit it
+        // (SubstituteShaper.FitToWidth): narrowed when wider, widened by up to a tenth and centred when narrower.
+        double em = Math.Abs(run.FontSize);
+        var advances = typeface.AdvanceWidths;
+        for (int i = 0; i < indices.Count; i++)
+        {
+            if (widths[i] <= 0 || !advances.TryGetValue(indices[i], out double own)) continue;
+            if (SubstituteShaper.FitToWidth(own, widths[i]) is not var (scale, shift)) continue;
+            scales ??= Enumerable.Repeat(1.0, indices.Count).ToList();
+            scales[i] = scale;
+            // Centred in what is left of its width (glyph space: text space without Tz).
+            if (shift > 0) offsets[i] = new Point(offsets[i].X + shift * em * sign, offsets[i].Y);
         }
         return new TextPart(typeface, indices, offsets, scales);
     }
