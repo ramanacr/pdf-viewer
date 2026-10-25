@@ -448,12 +448,12 @@ internal sealed class WpfDisplayListCompiler
         var indices = new List<ushort>(run.Glyphs.Count);
         var advances = new List<double>(run.Glyphs.Count);
         var offsets = new List<Point>(run.Glyphs.Count);
+        List<double>? scales = null; // each glyph's horizontal scale; null while all are 1
         var map = typeface.CharacterToGlyphMap;
 
         // Text whose font is not embedded reaches here as characters: Arabic and Indic words are
-        // shaped with the substitute's own tables, as the Direct2D and Skia backends shape them. This
-        // backend draws every glyph at its own width, so a shaped word keeps its fitted positions but
-        // not its fitted glyph width.
+        // shaped with the substitute's own tables, as the Direct2D and Skia backends shape them, and
+        // fitted to the width the document gives them.
         var words = !byGlyphId && !symbolSubstitute && sign > 0 && (face == null || face.ProgramData.IsEmpty)
             ? PdfEngine.Vector.Text.SubstituteShaper.Words(run) : null;
         var shaping = words is { Count: > 0 } ? _fonts.GetShapingFont(typeface) : null;
@@ -467,11 +467,14 @@ internal sealed class WpfDisplayListCompiler
                 var word = words[nextWord++];
                 if (PdfEngine.Vector.Text.SubstituteShaper.ShapeWord(shaping, run, word, th) is { } shaped)
                 {
-                    foreach (var (gid, offset, _) in shaped)
+                    foreach (var (gid, offset, scale) in shaped)
                     {
+                        if (scale != 1 && scales == null)
+                            scales = Enumerable.Repeat(1.0, indices.Count).ToList();
                         indices.Add(gid);
                         advances.Add(0);
                         offsets.Add(new Point(offset.X, offset.Y));
+                        scales?.Add(scale);
                     }
                     k = word.End - 1;
                     continue;
@@ -505,6 +508,7 @@ internal sealed class WpfDisplayListCompiler
 
             indices.Add(index);
             advances.Add(0);
+            scales?.Add(1);
             // All positioning is absolute from the run origin: PDF glyph placement is authored (ADR-006).
             offsets.Add(new Point(glyph.OffsetX / th * sign, glyph.OffsetY * sign));
         }
@@ -537,48 +541,63 @@ internal sealed class WpfDisplayListCompiler
             }
         }
 
-        GlyphRun glyphRun;
-        try
+        // The run in pieces of one horizontal glyph scale, each drawn scaled across from its own
+        // glyph space: its positions are divided by the scale so they land where they were.
+        var pieces = new List<(GlyphRun Glyphs, double Scale)>();
+        for (int i = 0; i < indices.Count;)
         {
-            glyphRun = new GlyphRun(
-                typeface,
-                bidiLevel: 0,
-                isSideways: false,
-                renderingEmSize: Math.Abs(run.FontSize),
-                pixelsPerDip: 1.0f,
-                glyphIndices: indices,
-                baselineOrigin: new Point(0, 0),
-                advanceWidths: advances,
-                glyphOffsets: offsets,
-                characters: null,
-                deviceFontName: null,
-                clusterMap: null,
-                caretStops: null,
-                language: null);
-        }
-        catch (ArgumentException)
-        {
-            ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType, "Glyph run rejected by the backend");
-            return;
+            double scale = scales?[i] ?? 1;
+            int j = scales == null ? indices.Count : i + 1;
+            while (j < indices.Count && scales![j] == scale) j++;
+            var pieceOffsets = offsets.GetRange(i, j - i);
+            if (scale != 1)
+                for (int n = 0; n < pieceOffsets.Count; n++)
+                    pieceOffsets[n] = new Point(pieceOffsets[n].X / scale, pieceOffsets[n].Y);
+            try
+            {
+                pieces.Add((new GlyphRun(
+                    typeface,
+                    bidiLevel: 0,
+                    isSideways: false,
+                    renderingEmSize: Math.Abs(run.FontSize),
+                    pixelsPerDip: 1.0f,
+                    glyphIndices: indices.GetRange(i, j - i),
+                    baselineOrigin: new Point(0, 0),
+                    advanceWidths: advances.GetRange(i, j - i),
+                    glyphOffsets: pieceOffsets,
+                    characters: null,
+                    deviceFontName: null,
+                    clusterMap: null,
+                    caretStops: null,
+                    language: null), scale));
+            }
+            catch (ArgumentException)
+            {
+                ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType, "Glyph run rejected by the backend");
+                return;
+            }
+            i = j;
         }
 
-        dc.PushTransform(new MatrixTransform(combined));
         int mode = run.RenderingMode;
         bool fill = mode is 0 or 2 or 4 or 6;
         bool stroke = mode is 1 or 2 or 5 or 6;
-
-        if (fill)
+        foreach (var (glyphRun, scale) in pieces)
         {
-            dc.DrawGlyphRun(Brush(cmd.Paint.Color, cmd.Paint.Alpha), glyphRun);
+            dc.PushTransform(new MatrixTransform(scale == 1 ? combined : Matrix.Multiply(new Matrix(scale, 0, 0, 1, 0, 0), combined)));
+            if (fill)
+            {
+                dc.DrawGlyphRun(Brush(cmd.Paint.Color, cmd.Paint.Alpha), glyphRun);
+            }
+            if (stroke && run.StrokePaint is PdfPaint strokePaint && run.Stroke is PdfStroke strokeParams)
+            {
+                // Stroke width is user space; this drawing space is text space scaled by Tm, Th and the piece's scale.
+                double textScale = Math.Max(Math.Sqrt(Math.Abs(tm.Determinant * th * scale)), 1e-9);
+                var geometry = glyphRun.BuildGeometry();
+                dc.DrawGeometry(null, CreatePen(strokeParams with { Width = strokeParams.Width / textScale, DashArray = null }, strokePaint, ctm), geometry);
+            }
+            dc.Pop();
         }
-        if (stroke && run.StrokePaint is PdfPaint strokePaint && run.Stroke is PdfStroke strokeParams)
-        {
-            // Stroke width is user space; this drawing space is text space scaled by Tm and Th.
-            double textScale = Math.Max(Math.Sqrt(Math.Abs(tm.Determinant * th)), 1e-9);
-            var geometry = glyphRun.BuildGeometry();
-            dc.DrawGeometry(null, CreatePen(strokeParams with { Width = strokeParams.Width / textScale, DashArray = null }, strokePaint, ctm), geometry);
-        }
-        dc.Pop();
     }
 
     private static void ReportUnsupported(DrawGlyphRun cmd, int pageNumber, List<PdfFallbackToken> list, PdfFallbackReason reason, string description)
