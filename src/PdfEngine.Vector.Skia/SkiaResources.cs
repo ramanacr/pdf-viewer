@@ -28,6 +28,66 @@ public class SkiaFontSource
     public virtual SKTypeface? Load(SystemFontFace face) => SKTypeface.FromFile(face.Path, face.Index);
 
     /// <summary>
+    /// The instance of a variable font at <paramref name="weight"/> (100–900), so bold text gets the
+    /// real bold design instead of an emboldened regular: Android 12 and later ship Roboto as one
+    /// variable font. Null when the face is not a variable font or the platform's font manager has no
+    /// such instance; the caller then simulates the weight. SkiaSharp 3.116 has no API to set a
+    /// variation axis, so the instance comes from Skia's font manager: Android's reads
+    /// <c>/system/etc/fonts.xml</c>, which names an axis value for every weight of a variable family.
+    /// Only on Android by default; Windows ships static bold faces for the families substitution uses.
+    /// </summary>
+    public virtual SKTypeface? LoadInstance(SystemFontFace face, int weight, bool italic) =>
+        OperatingSystem.IsAndroid() ? FindInstance(SKFontManager.Default, face, weight, italic) : null;
+
+    private const uint FvarTag = 0x66766172, HeadTag = 0x68656164;
+
+    // (path, index, weight, italic) → the font manager's family and style index of the instance, or null.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int, int, bool), (string Family, int Style)?> Instances = new();
+
+    /// <summary>
+    /// The style of <paramref name="manager"/> that is <paramref name="face"/>'s file at the weight and
+    /// slant asked for: the same font data (its 'head' table) and a weight within 50.
+    /// </summary>
+    internal static SKTypeface? FindInstance(SKFontManager manager, SystemFontFace face, int weight, bool italic)
+    {
+        var key = (face.Path, face.Index, weight, italic);
+        if (Instances.TryGetValue(key, out var known))
+        {
+            if (known is not { } where) return null;
+            using var set = manager.GetFontStyles(where.Family);
+            return where.Style < set.Count ? set.CreateTypeface(where.Style) : null;
+        }
+        byte[]? head;
+        using (var file = SKTypeface.FromFile(face.Path, face.Index))
+        {
+            if (file == null || !file.GetTableTags().Contains(FvarTag) || !file.TryGetTableData(HeadTag, out head))
+            {
+                Instances[key] = null;
+                return null;
+            }
+        }
+        foreach (string family in manager.GetFontFamilies())
+        {
+            using var set = manager.GetFontStyles(family);
+            for (int i = 0; i < set.Count; i++)
+            {
+                var style = set[i];
+                if (Math.Abs(style.Weight - weight) > 50 || (style.Slant != SKFontStyleSlant.Upright) != italic || style.Width != (int)SKFontStyleWidth.Normal)
+                    continue;
+                var candidate = set.CreateTypeface(i);
+                if (candidate != null && candidate.TryGetTableData(HeadTag, out var h) && h.AsSpan().SequenceEqual(head))
+                {
+                    Instances[key] = (family, i);
+                    return candidate;
+                }
+                candidate?.Dispose();
+            }
+        }
+        Instances[key] = null;
+        return null;
+    }
+
+    /// <summary>
     /// A face of the named family nearest the style asked for, from Skia's font manager; else the face
     /// that stands in for the family by the catalog's aliases (Android: Roboto for Arial); null when
     /// neither has it.
@@ -40,7 +100,9 @@ public class SkiaFontSource
         if (typeface != null && string.Equals(typeface.FamilyName, family, StringComparison.OrdinalIgnoreCase))
             return typeface;
         typeface?.Dispose();
-        return Catalog.FindAliasedFamily(family, bold ? 700 : 400, italic) is { } standIn ? Load(standIn) : null;
+        if (Catalog.FindAliasedFamily(family, bold ? 700 : 400, italic) is not { } standIn) return null;
+        // A variable stand-in (Roboto on Android 12+) has its bold as an instance, not a file.
+        return (bold && !standIn.Bold ? LoadInstance(standIn, 700, italic && standIn.Italic) : null) ?? Load(standIn);
     }
 
     /// <summary>
@@ -112,13 +174,17 @@ internal sealed class SkiaResources : IDisposable
     private readonly Dictionary<string, LinkedListNode<(string Key, SKImage Image, long Bytes)>> _imageIndex = new(StringComparer.Ordinal);
     private long _imageBytes;
 
-    public SkiaResources(long imageCacheBytes, SkiaFontSource fonts)
+    public SkiaResources(long imageCacheBytes, SkiaFontSource fonts, PdfEngine.Vector.Limits.PdfSecurityLimits? limits = null)
     {
         _imageBudget = Math.Max(0, imageCacheBytes);
         Fonts = fonts;
+        Limits = limits ?? PdfEngine.Vector.Limits.PdfSecurityLimits.Default;
     }
 
     public SkiaFontSource Fonts { get; }
+
+    /// <summary>Image size limits for the JPEG data the backend decodes itself.</summary>
+    public PdfEngine.Vector.Limits.PdfSecurityLimits Limits { get; }
 
     public long CachedImageBytes
     {
@@ -160,7 +226,14 @@ internal sealed class SkiaResources : IDisposable
         {
             if (_systemFaces.TryGetValue(key, out var cached))
                 return cached;
-            var typeface = Fonts.Load(installed);
+            SKTypeface? typeface = null;
+            // A variable font's bold instance (Roboto on Android 12+) instead of an emboldened regular.
+            if (embolden && Fonts.LoadInstance(installed, 700, installed.Italic) is { } instance)
+            {
+                if (instance.GlyphCount > 0) { typeface = instance; embolden = false; }
+                else instance.Dispose();
+            }
+            typeface ??= Fonts.Load(installed);
             var result = typeface != null && typeface.GlyphCount > 0 ? new SkiaFace(typeface, embolden, oblique) : null;
             _systemFaces[key] = result;
             return result;

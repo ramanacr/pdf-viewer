@@ -81,6 +81,23 @@ public sealed class ContinuousPageLayout
         ScrollToAnchor(anchor, focusX, focusY);
     }
 
+    /// <summary>
+    /// Shows the view saved as <paramref name="topLeft"/> (<see cref="AnchorAt"/> of the view's
+    /// top-left corner) and <paramref name="zoom"/>: after a restart, a rotation or a new view size.
+    /// </summary>
+    public void Restore(PageAnchor topLeft, double zoom)
+    {
+        Zoom = Math.Clamp(double.IsFinite(zoom) ? zoom : 1, MinZoom, MaxZoom);
+        Relayout();
+        var anchor = topLeft with
+        {
+            Page = Math.Clamp(topLeft.Page, 1, _pages.Count),
+            U = double.IsFinite(topLeft.U) ? Math.Clamp(topLeft.U, 0, 1) : 0,
+            V = double.IsFinite(topLeft.V) ? Math.Clamp(topLeft.V, 0, 1) : 0,
+        };
+        ScrollToAnchor(anchor, 0, 0);
+    }
+
     public void ScrollBy(double dx, double dy) => ScrollTo(ScrollX + dx, ScrollY + dy);
 
     public void ScrollTo(double x, double y)

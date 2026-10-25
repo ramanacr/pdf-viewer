@@ -171,10 +171,10 @@ public class ImageParityTests
     }
 
     [Fact]
-    public async Task CmykJpeg_IsReportedForFallback()
+    public async Task ArithmeticCodedCmykJpeg_IsReportedForFallback()
     {
-        // Only the frame header matters: the backend classifies four-component JPEGs before decoding.
-        byte[] sof = { 0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x14, 8, 0, 8, 0, 8, 4, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0, 0xFF, 0xD9 };
+        // Four-component JPEGs are decoded (CmykJpegTests); arithmetic coding is not, so it is classified.
+        byte[] sof = { 0xFF, 0xD8, 0xFF, 0xC9, 0x00, 0x14, 8, 0, 8, 0, 8, 4, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0, 0xFF, 0xD9 };
         var pdf = ImagePage("/Width 8 /Height 8 /ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /DCTDecode", sof);
         using var doc = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(pdf);
         var list = await doc.GetPageDisplayListAsync(1);

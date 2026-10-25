@@ -17,10 +17,12 @@ using Uri = Android.Net.Uri;
 namespace PdfViewer.Android;
 
 /// <summary>
-/// The viewer: a toolbar, a search bar and the pages. A document comes from the system document
-/// picker (Storage Access Framework, ACTION_OPEN_DOCUMENT) or from another app's "Open with"
-/// (ACTION_VIEW); it is read into memory and never written anywhere. The activity is kept across
-/// rotation and dark-mode switches so the open document stays open.
+/// The reader: a toolbar with a menu, a search bar, a selection bar, the pages and the page grid.
+/// A document comes from the system document picker (Storage Access Framework,
+/// ACTION_OPEN_DOCUMENT), from another app's "Open with" (ACTION_VIEW) or from the recent list;
+/// it is read into memory and never written anywhere. The activity is kept across rotation and
+/// dark-mode switches; when Android ends the process in the background, the saved state reopens
+/// the document at the same place.
 /// </summary>
 [Activity(Label = "PDF Viewer (preview)", MainLauncher = true, Exported = true, LaunchMode = LaunchMode.SingleTop,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.ScreenLayout
@@ -38,36 +40,84 @@ public sealed class MainActivity : Activity
         MaxBitmapPixels = 3000L * 3000,
     };
 
+    // Saved-state keys: the document's location and the view, never its text or a password.
+    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night";
+
     private PageView _pages = null!;
-    private TextView _title = null!, _pageIndicator = null!, _empty = null!, _searchCount = null!;
-    private TextView _openButton = null!, _searchButton = null!, _nightButton = null!, _prevButton = null!, _nextButton = null!, _closeSearchButton = null!;
-    private LinearLayout _toolbar = null!, _searchBar = null!;
+    private ThumbnailView _thumbnails = null!;
+    private TextView _title = null!, _pageIndicator = null!, _searchCount = null!, _emptyText = null!, _selectionLabel = null!;
+    private TextView _openButton = null!, _searchButton = null!, _menuButton = null!, _prevButton = null!, _nextButton = null!, _closeSearchButton = null!;
+    private TextView _copyButton = null!, _selectPageButton = null!, _closeSelectionButton = null!;
+    private LinearLayout _toolbar = null!, _searchBar = null!, _selectionBar = null!, _empty = null!, _recentList = null!;
     private EditText _searchText = null!;
     private ViewerDocument? _doc;
     private string? _fileName;
+    private Uri? _uri;
     private List<ViewerSearchHit> _hits = new();
     private int _hitIndex = -1;
     private CancellationTokenSource? _search;
+    private RecentDocuments _recent = null!;
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        _recent = new RecentDocuments(System.IO.Path.Combine(FilesDir!.AbsolutePath, "recent.json"));
         SetContentView(BuildLayout());
         ApplyTheme();
         ShowDocumentState();
-        if (Intent is { Action: Intent.ActionView, Data: { } uri }) _ = OpenUriAsync(uri);
+
+        // After Android ended the process: the document saved in the state, at the saved place.
+        if (savedInstanceState?.GetString(StateUri) is { } saved && Uri.Parse(saved) is { } savedUri)
+        {
+            _pages.NightPages = savedInstanceState.GetBoolean(StateNight);
+            var view = (new PageAnchor(savedInstanceState.GetInt(StatePage, 1), savedInstanceState.GetDouble(StateU), savedInstanceState.GetDouble(StateV)),
+                savedInstanceState.GetDouble(StateZoom, 1));
+            _ = OpenUriAsync(savedUri, view);
+        }
+        else if (Intent is { Action: Intent.ActionView, Data: { } uri })
+        {
+            _ = OpenUriAsync(uri, null);
+        }
     }
 
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);
-        if (intent is { Action: Intent.ActionView, Data: { } uri }) _ = OpenUriAsync(uri);
+        if (intent is { Action: Intent.ActionView, Data: { } uri }) _ = OpenUriAsync(uri, null);
     }
 
     public override void OnConfigurationChanged(Configuration newConfig)
     {
         base.OnConfigurationChanged(newConfig);
         ApplyTheme();
+    }
+
+    protected override void OnSaveInstanceState(Bundle outState)
+    {
+        base.OnSaveInstanceState(outState);
+        if (_uri == null || _doc == null) return;
+        outState.PutString(StateUri, _uri.ToString());
+        outState.PutBoolean(StateNight, _pages.NightPages);
+        if (_pages.SavedView is { } view)
+        {
+            outState.PutInt(StatePage, view.TopLeft.Page);
+            outState.PutDouble(StateU, view.TopLeft.U);
+            outState.PutDouble(StateV, view.TopLeft.V);
+            outState.PutDouble(StateZoom, view.Zoom);
+        }
+    }
+
+    protected override void OnPause()
+    {
+        base.OnPause();
+        RememberPosition();
+    }
+
+    /// <summary>The page and zoom of the open document, for the recent list.</summary>
+    private void RememberPosition()
+    {
+        if (_uri != null && _doc != null && _pages.CurrentPage > 0)
+            _recent.Moved(_uri.ToString()!, _pages.CurrentPage, Math.Round(_pages.Zoom, 3));
     }
 
     // ------------------------------------------------------------------ layout
@@ -79,9 +129,7 @@ public sealed class MainActivity : Activity
         var root = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         root.SetFitsSystemWindows(true);
 
-        _toolbar = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
-        _toolbar.SetGravity(GravityFlags.CenterVertical);
-        _toolbar.SetPadding((int)Dp(4), (int)Dp(4), (int)Dp(4), (int)Dp(4));
+        _toolbar = Bar();
         _openButton = ToolButton("Open", "Open a PDF", (_, _) => PickDocument());
         _title = new TextView(this) { Text = "PDF Viewer" };
         _title.SetSingleLine(true);
@@ -90,17 +138,16 @@ public sealed class MainActivity : Activity
         _title.SetPadding((int)Dp(8), 0, (int)Dp(8), 0);
         _pageIndicator = ToolButton("", "Go to page", (_, _) => AskPage());
         _searchButton = ToolButton("Search", "Search the document", (_, _) => ShowSearch(true));
-        _nightButton = ToolButton("Night", "Night pages: show pages inverted", (_, _) => ToggleNight());
+        _menuButton = ToolButton("⋮", "More: outline, pages, share, night pages, recent files", (_, _) => ShowMenu());
         _toolbar.AddView(_openButton);
         _toolbar.AddView(_title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _toolbar.AddView(_pageIndicator);
         _toolbar.AddView(_searchButton);
-        _toolbar.AddView(_nightButton);
+        _toolbar.AddView(_menuButton);
         root.AddView(_toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
-        _searchBar = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal, Visibility = ViewStates.Gone };
-        _searchBar.SetGravity(GravityFlags.CenterVertical);
-        _searchBar.SetPadding((int)Dp(8), 0, (int)Dp(4), (int)Dp(4));
+        _searchBar = Bar();
+        _searchBar.Visibility = ViewStates.Gone;
         _searchText = new EditText(this) { Hint = "Find in document", ImeOptions = ImeAction.Search };
         _searchText.SetSingleLine(true);
         _searchText.InputType = InputTypes.ClassText | InputTypes.TextFlagNoSuggestions;
@@ -121,21 +168,64 @@ public sealed class MainActivity : Activity
         _searchBar.AddView(_closeSearchButton);
         root.AddView(_searchBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
+        _selectionBar = Bar();
+        _selectionBar.Visibility = ViewStates.Gone;
+        _selectionLabel = new TextView(this) { Text = "Text selected" };
+        _selectionLabel.SetPadding((int)Dp(8), 0, (int)Dp(8), 0);
+        _copyButton = ToolButton("Copy", "Copy the selected text", (_, _) => CopySelection());
+        _selectPageButton = ToolButton("Select page", "Select all text of this page", (_, _) => _pages.SelectPage());
+        _closeSelectionButton = ToolButton("✕", "End the selection", (_, _) => _pages.ClearSelection());
+        _selectionBar.AddView(_selectionLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        _selectionBar.AddView(_copyButton);
+        _selectionBar.AddView(_selectPageButton);
+        _selectionBar.AddView(_closeSelectionButton);
+
         var frame = new FrameLayout(this);
         _pages = new PageView(this);
         _pages.PageChanged += (page, count) => _pageIndicator.Text = count > 0 ? $"{page} / {count}" : "";
         _pages.Problem += message => Toast.MakeText(this, message, ToastLength.Short)?.Show();
-        frame.AddView(_pages, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
-        _empty = new TextView(this)
+        _pages.SelectionChanged += active => _selectionBar.Visibility = active ? ViewStates.Visible : ViewStates.Gone;
+        frame.AddView(_pages, Fill());
+        _thumbnails = new ThumbnailView(this) { Visibility = ViewStates.Gone };
+        _thumbnails.PageChosen += page =>
+        {
+            ShowThumbnails(false);
+            _pages.GoToPage(page);
+        };
+        frame.AddView(_thumbnails, Fill());
+
+        // The empty state: what the app is, and the recent files.
+        _empty = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
+        _empty.SetGravity(GravityFlags.CenterHorizontal);
+        _empty.SetPadding((int)Dp(32), (int)Dp(48), (int)Dp(32), (int)Dp(16));
+        _emptyText = new TextView(this)
         {
             Text = "Open a PDF to read it.\n\nThis app runs its own C# PDF engine on the device. It has no internet permission: documents never leave the phone.",
             Gravity = GravityFlags.Center,
         };
-        _empty.SetPadding((int)Dp(32), 0, (int)Dp(32), 0);
-        _empty.Click += (_, _) => PickDocument();
-        frame.AddView(_empty, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        _emptyText.Click += (_, _) => PickDocument();
+        _empty.AddView(_emptyText);
+        _recentList = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
+        _recentList.SetPadding(0, (int)Dp(24), 0, 0);
+        var scroll = new ScrollView(this);
+        scroll.AddView(_recentList);
+        _empty.AddView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
+        frame.AddView(_empty, Fill());
+        // Over the pages, so that they do not move when a selection starts.
+        _selectionBar.Elevation = Dp(4);
+        frame.AddView(_selectionBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent, GravityFlags.Top));
         root.AddView(frame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, 0, 1f));
         return root;
+
+        static FrameLayout.LayoutParams Fill() => new(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent);
+    }
+
+    private LinearLayout Bar()
+    {
+        var bar = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
+        bar.SetGravity(GravityFlags.CenterVertical);
+        bar.SetPadding((int)Dp(4), (int)Dp(4), (int)Dp(4), (int)Dp(4));
+        return bar;
     }
 
     private TextView ToolButton(string text, string description, EventHandler onClick)
@@ -151,23 +241,23 @@ public sealed class MainActivity : Activity
 
     private bool IsDark => ((Resources?.Configuration?.UiMode ?? UiMode.NightNo) & UiMode.NightMask) == UiMode.NightYes;
 
+    private Color TextColor => IsDark ? Color.ParseColor("#E6E8EB") : Color.ParseColor("#1A1C1E");
+    private Color AccentColor => IsDark ? Color.ParseColor("#8AB4F8") : Color.ParseColor("#1F5FA8");
+
     /// <summary>Colours of the chrome for the system's light or dark theme (views made in code do not follow a theme switch by themselves).</summary>
     private void ApplyTheme()
     {
         bool dark = IsDark;
         var bar = dark ? Color.ParseColor("#1B1D21") : Color.ParseColor("#ECEFF3");
-        var text = dark ? Color.ParseColor("#E6E8EB") : Color.ParseColor("#1A1C1E");
-        var accent = dark ? Color.ParseColor("#8AB4F8") : Color.ParseColor("#1F5FA8");
-        _toolbar.SetBackgroundColor(bar);
-        _searchBar.SetBackgroundColor(bar);
-        _title.SetTextColor(text);
-        _searchCount.SetTextColor(text);
-        _searchText.SetTextColor(text);
+        var text = TextColor;
+        var accent = AccentColor;
+        foreach (var b in new[] { _toolbar, _searchBar, _selectionBar }) b.SetBackgroundColor(bar);
+        _empty.SetBackgroundColor(dark ? Color.ParseColor("#121316") : Color.ParseColor("#F7F8FA"));
+        foreach (var t in new[] { _title, _searchCount, _searchText, _emptyText, _selectionLabel }) t.SetTextColor(text);
         _searchText.SetHintTextColor(dark ? Color.ParseColor("#8C9199") : Color.ParseColor("#6C717A"));
-        _empty.SetTextColor(text);
-        foreach (var b in new[] { _openButton, _pageIndicator, _searchButton, _nightButton, _prevButton, _nextButton, _closeSearchButton })
+        foreach (var b in new[] { _openButton, _pageIndicator, _searchButton, _menuButton, _prevButton, _nextButton, _closeSearchButton, _copyButton, _selectPageButton, _closeSelectionButton })
             b.SetTextColor(accent);
-        _nightButton.SetTypeface(null, _pages.NightPages ? TypefaceStyle.Bold : TypefaceStyle.Normal);
+        ShowRecent();
         // Android 15 draws apps edge to edge and ignores bar colours; earlier versions take them.
         if (!OperatingSystem.IsAndroidVersionAtLeast(35))
         {
@@ -181,6 +271,7 @@ public sealed class MainActivity : Activity
             Window?.InsetsController?.SetSystemBarsAppearance(dark ? 0 : light, light);
         }
         _pages.SetDark(dark);
+        _thumbnails.SetDark(dark);
     }
 
     private void ShowDocumentState()
@@ -188,10 +279,195 @@ public sealed class MainActivity : Activity
         bool open = _doc != null;
         _empty.Visibility = open ? ViewStates.Gone : ViewStates.Visible;
         _pages.Visibility = open ? ViewStates.Visible : ViewStates.Gone;
-        _searchButton.Enabled = _nightButton.Enabled = _pageIndicator.Enabled = open;
-        _searchButton.Alpha = _nightButton.Alpha = open ? 1f : 0.4f;
+        if (!open) ShowThumbnails(false);
+        _searchButton.Enabled = _pageIndicator.Enabled = open;
+        _searchButton.Alpha = open ? 1f : 0.4f;
         _title.Text = !open ? "PDF Viewer" : _doc!.Title ?? _fileName ?? "Document";
-        if (!open) _pageIndicator.Text = "";
+        if (!open)
+        {
+            _pageIndicator.Text = "";
+            ShowRecent();
+        }
+    }
+
+    /// <summary>The recent files under the empty state: tap to open, long press to remove.</summary>
+    private void ShowRecent()
+    {
+        if (_recentList == null) return;
+        _recentList.RemoveAllViews();
+        if (_recent.Items.Count == 0) return;
+        var heading = new TextView(this) { Text = "Recent files" };
+        heading.SetTextColor(TextColor);
+        heading.SetTypeface(null, TypefaceStyle.Bold);
+        heading.SetPadding(0, 0, 0, (int)Dp(8));
+        _recentList.AddView(heading);
+        foreach (var item in _recent.Items)
+        {
+            var entry = item;
+            var row = new TextView(this)
+            {
+                Text = $"{entry.Name}  ·  page {entry.Page}",
+                Clickable = true,
+                Focusable = true,
+                ContentDescription = $"Open {entry.Name} at page {entry.Page}",
+            };
+            row.SetTextColor(AccentColor);
+            row.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 16);
+            row.SetSingleLine(true);
+            row.Ellipsize = TextUtils.TruncateAt.Middle;
+            row.SetMinHeight((int)Dp(44));
+            row.Gravity = GravityFlags.CenterVertical;
+            row.Click += (_, _) => OpenRecent(entry);
+            row.LongClick += (_, _) => ForgetRecent(entry.Location);
+            _recentList.AddView(row);
+        }
+    }
+
+    // ------------------------------------------------------------------ menu
+
+    private void ShowMenu()
+    {
+        var menu = new PopupMenu(this, _menuButton);
+        bool open = _doc != null;
+        var items = menu.Menu!;
+        items.Add(0, 1, 1, "Outline")!.SetEnabled(open);
+        items.Add(0, 2, 2, "Pages")!.SetEnabled(open);
+        items.Add(0, 3, 3, "Share")!.SetEnabled(open && _uri != null);
+        var night = items.Add(0, 4, 4, "Night pages")!;
+        night.SetCheckable(true);
+        night.SetChecked(_pages.NightPages);
+        night.SetEnabled(open);
+        items.Add(0, 5, 5, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
+        menu.MenuItemClick += (_, e) =>
+        {
+            switch (e.Item?.ItemId)
+            {
+                case 1: _ = ShowOutlineAsync(); break;
+                case 2: ShowThumbnails(true); break;
+                case 3: Share(); break;
+                case 4: _pages.NightPages = !_pages.NightPages; break;
+                case 5: AskRecent(); break;
+            }
+        };
+        menu.Show();
+    }
+
+    private async Task ShowOutlineAsync()
+    {
+        var doc = _doc;
+        if (doc == null) return;
+        IReadOnlyList<ViewerOutlineLine> lines;
+        try
+        {
+            lines = ViewerOutline.Flatten(await Task.Run(() => doc.GetOutlineAsync()));
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Toast.MakeText(this, $"The outline could not be read ({ex.GetType().Name}).", ToastLength.Short)?.Show();
+            return;
+        }
+        if (!ReferenceEquals(doc, _doc)) return;
+        if (lines.Count == 0)
+        {
+            Toast.MakeText(this, "This document has no outline.", ToastLength.Short)?.Show();
+            return;
+        }
+        // Indented by depth; an entry that goes nowhere in this document says so.
+        var items = lines.Select(l => new string(' ', Math.Min(l.Depth, 6)) + l.Title + (l.Page is { } p ? $"  ({p})" : "")).ToArray();
+        new AlertDialog.Builder(this)
+            .SetTitle("Outline")!
+            .SetItems(items, (_, e) =>
+            {
+                if (lines[e.Which].Page is { } page) _pages.GoToPage(page);
+                else Toast.MakeText(this, "This entry does not go to a page of this document.", ToastLength.Short)?.Show();
+            })!
+            .SetNegativeButton("Close", (_, _) => { })!
+            .Show();
+    }
+
+    private void ShowThumbnails(bool show)
+    {
+        if (show && _doc == null) return;
+        _thumbnails.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
+        if (show)
+        {
+            _pages.ClearSelection();
+            _thumbnails.Show(_doc!, _pages.CurrentPage, _pages.NightPages);
+        }
+    }
+
+    /// <summary>
+    /// Shares the open PDF with the system share sheet: the document's own content URI, with read
+    /// access for the app the user chooses. The app needs no permission and no file of its own for this.
+    /// </summary>
+    private void Share()
+    {
+        if (_uri == null) return;
+        var send = new Intent(Intent.ActionSend);
+        send.SetType("application/pdf");
+        send.PutExtra(Intent.ExtraStream, _uri);
+        send.ClipData = ClipData.NewRawUri(_fileName ?? "PDF", _uri);
+        send.AddFlags(ActivityFlags.GrantReadUriPermission);
+        try
+        {
+            StartActivity(Intent.CreateChooser(send, "Share PDF"));
+        }
+        catch (ActivityNotFoundException)
+        {
+            Toast.MakeText(this, "No app on this device can receive a PDF.", ToastLength.Short)?.Show();
+        }
+    }
+
+    private void AskRecent()
+    {
+        var items = _recent.Items.ToList();
+        if (items.Count == 0) return;
+        new AlertDialog.Builder(this)
+            .SetTitle("Recent files")!
+            .SetItems(items.Select(d => $"{d.Name}  ·  page {d.Page}").ToArray(), (_, e) => OpenRecent(items[e.Which]))!
+            .SetNeutralButton("Clear list", (_, _) =>
+            {
+                foreach (var d in items) ReleasePermission(d.Location);
+                _recent.Clear();
+                ShowRecent();
+            })!
+            .SetNegativeButton("Close", (_, _) => { })!
+            .Show();
+    }
+
+    private void OpenRecent(RecentDocument entry)
+    {
+        if (Uri.Parse(entry.Location) is not { } uri) return;
+        RememberPosition();
+        _ = OpenUriAsync(uri, (new PageAnchor(entry.Page, 0, 0), entry.Zoom), fromRecent: true);
+    }
+
+    private void ForgetRecent(string location)
+    {
+        ReleasePermission(location);
+        _recent.Remove(location);
+        ShowRecent();
+    }
+
+    // ------------------------------------------------------------------ selection
+
+    /// <summary>Copies the selection to the clipboard; the document's copy permission was checked when it was made.</summary>
+    private void CopySelection()
+    {
+        if (_doc is not { CanCopy: true } || !_pages.HasSelection) return;
+        string text = _pages.SelectedText;
+        if (text.Length == 0) return;
+        var clipboard = GetSystemService(ClipboardService)?.JavaCast<global::Android.Content.ClipboardManager>();
+        if (clipboard == null) return;
+        clipboard.PrimaryClip = ClipData.NewPlainText("Text from a PDF", text);
+        // Android 13 and later show their own confirmation.
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33))
+            Toast.MakeText(this, "Copied", ToastLength.Short)?.Show();
+        _pages.ClearSelection();
     }
 
     // ------------------------------------------------------------------ opening
@@ -202,6 +478,7 @@ public sealed class MainActivity : Activity
         var intent = new Intent(Intent.ActionOpenDocument);
         intent.AddCategory(Intent.CategoryOpenable);
         intent.SetType("application/pdf");
+        intent.AddFlags(ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantPersistableUriPermission);
         StartActivityForResult(intent, OpenDocumentRequest);
     }
 
@@ -209,10 +486,39 @@ public sealed class MainActivity : Activity
     {
         base.OnActivityResult(requestCode, resultCode, data);
         if (requestCode == OpenDocumentRequest && resultCode == Result.Ok && data?.Data is { } uri)
-            _ = OpenUriAsync(uri);
+        {
+            RememberPosition();
+            // Keep access across restarts (the picker offers a persistable grant), so the recent
+            // list and a restore after Android ended the process can open the file again.
+            try
+            {
+                ContentResolver?.TakePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
+            }
+            catch (Java.Lang.SecurityException)
+            {
+                // Not persistable: the file opens now, but is not kept in the recent list.
+            }
+            _ = OpenUriAsync(uri, null);
+        }
     }
 
-    private async Task OpenUriAsync(Uri uri)
+    private bool HasPersistedPermission(Uri uri) =>
+        ContentResolver?.PersistedUriPermissions?.Any(p => p.IsReadPermission && p.Uri?.Equals(uri) == true) == true;
+
+    private void ReleasePermission(string location)
+    {
+        try
+        {
+            if (Uri.Parse(location) is { } uri && HasPersistedPermission(uri))
+                ContentResolver?.ReleasePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
+        }
+        catch (Java.Lang.SecurityException)
+        {
+        }
+    }
+
+    /// <summary>Opens a document; <paramref name="view"/> is the place to show (a saved state or the recent list).</summary>
+    private async Task OpenUriAsync(Uri uri, (PageAnchor TopLeft, double Zoom)? view, bool fromRecent = false)
     {
         byte[] bytes;
         try
@@ -221,10 +527,17 @@ public sealed class MainActivity : Activity
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            bool gone = ex is Java.Lang.SecurityException or Java.IO.FileNotFoundException or FileNotFoundException;
+            if (gone && _recent.Find(uri.ToString()!) != null)
+            {
+                ForgetRecent(uri.ToString()!);
+                Toast.MakeText(this, "This file can no longer be opened here, so it was taken off the recent list.", ToastLength.Long)?.Show();
+                return;
+            }
             Toast.MakeText(this, ex is FileTooLargeException ? ex.Message : $"The file could not be read ({ex.GetType().Name}).", ToastLength.Long)?.Show();
             return;
         }
-        await OpenBytesAsync(bytes, DisplayName(uri), password: null);
+        await OpenBytesAsync(bytes, uri, fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri), password: null, view);
     }
 
     private sealed class FileTooLargeException(string message) : IOException(message);
@@ -244,7 +557,7 @@ public sealed class MainActivity : Activity
         return memory.ToArray();
     }
 
-    /// <summary>The file's name as the document provider shows it, for the title bar only.</summary>
+    /// <summary>The file's name as the document provider shows it, for the title bar and the recent list only.</summary>
     private string? DisplayName(Uri uri)
     {
         try
@@ -258,7 +571,7 @@ public sealed class MainActivity : Activity
         }
     }
 
-    private async Task OpenBytesAsync(byte[] bytes, string? name, string? password)
+    private async Task OpenBytesAsync(byte[] bytes, Uri uri, string? name, string? password, (PageAnchor TopLeft, double Zoom)? view)
     {
         ViewerDocument opened;
         try
@@ -267,7 +580,7 @@ public sealed class MainActivity : Activity
         }
         catch (ViewerOpenException ex) when (ex.Failure is ViewerOpenFailure.PasswordRequired or ViewerOpenFailure.WrongPassword)
         {
-            AskPassword(bytes, name, wrong: ex.Failure == ViewerOpenFailure.WrongPassword);
+            AskPassword(bytes, uri, name, wrong: ex.Failure == ViewerOpenFailure.WrongPassword, view);
             return;
         }
         catch (ViewerOpenException ex)
@@ -282,26 +595,48 @@ public sealed class MainActivity : Activity
         _hits = new List<ViewerSearchHit>();
         _hitIndex = -1;
         _searchCount.Text = "";
+        ShowSearch(false);
+        _thumbnails.Release();
         _doc = opened;
         _fileName = name;
+        _uri = uri;
+        _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
+        if (view is { } v) _pages.RestoreView(v.TopLeft, v.Zoom);
+        // Files the app may open again (a persisted grant) go to the top of the recent list.
+        if (HasPersistedPermission(uri))
+            _recent.Opened(uri.ToString()!, name ?? "Document", DateTimeOffset.Now);
+        ReleaseUnlistedPermissions();
         ShowDocumentState();
         if (previous != null) await previous.DisposeAsync();
     }
 
-    private void AskPassword(byte[] bytes, string? name, bool wrong)
+    /// <summary>Gives back persisted grants for files that are no longer on the recent list (the system keeps a limited number).</summary>
+    private void ReleaseUnlistedPermissions()
+    {
+        var permissions = ContentResolver?.PersistedUriPermissions;
+        if (permissions == null) return;
+        foreach (var p in permissions.ToList())
+        {
+            string? location = p.Uri?.ToString();
+            if (location != null && _recent.Find(location) == null && p.Uri?.Equals(_uri) != true)
+                ReleasePermission(location);
+        }
+    }
+
+    private void AskPassword(byte[] bytes, Uri uri, string? name, bool wrong, (PageAnchor TopLeft, double Zoom)? view)
     {
         var input = new EditText(this) { InputType = InputTypes.ClassText | InputTypes.TextVariationPassword, Hint = "Password" };
         new AlertDialog.Builder(this)
             .SetTitle(wrong ? "Wrong password" : "This PDF is protected")!
             .SetMessage(wrong ? "That password does not open this PDF. Try again." : "Enter the password to open it.")!
             .SetView(input)!
-            .SetPositiveButton("Open", (_, _) => _ = OpenBytesAsync(bytes, name, input.Text ?? ""))!
+            .SetPositiveButton("Open", (_, _) => _ = OpenBytesAsync(bytes, uri, name, input.Text ?? "", view))!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
     }
 
-    // ------------------------------------------------------------------ navigation, night pages, search
+    // ------------------------------------------------------------------ navigation, search
 
     private void AskPage()
     {
@@ -318,12 +653,6 @@ public sealed class MainActivity : Activity
             .Show();
     }
 
-    private void ToggleNight()
-    {
-        _pages.NightPages = !_pages.NightPages;
-        ApplyTheme();
-    }
-
     /// <summary>The soft keyboard (input_method) service; a Java object, so JavaCast gives its managed wrapper.</summary>
     private InputMethodManager? Keyboard() => GetSystemService(InputMethodService)?.JavaCast<InputMethodManager>();
 
@@ -334,6 +663,7 @@ public sealed class MainActivity : Activity
         var keyboard = Keyboard();
         if (show)
         {
+            ShowThumbnails(false);
             _searchText.RequestFocus();
             _searchText.SelectAll(); // typing replaces the last query
             keyboard?.ShowSoftInput(_searchText, ShowFlags.Implicit);
@@ -397,8 +727,39 @@ public sealed class MainActivity : Activity
         _pages.SetSearchHits(_hits, _hitIndex);
     }
 
+    /// <summary>A hardware keyboard (or a Chromebook): + and − zoom by steps, 0 goes back to fit width.</summary>
+    public override bool OnKeyDown([GeneratedEnum] Keycode keyCode, KeyEvent? e)
+    {
+        if (_doc != null && _thumbnails.Visibility != ViewStates.Visible && !_searchText.HasFocus)
+        {
+            switch (keyCode)
+            {
+                case Keycode.Plus or Keycode.Equals or Keycode.NumpadAdd:
+                    _pages.ZoomTo(_pages.Zoom * 1.5);
+                    return true;
+                case Keycode.Minus or Keycode.NumpadSubtract:
+                    _pages.ZoomTo(_pages.Zoom / 1.5);
+                    return true;
+                case Keycode.Num0 or Keycode.Numpad0:
+                    _pages.ZoomTo(1);
+                    return true;
+            }
+        }
+        return base.OnKeyDown(keyCode, e);
+    }
+
     public override void OnBackPressed()
     {
+        if (_thumbnails.Visibility == ViewStates.Visible)
+        {
+            ShowThumbnails(false);
+            return;
+        }
+        if (_pages.HasSelection)
+        {
+            _pages.ClearSelection();
+            return;
+        }
         if (_searchBar.Visibility == ViewStates.Visible)
         {
             ShowSearch(false);
@@ -415,6 +776,7 @@ public sealed class MainActivity : Activity
         var doc = _doc;
         _doc = null;
         _pages.SetDocument(null);
+        _thumbnails.Release();
         if (doc != null) _ = doc.DisposeAsync().AsTask();
         base.OnDestroy();
     }

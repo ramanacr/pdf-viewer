@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
+using PdfEngine.Vector.Limits;
 using SkiaSharp;
 
 namespace PdfEngine.Vector.Skia;
@@ -15,6 +16,10 @@ internal sealed partial class SkiaReplayer
 
     // Images larger than the renderer's cache budget, kept by this replayer instead.
     private readonly Dictionary<string, (SKImage Image, long Bytes)> _uncachedImages = new(StringComparer.Ordinal);
+
+    // Pixels of the images this replayer has decoded, held to the page budget (MaxImagePixelsPerPage)
+    // as the interpreter holds the sizes the image dictionaries state: a JPEG frame may be larger.
+    private long _decodedPixels;
 
     private bool TryDecode(PdfImageRef image, out byte[] pixels, out int width, out int height, out PdfFallbackReason reason)
     {
@@ -49,12 +54,14 @@ internal sealed partial class SkiaReplayer
             var decoded = image.Source.Decode(_ct);
             width = decoded.Width;
             height = decoded.Height;
-            pixels = decoded.Format == PdfDecodedImageFormat.Bgra32 ? decoded.Data.ToArray() : SkiaJpeg.Decode(decoded, out width, out height);
+            pixels = decoded.Format == PdfDecodedImageFormat.Bgra32 ? decoded.Data.ToArray()
+                   : SkiaJpeg.Decode(decoded, out width, out height, _res.Limits, _decodedPixels, _ct);
+            _decodedPixels += (long)width * height;
             if (decoded.Format == PdfDecodedImageFormat.Jpeg && decoded.Alpha is ReadOnlyMemory<byte> alpha)
                 ApplyAlpha(pixels, width, height, alpha.Span, decoded.Width, decoded.Height);
             if (decoded.JpegMask is { } mask)
             {
-                var gray = SkiaJpeg.DecodeGray(mask.Data, out int mw, out int mh);
+                var gray = SkiaJpeg.DecodeGray(mask.Data, out int mw, out int mh, _res.Limits);
                 var plane = (mask with { Width = mw, Height = mh }).ToAlpha(gray, 1, mw);
                 ApplyAlpha(pixels, width, height, plane, mw, mh);
             }
@@ -154,7 +161,8 @@ public static class SkiaJpeg
         {
             return Decode(decoded, out width, out height);
         }
-        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or OverflowException
+                                       or PdfEngine.Vector.Diagnostics.PdfVectorException)
         {
             width = height = 0;
             return null;
@@ -167,26 +175,51 @@ public static class SkiaJpeg
     /// space.
     /// </summary>
     /// <exception cref="InvalidDataException">The data is not a JPEG Skia can decode.</exception>
-    /// <exception cref="NotSupportedException">
-    /// A four-component (CMYK or YCCK) JPEG. Skia hands back no raw CMYK samples for the core to
-    /// map, and SkiaSharp 3.116.1 decodes the CMYK and YCCK JPEGs of the corpus as solid black,
-    /// so they are classified for fallback instead of drawn wrong.
-    /// </exception>
-    public static byte[] Decode(PdfDecodedImage decoded, out int width, out int height)
+    /// <exception cref="NotSupportedException">A four-component JPEG with arithmetic coding or more than 8 bits per sample.</exception>
+    /// <remarks>
+    /// Four-component (CMYK or YCCK) JPEGs are decoded by <see cref="JpegComponentDecoder"/>: Skia's
+    /// codec converts them to RGB by itself (SkiaSharp 3.116.1 drew the corpus's as solid black) and
+    /// hands back no CMYK samples. They then take the Direct2D backend's path, so both backends show
+    /// the same colours. WIC returns the inverse of the stored samples (it undoes the Adobe
+    /// convention itself, with or without an APP14 marker), and <see cref="PdfDecodedImage.InvertCmykJpeg"/>
+    /// is set for that output; the stored samples are turned into WIC's first.
+    /// </remarks>
+    public static byte[] Decode(PdfDecodedImage decoded, out int width, out int height) =>
+        Decode(decoded, out width, out height, null, 0, CancellationToken.None);
+
+    /// <summary>
+    /// <see cref="Decode(PdfDecodedImage, out int, out int)"/> held to <paramref name="limits"/>
+    /// (null: <see cref="PdfSecurityLimits.Default"/>), with <paramref name="pagePixels"/> already
+    /// spent of the page's image budget.
+    /// </summary>
+    /// <exception cref="PdfEngine.Vector.Diagnostics.PdfResourceLimitException">The JPEG is over the pixel limits.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled.</exception>
+    internal static byte[] Decode(PdfDecodedImage decoded, out int width, out int height, PdfSecurityLimits? limits, long pagePixels,
+        CancellationToken ct)
     {
         var header = PdfEngine.Vector.Create.JpegHeader.TryRead(decoded.Data.Span);
         int components = header?.Components ?? 3;
         if (components == 4)
-            throw new NotSupportedException("CMYK JPEG data is not decoded by the Skia backend.");
+        {
+            var cmyk = JpegComponentDecoder.Decode(decoded.Data.Span, out width, out height, out int n, limits, pagePixels, ct);
+            if (n != 4) throw new InvalidDataException("JPEG frame does not have four components.");
+            // WIC's samples are 255 − stored, and the backend inverts them again for InvertCmykJpeg:
+            // the stored samples stay as they are exactly when InvertCmykJpeg is set.
+            if (!decoded.InvertCmykJpeg)
+                for (int i = 0; i < cmyk.Length; i++) cmyk[i] = (byte)(255 - cmyk[i]);
+            return decoded.MapJpegComponents is { } mapCmyk
+                ? mapCmyk(cmyk, 4, width, height)
+                : PdfEngine.Vector.Color.PdfColorConversion.CmykToBgra(cmyk, width * height, inverted: false);
+        }
         if (decoded.MapJpegComponents is { } map && components is 1 or 3)
         {
             // Raw components (no colour management: no colour space on the destination) for the core.
             if (components == 1)
             {
-                var gray = DecodeGray(decoded.Data, out width, out height);
+                var gray = DecodePixels(decoded.Data, SKColorType.Gray8, out width, out height, limits, pagePixels);
                 return map(gray, 1, width, height);
             }
-            var bgra = DecodePixels(decoded.Data, SKColorType.Bgra8888, out width, out height);
+            var bgra = DecodePixels(decoded.Data, SKColorType.Bgra8888, out width, out height, limits, pagePixels);
             var rgb = new byte[width * height * 3];
             for (int i = 0, p = 0; i < rgb.Length; i += 3, p += 4)
             {
@@ -194,14 +227,15 @@ public static class SkiaJpeg
             }
             return map(rgb, 3, width, height);
         }
-        return DecodePixels(decoded.Data, SKColorType.Bgra8888, out width, out height);
+        return DecodePixels(decoded.Data, SKColorType.Bgra8888, out width, out height, limits, pagePixels);
     }
 
     /// <summary>The luminance (gray JPEG: its samples) of a JPEG, one byte per pixel.</summary>
-    internal static byte[] DecodeGray(ReadOnlyMemory<byte> data, out int width, out int height) =>
-        DecodePixels(data, SKColorType.Gray8, out width, out height);
+    internal static byte[] DecodeGray(ReadOnlyMemory<byte> data, out int width, out int height, PdfSecurityLimits? limits = null) =>
+        DecodePixels(data, SKColorType.Gray8, out width, out height, limits, 0);
 
-    private static byte[] DecodePixels(ReadOnlyMemory<byte> data, SKColorType colorType, out int width, out int height)
+    private static byte[] DecodePixels(ReadOnlyMemory<byte> data, SKColorType colorType, out int width, out int height,
+        PdfSecurityLimits? limits, long pagePixels)
     {
         using var skData = SKData.CreateCopy(data.Span);
         using var codec = SKCodec.Create(skData) ?? throw new InvalidDataException("Not a JPEG Skia can read.");
@@ -209,6 +243,12 @@ public static class SkiaJpeg
         height = codec.Info.Height;
         if (width <= 0 || height <= 0)
             throw new InvalidDataException("JPEG has no size.");
+        limits ??= PdfSecurityLimits.Default;
+        long area = (long)width * height;
+        if (area > limits.MaxImagePixels)
+            throw new PdfEngine.Vector.Diagnostics.PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG exceeds the pixel limit.");
+        if (pagePixels + area > limits.MaxImagePixelsPerPage)
+            throw new PdfEngine.Vector.Diagnostics.PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixelsPerPage), "JPEG exceeds the page's image pixel budget.");
         var info = new SKImageInfo(width, height, colorType, colorType == SKColorType.Gray8 ? SKAlphaType.Opaque : SKAlphaType.Unpremul);
         var pixels = new byte[checked(info.BytesSize)];
         var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);

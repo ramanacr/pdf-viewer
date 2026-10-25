@@ -174,8 +174,10 @@ public sealed class TrueTypeFontFile
     /// <summary>
     /// <see cref="ReadNames(byte[], int)"/> reading only the table directory and the name and OS/2
     /// tables, so a catalogue of every installed font does not read hundreds of megabytes of outlines.
+    /// <paramref name="openTypeCff"/> also names fonts with CFF outlines ('OTTO', a CFF or CFF2
+    /// table), for a renderer that loads them itself (Skia); this class reads TrueType outlines only.
     /// </summary>
-    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? ReadNames(Stream stream, int index)
+    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? ReadNames(Stream stream, int index, bool openTypeCff = false)
     {
         try
         {
@@ -191,7 +193,8 @@ public sealed class TrueTypeFontFile
             else if (index != 0) return null;
             if (ReadAt(stream, dir, 12) is not { } offsetTable) return null;
             uint version = BigEndian.U32(offsetTable, 0);
-            if (version != 0x00010000 && version != 0x74727565) return null; // TrueType outlines only
+            bool cff = openTypeCff && version == 0x4F54544F; // 'OTTO'
+            if (version != 0x00010000 && version != 0x74727565 && !cff) return null; // TrueType outlines only
             int numTables = BigEndian.U16(offsetTable, 4);
             if (numTables == 0 || numTables > 256 || ReadAt(stream, dir + 12, numTables * 16) is not { } records) return null;
             var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
@@ -200,7 +203,8 @@ public sealed class TrueTypeFontFile
                 string tag = Encoding.ASCII.GetString(records, i * 16, 4);
                 long offset = BigEndian.U32(records, i * 16 + 8), length = BigEndian.U32(records, i * 16 + 12);
                 if (offset + length > stream.Length) return null;
-                if (tag == "glyf") tables[tag] = Array.Empty<byte>();
+                // Only that outlines exist matters for the names: CFF outlines count as glyf here.
+                if (tag == "glyf" || cff && tag is "CFF " or "CFF2") tables["glyf"] = Array.Empty<byte>();
                 else if (tag is "name" or "OS/2" && length <= 1024 * 1024 && ReadAt(stream, offset, (int)length) is { } table) tables[tag] = table;
             }
             return NamesFromTables(tables);

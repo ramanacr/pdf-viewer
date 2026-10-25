@@ -14,7 +14,7 @@ public sealed record SystemFontFace(string Path, int Index, string Family, strin
 }
 
 /// <summary>
-/// The TrueType fonts in a font directory, found by PostScript name or by family and style, with
+/// The TrueType fonts in a font directory (on Android also those with CFF outlines), found by PostScript name or by family and style, with
 /// a fallback chain for characters the chosen font lacks. Only fonts whose licence allows
 /// embedding are used.
 /// </summary>
@@ -74,10 +74,12 @@ public sealed class SystemFontCatalog
     /// The fonts of an Android font folder (<c>/system/fonts</c>), where the families that
     /// substitution asks for by their Windows names stand in by <see cref="AndroidFamilyAliases"/>:
     /// Arial and Helvetica are drawn with Roboto, Times with Noto Serif, Courier with Droid Sans Mono,
-    /// each glyph still placed by the document's widths.
+    /// each glyph still placed by the document's widths. Fonts with CFF outlines (<c>.otf</c>, and
+    /// the CFF faces of <c>.ttc</c> collections such as Noto Sans CJK) are catalogued too: the Skia
+    /// backend, the only renderer on Android, loads them itself.
     /// </summary>
     public static SystemFontCatalog ForAndroid(string directory = PdfEngine.Vector.Diagnostics.PdfPlatform.AndroidFontDirectory) =>
-        AndroidCatalogs.GetOrAdd(directory, d => ForDirectory(d).WithFamilyAliases(AndroidFamilyAliases));
+        AndroidCatalogs.GetOrAdd(directory, d => new SystemFontCatalog(ScanFaces(d, openTypeCff: true), AndroidFamilyAliases));
 
     /// <summary>This catalog's faces, where a missing family is looked up as the families <paramref name="aliases"/> maps it to, in order.</summary>
     public SystemFontCatalog WithFamilyAliases(IReadOnlyDictionary<string, string[]> aliases) => new(Faces, aliases);
@@ -148,15 +150,17 @@ public sealed class SystemFontCatalog
     /// <summary>A catalog without faces.</summary>
     private static readonly SystemFontCatalog None = new(Array.Empty<SystemFontFace>());
 
-    public static SystemFontCatalog ForDirectory(string directory) => Catalogs.GetOrAdd(directory, Scan);
+    /// <summary>The TrueType fonts (<c>.ttf</c>, <c>.ttc</c>) of a folder, read once per folder.</summary>
+    public static SystemFontCatalog ForDirectory(string directory) => Catalogs.GetOrAdd(directory, d => new SystemFontCatalog(ScanFaces(d, openTypeCff: false)));
 
-    private static SystemFontCatalog Scan(string directory)
+    /// <param name="openTypeCff">Also <c>.otf</c> files and faces with CFF outlines (only a renderer that loads fonts itself can use them).</param>
+    private static List<SystemFontFace> ScanFaces(string directory, bool openTypeCff)
     {
         var faces = new List<SystemFontFace>();
         if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
         {
             var paths = Directory.EnumerateFiles(directory)
-                .Where(p => System.IO.Path.GetExtension(p).ToLowerInvariant() is ".ttf" or ".ttc")
+                .Where(p => System.IO.Path.GetExtension(p).ToLowerInvariant() is ".ttf" or ".ttc" || openTypeCff && System.IO.Path.GetExtension(p).Equals(".otf", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             // Names only: the renderer scans this on its first non-embedded font, which the first page
             // waits for. Files are read in parallel (opening each one is most of the cost) and the
@@ -172,7 +176,7 @@ public sealed class SystemFontCatalog
                     using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
                     int count = TrueTypeFontFile.FontCount(stream);
                     for (int f = 0; f < count; f++)
-                        if (TrueTypeFontFile.ReadNames(stream, f) is { } n && n.Family.Length > 0)
+                        if (TrueTypeFontFile.ReadNames(stream, f, openTypeCff) is { } n && n.Family.Length > 0)
                             found.Add(new SystemFontFace(path, f, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
@@ -180,7 +184,7 @@ public sealed class SystemFontCatalog
             foreach (var found in perFile)
                 if (found != null) faces.AddRange(found);
         }
-        return new SystemFontCatalog(faces);
+        return faces;
     }
 
     public TrueTypeFontFile? Load(SystemFontFace face) => _loaded.GetOrAdd((face.Path, face.Index), key =>
