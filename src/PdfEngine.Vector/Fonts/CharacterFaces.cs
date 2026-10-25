@@ -7,8 +7,8 @@ namespace PdfEngine.Vector.Fonts;
 /// <summary>
 /// Which face draws a character that a run's substitute lacks: the Windows families for its script
 /// (Arabic and Hebrew in Segoe UI, Indic in Nirmala UI, Han in the face of the text's CJK language,
-/// symbols in Segoe UI Symbol), and the CJK language of a run. The Direct2D backend picks installed
-/// faces by these rules; the web demo's bundled faces use <see cref="CjkLanguage"/> too.
+/// symbols in Segoe UI Symbol), and the CJK language of a run. The Direct2D and WPF backends pick
+/// installed faces by these rules; the web demo's bundled faces use <see cref="CjkLanguage"/> too.
 /// </summary>
 public static class CharacterFaces
 {
