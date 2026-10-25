@@ -578,7 +578,9 @@ internal sealed class WpfDisplayListCompiler
         var (_, bold, italic) = WpfFontCache.StyleOf(face, fontName);
         var chain = new List<(GlyphTypeface Face, bool SymbolCodes)> { (typeface, symbolSubstitute) };
         if (symbolSubstitute) chain.Add((typeface, false));
-        foreach (var family in CharacterComposition.UnicodeFallbackFamilies)
+        // CJK text: the face of its language before the generic faces (Yu Gothic for a Japan1 font).
+        var cjk = PdfEngine.Vector.Fonts.CharacterFaces.WindowsCjkFamilies(face?.CidOrdering, face?.PostScriptName ?? fontName, CharacterComposition.RunText(run));
+        foreach (var family in cjk.Concat(CharacterComposition.UnicodeFallbackFamilies))
             if (_fonts.GetFamily(family, bold, italic) is { } extra && !chain.Exists(c => ReferenceEquals(c.Face, extra) && !c.SymbolCodes))
                 chain.Add((extra, false));
 

@@ -46,6 +46,20 @@ public static class CharacterFaces
         return "sc";
     }
 
+    /// <summary>
+    /// The Windows CJK faces for a whole run, the face of its language first (<see cref="CjkLanguage"/>);
+    /// empty for a run without a CJK character. A substitute chain tries them before its generic
+    /// faces, so that all-Han text in a Japanese, Traditional Chinese or Korean font takes the glyph
+    /// forms of that language, not those of the first CJK face of the chain.
+    /// </summary>
+    public static IReadOnlyList<string> WindowsCjkFamilies(string? cidOrdering, string? fontName, string? text)
+    {
+        foreach (var rune in (text ?? "").EnumerateRunes())
+            if (IsCjk(rune.Value))
+                return CjkFamilies[CjkLanguage(cidOrdering, fontName, text)];
+        return Array.Empty<string>();
+    }
+
     /// <summary>True for a character of a CJK block (Han, kana, hangul, bopomofo, CJK symbols and full-width forms).</summary>
     public static bool IsCjk(int c) =>
         c is >= 0x1100 and <= 0x11FF or >= 0x2E80 and <= 0x2FDF or >= 0x3000 and <= 0x31FF or >= 0x3400 and <= 0x4DBF
