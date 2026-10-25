@@ -1,0 +1,55 @@
+name: Microsoft Store package
+
+# Builds the MSIX for the Microsoft Store (docs/microsoft-store.md) on release tags, and uploads
+# it as a workflow artifact. It publishes nothing: the owner submits the package in Partner
+# Center, and the Store signs it there. A workflow of its own, so that it needs none of the
+# release signing secrets and a packaging problem cannot stop the GitHub release.
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to package (e.g. v4.2.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+    - name: Checkout the tag
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        ref: ${{ github.event.inputs.tag || github.ref }}
+        fetch-depth: 0 # the version comes from the nearest tag
+
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      with:
+        dotnet-version: '9.0.x'
+
+    # The identity comes from eng/msix/identity.json. Until the owner fills it in, the package is
+    # built with the local test identity: it checks the packaging, but cannot be submitted.
+    - name: Build the MSIX
+      shell: pwsh
+      run: |
+        $identity = Get-Content -Raw eng/msix/identity.json | ConvertFrom-Json
+        if ([string]::IsNullOrWhiteSpace($identity.identityName) -or [string]::IsNullOrWhiteSpace($identity.publisher)) {
+          Write-Host "::warning title=MSIX identity::eng/msix/identity.json is empty, so this package has the local test identity and cannot be submitted to the Store (docs/microsoft-store.md)."
+          ./scripts/build_msix.ps1 -TestIdentity
+        } else {
+          ./scripts/build_msix.ps1
+        }
+
+    - name: Upload the MSIX
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: PdfViewer-msix-${{ env.TAG }}
+        path: publish/msix/*.msix
+        if-no-files-found: error
