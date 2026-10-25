@@ -73,13 +73,13 @@ public sealed class Parity
         }
     }
 
-    /// <summary>Renders page 1 of <paramref name="pdf"/> with both backends.</summary>
-    public static async Task<Pair> RenderBoth(byte[] pdf, double dpi, PageRotation rotation = PageRotation.Rotate0, bool invert = false)
+    /// <summary>Renders page 1 of <paramref name="pdf"/> with both backends (Skia: <paramref name="skiaRenderer"/>, else the shared renderer).</summary>
+    public static async Task<Pair> RenderBoth(byte[] pdf, double dpi, PageRotation rotation = PageRotation.Rotate0, bool invert = false, SkiaVectorRenderer? skiaRenderer = null)
     {
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
         var list = await doc.GetPageDisplayListAsync(1);
         var request = new RenderRequest { PageNumber = 1, Dpi = dpi, Rotation = rotation };
-        var skia = await Skia.RenderAsync(list, request, null, null, invert, CancellationToken.None);
+        var skia = await (skiaRenderer ?? Skia).RenderAsync(list, request, null, null, invert, CancellationToken.None);
         var d2d = (await D2D.RenderAsync(list, request, null, null, invert, CancellationToken.None)).Page;
         var backend = skia.Fallbacks.Skip(list.FallbackTokens.Count).ToList();
         return new Pair(skia.Page, d2d, list, PixelDiff.Compare(skia.Page, d2d), backend);
@@ -90,12 +90,12 @@ public sealed class Parity
     /// render stays within the budget of the Direct2D render at each resolution.
     /// </summary>
     public async Task<PixelDiff> AssertMatches(string name, byte[] pdf, double maxMean, double maxBad, double[]? dpis = null,
-        PageRotation rotation = PageRotation.Rotate0, bool invert = false)
+        PageRotation rotation = PageRotation.Rotate0, bool invert = false, SkiaVectorRenderer? skiaRenderer = null)
     {
         PixelDiff worst = default;
         foreach (double dpi in dpis ?? new[] { 72.0, 144.0 })
         {
-            using var pair = await RenderBoth(pdf, dpi, rotation, invert);
+            using var pair = await RenderBoth(pdf, dpi, rotation, invert, skiaRenderer);
             Assert.False(pair.List.HasFallback, $"{name}: the interpreter fell back: {string.Join(", ", pair.List.FallbackTokens.Select(t => t.Reason))}");
             var backend = pair.SkiaBackendFallbacks;
             Assert.True(backend.Count == 0, $"{name}: the Skia backend classified {string.Join(", ", backend.Select(t => t.Reason))}");
