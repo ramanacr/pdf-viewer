@@ -450,8 +450,33 @@ internal sealed class WpfDisplayListCompiler
         var offsets = new List<Point>(run.Glyphs.Count);
         var map = typeface.CharacterToGlyphMap;
 
-        foreach (var glyph in run.Glyphs)
+        // Text whose font is not embedded reaches here as characters: Arabic and Indic words are
+        // shaped with the substitute's own tables, as the Direct2D and Skia backends shape them. This
+        // backend draws every glyph at its own width, so a shaped word keeps its fitted positions but
+        // not its fitted glyph width.
+        var words = !byGlyphId && !symbolSubstitute && sign > 0 && (face == null || face.ProgramData.IsEmpty)
+            ? PdfEngine.Vector.Text.SubstituteShaper.Words(run) : null;
+        var shaping = words is { Count: > 0 } ? _fonts.GetShapingFont(typeface) : null;
+        int nextWord = 0;
+
+        for (int k = 0; k < run.Glyphs.Count; k++)
         {
+            var glyph = run.Glyphs[k];
+            if (shaping != null && nextWord < words!.Count && words[nextWord].Start == k)
+            {
+                var word = words[nextWord++];
+                if (PdfEngine.Vector.Text.SubstituteShaper.ShapeWord(shaping, run, word, th) is { } shaped)
+                {
+                    foreach (var (gid, offset, _) in shaped)
+                    {
+                        indices.Add(gid);
+                        advances.Add(0);
+                        offsets.Add(new Point(offset.X, offset.Y));
+                    }
+                    k = word.End - 1;
+                    continue;
+                }
+            }
             ushort index;
             if (byGlyphId)
             {

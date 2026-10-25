@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Editing;
+using SubstituteShaper = PdfEngine.Vector.Text.SubstituteShaper;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.DCommon;
@@ -1350,6 +1351,12 @@ internal sealed partial class Replayer : IDisposable
         finally { _res.Stages.Fonts += RenderStages.Now - start; }
     }
 
+    /// <summary>The glyph indices, offsets and horizontal scales the run is drawn with (for tests).</summary>
+    internal IReadOnlyList<(ushort Gid, Vector2 Offset, float Scale)>? ResolvedGlyphs(DrawGlyphRun cmd) =>
+        ResolveText(cmd, out _) is { } r
+            ? r.Indices.Select((gid, i) => (gid, r.Offsets[i], r.Scales?[i] ?? 1f)).ToList()
+            : null;
+
     private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? ResolveTextCore(DrawGlyphRun cmd, out bool byGlyphId)
     {
         var run = cmd.Run;
@@ -1396,18 +1403,22 @@ internal sealed partial class Replayer : IDisposable
         foreach (var extra in UnicodeFallbackFamilies)
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
+        // Text whose font is not embedded reaches here as characters, not shaped glyphs: Arabic and
+        // Indic words are shaped with the substitute's own tables, as the Skia backend shapes them
+        // (an embedded program DirectWrite cannot load had its glyphs chosen by the producer, so it is drawn as it is).
+        Func<IDWriteFontFace, TrueTypeFontFile?>? shaping = face == null || face.ProgramData.IsEmpty ? _res.GetShapingFont : null;
         (IDWriteFontFace Face, (ushort[] Indices, Vector2[] Offsets, float[]? Scales) Mapped, int Missing)? best = null;
         foreach (var (inst, fam, b, it, symbolCodes) in chain)
         {
             var candidate = inst != null ? _res.GetInstalledFace(inst, b, it) : _res.GetSystemFace(fam, b, it);
             if (candidate == null)
                 continue;
-            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _);
+            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _, shaping);
             if (mapped != null)
                 return (candidate, mapped.Value.Indices, mapped.Value.Offsets, mapped.Value.Scales);
             // Best effort: the face that has the most of the run's glyphs draws it, leaving out the
             // ones none of them has (PDFium draws what its substitute has too).
-            var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing);
+            var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing, shaping);
             if (partial != null && (best == null || missing < best.Value.Missing))
                 best = (candidate, partial.Value, missing);
         }
@@ -1429,13 +1440,22 @@ internal sealed partial class Replayer : IDisposable
     /// rest, so the gaps fall evenly instead of all after it.
     /// </summary>
     /// <param name="allowMissing">Leave out glyphs the face lacks (counted in <paramref name="missing"/>) instead of failing.</param>
+    /// <param name="shapingFont">
+    /// When set, the run's Arabic and Indic words are shaped with the font file it gives for the face
+    /// (<see cref="SubstituteShaper.ShapeWord"/>); a word the file cannot shape is mapped glyph by glyph.
+    /// </param>
     private static (ushort[] Indices, Vector2[] Offsets, float[]? Scales)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
-        bool allowMissing, out int missing)
+        bool allowMissing, out int missing, Func<IDWriteFontFace, TrueTypeFontFile?>? shapingFont = null)
     {
         missing = 0;
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
         var widths = new List<double>(run.Glyphs.Count);
+        // The scale of a shaped glyph (already fitted with its word); 0 for a glyph fitted to its own width below.
+        var fitted = new List<float>(run.Glyphs.Count);
+        var words = shapingFont != null && !symbolCodes && sign > 0 ? SubstituteShaper.Words(run) : null;
+        var shaping = words is { Count: > 0 } ? shapingFont!(face) : null;
+        int nextWord = 0;
         // The code points of the drawable glyphs, looked up in one call instead of one per glyph.
         var points = new uint[run.Glyphs.Count];
         for (int k = 0; k < run.Glyphs.Count; k++)
@@ -1451,6 +1471,22 @@ internal sealed partial class Replayer : IDisposable
         for (int k = 0; k < run.Glyphs.Count; k++)
         {
             var g = run.Glyphs[k];
+            if (shaping != null && nextWord < words!.Count && words[nextWord].Start == k)
+            {
+                var word = words[nextWord++];
+                if (SubstituteShaper.ShapeWord(shaping, run, word, th) is { } shaped)
+                {
+                    foreach (var (gid, offset, scale) in shaped)
+                    {
+                        indices.Add(gid);
+                        offsets.Add(offset);
+                        widths.Add(0);
+                        fitted.Add(scale);
+                    }
+                    k = word.End - 1;
+                    continue;
+                }
+            }
             string? text = g.Unicode;
             if (string.IsNullOrEmpty(text) || text == " " || text == " ")
                 continue;
@@ -1474,9 +1510,16 @@ internal sealed partial class Replayer : IDisposable
             indices.Add(index);
             offsets.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
             widths.Add(g.Width);
+            fitted.Add(0);
         }
         var ids = indices.ToArray();
         float[]? scales = null;
+        for (int i = 0; i < ids.Length; i++)
+        {
+            if (fitted[i] is 0 or 1) continue;
+            scales ??= Enumerable.Repeat(1f, ids.Length).ToArray();
+            scales[i] = fitted[i];
+        }
         if (ids.Length > 0 && widths.Exists(w => w > 0))
         {
             var metrics = new GlyphMetrics[ids.Length];

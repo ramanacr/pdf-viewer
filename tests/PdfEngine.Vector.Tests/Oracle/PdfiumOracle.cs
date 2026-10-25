@@ -301,13 +301,17 @@ public sealed class PdfiumOracle : IDisposable
         {
             if (_loaded) return;
             PdfiumNativeBridge.EnsureInitialized();
-            string? path = Process.GetCurrentProcess().Modules.Cast<ProcessModule>()
-                .FirstOrDefault(m => string.Equals(m.ModuleName, "pdfium.dll", StringComparison.OrdinalIgnoreCase))?.FileName;
+            // The module the bridge loaded, by name. Process.Modules was used before, but listing
+            // the modules while other tests load DLLs fails now and then with a Win32Exception.
+            IntPtr module = GetModuleHandleW("pdfium.dll");
             NativeLibrary.SetDllImportResolver(typeof(PdfiumOracle).Assembly, (name, assembly, search) =>
-                name == "pdfium_oracle" && path != null ? NativeLibrary.Load(path) : IntPtr.Zero);
+                name == "pdfium_oracle" ? module : IntPtr.Zero);
             _loaded = true;
         }
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern IntPtr GetModuleHandleW(string moduleName);
 
     private static class N
     {

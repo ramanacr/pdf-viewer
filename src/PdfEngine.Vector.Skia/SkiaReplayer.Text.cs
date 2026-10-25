@@ -1,6 +1,7 @@
 using System.Numerics;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Editing;
+using SubstituteShaper = PdfEngine.Vector.Text.SubstituteShaper;
 using SkiaSharp;
 
 namespace PdfEngine.Vector.Skia;
@@ -235,7 +236,7 @@ internal sealed partial class SkiaReplayer
     /// </summary>
     /// <param name="allowMissing">Leave out glyphs the face lacks (counted in <paramref name="missing"/>) instead of failing.</param>
     /// <param name="only">When set, only the glyphs flagged here (by position in the run) are mapped.</param>
-    /// <param name="shape">Shape the run's Arabic and Indic words with the face's tables (<see cref="ShapeWord"/>).</param>
+    /// <param name="shape">Shape the run's Arabic and Indic words with the face's tables (<see cref="SubstituteShaper.ShapeWord"/>).</param>
     private ResolvedRun? MapByUnicode(SkiaFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
         bool allowMissing, out int missing, bool[]? only = null, bool shape = false)
     {
@@ -245,7 +246,7 @@ internal sealed partial class SkiaReplayer
         var widths = new List<double>(run.Glyphs.Count);
         // The scale of a shaped glyph (already fitted with its word); 0 for a glyph fitted to its own width below.
         var fitted = new List<float>(run.Glyphs.Count);
-        var words = shape && !symbolCodes && sign > 0 ? ShapingWords(run, only) : null;
+        var words = shape && !symbolCodes && sign > 0 ? SubstituteShaper.Words(run, only) : null;
         var shaping = words is { Count: > 0 } ? _res.GetShapingFont(face) : null;
         int nextWord = 0;
         using var font = new SKFont(face.Typeface, 1f) { LinearMetrics = true, Hinting = SKFontHinting.None };
@@ -257,7 +258,7 @@ internal sealed partial class SkiaReplayer
             if (shaping != null && nextWord < words!.Count && words[nextWord].Start == i)
             {
                 var word = words[nextWord++];
-                if (ShapeWord(shaping, run, word, th) is { } shaped)
+                if (SubstituteShaper.ShapeWord(shaping, run, word, th) is { } shaped)
                 {
                     foreach (var (gid, offset, scale) in shaped)
                     {

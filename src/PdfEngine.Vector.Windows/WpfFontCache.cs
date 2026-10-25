@@ -158,6 +158,59 @@ internal sealed class WpfFontCache : IDisposable
         return new string(chars);
     }
 
+    private readonly Dictionary<GlyphTypeface, PdfEngine.Vector.Editing.TrueTypeFontFile?> _shapingFonts = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// A substitute's font file as the editing shaper reads it (its cmap, GSUB and GPOS), read once on
+    /// first use; null when its file is not an installed font or cannot be read. A collection's face is
+    /// found by its names in the shared font catalogue, as WPF does not say which face it loaded.
+    /// </summary>
+    public PdfEngine.Vector.Editing.TrueTypeFontFile? GetShapingFont(GlyphTypeface typeface)
+    {
+        if (_shapingFonts.TryGetValue(typeface, out var cached))
+            return cached;
+        PdfEngine.Vector.Editing.TrueTypeFontFile? result = null;
+        try
+        {
+            if (typeface.FontUri is { IsFile: true } uri && FaceIndex(uri.LocalPath, typeface) is int index)
+            {
+                result = PdfEngine.Vector.Editing.TrueTypeFontFile.TryLoad(File.ReadAllBytes(uri.LocalPath), index);
+                if (result != null && result.GlyphCount != typeface.GlyphCount) result = null;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or NotSupportedException)
+        {
+            result = null;
+        }
+        _shapingFonts[typeface] = result;
+        return result;
+    }
+
+    /// <summary>The index of the typeface's face in its file: 0 for a single font, else the catalogue face of its names.</summary>
+    private static int? FaceIndex(string path, GlyphTypeface typeface)
+    {
+        if (!path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".otc", StringComparison.OrdinalIgnoreCase))
+            return 0;
+        var english = System.Globalization.CultureInfo.GetCultureInfo("en-US");
+        string? family = typeface.Win32FamilyNames.TryGetValue(english, out var f) ? f : null;
+        string? style = typeface.Win32FaceNames.TryGetValue(english, out var s) ? s : null;
+        int? found = null;
+        foreach (var face in PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Faces)
+        {
+            if (!string.Equals(face.Path, path, StringComparison.OrdinalIgnoreCase)) continue;
+            if ((string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase) || string.Equals(face.LegacyFamily, family, StringComparison.OrdinalIgnoreCase))
+                && (style == null || string.Equals(face.Subfamily, style, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (style != null) return face.Index;
+                // Without a style name only one face of the family may match: two faces of a
+                // collection can have the same glyph count, so a guess would draw the wrong glyphs.
+                if (found != null) return null;
+                found = face.Index;
+            }
+        }
+        return found;
+    }
+
     public void Dispose()
     {
         foreach (var file in _tempFiles)
