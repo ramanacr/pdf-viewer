@@ -14,6 +14,9 @@ server code.
 - **Document JavaScript never runs.** The engine has no script interpreter.
 - Diagnostics shown on screen are numbers and exception type names, never document text.
 
+**Live demo:** https://ramanacr.github.io/pdf-viewer/demo/ (deployed from `main` by
+`.github/workflows/web-demo.yml`).
+
 Status: a demo, and the base of an embeddable viewer SDK (see [next steps](#next-steps)).
 
 ## Features

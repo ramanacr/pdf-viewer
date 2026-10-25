@@ -5,11 +5,12 @@ permalink: /privacy/
 
 # Privacy Policy
 
-*PDF Viewer — last updated 18 October 2026*
+*PDF Viewer — last updated 25 October 2026*
 
 PDF Viewer is a desktop application for Windows. It does not collect, store or transmit
 personal data, and it does not transfer any information to other networked systems unless the
-person using, installing or operating it asks for that.
+person using, installing or operating it asks for that. The same applies to the web demo and the
+Android app (see [other versions](#other-versions)).
 
 ## What the application does not do
 
@@ -44,8 +45,21 @@ network connection.
 The application keeps its settings on your computer only, in your Windows user profile
 (`%LOCALAPPDATA%\PdfViewerNative`): your privacy choice for the update check, the list of
 recently opened files, your signing preferences (such as the timestamp server and how a
-signature looks), and, only if you tick the option, your signature picture. Nothing of this
-leaves your computer, and deleting that folder removes it.
+signature looks), and, only if you tick the option, your signature picture. It also keeps the
+name that dynamic stamps show, your custom stamps, and the measuring scale you set for a
+document. Nothing of this leaves your computer, and deleting that folder removes it.
+
+## Other versions
+
+- **Microsoft Store version.** It has no update check: the Microsoft Store updates it.
+  Everything else on this page applies. The Store itself is a Microsoft service.
+- **Web demo** ([ramanacr.github.io/pdf-viewer/demo/](https://ramanacr.github.io/pdf-viewer/demo/)).
+  A PDF you open stays in the browser tab and is never uploaded. The page has no analytics, no
+  cookies and no third-party requests: the app and its fonts come from the demo's own site. The
+  browser's local storage keeps only your theme and side-panel choices. The site is hosted on
+  GitHub Pages, which receives your IP address like any web server.
+- **Android app** (proof of concept). It asks for no permission, including no internet access.
+  It opens only the file you choose in the system document picker.
 
 ## Code signing
 
