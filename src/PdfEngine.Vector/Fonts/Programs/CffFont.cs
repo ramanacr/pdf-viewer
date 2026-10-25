@@ -349,8 +349,8 @@ internal sealed class CffFont
         if (spare < 0)
             return null;
         // Pad the first real with trailing zero digits (one nibble each); the second takes the rest.
-        string first = PadReal(scale, minReal + spare / 2 + spare % 2);
-        string second = PadReal(scale, minReal + spare / 2);
+        string? first = PadReal(scale, minReal + spare / 2 + spare % 2);
+        string? second = PadReal(scale, minReal + spare / 2);
         if (first == null || second == null)
             return null;
         var entry = new List<byte>(available);

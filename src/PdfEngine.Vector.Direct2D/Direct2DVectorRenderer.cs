@@ -760,22 +760,24 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     /// <summary>
     /// A rendered page's pixels in native memory, as PDFium's renders are (NativeMemoryOwner): pages
     /// of several megabytes on the managed heap made the garbage collector run a full collection
-    /// every few renders. Freed on Dispose, or by the finalizer when a caller forgets; reading the
-    /// pixels after that throws instead of reading freed memory. Every byte is written by the
-    /// render, so the memory is not cleared first.
+    /// every few renders. Freed on Dispose, or by the block's finalizer when a caller forgets;
+    /// reading the pixels after that throws instead of reading freed memory. The memory belongs to
+    /// a SafeHandle rather than to a finalizer on this type (CA2015), and each Pin holds a
+    /// reference on it, so a pinned pointer stays valid until it is unpinned, even across Dispose.
+    /// Every byte is written by the render, so the memory is not cleared first.
     /// </summary>
     internal sealed unsafe class PageBuffer : System.Buffers.MemoryManager<byte>
     {
+        private readonly NativeBlock _block;
         private byte* _pointer;
         private readonly int _length;
 
         public PageBuffer(int length)
         {
             _length = length;
-            _pointer = (byte*)NativeMemory.Alloc((nuint)Math.Max(1, length));
+            _block = new NativeBlock((nuint)Math.Max(1, length));
+            _pointer = (byte*)_block.DangerousGetHandle();
         }
-
-        ~PageBuffer() => Dispose(false);
 
         public override Span<byte> GetSpan()
         {
@@ -792,17 +794,31 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
                 throw new ObjectDisposedException(nameof(PageBuffer), "The rendered page has already been disposed.");
             if ((uint)elementIndex > (uint)_length)
                 throw new ArgumentOutOfRangeException(nameof(elementIndex));
-            return new System.Buffers.MemoryHandle(p + elementIndex);
+            bool added = false;
+            _block.DangerousAddRef(ref added); // throws ObjectDisposedException if Dispose won the race
+            return new System.Buffers.MemoryHandle(p + elementIndex, default, this);
         }
 
-        public override void Unpin() { }
+        public override void Unpin() => _block.DangerousRelease();
 
         protected override void Dispose(bool disposing)
         {
-            var p = _pointer;
             _pointer = null;
-            if (p != null)
-                NativeMemory.Free(p);
+            _block.Dispose(); // frees now, or when the last pin is released
+        }
+
+        /// <summary>The native memory itself; its critical finalizer frees it when nobody disposed the page.</summary>
+        private sealed class NativeBlock : SafeHandle
+        {
+            public NativeBlock(nuint size) : base(IntPtr.Zero, ownsHandle: true) => SetHandle((IntPtr)NativeMemory.Alloc(size));
+
+            public override bool IsInvalid => handle == IntPtr.Zero;
+
+            protected override bool ReleaseHandle()
+            {
+                NativeMemory.Free((void*)handle);
+                return true;
+            }
         }
     }
 }
