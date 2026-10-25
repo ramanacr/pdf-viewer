@@ -120,6 +120,42 @@ public class FormScriptTests
     }
 
     [Fact]
+    public void Evaluate_DeepNesting_IsUnsupported_NotAStackOverflow()
+    {
+        static IEnumerable<decimal> Two(string _) => new[] { 2m };
+        string Nested(int depth) => new string('(', depth) + "a" + new string(')', depth);
+        Assert.Equal(2m, PdfFormScripts.Evaluate(Nested(PdfFormScripts.MaxExpressionDepth - 1), Two));
+        Assert.Null(PdfFormScripts.Evaluate(Nested(PdfFormScripts.MaxExpressionDepth + 1), Two));
+        Assert.Null(PdfFormScripts.Evaluate(Nested(200_000), Two));
+        Assert.Null(PdfFormScripts.Evaluate(new string('-', 200_000) + "1", Two));
+        Assert.Equal(-2m, PdfFormScripts.Evaluate("-(-(-a))", Two));
+    }
+
+    [Fact]
+    public async Task Calculation_WithDeeplyNestedParentheses_LeavesTheFieldAlone()
+    {
+        // A calculate script of 100,000 nested parentheses: without a depth limit the parser's recursion overflows the stack.
+        string deep = new string('(', 100_000) + "qty" + new string(')', 100_000);
+        string ok = new string('(', 10) + "qty * 2" + new string(')', 10);
+        var b = new VectorPdfBuilder();
+        int helv = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+        int deepJs = b.AddStream(string.Empty, $"/** BVCALC {deep} EVCALC **/ event.value = 0;");
+        int okJs = b.AddStream(string.Empty, $"/** BVCALC {ok} EVCALC **/ event.value = 0;");
+        int page = b.AddPage("", $"<< /Font << /Helv {helv} 0 R >> >>", mediaBox: "[0 0 400 400]");
+        int qty = b.Add($"<< /FT /Tx /T (qty) /Rect [20 360 380 380] /DA (/Helv 10 Tf 0 g) >>");
+        int deepField = b.Add($"<< /FT /Tx /T (deep) /Rect [20 330 380 350] /DA (/Helv 10 Tf 0 g) /AA << /C << /S /JavaScript /JS {deepJs} 0 R >> >> >>");
+        int okField = b.Add($"<< /FT /Tx /T (double) /Rect [20 300 380 320] /DA (/Helv 10 Tf 0 g) /AA << /C << /S /JavaScript /JS {okJs} 0 R >> >> >>");
+        int acro = b.Add($"<< /Fields [{qty} 0 R {deepField} 0 R {okField} 0 R] /CO [{deepField} 0 R {okField} 0 R] /DA (/Helv 0 Tf 0 g) >>");
+        b.WithCatalog($"/AcroForm {acro} 0 R");
+        var form = await Form(b.Build());
+        Assert.Equal(deep, PdfFormScripts.Read(form["deep"]!).CalculateExpression);
+
+        var changes = PdfFormScripts.Recalculate(form, new Dictionary<string, string> { ["qty"] = "3" }).ToDictionary(c => c.Field, c => c.Value);
+        Assert.False(changes.ContainsKey("deep")); // an unsupported calculation: the field keeps its (empty) value
+        Assert.Equal("6", changes["double"]);
+    }
+
+    [Fact]
     public async Task Prepare_ValidatesFormatsAndRecalculates_InOneRevision()
     {
         byte[] pdf = ScriptedFormFixture.Build();

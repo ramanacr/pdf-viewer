@@ -23,6 +23,14 @@ namespace PdfEngine.Vector.Annotations;
 public static class PdfAnnotationAppearances
 {
     /// <summary>
+    /// The fonts that free text, stamp and caption appearances are drawn with. Null (the default)
+    /// uses the installed fonts (<see cref="SystemFontCatalog.Installed"/>). A host without
+    /// installed fonts (a browser) sets its own catalog, for example bundled fonts written to a
+    /// folder (<see cref="SystemFontCatalog.ForDirectory"/>) with family aliases for Arial and Helvetica.
+    /// </summary>
+    public static SystemFontCatalog? Fonts { get; set; }
+
+    /// <summary>
     /// Builds a normal appearance for an annotation that lacks one, or null when the type is not supported.
     /// newObject is called to add supporting objects (e.g. an embedded font) and returns their object numbers.
     /// </summary>
@@ -1576,7 +1584,7 @@ public static class PdfAnnotationAppearances
     /// </summary>
     private sealed class FontSet
     {
-        private readonly SystemFontCatalog _catalog = SystemFontCatalog.Installed;
+        private readonly SystemFontCatalog _catalog = PdfAnnotationAppearances.Fonts ?? SystemFontCatalog.Installed;
         private readonly Dictionary<(string, int), EmbeddedFontBuilder?> _builders = new();
         private readonly List<EmbeddedFontBuilder> _order = new();
 

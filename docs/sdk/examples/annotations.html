@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Annotations and saving: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+    <style>
+        .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); gap: 16px; padding: 16px; }
+        @media (max-width: 860px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+        #viewer { height: 680px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        #log { font: 12.5px/1.45 ui-monospace, Consolas, monospace; height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin: 0; white-space: pre-wrap; }
+        h2 { font-size: 15px; margin: 12px 0 6px; }
+        #saved a { font-weight: 600; }
+    </style>
+</head>
+<body>
+<header class="example"><h1>Annotations and saving</h1><nav><a href="index.html">All examples</a></nav></header>
+<div class="layout">
+    <div id="viewer"></div>
+    <section aria-label="Annotation manager and events">
+        <p class="status">Use the tools above the pages (highlight, note, text box, pen, shapes), or the buttons below. Save with the Save button or Ctrl+S.</p>
+        <h2>Annotation manager</h2>
+        <div class="controls">
+            <button type="button" data-api="add">addAnnotations (3)</button>
+            <button type="button" data-api="get">getAnnotations</button>
+            <button type="button" data-api="select">selectAnnotation</button>
+            <button type="button" data-api="update">updateAnnotation</button>
+            <button type="button" data-api="delete">deleteAnnotations (page 1)</button>
+        </div>
+        <div class="controls">
+            <button type="button" data-api="author">setConfig({ authorName })</button>
+            <button type="button" data-api="export">exportXfdf</button>
+            <button type="button" data-api="import">importXfdf (last export)</button>
+        </div>
+        <h2>Saved file</h2>
+        <p id="saved" class="status">Not saved yet.</p>
+        <h2>Events (they stay in this page)</h2>
+        <pre id="log" aria-live="polite"></pre>
+    </section>
+</div>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="sample-pdf.js"></script>
+<script>
+    const log = document.getElementById('log');
+    const write = (label, value) => {
+        log.textContent += label + (value === undefined ? '' : ' ' + JSON.stringify(value)) + '\n';
+        log.scrollTop = log.scrollHeight;
+    };
+    const short = a => ({ id: a.id, subtype: a.target.selector.subtype, page: a.target.selector.node.index + 1, bodyValue: a.bodyValue });
+
+    const view = new PdfViewer.View({ divId: 'viewer' });
+
+    // SAVE_API: the viewer sends the PDF with its annotations (an incremental update) to this page.
+    // Here it is offered as a download; a real page would upload it to its own server.
+    let savedUrl = null;
+    view.registerCallback(PdfViewer.View.Enum.CallbackType.SAVE_API, async (metaData, content, options) => {
+        if (savedUrl) URL.revokeObjectURL(savedUrl);
+        savedUrl = URL.createObjectURL(new Blob([content], { type: 'application/pdf' }));
+        const saved = document.getElementById('saved');
+        saved.replaceChildren(`Saved ${content.byteLength} bytes (${options.reason}). `);
+        const a = document.createElement('a');
+        a.href = savedUrl;
+        a.download = metaData.fileName;
+        a.textContent = `Download ${metaData.fileName}`;
+        saved.append(a);
+        write('SAVE_API', { fileName: metaData.fileName, bytes: content.byteLength, reason: options.reason });
+        return { code: PdfViewer.View.Enum.ApiResponseCode.SUCCESS, data: { metaData } };
+    }, { autoSaveFrequency: 0, enableFocusPolling: false, showSaveButton: true });
+
+    const ready = view.previewFile({
+        content: { promise: Promise.resolve(samplePdf()) },
+        metaData: { fileName: 'Quarterly report.pdf', id: 'report-q3' },
+    }, {
+        embedMode: 'FULL_WINDOW',
+        enableAnnotationAPIs: true,
+        includePDFAnnotations: true,
+        downloadWithAnnotations: true,
+        printWithAnnotations: true,
+    }).then(viewer => viewer.getAnnotationManager());
+
+    ready.then(manager => {
+        manager.registerEventListener(event => write(event.type, short(event.data)), {
+            listenOn: ['ANNOTATION_ADDED', 'ANNOTATION_UPDATED', 'ANNOTATION_DELETED', 'ANNOTATION_SELECTED', 'ANNOTATION_UNSELECTED', 'ANNOTATION_CLICKED'],
+        });
+    });
+
+    // Coordinates are PDF points from the page's lower-left corner; page indexes count from 0.
+    const examples = [
+        {
+            id: 'api-highlight', type: 'Annotation', motivation: 'highlighting', bodyValue: 'Check this number',
+            target: { selector: { node: { index: 1 }, subtype: 'highlight', boundingBox: [70, 620, 400, 640],
+                quadPoints: [70, 640, 400, 640, 70, 620, 400, 620], strokeColor: '#FFD400', opacity: 0.6 } },
+            creator: { type: 'Person', name: 'Reviewer' },
+        },
+        {
+            id: 'api-note', type: 'Annotation', motivation: 'commenting', bodyValue: 'A note added by the page.',
+            target: { selector: { node: { index: 0 }, subtype: 'note', boundingBox: [500, 690, 520, 710], strokeColor: '#2563EB' } },
+        },
+        {
+            id: 'api-box', type: 'Annotation', motivation: 'commenting', bodyValue: 'Free text from the API',
+            target: { selector: { node: { index: 0 }, subtype: 'freetext', boundingBox: [72, 520, 330, 560], strokeColor: '#E5484D', fontSize: 16, strokeWidth: 1 } },
+        },
+    ];
+    let xfdf = null;
+    const actions = {
+        add: m => m.addAnnotations(examples).then(list => list.map(short)),
+        get: m => m.getAnnotations().then(list => list.map(short)),
+        select: m => m.selectAnnotation('api-highlight').then(short),
+        update: m => m.getAnnotations({ annotationIds: ['api-note'] }).then(([note]) => {
+            if (!note) return 'add the annotations first';
+            note.bodyValue = 'Changed at ' + new Date().toLocaleTimeString();
+            return m.updateAnnotation(note).then(short);
+        }),
+        delete: m => m.deleteAnnotations({ pageRange: { startPage: 1, endPage: 1 } }).then(list => list.map(short)),
+        author: m => m.setConfig({ authorName: 'Example reader' }).then(() => 'new annotations are by "Example reader"'),
+        export: m => m.exportXfdf().then(text => { xfdf = text; return `${text.length} characters of XFDF`; }),
+        import: m => xfdf ? m.importXfdf(xfdf).then(list => list.map(short)) : 'export first',
+    };
+    document.querySelectorAll('[data-api]').forEach(button => button.addEventListener('click', () => {
+        ready.then(m => actions[button.dataset.api](m))
+            .then(value => write('→ ' + button.textContent, value === undefined ? null : value))
+            .catch(error => write('✗ ' + button.textContent, { code: error.code, message: error.message }));
+    }));
+    ready.catch(error => write('previewFile failed', { code: error.code, message: error.message }));
+</script>
+</body>
+</html>

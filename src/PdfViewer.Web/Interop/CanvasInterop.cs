@@ -89,4 +89,12 @@ internal static partial class CanvasInterop
 
     [JSImport("embedPost", ModuleName)]
     public static partial void EmbedPost(string json);
+
+    /// <summary>Posts a message with bytes beside it (a copy, transferred to the host page as an ArrayBuffer).</summary>
+    [JSImport("embedPostBytes", ModuleName)]
+    public static partial void EmbedPostBytes(string json, [JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bytes);
+
+    /// <summary>The annotation tool the pages' pointer handling follows ("select", "highlight", "ink", …).</summary>
+    [JSImport("setTool", ModuleName)]
+    public static partial void SetTool(string tool);
 }

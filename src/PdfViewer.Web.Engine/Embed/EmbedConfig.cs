@@ -25,8 +25,26 @@ public sealed record EmbedConfig
     public bool ShowDownload { get; init; } = true;
     public bool ShowPrint { get; init; } = true;
 
-    /// <summary>Accepted for compatibility; there are no annotation tools yet (planned, phase 2).</summary>
+    /// <summary>The annotation toolbar (full window and light box only; the other modes have no room for it).</summary>
     public bool ShowAnnotationTools { get; init; } = true;
+
+    /// <summary><c>viewer.getAnnotationManager()</c> works (Adobe: <c>enableAnnotationAPIs</c>).</summary>
+    public bool EnableAnnotationApis { get; init; } = true;
+
+    /// <summary>The file's own annotations are listed and can be changed, not only the ones added in the viewer.</summary>
+    public bool IncludePdfAnnotations { get; init; } = true;
+
+    /// <summary>The reader can fill the document's form fields.</summary>
+    public bool EnableFormFilling { get; init; } = true;
+
+    /// <summary>Download saves the annotated document (the reader's annotations and form data), not the bytes as opened.</summary>
+    public bool DownloadWithAnnotations { get; init; } = true;
+
+    /// <summary>Print prints the annotated document.</summary>
+    public bool PrintWithAnnotations { get; init; } = true;
+
+    /// <summary>The annotation toolbar can show in this mode.</summary>
+    public bool HasAnnotationTools => ShowAnnotationTools && Mode is EmbedMode.FullWindow or EmbedMode.LightBox;
 
     public bool ShowThumbnails { get; init; } = true;
     public bool ShowBookmarks { get; init; } = true;
@@ -97,6 +115,11 @@ public sealed record EmbedConfig
             FocusOnRendering = Flag(config, "focusOnRendering", !sized),
             ExitReturns = Text(config, "exitPDFViewerType", ["CLOSE", "RETURN"]) == "RETURN",
             EnableSearchApis = Flag(config, "enableSearchAPIs", false),
+            EnableAnnotationApis = Flag(config, "enableAnnotationAPIs", false),
+            IncludePdfAnnotations = Flag(config, "includePDFAnnotations", false),
+            EnableFormFilling = Flag(config, "enableFormFilling", frameMode is EmbedMode.FullWindow or EmbedMode.LightBox),
+            DownloadWithAnnotations = Flag(config, "downloadWithAnnotations", false),
+            PrintWithAnnotations = Flag(config, "printWithAnnotations", false),
             Theme = Text(config, "theme", ["system", "light", "dark"]) ?? "system",
         };
     }

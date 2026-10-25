@@ -26,7 +26,7 @@ namespace PdfViewer.Web.Components;
 public sealed partial class Viewer : IAsyncDisposable
 {
     private enum ZoomMode { FitWidth, FitPage, Custom }
-    private enum Panel { Outline, Thumbnails, Results }
+    private enum Panel { Outline, Thumbnails, Results, Comments }
     private enum Dialog { None, Help, Password }
 
     private static readonly double[] ZoomPresets = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -157,7 +157,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=3");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=4");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {
@@ -209,6 +209,11 @@ public sealed partial class Viewer : IAsyncDisposable
         {
             _scrollToStart = false;
             CanvasInterop.ScrollToPage(1, 0, smooth: false);
+        }
+        if (_focusEditor)
+        {
+            _focusEditor = false;
+            CanvasInterop.FocusElement("annot-editor-text", select: false);
         }
         if (_dialog != _focusedDialog)
         {
@@ -294,12 +299,19 @@ public sealed partial class Viewer : IAsyncDisposable
         await CloseDocumentAsync();
         _doc = doc;
         _docBytes = bytes;
+        await StartEditsAsync(doc, readOnly: Embedded && _openReadOnly);
         _fileName = name;
         _currentPage = 1;
         _outline = await doc.GetOutlineAsync();
         _panel = Panel.Outline;
         _noticeDismissed = false;
         _notice = null;
+        if (doc.EditRestriction is { } restriction && !(Embedded && _openReadOnly) && (_config.HasAnnotationTools || _config.EnableFormFilling))
+        {
+            // A signed or certified file that may not be changed (or only partly): the reader is told why.
+            _noticeIsFonts = false;
+            _notice = restriction;
+        }
         _query = _query.Trim();
         _loading = false;
         _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {opened.TotalMilliseconds:0} ms" +
@@ -352,6 +364,7 @@ public sealed partial class Viewer : IAsyncDisposable
         _thumbsDrawn.Clear();
         _thumbsVisible.Clear();
         _docBytes = null;
+        StopEdits();
         if (_doc != null) await _doc.DisposeAsync();
         _doc = null;
     }
@@ -697,9 +710,16 @@ public sealed partial class Viewer : IAsyncDisposable
                 break;
             case "find-next": StepHit(1); break;
             case "find-previous": StepHit(-1); break;
+            case "undo": Undo(); break;
+            case "redo": Redo(); break;
+            case "delete": DeleteSelected(); break;
+            case "save": await SaveAsync("shortcut"); break;
             case "escape":
                 if (_dialog == Dialog.Password) CancelPassword();
                 else if (_dialog != Dialog.None) _dialog = Dialog.None;
+                else if (_editingId != null) CancelEditing();
+                else if (_selectedId != null) Unselect(user: true);
+                else if (_tool != Tool.Select) SetTool(Tool.Select);
                 else if (_selection is { IsEmpty: false }) ClearSelection();
                 else if (_searchedFor.Length > 0)
                 {

@@ -22,10 +22,23 @@ public sealed partial class Viewer
 
     private string DownloadName => _fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? _fileName : _fileName + ".pdf";
 
-    private void Download()
+    private async Task Download()
     {
-        if (_doc == null || _docBytes == null) return;
-        CanvasInterop.DownloadBytes(_docBytes, DownloadName);
+        var doc = _doc;
+        if (doc == null || _docBytes == null) return;
+        // The reader's annotations and form data go with it when the config asks (always in the demo),
+        // and only when the document has all of them.
+        if (_config.DownloadWithAnnotations)
+        {
+            bool ready = await WaitForEditsAsync();
+            if (_doc != doc) return;
+            if (!ready)
+            {
+                NotSaved();
+                return;
+            }
+        }
+        CanvasInterop.DownloadBytes(_config.DownloadWithAnnotations ? doc.Bytes : doc.OriginalBytes, DownloadName);
         _status = $"Saved {DownloadName}";
         Emit(EmbedEvents.DocumentDownload, w => w.WriteString("fileName", DownloadName));
     }
@@ -47,12 +60,13 @@ public sealed partial class Viewer
         _printing = true;
         try
         {
+            await WaitForEditsAsync();
             CanvasInterop.PrintBegin();
             foreach (var page in doc.Pages)
             {
                 _status = $"Preparing page {page.Number} of {doc.PageCount} for printing…";
                 StateHasChanged();
-                var bitmap = await doc.RenderPageAsync(page.Number, PrintDpi / 72);
+                var bitmap = await doc.RenderPageAsync(page.Number, PrintDpi / 72, night: false, asOpened: !_config.PrintWithAnnotations);
                 if (_doc != doc) return;
                 CanvasInterop.PrintAddPage(bitmap.Pixels, bitmap.Width, bitmap.Height, page.Width, page.Height);
                 await CanvasInterop.PrintPending();

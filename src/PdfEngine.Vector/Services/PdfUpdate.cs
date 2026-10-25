@@ -63,11 +63,23 @@ public sealed class PdfUpdate
         return (number, Get(number) as PdfDictionary ?? throw new InvalidOperationException($"Page {pageNumber} cannot be read."));
     }
 
+    /// <summary>
+    /// True when <paramref name="bytes"/> (the bytes of <paramref name="document"/>) can take an
+    /// incremental update: the cross-reference data was read, not rebuilt, and the file has a
+    /// startxref. Otherwise a change rewrites the whole file, which breaks every signature in it.
+    /// </summary>
+    public static bool TakesIncrementalUpdate(PdfVectorDocument document, byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(bytes);
+        return !document.WasRepaired && PdfIncrementalWriter.FindStartXref(bytes) >= 0;
+    }
+
     /// <summary>The bytes with this update applied; the original bytes when nothing changed.</summary>
     public byte[] Commit(bool forceFullRewrite = false)
     {
         if (_objects.Count == 0 && !forceFullRewrite) return _original;
-        if (!forceFullRewrite && !Document.WasRepaired && PdfIncrementalWriter.FindStartXref(_original) >= 0)
+        if (!forceFullRewrite && TakesIncrementalUpdate(Document, _original))
             return PdfIncrementalWriter.Append(_original, Document, _objects);
         return PdfFullWriter.Rewrite(Document, _objects);
     }

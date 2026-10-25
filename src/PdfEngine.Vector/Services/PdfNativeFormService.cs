@@ -139,15 +139,65 @@ public sealed class PdfNativeFormService : IPdfFormService
     public static IReadOnlyList<string> SetValues(PdfNativeDocument doc, IEnumerable<(string Name, IReadOnlyList<string> Values)> values, bool validate)
     {
         var form = PdfAcroForm.Read(doc.Vector) ?? throw new KeyNotFoundException("The document has no form fields.");
+        return Commit(doc, form, Changes(form, values), validate);
+    }
+
+    /// <summary>
+    /// <see cref="SetValues"/> for a host that keeps its own bytes (the web viewer): the values go
+    /// into <paramref name="original"/>, the bytes of <paramref name="document"/>, as one incremental
+    /// update, with the same rules and recalculation. Returns the new bytes (<paramref name="original"/>
+    /// itself when there is nothing to change) and the full names of the fields changed. The
+    /// document must take an incremental update: rewrite a repaired one first (<see cref="PdfFullWriter.Rewrite"/>).
+    /// </summary>
+    public static (byte[] Bytes, IReadOnlyList<string> Changed) Fill(PdfVectorDocument document, byte[] original,
+        IEnumerable<(string Name, IReadOnlyList<string> Values)> values, bool validate)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(original);
+        var form = PdfAcroForm.Read(document) ?? throw new KeyNotFoundException("The document has no form fields.");
+        var changes = Changes(form, values);
+        if (changes.Count == 0) return (original, Array.Empty<string>());
+        var prepared = Prepared(form, changes, validate);
+        return (PdfFormFiller.Apply(document, original, prepared), prepared.Select(c => c.FullName).Distinct().ToList());
+    }
+
+    /// <summary>Longest value of one field, in characters.</summary>
+    public const int MaxValueLength = 10000;
+
+    /// <summary>Most fields changed in one call, and most selections of one list box.</summary>
+    public const int MaxChanges = 10000;
+
+    private static List<PdfFieldChange> Changes(PdfAcroForm form, IEnumerable<(string Name, IReadOnlyList<string> Values)> values)
+    {
         var changes = new List<PdfFieldChange>();
         foreach (var (name, v) in values)
         {
+            if (changes.Count >= MaxChanges) throw new ArgumentException($"At most {MaxChanges} form fields can be changed at once.");
             var field = Find(form, name) ?? throw new KeyNotFoundException($"No form field named '{name}' exists in the document.");
             if (field.IsReadOnly) throw new InvalidOperationException($"Form field '{field.FullName}' is read-only and cannot be modified.");
-            changes.Add(ToChange(field, v));
+            CheckValues(field, v);
+            changes.Add(ToChange(field, v, strict: true));
         }
-        return Commit(doc, form, changes, validate);
+        return changes;
     }
+
+    /// <summary>Refuses values longer than <see cref="MaxValueLength"/> (or a text field's /MaxLen), and too many selections.</summary>
+    private static void CheckValues(PdfFormField field, IReadOnlyList<string> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count > MaxChanges) throw new ArgumentException($"Form field '{field.FullName}' was given more than {MaxChanges} values.");
+        foreach (var v in values)
+        {
+            ArgumentNullException.ThrowIfNull(v);
+            if (v.Length > MaxValueLength) throw new ArgumentException($"A value of form field '{field.FullName}' is longer than {MaxValueLength} characters.");
+        }
+        // /MaxLen (12.7.5.3, Table 231) is the longest text a text field takes.
+        if (field.Kind == PdfFormFieldKind.Text && field.MaxLength > 0 && values.Count > 0 && values[0].Length > field.MaxLength)
+            throw new ArgumentException($"Form field '{field.FullName}' takes at most {field.MaxLength} characters.");
+    }
+
+    private static List<PdfFieldChange> Prepared(PdfAcroForm form, List<PdfFieldChange> changes, bool validate) =>
+        validate ? PdfFormScripts.Prepare(form, changes) : WithCalculations(form, changes);
 
     /// <summary>A field by full name, else the one field whose last name part is <paramref name="name"/> (PDFium's partial names).</summary>
     public static PdfFormField? Find(PdfAcroForm form, string name)
@@ -159,17 +209,29 @@ public sealed class PdfNativeFormService : IPdfFormService
 
     private static readonly string[] OffWords = { "", "off", "false", "0", "no" };
 
-    internal static PdfFieldChange ToChange(PdfFormField field, IReadOnlyList<string> values)
+    /// <summary>
+    /// The change that sets <paramref name="values"/>. <paramref name="strict"/> (a reader's or a
+    /// host's input) refuses a choice that is not one of the field's options, by export value or
+    /// display text, with an <see cref="ArgumentException"/>: only an editable combo box takes
+    /// other text. Imported form data is not strict.
+    /// </summary>
+    internal static PdfFieldChange ToChange(PdfFormField field, IReadOnlyList<string> values, bool strict = false)
     {
         string value = values.Count > 0 ? values[0] : string.Empty;
-        string Export(string v) =>
-            field.Options.Any(o => o.Export == v) ? v : field.Options.FirstOrDefault(o => o.Display == v).Export ?? v;
+        string Export(string v)
+        {
+            if (field.Options.Any(o => o.Export == v)) return v;
+            if (field.Options.Any(o => o.Display == v)) return field.Options.First(o => o.Display == v).Export;
+            if (strict && !field.IsEditableCombo) throw new ArgumentException($"'{v}' is not an option of '{field.FullName}'.");
+            return v;
+        }
         switch (field.Kind)
         {
             case PdfFormFieldKind.Text:
                 return new PdfFieldChange(field.FullName, Text: value);
             case PdfFormFieldKind.ComboBox:
-                return new PdfFieldChange(field.FullName, Text: Export(value));
+                // An empty value clears the choice.
+                return new PdfFieldChange(field.FullName, Text: value.Length == 0 ? value : Export(value));
             case PdfFormFieldKind.ListBox:
                 return new PdfFieldChange(field.FullName, Selections: values.Where(v => v.Length > 0).Select(Export).ToList());
             case PdfFormFieldKind.CheckBox:
@@ -196,10 +258,10 @@ public sealed class PdfNativeFormService : IPdfFormService
     private static IReadOnlyList<string> Commit(PdfNativeDocument doc, PdfAcroForm form, List<PdfFieldChange> changes, bool validate)
     {
         if (changes.Count == 0) return Array.Empty<string>();
-        var prepared = validate ? PdfFormScripts.Prepare(form, changes) : WithCalculations(form, changes);
+        var prepared = Prepared(form, changes, validate);
         var vector = doc.Vector;
         byte[] original = doc.Bytes;
-        if (vector.WasRepaired || PdfIncrementalWriter.FindStartXref(original) < 0)
+        if (!PdfUpdate.TakesIncrementalUpdate(vector, original))
         {
             // A damaged file cannot take an incremental update: it is written whole first.
             doc.Replace(PdfFullWriter.Rewrite(vector));

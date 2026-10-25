@@ -11,11 +11,11 @@ the file goes from your page to the viewer in the same browser tab, and nowhere 
 
 The JavaScript API follows the
 [Adobe PDF Embed API](https://developer.adobe.com/document-services/docs/overview/pdf-embed-api/howtos/),
-so code written for it needs few changes. Status: **phase 1, preview.** The API can change
-before version 1.0.
+so code written for it needs few changes. Status: **phase 2, preview** (viewing, annotations,
+forms and saving). The API can change before version 1.0.
 
 **[Examples](examples/)**: full window, sized container, in line, light box, events and APIs,
-file picker, React and Angular.
+file picker, annotations and saving, forms, React and Angular.
 
 ## Compared with the Adobe PDF Embed API
 
@@ -26,7 +26,8 @@ file picker, React and Angular.
 | Where the PDF is rendered | In the reader's browser (WebAssembly) | In the reader's browser |
 | Events | Only to the callbacks of your page; nothing is sent anywhere | To your callbacks; optional Adobe Analytics |
 | Embed modes | Full window, sized container, in line, light box | The same |
-| Annotations, comments, save | Planned (phase 2) | Available |
+| Annotations, comments, save | Highlight, underline, strike-through, note, free text, ink, rectangle, ellipse; annotation manager; XFDF; `SAVE_API` | Available, with more types |
+| Forms | Fill text, check box, radio, combo and list fields; calculations without JavaScript | Available |
 | Licence | MIT, open source | Adobe terms |
 
 ## Quick start
@@ -121,8 +122,10 @@ same View.
   never fetches the file: its Content-Security-Policy allows only its own files.
 - **`promise` and `arrayBuffer`.** The SDK copies the bytes and transfers the copy to the
   viewer, so your buffer stays usable.
-- **`metaData.fileName`** is shown in the viewer and used for Download. **`id`** comes back in
-  `getPDFMetadata()`. **`hasReadOnlyAccess`** is accepted; the viewer has no editing tools yet.
+- **`metaData.fileName`** is shown in the viewer and used for Download and Save. **`id`** comes
+  back in `getPDFMetadata()` and as `target.source` of annotations. **`hasReadOnlyAccess: true`**
+  removes the annotation tools and form filling; the annotation manager can read, but its
+  changes reject with `NOT_ALLOWED`.
 - Largest file: 512 MB. For `location`, the SDK counts the bytes as they arrive and stops the
   download (`TOO_LARGE`) as soon as there are more; a `Content-Length` that is already too large
   fails at once. A Blob is checked by its size before it is read.
@@ -133,13 +136,18 @@ same View.
 | --- | --- | --- | --- |
 | `embedMode` | `FULL_WINDOW`, `SIZED_CONTAINER`, `IN_LINE`, `LIGHT_BOX` | `FULL_WINDOW` | See [embed modes](#embed-modes). |
 | `defaultViewMode` | `FIT_WIDTH`, `FIT_PAGE`, `TWO_COLUMN`, `TWO_COLUMN_FIT_PAGE` | `FIT_WIDTH` | In line, fit page is fit width. |
-| `showDownloadPDF` | `true`, `false` | `true` | Download saves the original bytes. |
+| `showDownloadPDF` | `true`, `false` | `true` | Download saves the bytes you gave, or the annotated document with `downloadWithAnnotations`. |
 | `showPrintPDF` | `true`, `false` | `true` | See [printing](#printing). Disabled when the document forbids printing. |
 | `showZoomControl` | `true`, `false` | `true` | |
 | `showBookmarks` | `true`, `false` | `true` | The outline tab of the side panel (full window, light box). |
 | `showThumbnails` | `true`, `false` | `true` | The pages tab of the side panel (full window, light box). |
 | `showFullScreen` | `true`, `false` | `true` | Sized container only. |
-| `showAnnotationTools` | `true`, `false` | `true` | Accepted; no annotation tools yet (phase 2). |
+| `showAnnotationTools` | `true`, `false` | `true` | The annotation toolbar, in full window and light box. See [annotations](#annotations). |
+| `enableAnnotationAPIs` | `true`, `false` | `false` | Needed for `getAnnotationManager()` and its events. |
+| `includePDFAnnotations` | `true`, `false` | `false` | The file's own annotations of the [supported types](#annotation-json) are listed and can be changed. With `false` they are drawn but not managed. |
+| `enableFormFilling` | `true`, `false` | `true` in full window and light box, else `false` | See [forms](#forms). |
+| `downloadWithAnnotations` | `true`, `false` | `false` | Download saves the document with the reader's annotations and form data. |
+| `printWithAnnotations` | `true`, `false` | `false` | Print prints the annotations and form data. With `false`, the file as you gave it. |
 | `focusOnRendering` | `true`, `false` | `true` for full window and light box | Moves the keyboard focus to the viewer when the file opens. |
 | `exitPDFViewerType` | `CLOSE`, `RETURN` | `CLOSE` | The light box's button says "Close" or "Return". |
 | `enableSearchAPIs` | `true`, `false` | `false` | Needed for `search()`. |
@@ -158,6 +166,8 @@ An unknown key is ignored. A known key with a wrong value rejects the Promise wi
 | `LIGHT_BOX` | Covers your page, with the file name and a Close (or Return) button above it. Escape closes it and gives the focus back. |
 
 ## Events
+
+The annotation manager has its own events: see [annotation events](#annotation-events).
 
 ```js
 view.registerCallback(PdfViewer.View.Enum.CallbackType.EVENT_LISTENER,
@@ -190,7 +200,7 @@ Every method returns a Promise.
 
 | Method | Result |
 | --- | --- |
-| `getPDFMetadata()` | `{ numPages, pdfTitle, author, subject, keywords, creator, producer, creationDate, modDate, pdfVersion, isEncrypted, isTagged, canCopy, canPrint, wasRepaired, fileSize, fileName, id }`. Dates are `"YYYY-MM-DDTHH:mm:ss"` as written in the file, or `null`. |
+| `getPDFMetadata()` | `{ numPages, pdfTitle, author, subject, keywords, creator, producer, creationDate, modDate, pdfVersion, isEncrypted, isTagged, canCopy, canPrint, wasRepaired, isSigned, certificationLevel, fileSize, fileName, id }`. Dates are `"YYYY-MM-DDTHH:mm:ss"` as written in the file, or `null`. `isSigned` is `true` when the file has a signed signature field or a certification signature; `certificationLevel` is the certification signature's DocMDP level (1, 2 or 3), or `null`. See [signed and certified files](#signed-and-certified-files). |
 | `getCurrentPage()` | The page number. |
 | `gotoLocation(pageNumber, x, y)` | Scrolls the point (x, y) of the page to the top-left of the view. **x and y are PDF points from the top-left corner of the page as shown** (Adobe's are from the bottom-left). Both default to 0. |
 | `getSelectedContent()` | `{ type: 'text', data }`: the selected text, `''` when none. Rejects with `NOT_ALLOWED` when the document forbids copying (see [Copy protection](#copy-protection)). |
@@ -207,6 +217,9 @@ reject with `NO_DOCUMENT`.
 
 ### Error codes
 
+Other enums: `PdfViewer.View.Enum.CallbackType` (`EVENT_LISTENER`, `SAVE_API`),
+`AnnotationEvents`, `ApiResponseCode` (`SUCCESS`, `FAIL`).
+
 `PdfViewer.View.Enum.ErrorCode`: `INVALID_ARGUMENT`, `FILE_NOT_FOUND` (HTTP 404 or 410),
 `HTTP_ERROR` (another HTTP error; `detail.status`), `NETWORK_ERROR` (the network failed or CORS
 does not let your page read the file: browsers do not say which), `NOT_A_PDF`, `TOO_LARGE`,
@@ -216,6 +229,212 @@ in 60 seconds), `NO_DOCUMENT`, `NOT_ENABLED`, `NOT_ALLOWED`, `SEARCH_ENDED`, `CL
 was removed or the light box closed), `VIEWER_ERROR`.
 
 Password-protected files: the viewer asks the reader for the password. Your page never sees it.
+
+## Annotations
+
+With `showAnnotationTools` (full window and light box), a second toolbar shows these tools:
+
+| Tool | How |
+| --- | --- |
+| Select | Select text (drag), or click an annotation to select it; drag it to move it; `Delete` deletes it. Click a selected note or text box to edit its text. |
+| Highlight, underline, strike-through | Drag over text. With text already selected, the button marks it at once. |
+| Note | Click where the note goes, then type the comment. |
+| Text box (free text) | Click, or drag a box, then type. An empty new text box is not kept. |
+| Pen (ink) | Draw with the mouse or a pen. Each stroke is one annotation. |
+| Rectangle, ellipse | Drag the shape. |
+
+The colour buttons set the colour of the next annotation, or change the selected one. Undo and
+redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation change, the host page's too. The side
+panel's **Comments** tab lists the annotations; click one to go to it.
+
+Every change is written into the document by the engine (the same `PdfAnnotationEditor` as the
+Windows viewer): real annotation dictionaries with appearance streams, as an incremental update
+of the file you gave. The pages are drawn from that document, so what the reader sees is what
+Save writes, and Acrobat and other readers show the same annotations.
+
+### The annotation manager
+
+```js
+const viewer = await view.previewFile(file, { enableAnnotationAPIs: true, includePDFAnnotations: true });
+const manager = await viewer.getAnnotationManager();
+```
+
+`getAnnotationManager()` rejects with `NOT_ENABLED` without `enableAnnotationAPIs: true`. Every
+method returns a Promise.
+
+| Method | Result |
+| --- | --- |
+| `addAnnotations(list)` | Adds 1 to 1000 annotations (all or none). Resolves with them as stored: an `id` is made when you give none, the author and dates are filled in. An `id` in use rejects. |
+| `getAnnotations(filter?)` | The annotations, all or those of the filter. |
+| `selectAnnotation(id)` | Selects it and scrolls to it; resolves with it. |
+| `unselectAnnotation()` | |
+| `updateAnnotation(annotation)` | Replaces the annotation with the same `id` (its `subtype` cannot change); resolves with it. `modified` becomes now. |
+| `deleteAnnotations(filter)` | Deletes the annotations of the filter (`{}` deletes all); resolves with the deleted ones. |
+| `setConfig(config)` | `{ showToolbar, showCommentsPanel, downloadWithAnnotations, printWithAnnotations, authorName }`, each optional. `authorName` is the author of the reader's new annotations (default `Guest`). |
+| `exportXfdf()` | The annotations as an XFDF document (ISO 19444-1), a string. |
+| `importXfdf(xml)` | Adds the annotations of an XFDF document (the supported types; others are skipped); resolves with them. Long texts are cut to the limits below; an annotation with more than 1000 quadrilaterals is skipped, and the viewer's status line counts the skipped ones. |
+| `registerEventListener(handler, { listenOn })` | See [annotation events](#annotation-events). |
+
+A filter is `{ annotationIds: ['id1', …], pageRange: { startPage, endPage } }` (pages from 1),
+each part optional. Changes reject with `NOT_ALLOWED` when the file was opened with
+`hasReadOnlyAccess` or the document forbids annotations (its permissions, or a
+[signature](#signed-and-certified-files)), and with `INVALID_ARGUMENT` (and a message that
+says what) for an annotation that is not valid.
+
+### Annotation JSON
+
+Close to the Adobe PDF Embed API's format (W3C Web Annotation style):
+
+```js
+{
+  id: 'b1c3…',                       // 1 to 200 characters; made when missing
+  type: 'Annotation',
+  motivation: 'highlighting',        // 'highlighting' for text markup, 'commenting' for the others (written by the viewer)
+  bodyValue: 'The comment',          // the text: note, free text, or the comment of a markup; at most 10 000 characters
+  target: {
+    source: 'report-q3',             // metaData.id, else the file name (written by the viewer)
+    selector: {
+      node: { index: 0 },            // the page, counted from 0
+      subtype: 'highlight',          // highlight, underline, strikeout, note, freetext, ink, square, circle
+      boundingBox: [x1, y1, x2, y2], // the annotation's /Rect
+      quadPoints: [x1, y1, x2, y2, x3, y3, x4, y4, …],  // text markup: 8 numbers per line
+      inkList: [[x, y, x, y, …], …], // ink: one array per stroke
+      strokeColor: '#FFD400',        // the line colour; the text colour of free text
+      fillColor: '#CCE5FF',          // square and circle inside, free text background (optional)
+      strokeWidth: 2,                // ink, square, circle, the free text border (0 to 100)
+      opacity: 1,                    // 0 to 1
+      fontSize: 12,                  // free text, 4 to 144
+    },
+  },
+  creator: { type: 'Person', name: 'Ada' },
+  created: '2026-10-26T10:00:00Z',  // ISO 8601; made when missing
+  modified: '2026-10-26T10:05:00Z',
+}
+```
+
+**Coordinates are PDF points in the page's user space: the origin is the lower-left corner of
+the page's coordinate system (usually the lower-left corner of the page) and y goes up**, as in
+the PDF file and in Adobe's API. The page's `/Rotate` is not applied. (`gotoLocation` takes
+points from the top-left of the page as shown.) `quadPoints` give each quadrilateral as
+upper-left, upper-right, lower-left, lower-right. For markup, `boundingBox` can be left out
+(the box around `quadPoints`); for ink too (the box around the strokes).
+
+Every value is checked: types, string lengths, colours (`#RRGGBB`), finite numbers, and the
+geometry: on a page of the document and inside its media box (2 points of tolerance plus the
+line width). Limits: 1000 annotations per call, 10 000 per document, 1000 quadrilaterals per
+markup, 100 strokes and 10 000 points per stroke (50 000 points) per ink annotation, and
+**1 000 000 ink and quadrilateral points per document** (a quadrilateral has 4), counted when
+annotations are added and when an update makes one larger: past it, `INVALID_ARGUMENT`. Texts:
+`bodyValue` 10 000 characters, `creator.name` 256.
+
+XFDF (`importXfdf`) is read as a stream: no DTD, no external entities, at most 8 MB of text,
+**100 000 elements** and 64 attributes per element (past them, `INVALID_ARGUMENT`); unknown
+elements are skipped without being built. Its texts are cut to the same limits as the
+annotation JSON (title, subject and name 256 characters, contents 10 000), so one long field
+does not refuse the whole import. A dash pattern must have 1 to 16 numbers, none negative and
+not all zero, else it is `[3]`.
+
+The file's annotations of these types are managed with `includePDFAnnotations` (not replies,
+hidden ones or other types: links, stamps, form fields and the like stay as they are). Their
+`id` is their `/NM`, or `pdf-<page>-<index>` when they have none. New and changed annotations
+are written with `/NM` set to their `id`, so ids survive a save.
+
+### Annotation events
+
+```js
+manager.registerEventListener(event => console.log(event.type, event.data),
+  { listenOn: ['ANNOTATION_ADDED', 'ANNOTATION_DELETED'] });   // leave listenOn out to hear all
+```
+
+| Event | When |
+| --- | --- |
+| `ANNOTATION_ADDED` | The reader adds an annotation (or undoes a deletion). |
+| `ANNOTATION_UPDATED` | The reader moves or changes one (colour, text), or undo changes it back. |
+| `ANNOTATION_DELETED` | The reader deletes one (or undoes its addition). |
+| `ANNOTATION_SELECTED`, `ANNOTATION_UNSELECTED` | The reader selects one, or the selection ends. |
+| `ANNOTATION_CLICKED` | The reader clicks one with the select tool. |
+
+`event.data` is the annotation (the JSON above). Events report what the reader does; the
+manager's own calls do not fire them, so a page that keeps annotations on its server gets no
+echo of its own changes.
+
+## Saving (SAVE_API)
+
+```js
+view.registerCallback(PdfViewer.View.Enum.CallbackType.SAVE_API,
+  async (metaData, content, options) => {
+    await fetch('/api/files/' + metaData.id, { method: 'PUT', body: content });   // your server
+    return { code: PdfViewer.View.Enum.ApiResponseCode.SUCCESS, data: { metaData } };
+  },
+  { autoSaveFrequency: 0, enableFocusPolling: false, showSaveButton: true });
+```
+
+Register it before `previewFile` (or after: it applies to the open document). With it, the
+viewer shows a **Save** button (`showSaveButton`, default `true`), and saves when the reader
+presses it or `Ctrl`+`S`, every `autoSaveFrequency` seconds (0, the default, is never; at most
+86400) when something changed, and, with `enableFocusPolling: true`, when the viewer loses the
+focus (the reader goes back to your page) with changes not saved.
+
+- `metaData` is `{ fileName, id }`. `content` is an `ArrayBuffer`: the PDF with the reader's
+  annotations and form data, as an incremental update of the file you gave (earlier revisions
+  and their signatures stay as they were). It is transferred to your page, not copied.
+- `options` is `{ reason }`: `button`, `shortcut`, `autosave` or `focus`.
+- Resolve with `{ code: 'SUCCESS' }` and the viewer shows "Saved" and counts the document as
+  saved (the version it posted: changes made while your callback ran stay unsaved); anything
+  else (`FAIL`, a throw, a rejection) shows "The file was not saved." and keeps the changes as
+  unsaved. `data.metaData.fileName` renames the file in the viewer.
+- One save runs at a time. The button, `Ctrl`+`S`, autosave and focus polling do not start a
+  second one while a save waits for the changes to be written or for your answer, and the SDK
+  calls your callback for one save after another (never two at once), so an older, slower save
+  cannot finish after a newer one. A save stays in flight until your callback answers or the
+  viewer closes: after 120 seconds the viewer only says "Still saving…".
+- If the viewer cannot write the reader's latest changes into the document, it shows an error,
+  keeps the changes as unsaved and does not call your callback: it never posts a file without
+  the changes it shows.
+
+Without a `SAVE_API` callback, `Ctrl`+`S` downloads the annotated document (when
+`showDownloadPDF` is on). Nothing is sent anywhere but to your callback.
+
+## Forms
+
+With `enableFormFilling` (and unless `hasReadOnlyAccess`), the reader fills the document's
+AcroForm fields: text (single and multi-line, password, maximum length), check boxes, radio
+buttons, combo boxes and list boxes. Read-only fields, push buttons and signature fields are
+not filled. A value goes to the engine, which writes it with a new appearance and runs the
+form's calculations, formats and validations as the Windows viewer does: the standard Acrobat
+functions (`AFSimple_Calculate`, `AFNumber_Format`, `AFRange_Validate`, …) and simplified
+field notation are recognised, **never run: document JavaScript is never executed**. A value
+that a validation refuses is not kept, and the viewer says why. Saving (SAVE_API, or Download
+with `downloadWithAnnotations`) writes the values into the PDF. XFA forms are not supported.
+
+Values are checked as the reader enters them: a combo box (unless it is editable) and a list
+box take only their options (export value or display text), a text field takes at most its
+`/MaxLen` characters, every value at most 10 000 characters, and at most 10 000 fields change at
+once. A refused value is not kept, and the viewer shows why.
+
+**There is no API to set form values from your page in this version:** form fields take the
+reader's input only. The saved file (SAVE_API) has the values; read them on your server.
+
+### Signed and certified files
+
+The viewer follows Acrobat's rules for a file with signatures, so that its changes never
+break them silently:
+
+| The file | Annotations | Form filling |
+| --- | --- | --- |
+| Certified, DocMDP `P=1` (no changes) | No | No |
+| Certified, `P=2` (form filling and signing) | No | Yes |
+| Certified, `P=3` (also annotations) | Yes | Yes |
+| Signed, not certified | Yes | Yes |
+| Signed (or certified) and damaged, so that a save would rewrite the whole file | No | No |
+
+When changes are allowed, the viewer tells the reader once, at the first change, that
+changes are added as a new revision: existing signatures stay valid, but they show that the
+document was modified after signing. Saves are incremental updates, so the signed bytes stay
+as they were (they are a prefix of the saved file). When changes are not allowed, the viewer
+says why, the tools stay hidden, and the annotation manager's changes reject with
+`NOT_ALLOWED`. `getPDFMetadata()` reports `isSigned` and `certificationLevel`. The viewer does
+not check signatures (the Windows viewer does).
 
 ## In the viewer
 
@@ -251,7 +470,12 @@ from a PDF application.
   - The viewer checks every message (`EmbedProtocol` in `src/PdfViewer.Web.Engine/Embed`, with
     unit tests): unknown protocols, versions and types are ignored; bad arguments are refused
     with a code.
-  - The file goes to the viewer as a transferred `ArrayBuffer`.
+  - The file goes to the viewer as a transferred `ArrayBuffer`, and a saved file comes back the
+    same way, only to the SAVE_API callback.
+  - Annotations, filters, XFDF and save results from your page are untrusted data to the viewer:
+    every value is checked for type, length and range (see [annotation JSON](#annotation-json)),
+    and an XFDF document is read as a stream without a DTD or external entities, with element,
+    attribute and length limits.
   - A message longer than 2 MB of JSON (the file's bytes do not count) is refused with
     `INVALID_ARGUMENT` before it is parsed.
 - **No storage.** The embedded viewer keeps nothing in the browser's storage (the stand-alone
@@ -327,11 +551,12 @@ Firefox and Safari are not tested yet.
 | Pages | Drawn one at a time on the main thread; a heavy page can block the viewer for a moment. |
 | Loading | The whole file is read before the first page shows. |
 | Selection | One page at a time; dragging does not scroll. |
+| Annotations | The eight types above; no replies, stamps, lines, polygons or callouts yet. Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
+| Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. No API to set form values from the host page yet. Simplified field notation nested deeper than 64 levels is not calculated. |
 | Language | The viewer is in English. |
 
 ## Planned
 
-- **Phase 2:** an annotation manager (`getAnnotationManager`), `SAVE_API` callback,
-  annotation tools.
 - **Phase 3:** linearized and range loading (show the first page before the whole file has
   arrived), rendering in a Web Worker.
+- Later: more annotation types (replies, stamps, lines and polygons), comment threads.

@@ -33,7 +33,9 @@ Status: a demo, and the viewer of the [web embed SDK](#embed-sdk) (`wwwroot/pdfv
 | Outline | The document's bookmarks, with the current page marked. |
 | Thumbnails | The "Pages" tab of the side panel. Only thumbnails near its view are drawn, after the pages in view. |
 | Text selection and copy | Drag with the mouse or a pen, double-click for a word, `Ctrl`+`A` for the page, `Ctrl`+`C` to copy (when the document allows it). One page at a time, with the engine's text layout (`ViewerTextLayout`, shared with the Android app). |
-| Download | The original bytes as a Blob download. |
+| Annotations | Highlight, underline, strike-through, note, free text, ink, rectangle and ellipse; select, move, delete, undo and redo; a comments panel. Written by the engine's `PdfAnnotationEditor` as an incremental update with appearance streams (`ViewerAnnotationStore`, `ViewerDocument.ApplyEditsAsync`). |
+| Forms | Text, check box, radio, combo and list fields filled over the page; values, formats and calculations by the engine (`PdfNativeFormService.Fill`), without running document JavaScript. |
+| Download | The document with its annotations and form data as a Blob download (`Ctrl`+`S`); embedded, the bytes as given unless `downloadWithAnnotations`. |
 | Print | Pages rendered at 150 dpi and printed as images through a hidden iframe. Up to 500 pages. |
 | Encrypted PDFs | Password prompt. RC4 and AES (128 and 256) open, see [crypto](#cryptography). |
 | Night pages | The engine's night mode: the page inverted after drawing (`I`). |

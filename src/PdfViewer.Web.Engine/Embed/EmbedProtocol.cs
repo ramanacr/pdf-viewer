@@ -44,6 +44,14 @@ public static class EmbedEvents
     public const string ZoomChange = "ZOOM_CHANGE";
     public const string DocumentDownload = "DOCUMENT_DOWNLOAD";
     public const string DocumentPrint = "DOCUMENT_PRINT";
+
+    // For the annotation manager's listeners (annotationManager.registerEventListener).
+    public const string AnnotationAdded = "ANNOTATION_ADDED";
+    public const string AnnotationUpdated = "ANNOTATION_UPDATED";
+    public const string AnnotationDeleted = "ANNOTATION_DELETED";
+    public const string AnnotationSelected = "ANNOTATION_SELECTED";
+    public const string AnnotationUnselected = "ANNOTATION_UNSELECTED";
+    public const string AnnotationClicked = "ANNOTATION_CLICKED";
 }
 
 /// <summary>A message the host page sent that is this protocol's but is not valid. The viewer answers it with the code.</summary>
@@ -97,7 +105,11 @@ public sealed record EmbedFrame(EmbedMode Mode, string? Origin)
 public abstract record EmbedMessage(int RequestId);
 
 /// <summary>Show a file: its bytes come beside the message (a transferred ArrayBuffer).</summary>
-public sealed record EmbedOpen(int RequestId, string FileName, string? FileId, bool ReadOnly, string Locale, EmbedConfig Config) : EmbedMessage(RequestId);
+public sealed record EmbedOpen(int RequestId, string FileName, string? FileId, bool ReadOnly, string Locale, EmbedConfig Config) : EmbedMessage(RequestId)
+{
+    /// <summary>The host page's SAVE_API callback, when it registered one.</summary>
+    public EmbedSaveOptions Save { get; init; } = EmbedSaveOptions.None;
+}
 
 /// <summary>The API methods a host page can call (<c>viewer.getAPIs()</c> and the search object).</summary>
 public enum EmbedMethod
@@ -105,6 +117,9 @@ public enum EmbedMethod
     GetPdfMetadata, GetCurrentPage, GotoLocation, GetSelectedContent,
     ZoomIn, ZoomOut, SetZoomLevel, GetZoomLimits,
     Search, SearchNext, SearchPrevious, SearchClear,
+    GetAnnotationManager, AddAnnotations, GetAnnotations, UpdateAnnotation, DeleteAnnotations,
+    SelectAnnotation, UnselectAnnotation, SetAnnotationConfig, ExportXfdf, ImportXfdf,
+    SetSaveOptions, SaveResult,
 }
 
 /// <summary>
@@ -120,6 +135,29 @@ public sealed record EmbedCall(int RequestId, int Document, EmbedMethod Method) 
     public double Level { get; init; }
     public string? Term { get; init; }
     public int SearchId { get; init; }
+
+    /// <summary>addAnnotations: the annotations; updateAnnotation: the one annotation.</summary>
+    public IReadOnlyList<Annotations.ViewerAnnotation> Annotations { get; init; } = [];
+
+    /// <summary>getAnnotations and deleteAnnotations.</summary>
+    public Annotations.ViewerAnnotationFilter? Filter { get; init; }
+
+    /// <summary>selectAnnotation.</summary>
+    public string? AnnotationId { get; init; }
+
+    /// <summary>setAnnotationConfig.</summary>
+    public EmbedAnnotationConfig? AnnotationConfig { get; init; }
+
+    /// <summary>importXfdf: the XFDF document.</summary>
+    public string? Xfdf { get; init; }
+
+    /// <summary>setSaveOptions.</summary>
+    public EmbedSaveOptions? SaveOptions { get; init; }
+
+    /// <summary>saveResult: the save it answers, whether the host page saved it, and the file name it gave.</summary>
+    public int SaveId { get; init; }
+    public bool Saved { get; init; }
+    public string? SavedFileName { get; init; }
 }
 
 /// <summary>
@@ -234,7 +272,8 @@ public static class EmbedProtocol
             bool readOnly = root.TryGetProperty("readOnly", out var ro) && ro.ValueKind == JsonValueKind.True;
             string locale = OptionalString(root, "locale", 64) ?? "en-US";
             var config = EmbedConfig.FromJson(root.TryGetProperty("config", out var c) ? c : default, frameMode);
-            return new EmbedOpen(requestId, fileName, fileId, readOnly, locale, config);
+            var save = EmbedAnnotationJson.ParseSaveOptions(root.TryGetProperty("save", out var sv) ? sv : default, requestId);
+            return new EmbedOpen(requestId, fileName, fileId, readOnly, locale, config) { Save = save };
         }
         catch (EmbedProtocolException ex) when (ex.RequestId == 0)
         {
@@ -256,6 +295,18 @@ public static class EmbedProtocol
         ["searchNext"] = EmbedMethod.SearchNext,
         ["searchPrevious"] = EmbedMethod.SearchPrevious,
         ["searchClear"] = EmbedMethod.SearchClear,
+        ["getAnnotationManager"] = EmbedMethod.GetAnnotationManager,
+        ["addAnnotations"] = EmbedMethod.AddAnnotations,
+        ["getAnnotations"] = EmbedMethod.GetAnnotations,
+        ["updateAnnotation"] = EmbedMethod.UpdateAnnotation,
+        ["deleteAnnotations"] = EmbedMethod.DeleteAnnotations,
+        ["selectAnnotation"] = EmbedMethod.SelectAnnotation,
+        ["unselectAnnotation"] = EmbedMethod.UnselectAnnotation,
+        ["setAnnotationConfig"] = EmbedMethod.SetAnnotationConfig,
+        ["exportXfdf"] = EmbedMethod.ExportXfdf,
+        ["importXfdf"] = EmbedMethod.ImportXfdf,
+        ["setSaveOptions"] = EmbedMethod.SetSaveOptions,
+        ["saveResult"] = EmbedMethod.SaveResult,
     };
 
     private static EmbedCall ParseCall(JsonElement root, int requestId)
@@ -280,8 +331,48 @@ public static class EmbedProtocol
             EmbedMethod.SetZoomLevel => call with { Level = Number(Arg(0), "zoomLevel", 1e-6, 1e6, fallback: null) },
             EmbedMethod.Search => call with { Term = Term(Arg(0)) },
             EmbedMethod.SearchNext or EmbedMethod.SearchPrevious or EmbedMethod.SearchClear => call with { SearchId = Integer(Arg(0), "searchId", 1, int.MaxValue) },
+            EmbedMethod.AddAnnotations => call with { Annotations = EmbedAnnotationJson.ParseList(Arg(0), requestId, "", default) },
+            EmbedMethod.UpdateAnnotation => call with { Annotations = [EmbedAnnotationJson.Parse(Arg(0), requestId, "", default, requireId: true)] },
+            EmbedMethod.GetAnnotations => call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) },
+            EmbedMethod.DeleteAnnotations => Arg(0).ValueKind == JsonValueKind.Object
+                ? call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) }
+                : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "deleteAnnotations: give a filter ({ annotationIds, pageRange }; {} deletes every annotation).", requestId),
+            EmbedMethod.SelectAnnotation => call with { AnnotationId = Id(Arg(0)) },
+            EmbedMethod.SetAnnotationConfig => call with { AnnotationConfig = EmbedAnnotationJson.ParseConfig(Arg(0), requestId) },
+            EmbedMethod.ImportXfdf => call with { Xfdf = Xfdf(Arg(0)) },
+            EmbedMethod.SetSaveOptions => Arg(0).ValueKind == JsonValueKind.Object
+                ? call with { SaveOptions = EmbedAnnotationJson.ParseSaveOptions(Arg(0), requestId) }
+                : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "setSaveOptions: give an object.", requestId),
+            EmbedMethod.SaveResult => call with
+            {
+                SaveId = Integer(Arg(0), "saveId", 1, int.MaxValue),
+                Saved = SaveCode(Arg(1)),
+                SavedFileName = SaveName(Arg(2)),
+            },
             _ => call,
         };
+
+        string Id(JsonElement e) =>
+            e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 and <= Annotations.ViewerAnnotationStore.MaxIdLength } s
+                ? s
+                : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, $"{name}: the annotation id must be a string of 1 to {Annotations.ViewerAnnotationStore.MaxIdLength} characters.", requestId);
+
+        string Xfdf(JsonElement e) =>
+            e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 } s
+                ? s
+                : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "importXfdf: give the XFDF document as a string.", requestId);
+
+        bool SaveCode(JsonElement e) =>
+            e.ValueKind == JsonValueKind.String && e.GetString() is "SUCCESS" or "FAIL"
+                ? e.GetString() == "SUCCESS"
+                : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "saveResult: the code must be SUCCESS or FAIL.", requestId);
+
+        string? SaveName(JsonElement e)
+        {
+            if (e.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return null;
+            if (e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 and <= 1024 } fn && !fn.Any(char.IsControl)) return fn;
+            throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "saveResult: metaData.fileName must be a string of 1 to 1024 characters.", requestId);
+        }
 
         int Integer(JsonElement e, string what, int min, int max) =>
             e.ValueKind == JsonValueKind.Number && e.TryGetDouble(out double x) && x == Math.Floor(x) && x >= min && x <= max
@@ -367,6 +458,19 @@ public static class EmbedProtocol
         w.WriteEndObject();
     });
 
+    /// <summary>
+    /// The reader saved: the host page's SAVE_API callback gets the file, whose bytes travel beside
+    /// this message as a transferred ArrayBuffer (<c>data</c>). The host answers with saveResult.
+    /// </summary>
+    public static string SaveRequest(int saveId, string fileName, string? fileId, string reason) => Write("save", w =>
+    {
+        w.WriteNumber("saveId", saveId);
+        w.WriteString("fileName", fileName);
+        if (fileId == null) w.WriteNull("fileId");
+        else w.WriteString("fileId", fileId);
+        w.WriteString("reason", reason);
+    });
+
     /// <summary>In line: the height of the viewer's content, for the host to size the frame.</summary>
     public static string Size(double height) => Write("size", w => w.WriteNumber("height", Math.Round(height, 1)));
 
@@ -395,6 +499,9 @@ public static class EmbedProtocol
         w.WriteBoolean("canCopy", m.CanCopy);
         w.WriteBoolean("canPrint", m.CanPrint);
         w.WriteBoolean("wasRepaired", m.WasRepaired);
+        w.WriteBoolean("isSigned", m.IsSigned);
+        if (m.CertificationLevel is int level) w.WriteNumber("certificationLevel", level);
+        else w.WriteNull("certificationLevel");
         w.WriteNumber("fileSize", m.FileSizeBytes);
         w.WriteString("fileName", fileName);
         if (fileId == null) w.WriteNull("id");

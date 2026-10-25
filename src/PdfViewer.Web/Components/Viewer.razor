@@ -1,4 +1,5 @@
 @using PdfViewer.Web.Engine
+@using PdfViewer.Web.Engine.Annotations
 @using PdfViewer.Web.Engine.Embed
 
 <div class="app @(_sidebarOpen && _doc != null && _config.HasSidePanel ? "with-sidebar" : "") @(Embedded ? "embedded" : "")">
@@ -83,6 +84,12 @@
         }
 
         <div class="group end">
+            @if (ShowsSaveButton)
+            {
+                <button type="button" class="button@(IsDirty ? " primary" : "")" title="Save (Ctrl+S)" disabled="@(Saving || !IsDirty)" @onclick="SaveFromButton">
+                    <Icon Name="save" /><span class="label">@(Saving ? "Saving…" : "Save")</span>
+                </button>
+            }
             @if (_doc != null && _config.ShowDownload)
             {
                 <button type="button" class="icon-button" title="Download the PDF" aria-label="Download the PDF" @onclick="Download"><Icon Name="download" /></button>
@@ -105,6 +112,39 @@
         </div>
     </header>
 
+    @if (_doc != null && ShowsAnnotationToolbar)
+    {
+        <div class="annot-toolbar" role="toolbar" aria-label="Comment and markup tools">
+            <div class="group" role="group" aria-label="Tools">
+                @foreach (var (tool, icon, label) in ToolButtons)
+                {
+                    var t = tool;
+                    <button type="button" class="icon-button" title="@label" aria-label="@label" aria-pressed="@(_tool == t ? "true" : "false")" @onclick="() => SetTool(t)"><Icon Name="@icon" /></button>
+                }
+            </div>
+            <div class="group swatches" role="group" aria-label="Colour">
+                @foreach (var colour in Palette)
+                {
+                    var c = colour;
+                    <button type="button" class="swatch" style="background:@c" title="@($"Colour {c}")" aria-label="@($"Colour {c}")"
+                            aria-pressed="@(string.Equals(CurrentColor, c, StringComparison.OrdinalIgnoreCase) ? "true" : "false")" @onclick="() => PickColor(c)"></button>
+                }
+            </div>
+            <div class="group" role="group" aria-label="Edit">
+                <button type="button" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled="@(_store?.CanUndo != true)" @onclick="Undo"><Icon Name="undo" /></button>
+                <button type="button" class="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled="@(_store?.CanRedo != true)" @onclick="Redo"><Icon Name="redo" /></button>
+                @if (Selected is { } sel)
+                {
+                    @if (sel.Kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText)
+                    {
+                        <button type="button" class="icon-button" title="Edit the text" aria-label="Edit the text" @onclick="() => StartEditing(sel, isNew: false)"><Icon Name="text" /></button>
+                    }
+                    <button type="button" class="icon-button" title="Delete the annotation (Delete)" aria-label="Delete the annotation" @onclick="DeleteSelected"><Icon Name="trash" /></button>
+                }
+            </div>
+        </div>
+    }
+
     @if (!Embedded)
     {
         <p class="privacy-bar"><Icon Name="shield" /> Everything runs in this browser tab. Files you open are never uploaded. No analytics, no cookies, no tracking.</p>
@@ -121,7 +161,7 @@
     @if (_notice != null && _error == null)
     {
         <div class="banner notice" role="status">
-            <Icon Name="font" />
+            <Icon Name="@(_noticeIsFonts ? "font" : "info")" />
             <p>@_notice</p>
             @if (_canUseLocalFonts && !_localFontsLoaded && _noticeIsFonts)
             {
@@ -145,8 +185,39 @@
                         <button type="button" role="tab" id="tab-thumbnails" aria-selected="@(_panel == Panel.Thumbnails ? "true" : "false")" aria-controls="panel-thumbnails" @onclick="ShowThumbnails">Pages</button>
                     }
                     <button type="button" role="tab" id="tab-results" aria-selected="@(_panel == Panel.Results ? "true" : "false")" aria-controls="panel-results" @onclick="() => _panel = Panel.Results">Results @(_hits.Count > 0 ? $"({_hits.Count})" : "")</button>
+                    @if (ShowsCommentsPanel)
+                    {
+                        <button type="button" role="tab" id="tab-comments" aria-selected="@(_panel == Panel.Comments ? "true" : "false")" aria-controls="panel-comments" @onclick="() => _panel = Panel.Comments">Comments @(_store!.Current.Count > 0 ? $"({_store.Current.Count})" : "")</button>
+                    }
                 </div>
-                @if (_panel == Panel.Thumbnails && _config.ShowThumbnails)
+                @if (_panel == Panel.Comments && ShowsCommentsPanel)
+                {
+                    <div id="panel-comments" role="tabpanel" aria-labelledby="tab-comments" class="panel">
+                        @if (_store!.Current.Count == 0)
+                        {
+                            <p class="muted empty">@(CanEditAnnotations && _config.HasAnnotationTools ? "No comments yet. Use the tools above the pages to add one." : "This document has no comments.")</p>
+                        }
+                        else
+                        {
+                            <ol class="results comments">
+                                @foreach (var annotation in _store.Current.Take(2000))
+                                {
+                                    var a = annotation;
+                                    <li>
+                                        <button type="button" class="result@(a.Id == _selectedId ? " current" : "")" aria-current="@(a.Id == _selectedId ? "true" : null)" @onclick="() => SelectFromPanel(a)">
+                                            <span class="result-page"><span class="dot" style="background:@a.Color"></span>@KindLabel(a.Kind), page @a.Page@(a.Author.Length > 0 ? $", {a.Author}" : "")</span>
+                                            @if (a.Contents.Length > 0)
+                                            {
+                                                <span class="result-text">@(a.Contents.Length > 200 ? a.Contents[..200] + "…" : a.Contents)</span>
+                                            }
+                                        </button>
+                                    </li>
+                                }
+                            </ol>
+                        }
+                    </div>
+                }
+                else if (_panel == Panel.Thumbnails && _config.ShowThumbnails)
                 {
                     <div id="panel-thumbnails" role="tabpanel" aria-labelledby="tab-thumbnails" class="panel">
                         <ol class="thumbs">
@@ -262,6 +333,72 @@
                                       style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(r.Width / pv.Width);height:@Pct(r.Height / pv.Height)"></span>
                             }
                         }
+                        @if (AnnotationsClickable)
+                        {
+                            @foreach (var a in AnnotationsByPage[pv.Number])
+                            {
+                                var r = _doc.Geometry[pv.Number - 1].ToShown(a.Box);
+                                <span class="annot-hit@(a.Id == _selectedId ? " selected" : "")" data-annot="@a.Id" title="@(a.Contents.Length > 0 ? a.Contents : KindLabel(a.Kind))"
+                                      style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(Math.Max(r.Width, 4) / pv.Width);height:@Pct(Math.Max(r.Height, 4) / pv.Height)"></span>
+                            }
+                        }
+                        else if (Selected is { } shown && shown.Page == pv.Number)
+                        {
+                            var r = _doc.Geometry[pv.Number - 1].ToShown(shown.Box);
+                            <span class="annot-hit selected passive" aria-hidden="true"
+                                  style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(Math.Max(r.Width, 4) / pv.Width);height:@Pct(Math.Max(r.Height, 4) / pv.Height)"></span>
+                        }
+                        @if (CanFillForms)
+                        {
+                            @foreach (var field in _formWidgetsByPage[pv.Number].Where(w => !w.ReadOnly))
+                            {
+                                var f = field;
+                                var fr = f.Rect;
+                                string place = $"left:{Pct(fr.X / pv.Width)};top:{Pct(fr.Y / pv.Height)};width:{Pct(fr.Width / pv.Width)};height:{Pct(fr.Height / pv.Height)};font-size:{FieldFontSize(f)}";
+                                @switch (f.Kind)
+                                {
+                                    case ViewerFormKind.Text when f.Multiline:
+                                        <textarea class="form-field" style="@place" aria-label="@FieldLabel(f)" maxlength="@(f.MaxLength > 0 ? f.MaxLength : MaxFieldValueLength)" spellcheck="false" value="@f.Value" @onchange="e => OnFieldChange(f, e)"></textarea>
+                                        break;
+                                    case ViewerFormKind.Text:
+                                        <input class="form-field" style="@place" type="@(f.Password ? "password" : "text")" aria-label="@FieldLabel(f)" value="@f.Value" autocomplete="off" spellcheck="false"
+                                               maxlength="@(f.MaxLength > 0 ? f.MaxLength : MaxFieldValueLength)" @onchange="e => OnFieldChange(f, e)" />
+                                        break;
+                                    case ViewerFormKind.CheckBox or ViewerFormKind.Radio:
+                                        <button type="button" class="form-field toggle" style="@place" role="@(f.Kind == ViewerFormKind.Radio ? "radio" : "checkbox")"
+                                                aria-checked="@(f.IsOn ? "true" : "false")" aria-label="@(f.Kind == ViewerFormKind.Radio ? $"{FieldLabel(f)} {f.OnState}" : FieldLabel(f))" @onclick="() => ToggleField(f)"></button>
+                                        break;
+                                    case ViewerFormKind.ComboBox or ViewerFormKind.ListBox:
+                                        <select class="form-field choice" style="@place" aria-label="@FieldLabel(f)" multiple="@(f.Kind == ViewerFormKind.ListBox && f.MultiSelect)"
+                                                size="@(f.Kind == ViewerFormKind.ListBox ? Math.Max(2, f.Options.Count) : 1)" @onchange="e => OnFieldChange(f, e)">
+                                            @if (f.Kind == ViewerFormKind.ComboBox && !f.Options.Any(o => o.Export == f.Value))
+                                            {
+                                                <option value="" selected>@f.Value</option>
+                                            }
+                                            @foreach (var (export, display) in f.Options)
+                                            {
+                                                <option value="@export" selected="@(f.Values.Contains(export))">@display</option>
+                                            }
+                                        </select>
+                                        break;
+                                }
+                            }
+                        }
+                        @if (_editingId != null && Selected is { } editing && editing.Page == pv.Number)
+                        {
+                            var er = _doc.Geometry[pv.Number - 1].ToShown(editing.Box);
+                            // The editor is 240 x 150 CSS pixels: kept inside the page at any zoom.
+                            double ew = 256 / (_zoom * CssPerPoint), eh = 160 / (_zoom * CssPerPoint);
+                            <div class="annot-editor" style="left:@Pct(Math.Max(0, Math.Min(er.X, pv.Width - ew)) / pv.Width);top:@Pct(Math.Max(0, Math.Min(er.Y + er.Height, pv.Height - eh)) / pv.Height)"
+                                 role="dialog" aria-label="@(editing.Kind == ViewerAnnotationKind.Note ? "Note text" : "Text box text")">
+                                <textarea id="annot-editor-text" rows="4" maxlength="@ViewerAnnotationStore.MaxContentsLength" placeholder="@(editing.Kind == ViewerAnnotationKind.Note ? "Write a comment" : "Type the text")"
+                                          @bind="_editText" @bind:event="oninput"></textarea>
+                                <div class="annot-editor-actions">
+                                    <button type="button" class="button" @onclick="CancelEditing">Cancel</button>
+                                    <button type="button" class="button primary" @onclick="CommitEditing">Done</button>
+                                </div>
+                            </div>
+                        }
                         @if (_hitsByPage.TryGetValue(pv.Number, out var pageHits))
                         {
                             @foreach (var (hit, index) in pageHits)
@@ -317,6 +454,9 @@
                     <tr><td><kbd>O</kbd></td><td>Show or hide the side panel</td></tr>
                     <tr><td><kbd>D</kbd></td><td>Colour theme: system, light, dark</td></tr>
                     <tr><td><kbd>I</kbd></td><td>Night pages (inverted page colours)</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>Z</kbd> / <kbd>Ctrl</kbd> <kbd>Y</kbd></td><td>Undo / redo an annotation change</td></tr>
+                    <tr><td><kbd>Delete</kbd></td><td>Delete the selected annotation</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>S</kbd></td><td>Save the PDF with its annotations and form data</td></tr>
                     <tr><td><kbd>Esc</kbd></td><td>Close this dialog, clear the selection or the search</td></tr>
                 </tbody>
             </table>
