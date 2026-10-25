@@ -16,8 +16,20 @@ internal sealed partial class SkiaReplayer
 
     private readonly Dictionary<PdfGlyphRun, ResolvedRun?> _resolved = new(ReferenceEqualityComparer.Instance);
 
-    /// <summary>A run's face, glyph indices and offsets (glyph space, ascender up), and the horizontal scale of each glyph (null when all are 1).</summary>
-    private sealed record ResolvedRun(SkiaFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales);
+    /// <summary>
+    /// A run's face, glyph indices and offsets (glyph space, ascender up), and the horizontal scale of
+    /// each glyph (null when all are 1). A run whose characters come from more than one face (a host's
+    /// faces by script, see <see cref="SkiaFontSource.FindCharacterFace"/>) has one part per face in <see cref="More"/>.
+    /// </summary>
+    private sealed record ResolvedRun(SkiaFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)
+    {
+        public IReadOnlyList<ResolvedRun>? More { get; init; }
+
+        /// <summary>This part and the others.</summary>
+        public IEnumerable<ResolvedRun> Parts => More == null ? new[] { this } : More.Prepend(this);
+
+        public int GlyphCount => Parts.Sum(p => p.Indices.Length);
+    }
 
     /// <summary>Font face and glyph indices for a run; null when the backend cannot draw it faithfully.</summary>
     private ResolvedRun? ResolveText(PdfGlyphRun run)
@@ -68,7 +80,7 @@ internal sealed partial class SkiaReplayer
         foreach (var extra in UnicodeFallbackFamilies)
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
-        (SkiaFace Face, ResolvedRun Mapped, int Missing)? best = null;
+        (SkiaFace Face, ResolvedRun Mapped, int Missing, bool SymbolCodes)? best = null;
         foreach (var (inst, fam, b, it, symbolCodes) in chain)
         {
             var candidate = inst != null ? _res.GetInstalledFace(inst, b, it) : _res.GetSystemFace(fam, b, it);
@@ -91,12 +103,120 @@ internal sealed partial class SkiaReplayer
             // of them draws nothing, so the run stays reported as not drawn.
             var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing);
             if (partial != null && partial.Indices.Length > 0 && (best == null || missing < best.Value.Missing))
-                best = (candidate, partial, missing);
+                best = (candidate, partial, missing, symbolCodes);
+        }
+        // Characters no substitute has: faces the host has by script (the web demo's Noto fonts), character by character.
+        if (best is not { Missing: 0 } && _res.Fonts.HasCharacterFaces)
+        {
+            var hint = new SkiaTextHint(face?.PostScriptName ?? run.FontFamilyName ?? run.FontResourceName, face?.CidOrdering, RunText(run));
+            var composed = ComposeByCharacter(run, best?.Face, best?.SymbolCodes ?? false, bold, italic, hint, th, sign, out bool waiting);
+            if (waiting)
+            {
+                _lastTextProblem = "Substitute font not loaded yet";
+                return null;
+            }
+            if (composed != null)
+                return composed;
         }
         if (best is { } found)
             return found.Mapped;
         _lastTextProblem = family == null ? "No system substitute for font" : "Substitute font lacks a glyph used by this text";
         return null;
+    }
+
+    /// <summary>The run's text, for a host that chooses faces by language (Han characters in Chinese, Japanese or Korean faces).</summary>
+    private static string RunText(PdfGlyphRun run)
+    {
+        if (run.FullText != null) return run.FullText;
+        var sb = new System.Text.StringBuilder(run.Glyphs.Count);
+        foreach (var g in run.Glyphs) sb.Append(g.Unicode);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The run drawn from several faces: each glyph from <paramref name="primary"/> (the substitute
+    /// that has most of them) when it has it, else from the face the font source names for its
+    /// character. Null when no face has any of the glyphs. <paramref name="waiting"/> is true when a
+    /// face (or the index that names the faces) is still being fetched. Every face the run needs is
+    /// asked for in the same pass, so the host fetches them together and draws the page again once.
+    /// </summary>
+    private ResolvedRun? ComposeByCharacter(PdfGlyphRun run, SkiaFace? primary, bool symbolCodes, bool bold, bool italic,
+        SkiaTextHint hint, double th, double sign, out bool waiting)
+    {
+        waiting = false;
+        var owners = new SkiaFace?[run.Glyphs.Count];
+        var order = new List<SkiaFace>();
+        var fonts = new Dictionary<SkiaFace, SKFont>(ReferenceEqualityComparer.Instance);
+        try
+        {
+            if (primary != null)
+                fonts[primary] = new SKFont(primary.Typeface, 1f);
+            for (int i = 0; i < run.Glyphs.Count; i++)
+            {
+                var g = run.Glyphs[i];
+                if (IsBlank(g.Unicode)) continue;
+                if (primary != null && GlyphIndex(fonts[primary], g, symbolCodes) != 0)
+                {
+                    owners[i] = primary;
+                    if (!order.Contains(primary)) order.Add(primary);
+                    continue;
+                }
+                string text = g.Unicode!;
+                if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0)) continue;
+                var named = _res.Fonts.FindCharacterFace(char.ConvertToUtf32(text, 0), hint);
+                if (named == null)
+                {
+                    waiting |= _res.Fonts.IsCharacterIndexPending;
+                    continue;
+                }
+                var candidate = _res.GetInstalledFace(named, bold, italic);
+                if (candidate == null)
+                {
+                    waiting |= _res.Fonts.IsPending(named);
+                    continue;
+                }
+                if (!fonts.TryGetValue(candidate, out var font))
+                    fonts[candidate] = font = new SKFont(candidate.Typeface, 1f);
+                if (GlyphIndex(font, g, false) == 0) continue;
+                owners[i] = candidate;
+                if (!order.Contains(candidate)) order.Add(candidate);
+            }
+        }
+        finally
+        {
+            foreach (var f in fonts.Values) f.Dispose();
+        }
+        if (waiting || order.Count == 0)
+            return null;
+        var parts = new List<ResolvedRun>();
+        foreach (var f in order)
+        {
+            var mine = Array.ConvertAll(owners, o => ReferenceEquals(o, f));
+            var part = MapByUnicode(f, run, ReferenceEquals(f, primary) && symbolCodes, th, sign, allowMissing: true, out _, mine);
+            if (part != null && part.Indices.Length > 0) parts.Add(part);
+        }
+        if (parts.Count == 0)
+            return null;
+        return parts[0] with { More = parts.Count > 1 ? parts.GetRange(1, parts.Count - 1) : null };
+    }
+
+    /// <summary>No glyph to draw: no text, or a space.</summary>
+    private static bool IsBlank([System.Diagnostics.CodeAnalysis.NotNullWhen(false)] string? text) => string.IsNullOrEmpty(text) || text == " " || text == "\u00A0";
+
+    /// <summary>The glyph for <paramref name="g"/>'s character in a substitute; 0 when the face lacks it.</summary>
+    private static ushort GlyphIndex(SKFont font, PdfGlyph g, bool symbolCodes)
+    {
+        string text = g.Unicode!;
+        int unicode = char.ConvertToUtf32(text, 0);
+        int cp = symbolCodes && g.CharCode >= 0 ? 0xF000 + g.CharCode : unicode;
+        ushort index = font.GetGlyph(cp);
+        // A re-encoded Symbol font shows its characters by codes of its own: find them by what they are.
+        if (index == 0 && symbolCodes && Fonts.SymbolFontCodes.CodeFor(unicode) is int symbolCode)
+            index = font.GetGlyph(0xF000 + symbolCode);
+        // Adobe's private-use forms (the serif registered sign, pieces of tall brackets) by their standard character.
+        if (index == 0 && !symbolCodes && Fonts.SymbolFontCodes.StandardFor(unicode) is int standard)
+            index = font.GetGlyph(standard);
+        return index;
     }
 
     /// <summary>Faces tried after the metric-compatible substitute, for glyphs it lacks (symbols, dingbats, other scripts).</summary>
@@ -110,28 +230,24 @@ internal sealed partial class SkiaReplayer
     /// into the next, and one narrower is widened by up to a tenth and centred in the rest.
     /// </summary>
     /// <param name="allowMissing">Leave out glyphs the face lacks (counted in <paramref name="missing"/>) instead of failing.</param>
+    /// <param name="only">When set, only the glyphs flagged here (by position in the run) are mapped.</param>
     private static ResolvedRun? MapByUnicode(SkiaFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
-        bool allowMissing, out int missing)
+        bool allowMissing, out int missing, bool[]? only = null)
     {
         missing = 0;
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
         var widths = new List<double>(run.Glyphs.Count);
         using var font = new SKFont(face.Typeface, 1f) { LinearMetrics = true, Hinting = SKFontHinting.None };
-        foreach (var g in run.Glyphs)
+        for (int i = 0; i < run.Glyphs.Count; i++)
         {
-            string? text = g.Unicode;
-            if (string.IsNullOrEmpty(text) || text == " " || text == " ")
+            var g = run.Glyphs[i];
+            if (only != null && !only[i])
                 continue;
-            int unicode = char.ConvertToUtf32(text, 0);
-            int cp = symbolCodes && g.CharCode >= 0 ? 0xF000 + g.CharCode : unicode;
-            ushort index = font.GetGlyph(cp);
-            // A re-encoded Symbol font shows its characters by codes of its own: find them by what they are.
-            if (index == 0 && symbolCodes && Fonts.SymbolFontCodes.CodeFor(unicode) is int symbolCode)
-                index = font.GetGlyph(0xF000 + symbolCode);
-            // Adobe's private-use forms (the serif registered sign, pieces of tall brackets) by their standard character.
-            if (index == 0 && !symbolCodes && Fonts.SymbolFontCodes.StandardFor(unicode) is int standard)
-                index = font.GetGlyph(standard);
+            string? text = g.Unicode;
+            if (IsBlank(text))
+                continue;
+            ushort index = GlyphIndex(font, g, symbolCodes);
             if (index == 0)
             {
                 if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0))
@@ -264,14 +380,18 @@ internal sealed partial class SkiaReplayer
             return cached;
         var run = cmd.Run;
         float em = (float)Math.Abs(run.FontSize);
-        var (glyphMatrix, positions) = GlyphFrame(run.Face, em, r.Offsets);
-        var glyphToText = GlyphToText(run, glyphMatrix);
-        using var font = r.Face.CreateFont(em);
-        var pieces = ScaledPieces(r.Indices, positions, r.Scales)
-            .Select(p => (GlyphOutlines(font, p.Indices, p.Positions), Matrix3x2.CreateScale(p.Scale, 1) * glyphToText))
-            .ToArray();
-        _glyphOutlines[cmd] = pieces;
-        return pieces;
+        var pieces = new List<(SKPath, Matrix3x2)>();
+        foreach (var part in r.Parts)
+        {
+            var (glyphMatrix, positions) = GlyphFrame(run.Face, em, part.Offsets);
+            var glyphToText = GlyphToText(run, glyphMatrix);
+            using var font = part.Face.CreateFont(em);
+            pieces.AddRange(ScaledPieces(part.Indices, positions, part.Scales)
+                .Select(p => (GlyphOutlines(font, p.Indices, p.Positions), Matrix3x2.CreateScale(p.Scale, 1) * glyphToText)));
+        }
+        var result = pieces.ToArray();
+        _glyphOutlines[cmd] = result;
+        return result;
     }
 
     /// <summary>
@@ -281,7 +401,7 @@ internal sealed partial class SkiaReplayer
     private void DrawText(SKCanvas canvas, DrawGlyphRun cmd, Matrix3x2 full)
     {
         var run = cmd.Run;
-        if (ResolveText(run) is not { } r || r.Indices.Length == 0 || run.FontSize == 0)
+        if (ResolveText(run) is not { } r || r.GlyphCount == 0 || run.FontSize == 0)
             return;
         var textMatrix = M(run.TextMatrix);
         int mode = run.RenderingMode;
@@ -329,14 +449,17 @@ internal sealed partial class SkiaReplayer
                 continue;
             }
             float em = (float)Math.Abs(run.FontSize);
-            var (glyphMatrix, positions) = GlyphFrame(run.Face, em, r.Offsets);
-            var glyphToUser = GlyphToText(run, glyphMatrix) * M(run.TextMatrix);
-            using var font = r.Face.CreateFont(em);
-            foreach (var (indices, piecePositions, scale) in ScaledPieces(r.Indices, positions, r.Scales))
+            foreach (var part in r.Parts)
             {
-                using var outline = GlyphOutlines(font, indices, piecePositions);
-                var toUser = ToSk(Matrix3x2.CreateScale(scale, 1) * glyphToUser);
-                result.AddPath(outline, in toUser);
+                var (glyphMatrix, positions) = GlyphFrame(run.Face, em, part.Offsets);
+                var glyphToUser = GlyphToText(run, glyphMatrix) * M(run.TextMatrix);
+                using var font = part.Face.CreateFont(em);
+                foreach (var (indices, piecePositions, scale) in ScaledPieces(part.Indices, positions, part.Scales))
+                {
+                    using var outline = GlyphOutlines(font, indices, piecePositions);
+                    var toUser = ToSk(Matrix3x2.CreateScale(scale, 1) * glyphToUser);
+                    result.AddPath(outline, in toUser);
+                }
             }
         }
         _textOutlines[cmd] = result;

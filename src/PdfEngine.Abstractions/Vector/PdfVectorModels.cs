@@ -207,7 +207,14 @@ public sealed record PdfFontFace(
     double Ascent = 0.8,
     double Descent = -0.2,
     PdfMatrix? GlyphMatrix = null,
-    bool IsScript = false);
+    bool IsScript = false)
+{
+    /// <summary>
+    /// The CIDSystemInfo /Ordering of a composite font's Adobe character collection (Japan1, GB1,
+    /// CNS1, Korea1), else null: the language a substitute for CJK text is chosen for.
+    /// </summary>
+    public string? CidOrdering { get; init; }
+}
 
 /// <summary>
 /// Glyph run preserving exact PDF positioning, font identity, and text matrix.
