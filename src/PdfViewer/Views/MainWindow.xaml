@@ -748,6 +748,25 @@
                     <TextBlock Text="{x:Static themes:IconGlyphs.SaveAs}" Style="{StaticResource ToolbarGlyph}" Foreground="{DynamicResource IconAccentBrush}" />
                 </Button>
 
+                <!-- Undo and Redo, as in the Edit menu: one history for comments, content edits and page marks.
+                     The tooltip names the step; it shows on a disabled button too, so "Undo" says why nothing happens. -->
+                <Button x:Name="ToolbarUndoButton"
+                        Style="{StaticResource ToolbarIconButton}"
+                        Command="{Binding UndoCommand}"
+                        ToolTip="{Binding UndoToolTip}"
+                        ToolTipService.ShowOnDisabled="True"
+                        AutomationProperties.Name="{Binding UndoName}">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Undo}" Style="{StaticResource ToolbarGlyph}" />
+                </Button>
+                <Button x:Name="ToolbarRedoButton"
+                        Style="{StaticResource ToolbarIconButton}"
+                        Command="{Binding RedoCommand}"
+                        ToolTip="{Binding RedoToolTip}"
+                        ToolTipService.ShowOnDisabled="True"
+                        AutomationProperties.Name="{Binding RedoName}">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Redo}" Style="{StaticResource ToolbarGlyph}" />
+                </Button>
+
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,2" />
 
                 <!-- Search Toggle -->
