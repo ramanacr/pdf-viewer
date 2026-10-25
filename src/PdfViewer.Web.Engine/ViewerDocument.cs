@@ -104,8 +104,11 @@ public sealed class ViewerDocument : IAsyncDisposable
     private SkiaFontSource? _fonts;
     private bool _disposed;
 
-    /// <summary>Most times a page is drawn again after fetching the fonts it asked for (each time fetches at least one face).</summary>
-    private const int MaxFontRounds = 4;
+    /// <summary>
+    /// Most times a page is drawn again after fetching the fonts it asked for (each time fetches at
+    /// least one file). Three are needed at most: the Liberation face, the Noto index, the Noto faces.
+    /// </summary>
+    private const int MaxFontRounds = 5;
 
     private ViewerDocument(PdfVectorDocument document, ViewerOptions options, IReadOnlyList<ViewerPage> pages)
     {

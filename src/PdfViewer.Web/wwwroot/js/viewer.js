@@ -166,12 +166,15 @@ export function setTheme(theme) {
 }
 
 /**
- * One of the fonts bundled with the app (wwwroot/fonts, relative to the base href), fetched when a
- * page first needs it; the browser's HTTP cache keeps it. Null when it cannot be had.
+ * One of the fonts bundled with the app (wwwroot/fonts, relative to the base href, for example
+ * 'LiberationSans-Regular.ttf' or 'noto/index.json'), fetched when a page first needs it; the
+ * browser's HTTP cache keeps it. Same origin only. Null when it cannot be had.
  */
 export async function fetchFont(file) {
+    const parts = String(file).split('/');
+    if (parts.some(p => p === '' || p === '.' || p === '..')) return null;
     try {
-        const response = await fetch('fonts/' + encodeURIComponent(file));
+        const response = await fetch('fonts/' + parts.map(encodeURIComponent).join('/'), { credentials: 'same-origin' });
         return response.ok ? new Uint8Array(await response.arrayBuffer()) : null;
     } catch {
         return null;
