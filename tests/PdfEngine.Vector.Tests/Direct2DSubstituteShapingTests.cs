@@ -324,6 +324,77 @@ public class Direct2DSubstituteShapingTests
         Assert.InRange(wb, wa - 1, wa + 1);
     }
 
+    /// <summary>
+    /// Helvetica, not embedded (drawn with Arial), with /Widths that are Arial's advances times
+    /// <paramref name="factor"/> for each character code.
+    /// </summary>
+    private static byte[] HelveticaPage(string content, Func<int, double> factor)
+    {
+        var arial = Arial.Value;
+        string widths = string.Join(" ", Enumerable.Range(32, 95).Select(c => Math.Round(Width(arial, c) * factor(c)).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var b = new VectorPdfBuilder();
+        int helv = b.Add($"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 126 /Widths [{widths}] /Encoding /WinAnsiEncoding >>");
+        b.AddPage(content, $"<< /Font << /H {helv} 0 R >> >>", mediaBox: "[0 0 400 400]");
+        return b.Build();
+    }
+
+    private static async Task<(RenderedPage D2D, RenderedPage Wpf)> RenderBoth(byte[] pdf, double dpi)
+    {
+        using var d2d = new Direct2DVectorRenderer();
+        using var wpf = new WindowsVectorRenderer();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        var request = new RenderRequest { PageNumber = 1, Dpi = dpi };
+        return (await d2d.RenderDisplayListAsync(list, request), await wpf.RenderDisplayListAsync(list, request));
+    }
+
+    /// <summary>
+    /// A single glyph whose /Widths width is much less than the substitute's own advance: both
+    /// backends narrow it to that width (<see cref="SubstituteShaper.FitToWidth"/>), so its ink is as
+    /// wide in the WPF render as in the Direct2D one.
+    /// </summary>
+    [Fact]
+    public async Task Wpf_FitsANarrowSingleGlyphLikeDirect2D()
+    {
+        // "W" at 40 % of Arial's advance.
+        byte[] pdf = HelveticaPage("BT /H 144 Tf 20 150 Td (W) Tj ET", c => c == 'W' ? 0.4 : 1);
+        var scale = Assert.Single((await Resolve(pdf))[0]).Scale;
+        Assert.InRange(scale, 0.39f, 0.41f);
+        var (a, b) = await RenderBoth(pdf, 72);
+        using (a)
+        using (b)
+        {
+            int wa = InkWidth(a), wb = InkWidth(b);
+            _output.WriteLine($"scale={scale:F3} ink width d2d={wa} wpf={wb}");
+            Assert.True(wa > 20, "no ink");
+            Assert.InRange(wb, wa - 1, wa + 1);
+        }
+    }
+
+    /// <summary>
+    /// A Latin line whose /Widths are narrower and wider than Arial's advances: the WPF backend fits
+    /// and centres each glyph as the Direct2D backend does, so the two renders nearly agree.
+    /// </summary>
+    [Fact]
+    public async Task Wpf_FitsLatinSubstituteGlyphsLikeDirect2D()
+    {
+        static string Lines(params string[] lines) => string.Concat(lines.Select((l, i) => $"BT /H 40 Tf 10 {340 - 60 * i} Td ({l}) Tj ET\n"));
+        // Every other code 25 % narrower, the rest 20 % wider (widened by a tenth and centred).
+        byte[] pdf = HelveticaPage(Lines("Waving flags", "over MOUNTAINS", "quick brown fox"), c => c % 2 == 0 ? 0.75 : 1.2);
+        var (a, b) = await RenderBoth(pdf, 96);
+        using (a)
+        using (b)
+        {
+            var (mean, bad) = DifferentialRenderingTests.Compare(b, a);
+            _output.WriteLine($"wpf vs d2d latin: mean={mean:F2} bad={bad:P2}");
+            // Fitted: mean 1.08, 0.48 % of pixels off by more than 64, as close as the same line at
+            // Arial's own widths (mean 1.03, 0.46 %: the two rasterizers differ). Each glyph at its own
+            // width: mean 11.5, 5.3 %.
+            Assert.True(mean <= 2, $"mean {mean:F2}");
+            Assert.True(bad <= 0.01, $"{bad:P2} off");
+        }
+    }
+
     /// <summary>The width in pixels of the dark pixels' bounding box.</summary>
     private static int InkWidth(RenderedPage page)
     {

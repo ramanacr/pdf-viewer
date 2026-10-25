@@ -78,7 +78,11 @@ internal sealed partial class SkiaReplayer
         if (installed != null) chain.Add((installed, installed.Family, bold, italic, false));
         if (family != null) chain.Add((null, family, bold, italic, isSymbol));
         if (isSymbol) chain.Add((null, family!, bold, italic, false));
-        foreach (var extra in UnicodeFallbackFamilies)
+        // CJK text: the face of its language before the generic faces (Yu Gothic for a Japan1 font,
+        // its stand-in on Android). A host without these families (the web demo) skips them, and its
+        // per-character faces take Han in the run's language (BundledFontIndex.Find).
+        var cjk = Fonts.CharacterFaces.WindowsCjkFamilies(face?.CidOrdering, face?.PostScriptName ?? run.FontFamilyName ?? run.FontResourceName, RunText(run));
+        foreach (var extra in cjk.Concat(UnicodeFallbackFamilies))
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
         // Text whose font is not embedded reaches here as characters, not shaped glyphs: Arabic and
@@ -304,14 +308,11 @@ internal sealed partial class SkiaReplayer
             double em = Math.Abs(run.FontSize);
             for (int i = 0; i < ids.Length; i++)
             {
-                double own = advances[i];
-                if (widths[i] <= 0 || own <= 0 || Math.Abs(widths[i] - own) <= own * 0.01) continue;
-                double scale = Math.Min(widths[i] / own, 1.10);
+                if (SubstituteShaper.FitToWidth(advances[i], widths[i]) is not var (scale, shift)) continue;
                 scales ??= Enumerable.Repeat(1f, ids.Length).ToArray();
                 scales[i] = (float)scale;
                 // Centred in what is left of its width (glyph space: text space without Tz).
-                double gap = (widths[i] - own * scale) * em / 2;
-                if (gap > 0) offsets[i] = offsets[i] with { X = offsets[i].X + (float)(gap * sign) };
+                if (shift > 0) offsets[i] = offsets[i] with { X = offsets[i].X + (float)(shift * em * sign) };
             }
         }
         return new ResolvedRun(face, ids, offsets.ToArray(), scales);

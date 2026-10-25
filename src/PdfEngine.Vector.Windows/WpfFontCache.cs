@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 
@@ -66,19 +67,13 @@ internal sealed class WpfFontCache : IDisposable
         return typeface;
     }
 
-    /// <summary>System substitute for a face; null when no honest substitute exists (e.g. dingbats).</summary>
+    /// <summary>System substitute for a face, as the Direct2D backend chooses it; null when WPF has no such face.</summary>
     public GlyphTypeface? GetSubstitute(PdfFontFace? face, string? fontName)
     {
-        string name = face?.PostScriptName ?? fontName ?? string.Empty;
-        int plus = name.IndexOf('+');
-        if (plus >= 0 && plus < name.Length - 1) name = name[(plus + 1)..];
-
-        bool bold = face?.IsBold == true || name.Contains("Bold", StringComparison.OrdinalIgnoreCase) || name.Contains("Black", StringComparison.OrdinalIgnoreCase);
-        bool italic = face?.IsItalic == true || name.Contains("Italic", StringComparison.OrdinalIgnoreCase) || name.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
-
+        var (name, bold, italic) = StyleOf(face, fontName);
         string family;
         if (name.Contains("Dingbat", StringComparison.OrdinalIgnoreCase))
-            return null; // no metric- or glyph-compatible system font
+            return GetFamily("Segoe UI Symbol", false, false); // the Dingbats block, by the encoding's Unicode
         // The installed font of that name or design first, as the Direct2D backend chooses it.
         if (!name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase)
             && PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Match(name, bold, italic, face?.IsSerif == true, face?.IsFixedPitch == true, face?.IsScript == true) is { } catalogFace
@@ -95,6 +90,23 @@ internal sealed class WpfFontCache : IDisposable
         else
             family = "Arial"; // metric-compatible with Helvetica
 
+        return GetFamily(family, bold, italic);
+    }
+
+    /// <summary>A font's name without its subset tag, and whether its face or name asks for bold and italic.</summary>
+    public static (string Name, bool Bold, bool Italic) StyleOf(PdfFontFace? face, string? fontName)
+    {
+        string name = face?.PostScriptName ?? fontName ?? string.Empty;
+        int plus = name.IndexOf('+');
+        if (plus >= 0 && plus < name.Length - 1) name = name[(plus + 1)..];
+        bool bold = face?.IsBold == true || name.Contains("Bold", StringComparison.OrdinalIgnoreCase) || name.Contains("Black", StringComparison.OrdinalIgnoreCase);
+        bool italic = face?.IsItalic == true || name.Contains("Italic", StringComparison.OrdinalIgnoreCase) || name.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
+        return (name, bold, italic);
+    }
+
+    /// <summary>The installed family's face in the style asked for, the same object every time; null when WPF has no such face.</summary>
+    public GlyphTypeface? GetFamily(string family, bool bold, bool italic)
+    {
         string key = $"{family}|{bold}|{italic}";
         if (_substitutes.TryGetValue(key, out var cached))
             return cached;
@@ -105,6 +117,51 @@ internal sealed class WpfFontCache : IDisposable
         _substitutes[key] = glyphTypeface;
         return glyphTypeface;
     }
+
+    // ------------------------------------------------------------------ faces for single characters
+
+    private readonly Dictionary<(int CodePoint, string Language, bool Bold, bool Italic), GlyphTypeface?> _characterFaces = new();
+
+    /// <summary>
+    /// Broad installed faces scanned, in order, for a character no script rule places: WPF has no
+    /// system font fallback to ask (DirectWrite's MapCharacters), so these stand in for it.
+    /// </summary>
+    internal static readonly string[] BroadFamilies =
+    {
+        "Segoe UI", "Segoe UI Symbol", "Segoe UI Emoji", "Nirmala UI", "Ebrima", "Gadugi", "Leelawadee UI",
+        "Microsoft Himalaya", "Mongolian Baiti", "Microsoft Yi Baiti", "Javanese Text", "Myanmar Text", "Sylfaen",
+    };
+
+    /// <summary>
+    /// The installed face that draws a character the run's substitute lacks: the face for its script
+    /// (<see cref="PdfEngine.Vector.Fonts.CharacterFaces.WindowsFamilies"/>: Segoe UI for Arabic and
+    /// Hebrew, Nirmala UI for Indic, the face of <paramref name="cjkLanguage"/> for Han, Segoe UI Symbol
+    /// for symbols), else the first of <see cref="BroadFamilies"/> that has it; null when none has it.
+    /// </summary>
+    public GlyphTypeface? GetCharacterFace(int codePoint, string cjkLanguage, bool bold, bool italic)
+    {
+        var key = (codePoint, PdfEngine.Vector.Fonts.CharacterFaces.IsCjk(codePoint) ? cjkLanguage : "", bold, italic);
+        if (_characterFaces.TryGetValue(key, out var cached))
+            return cached;
+        GlyphTypeface? result = null;
+        foreach (var family in PdfEngine.Vector.Fonts.CharacterFaces.WindowsFamilies(codePoint, cjkLanguage).Concat(BroadFamilies))
+        {
+            if (GetFamily(family, bold, italic) is { } face && IsFamily(face, family) && face.CharacterToGlyphMap.ContainsKey(codePoint))
+            {
+                result = face;
+                break;
+            }
+        }
+        _characterFaces[key] = result;
+        return result;
+    }
+
+    /// <summary>
+    /// True when WPF loaded the family asked for: for a family that is not installed it gives
+    /// another face, whose glyphs would not be the ones the rule chose.
+    /// </summary>
+    private static bool IsFamily(GlyphTypeface face, string family) =>
+        face.FamilyNames.Values.Concat(face.Win32FamilyNames.Values).Any(n => n.StartsWith(family, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The installed face the shared font catalogue chose, from its file (a single-font file only).</summary>
     private GlyphTypeface? GetInstalled(PdfEngine.Vector.Editing.SystemFontFace installed, bool bold, bool italic)

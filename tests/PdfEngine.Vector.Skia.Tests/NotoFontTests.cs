@@ -57,7 +57,7 @@ public class NotoFontTests
     }
 
     private const string Arabic = "NotoSansArabic-Regular.ttf", Devanagari = "NotoSansDevanagari-Regular.ttf", Symbols = "NotoSansSymbols2-Regular.ttf";
-    private const string ScCore = "NotoSansSC-Regular-00.otf", ScRest = "NotoSansSC-Regular-01.otf", JpCore = "NotoSansJP-Regular-00.otf", KrCore = "NotoSansKR-Regular-00.otf";
+    private const string ScCore = "NotoSansSC-Regular-00.otf", ScRest = "NotoSansSC-Regular-01.otf", TcCore = "NotoSansTC-Regular-00.otf", JpCore = "NotoSansJP-Regular-00.otf", KrCore = "NotoSansKR-Regular-00.otf";
 
     /// <summary>An index like the script's: script and symbol faces, then CJK slices by language.</summary>
     private static byte[] TestIndex() => IndexJson(
@@ -67,6 +67,7 @@ public class NotoFontTests
         // The core slice has the common characters; the rest slice the others (here: a block of rare ones).
         (ScCore, "Noto Sans SC", "sc", new[] { (0x3000, 0x303F), (0x4E00, 0x4E2D), (0x6587, 0x6587) }),
         (ScRest, "Noto Sans SC", "sc", new[] { (0x9F00, 0x9FA5) }),
+        (TcCore, "Noto Sans TC", "tc", new[] { (0x3000, 0x303F), (0x4E00, 0x4E2D), (0x6587, 0x6587) }),
         (JpCore, "Noto Sans JP", "jp", new[] { (0x3000, 0x30FF), (0x4E00, 0x4E2D), (0x6587, 0x6587) }),
         (KrCore, "Noto Sans KR", "kr", new[] { (0x3000, 0x303F), (0x4E00, 0x4E2D), (0xAC00, 0xD7A3) }));
 
@@ -76,14 +77,14 @@ public class NotoFontTests
     public void Index_DecodesRunsAndPaths()
     {
         var index = Index;
-        Assert.Equal(7, index.Entries.Count);
+        Assert.Equal(8, index.Entries.Count);
         var arabic = index.Entries[0];
         Assert.Equal("noto/" + Arabic, arabic.Face.Path);
         Assert.Equal("Noto Sans Arabic", arabic.Face.Family);
         Assert.Equal(0x100 + 0x2B0 + 0x90, arabic.CharacterCount);
         Assert.True(arabic.Covers(0x0600) && arabic.Covers(0x06FF) && arabic.Covers(0xFB50) && arabic.Covers(0xFEFF));
         Assert.False(arabic.Covers(0x05FF) || arabic.Covers(0x0700) || arabic.Covers(0xFE6F) || arabic.Covers(0xFF00));
-        Assert.Equal(new[] { false, false, false, true, true, true, true }, index.Entries.Select(e => e.IsCjk));
+        Assert.Equal(new[] { false, false, false, true, true, true, true, true }, index.Entries.Select(e => e.IsCjk));
     }
 
     [Fact]
@@ -105,6 +106,7 @@ public class NotoFontTests
     [InlineData(0x4E2D, "", null, ScCore)]                 // a common Han character: Simplified Chinese when nothing tells
     [InlineData(0x9F99, "", null, ScRest)]                 // a rare one: the slice that has it
     [InlineData(0x4E2D, "", "Japan1", JpCore)]             // the font's character collection
+    [InlineData(0x4E2D, "", "CNS1", TcCore)]
     [InlineData(0x4E2D, "", "Korea1", KrCore)]
     [InlineData(0x4E2D, "中の", null, JpCore)]     // kana in the text
     [InlineData(0x4E2D, "한中", null, KrCore)]     // hangul in the text
@@ -159,6 +161,7 @@ public class NotoFontTests
                 Devanagari => "Nirmala.ttc",
                 Symbols => "seguisym.ttf",
                 ScCore or ScRest => "msyh.ttc",
+                TcCore => "msjh.ttc",
                 JpCore => "msgothic.ttc",
                 KrCore => "malgun.ttf",
                 _ => null,
@@ -284,6 +287,25 @@ public class NotoFontTests
             options: new ViewerOptions { Fonts = OnDemandFontSource.Bundled(fetch.FetchAsync) });
         Assert.Equal(0, (await doc.RenderPageAsync(1, 1.0)).TextRegionsWithoutFont);
         Assert.Equal(new[] { "noto/index.json", "noto/" + JpCore }.Order(), fetch.NotoRequests.Order());
+    }
+
+    [Theory]
+    [InlineData("Ryumin", "Japan1", JpCore)]
+    [InlineData("Ryumin", "GB1", ScCore)]
+    [InlineData("Ryumin", "CNS1", TcCore)]
+    [InlineData("Ryumin", "Korea1", KrCore)]
+    [InlineData("Ryumin-Light", null, JpCore)] // no collection: the font's name tells
+    public async Task AllHanRun_TakesTheSliceOfItsLanguage(string baseFont, string? ordering, string file)
+    {
+        // A run of Han characters only: no Liberation face has any of them, so the whole run comes
+        // from the CJK face of the font's language, as on Windows (Yu Gothic for Japan1, and so on).
+        var fetch = new FakeFetch();
+        await using var doc = await ViewerDocument.OpenAsync(UnicodePage((baseFont, ordering, "一中")),
+            options: new ViewerOptions { Fonts = OnDemandFontSource.Bundled(fetch.FetchAsync) });
+        var bitmap = await doc.RenderPageAsync(1, 1.0);
+        Assert.Equal(0, bitmap.TextRegionsWithoutFont);
+        Assert.True(Ink(bitmap) > 50, "the Han drew nothing");
+        Assert.Equal(new[] { "noto/index.json", "noto/" + file }.Order(), fetch.NotoRequests.Order());
     }
 
     [Fact]

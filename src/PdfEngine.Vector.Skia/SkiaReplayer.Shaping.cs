@@ -18,4 +18,8 @@ internal sealed partial class SkiaReplayer
         ResolveText(run) is { } r
             ? r.Parts.SelectMany(p => p.Indices.Select((gid, i) => (gid, p.Offsets[i], p.Scales?[i] ?? 1f))).ToList()
             : null;
+
+    /// <summary>The family name of each part's face, in order (for tests).</summary>
+    internal IReadOnlyList<string>? ResolvedFamilies(PdfGlyphRun run) =>
+        ResolveText(run)?.Parts.Select(p => p.Face.Typeface.FamilyName).ToList();
 }
