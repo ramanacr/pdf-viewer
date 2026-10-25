@@ -25,9 +25,13 @@
     commit-count-based build number grows every commit while a tag's patch digit only
     grows once per release, so the two schemes must match or update checks silently
     stop detecting genuinely newer releases as newer.
+
+    Only app release tags count ("v" and a digit). The engine packages have their own tags
+    ("engine-v0.1.0"), which must not change the app's version: without the match, git describe
+    returns the nearest tag of any kind.
   -->
   <Target Name="AutoSetGitVersion" BeforeTargets="BeforeBuild;BeforeCompile;GetAssemblyVersion;GenerateNuspec;CoreCompile">
-    <Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+    <Exec Command="git describe --tags --abbrev=0 --match &quot;v[0-9]*&quot;" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitLatestTag" />
     </Exec>
     <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">

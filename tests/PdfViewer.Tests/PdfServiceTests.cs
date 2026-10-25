@@ -323,7 +323,7 @@ public class PdfServiceTests : IDisposable
     [Fact]
     public void TestAssemblyVersionMatchesLatestGitTagForSelfUpdate()
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("git", "describe --tags --abbrev=0")
+        var psi = new System.Diagnostics.ProcessStartInfo("git", "describe --tags --abbrev=0 --match v[0-9]*")
         {
             RedirectStandardOutput = true,
             UseShellExecute = false,

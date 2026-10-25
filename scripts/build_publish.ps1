@@ -32,9 +32,11 @@ Write-Host "==================================================" -ForegroundColor
 #    installed assembly version directly against GitHub release tag names, so a build
 #    versioned from anything else (e.g. raw commit count) silently breaks self-update
 #    detection once the two numbering schemes drift apart.
+#    Only app release tags count ("v" and a digit): the engine package tags (engine-v0.1.0)
+#    must not change the app version.
 $LatestTag = "v0.0.0"
 try {
-    $tag = (git describe --tags --abbrev=0 2>$null)
+    $tag = (git describe --tags --abbrev=0 --match "v[0-9]*" 2>$null)
     if (![string]::IsNullOrEmpty($tag)) {
         $LatestTag = $tag.Trim()
     }
