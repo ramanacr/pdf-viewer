@@ -880,9 +880,7 @@ public class PdfServiceTests : IDisposable
     [Fact]
     public async Task TestRecentFilesServiceConcurrentAddsDoNotLoseEntries()
     {
-        string originalDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "PdfViewerNative");
+        string originalDir = RecentFilesService.CurrentSettingsDirectory;
         string tempDir = Path.Combine(_testDir, "recent_files_concurrency");
 
         try

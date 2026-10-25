@@ -28,6 +28,9 @@ public static class RecentFilesService
         SettingsFile = Path.Combine(directory, "recent_files.json");
     }
 
+    /// <summary>The directory currently backing the settings file. Test seam only.</summary>
+    internal static string CurrentSettingsDirectory => SettingsDir;
+
     public static List<string> LoadRecentFiles()
     {
         lock (FileLock)
