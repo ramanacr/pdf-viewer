@@ -30,7 +30,8 @@ Status: a demo, and the base of an embeddable viewer SDK (see [next steps](#next
 | Encrypted PDFs | Password prompt. RC4 and AES (128 and 256) open, see [crypto](#cryptography). |
 | Night pages | The engine's night mode: the page inverted after drawing (`I`). |
 | Theme | System, light or dark (`D`), independent of night pages. |
-| Device fonts | Chromium browsers can lend the page the fonts installed on the device (Local Font Access API, after the browser asks). Text in non-embedded fonts is then drawn. |
+| Bundled fonts | Text in fonts a PDF does not embed is drawn with the Liberation fonts 2.1.5 (Sans, Serif, Mono; regular, bold, italic, bold italic; SIL Open Font License 1.1), shipped in `wwwroot/fonts` with their licence (`OFL.txt`). Each face is fetched the first time a page needs it and kept for the session. See [fonts](#fonts). |
+| Device fonts | Chromium browsers can lend the page the fonts installed on the device (Local Font Access API, after the browser asks), for text the bundled fonts do not cover. |
 | Accessibility | Toolbar with labels and keyboard access, live status for search and page changes, focus outlines, reduced motion respected, each page labelled "Page n of m". |
 | Layout | Responsive: below 760 px the toolbar compacts and the side panel overlays the pages. |
 
@@ -128,24 +129,27 @@ the app (one more step in the workflow) or move the demo to a subfolder of it.
 
 ## Limits
 
-1. **Fonts that a PDF does not embed.** A browser exposes no font files, and this project ships
-   none, so the Skia backend has no substitute for a non-embedded font (often Helvetica, Times
-   or Arial in older or generated PDFs). That text is not drawn, the page says so, and search
+1. **Fonts that a PDF does not embed** (see [fonts](#fonts)). The bundled Liberation fonts
+   cover the common case: Helvetica, Arial, Times, Times New Roman, Courier, Courier New and
+   unknown fonts by their class (sans-serif, serif, monospaced), in Latin, Greek, Cyrillic and Hebrew.
+   They do not cover Symbol and ZapfDingbats (Liberation has no equivalent), CJK, Indic and
+   other scripts. Text that is still not covered is not drawn, the page says so, and search
    still finds it, because text extraction does not need the font file. In Chrome and Edge the
-   page can ask to read the device's fonts (Local Font Access); the substitutes then come from
-   there, through the same `SystemFontCatalog` matching as on Windows. Other browsers have no
-   such API. This is the largest gap in practice: five of six government reports sampled from
-   the test corpus use at least one non-embedded font. (The device-font path was verified in
+   page can then ask to read the device's fonts (Local Font Access); the substitutes then come
+   from there, through the same `SystemFontCatalog` matching as on Windows, instead of the
+   bundled ones. Other browsers have no such API. (The device-font path was verified in
    headless Chrome with the API stubbed to hand over one installed face, because a headless or
-   embedded browser does not grant the permission; the substitute text then draws.) Bundling
-   an open font family (for example Liberation or Noto, under the SIL Open
-   Font License) would close the gap at the cost of several megabytes.
+   embedded browser does not grant the permission; the substitute text then draws.) Liberation
+   has the metrics of Arial, Times New Roman and Courier New, not their design: shapes differ
+   slightly from the Windows viewer, and Liberation Mono is darker than Courier New.
 2. **CMYK and YCCK JPEG images** are not decoded by the Skia backend (see its README) and stay
    blank. The page says so.
 3. **Cryptography.** See below. Certificate-encrypted (public-key) PDFs cannot be opened.
 4. **Size.** The site is about 15 MB uncompressed, about 6.6 MB over the wire with gzip, cached
    by the browser after the first visit. Largest pieces: `dotnet.native.wasm` with Skia 5.8 MB,
-   the engine `PdfEngine.Vector.wasm` 3.0 MB, `System.Private.CoreLib` 1.7 MB.
+   the engine `PdfEngine.Vector.wasm` 3.0 MB, `System.Private.CoreLib` 1.7 MB. The bundled fonts
+   add 4.4 MB to the published site (12 faces of 280 to 420 KB), but none of them is part of
+   the first load: a face is downloaded only when a page draws text in it.
 5. **Speed.** The engine runs in the .NET interpreter, so interpreting a page into a display
    list is slower than on the desktop; Skia's drawing is native code. See the measurements
    below. Trimming is on (the Blazor default for publish) and works. AOT is not enabled: an AOT
@@ -156,6 +160,48 @@ the app (one more step in the workflow) or move the demo to a subfolder of it.
    a time, and the UI yields between them.
 7. **Not in the demo:** annotations, forms, printing, text selection and copy, thumbnails, tiled
    rendering beyond 4096 × 4096 pixels.
+
+### Fonts
+
+The browser has no installed fonts, so the app ships its own substitutes for fonts a PDF does
+not embed:
+
+| Bundled | Stands in for |
+|---|---|
+| Liberation Sans | Helvetica, Arial (and Arial Narrow, Segoe UI, Calibri, Verdana, Tahoma and other sans-serif families), unknown sans-serif fonts |
+| Liberation Serif | Times, Times New Roman (and Georgia, Cambria, Palatino, Garamond and other serif families), unknown serif fonts |
+| Liberation Mono | Courier, Courier New (and Consolas, Lucida Console), unknown monospaced fonts |
+
+1. **Source.** Liberation fonts 2.1.5, `liberation-fonts-ttf-2.1.5.tar.gz` from the upstream
+   release (https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5), SIL Open
+   Font License 1.1. The licence ships next to the fonts as `wwwroot/fonts/OFL.txt`, and the
+   notice is in [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md), with the SHA-256 of each file.
+2. **Matching.** The substitution is the engine's own (`SystemFontCatalog.Match`, then the
+   Skia backend's class family), as on Windows and Android. The Liberation families stand in
+   for the Windows families by `SystemFontCatalog.LiberationFamilyAliases`, as Android's own
+   fonts do by `AndroidFamilyAliases`. Bold, italic and bold italic come from the name
+   (`Helvetica-BoldOblique`, `Arial,Bold`, `TimesNewRomanPS-ItalicMT`) and the descriptor
+   flags; each glyph is still placed by the document's `/Widths`.
+3. **Loading on demand.** `OnDemandFontSource` (in `PdfViewer.Web.Engine`) describes the 12
+   faces up front. When a page asks for a face that is not loaded, the text waits for it,
+   `ViewerDocument` fetches it (`fonts/<file>.ttf`, same origin) and draws the page again. Only
+   the face a run is drawn with is fetched, not the fallbacks after it. Fetched faces are kept
+   for the session (and in the browser's HTTP cache). A PDF that embeds all its fonts fetches
+   nothing.
+4. **Not covered.** Symbol and ZapfDingbats have no Liberation equivalent and are not mapped:
+   they keep the existing substitute chain, which asks for Symbol (or Segoe UI Symbol for the
+   Dingbats) and then for faces that have the characters, Arial among them. So Symbol's Greek
+   letters and common math signs draw with Liberation Sans; dingbats and other characters it
+   lacks are not drawn, and the page says so. The same holds for CJK, Arabic, Indic and other
+   scripts that Liberation does not cover.
+
+Verified in the browser (Chromium, the published site under `/pdf-viewer/demo/`, served by
+`eng/webdemo/serve.mjs --gzip`): the first load and the engine tour fetch no font; a generated
+page in non-embedded Helvetica, Helvetica-Bold, Times-Roman, Times-Italic, Courier,
+Courier-BoldOblique and ZapfDingbats fetched exactly those six Liberation faces (2.2 MB; about
+1.2 MB if the server compresses fonts) and drew the text; the banner appeared for the
+ZapfDingbats line only, and not at all for the same page without it. A second document in the
+same session fetched nothing more.
 
 ### Cryptography
 
@@ -200,7 +246,12 @@ longer, and the first page of a session pays the interpreter's warm-up.
   platform; RC4, AES-128 and AES-256 documents opened with the fallback forced).
 - `tests/PdfEngine.Vector.Skia.Tests`: `WebViewerEngineTests` (the tour document, rendering,
   night mode, the bitmap cap, search highlights on rotated pages, open failures, a browser-like
-  font source with and without lent fonts, the page cache).
+  font source with and without lent fonts, the page cache); `WebFontTests` (the 12 bundled
+  files are the faces the catalog describes, the standard 14 and common names map to the right
+  Liberation face, Symbol families stay unmapped, faces are fetched on demand with a fake fetch:
+  nothing for embedded fonts, only the face a run is drawn with, once per session, a failed
+  fetch reported and not retried; a page in non-embedded Helvetica, Times and Courier drawn with
+  the files from `wwwroot/fonts`, each line where the Windows fonts put it).
 - CI: `web-demo.yml` publishes the app on every pull request.
 
 ## Next steps
@@ -213,8 +264,8 @@ Toward an embeddable SDK in the style of the Adobe PDF Embed API:
    surface and a packaged build of the Blazor runtime as a custom element.
 2. **Rendering off the main thread**: run the engine in a Web Worker (or multi-threaded
    WebAssembly once it is stable) so a heavy page never blocks scrolling.
-3. **Fonts**: bundle an open-licence substitute family for the standard 14 fonts, loaded on
-   demand, so non-embedded text draws in every browser.
+3. **Fonts** beyond Liberation: a symbol and dingbats face and Noto for other scripts, on
+   demand as the Liberation faces are.
 4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
    acceptable.
 5. **Tiles** for deep zoom, text selection and copy, thumbnails, annotations display.
