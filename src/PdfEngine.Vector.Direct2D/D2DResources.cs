@@ -226,6 +226,58 @@ internal sealed class D2DResources : IDisposable
         return result;
     }
 
+    private readonly Dictionary<IDWriteFontFace, TrueTypeFontFile?> _shapingFonts = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The substitute's font file as the editing shaper reads it (its cmap, GSUB and GPOS), read once
+    /// on first use; null when it is not a single local TrueType-outline file or cannot be read.
+    /// </summary>
+    public TrueTypeFontFile? GetShapingFont(IDWriteFontFace face)
+    {
+        if (_shapingFonts.TryGetValue(face, out var cached))
+            return cached;
+        TrueTypeFontFile? result = null;
+        try
+        {
+            if (LocalPath(face) is { } path)
+                result = TrueTypeFontFile.TryLoad(File.ReadAllBytes(path), (int)face.Index);
+        }
+        catch (Exception e) when (e is SharpGenException or IOException or UnauthorizedAccessException)
+        {
+            result = null;
+        }
+        _shapingFonts[face] = result;
+        return result;
+    }
+
+    /// <summary>The path of the face's file when DirectWrite loads it from disk (installed fonts); else null.</summary>
+    private static unsafe string? LocalPath(IDWriteFontFace face)
+    {
+        var files = face.GetFiles();
+        try
+        {
+            if (files.Length != 1)
+                return null;
+            using var loader = files[0].Loader as ComObject;
+            using var local = loader?.QueryInterfaceOrNull<IDWriteLocalFontFileLoader>();
+            if (local == null)
+                return null; // not a file on disk (a font in memory)
+            var key = files[0].GetReferenceKey();
+            fixed (byte* k = key)
+            {
+                uint length = local.GetFilePathLengthFromKey((IntPtr)k, (uint)key.Length);
+                var buffer = new char[length + 1];
+                fixed (char* b = buffer)
+                    local.GetFilePathFromKey((IntPtr)k, (uint)key.Length, (IntPtr)b, length + 1);
+                return new string(buffer, 0, (int)length);
+            }
+        }
+        finally
+        {
+            foreach (var f in files) f.Dispose();
+        }
+    }
+
     // ------------------------------------------------------------------ device resources
 
     public ID2D1StrokeStyle1 StrokeStyle(StrokeStyleProperties1 props, float[]? dashes)
@@ -326,6 +378,7 @@ internal sealed class D2DResources : IDisposable
         foreach (var s in _strokeStyles.Values) s.Dispose();
         foreach (var f in _embeddedFaces.Values) f?.Dispose();
         foreach (var f in _systemFaces.Values) f?.Dispose();
+        _shapingFonts.Clear();
         _systemCollection?.Dispose();
         DWrite.UnregisterFontFileLoader(_fontLoader);
         _fontLoader.Dispose();
