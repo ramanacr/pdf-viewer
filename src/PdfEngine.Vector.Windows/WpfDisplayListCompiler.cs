@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Text;
 using MediaGeometry = System.Windows.Media.Geometry;
 
 namespace PdfEngine.Vector.Windows;
@@ -404,117 +405,26 @@ internal sealed class WpfDisplayListCompiler
 
     // ------------------------------------------------------------------ text
 
+    /// <summary>The glyphs of a run that one face draws, with their offsets from the run origin and their horizontal scales (null while all are 1).</summary>
+    internal sealed record TextPart(GlyphTypeface Face, List<ushort> Indices, List<Point> Offsets, List<double>? Scales);
+
     private void DrawText(DrawingContext dc, DrawGlyphRun cmd, PdfMatrix ctm, int pageNumber, List<PdfFallbackToken> backendFallbacks)
     {
         var run = cmd.Run;
         if (run.Glyphs.Count == 0 || run.FontSize == 0)
             return;
 
+        var parts = ResolveText(run, out string? problem);
+        if (parts == null)
+        {
+            if (problem != null)
+                ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType, problem);
+            return;
+        }
+
         var face = run.Face;
-        GlyphTypeface? typeface = face != null ? _fonts.GetEmbedded(face) : null;
-        bool byGlyphId = typeface != null;
-        if (face != null && typeface == null && !face.ProgramData.IsEmpty &&
-            face.Format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff)
-        {
-            // The author's glyphs exist but the platform rejected the program: another font's
-            // shapes would be silently wrong (ADR-006), so classify instead of substituting.
-            ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType,
-                "Embedded font program could not be loaded by the Windows backend");
-            return;
-        }
-        if (face?.Format == PdfFontProgramFormat.Unsupported && typeface == null)
-        {
-            ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType,
-                "Embedded font program format is not loadable by the Windows backend");
-            return;
-        }
-
-        if (typeface == null)
-        {
-            typeface = _fonts.GetSubstitute(face, run.FontFamilyName ?? run.FontResourceName);
-            if (typeface == null)
-            {
-                ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType,
-                    "No system substitute for font");
-                return;
-            }
-        }
-
         double sign = run.FontSize < 0 ? -1 : 1;
-        bool symbolSubstitute = !byGlyphId && typeface.Win32FamilyNames.TryGetValue(System.Globalization.CultureInfo.GetCultureInfo("en-US"), out var fam) && fam == "Symbol";
         double th = run.HorizontalScaling / 100.0;
-        if (Math.Abs(th) < 1e-6) return;
-
-        var indices = new List<ushort>(run.Glyphs.Count);
-        var advances = new List<double>(run.Glyphs.Count);
-        var offsets = new List<Point>(run.Glyphs.Count);
-        List<double>? scales = null; // each glyph's horizontal scale; null while all are 1
-        var map = typeface.CharacterToGlyphMap;
-
-        // Text whose font is not embedded reaches here as characters: Arabic and Indic words are
-        // shaped with the substitute's own tables, as the Direct2D and Skia backends shape them, and
-        // fitted to the width the document gives them.
-        var words = !byGlyphId && !symbolSubstitute && sign > 0 && (face == null || face.ProgramData.IsEmpty)
-            ? PdfEngine.Vector.Text.SubstituteShaper.Words(run) : null;
-        var shaping = words is { Count: > 0 } ? _fonts.GetShapingFont(typeface) : null;
-        int nextWord = 0;
-
-        for (int k = 0; k < run.Glyphs.Count; k++)
-        {
-            var glyph = run.Glyphs[k];
-            if (shaping != null && nextWord < words!.Count && words[nextWord].Start == k)
-            {
-                var word = words[nextWord++];
-                if (PdfEngine.Vector.Text.SubstituteShaper.ShapeWord(shaping, run, word, th) is { } shaped)
-                {
-                    foreach (var (gid, offset, scale) in shaped)
-                    {
-                        if (scale != 1 && scales == null)
-                            scales = Enumerable.Repeat(1.0, indices.Count).ToList();
-                        indices.Add(gid);
-                        advances.Add(0);
-                        offsets.Add(new Point(offset.X, offset.Y));
-                        scales?.Add(scale);
-                    }
-                    k = word.End - 1;
-                    continue;
-                }
-            }
-            ushort index;
-            if (byGlyphId)
-            {
-                index = glyph.GlyphId;
-                if (index >= typeface.GlyphCount) index = 0;
-            }
-            else
-            {
-                string? text = glyph.Unicode;
-                if (string.IsNullOrEmpty(text) || text == " " || text == " ")
-                    continue; // spacing only; position is carried by the next glyph's offset
-
-                int cp = symbolSubstitute && glyph.CharCode >= 0
-                    ? 0xF000 + glyph.CharCode
-                    : char.ConvertToUtf32(text, 0);
-                if (!map.TryGetValue(cp, out index))
-                {
-                    if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0))
-                        continue;
-                    // A substitute lacking the glyph would paint .notdef boxes: classify instead.
-                    ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType,
-                        "Substitute font lacks a glyph used by this text");
-                    return;
-                }
-            }
-
-            indices.Add(index);
-            advances.Add(0);
-            scales?.Add(1);
-            // All positioning is absolute from the run origin: PDF glyph placement is authored (ADR-006).
-            offsets.Add(new Point(glyph.OffsetX / th * sign, glyph.OffsetY * sign));
-        }
-
-        if (indices.Count == 0)
-            return;
 
         // Glyph drawing space (y-down baseline at the origin, em = |Tfs|) → text space → user space:
         // (x, y) ↦ (Th·x, Trise − y), sign-flipped for a negative font size, then Tm.
@@ -532,51 +442,58 @@ internal sealed class WpfDisplayListCompiler
             if (linear.HasInverse)
             {
                 linear.Invert();
-                for (int i = 0; i < offsets.Count; i++)
+                foreach (var part in parts)
                 {
-                    var q = linear.Transform(new Point(offsets[i].X, -offsets[i].Y));
-                    offsets[i] = new Point(q.X, -q.Y);
+                    var offsets = part.Offsets;
+                    for (int i = 0; i < offsets.Count; i++)
+                    {
+                        var q = linear.Transform(new Point(offsets[i].X, -offsets[i].Y));
+                        offsets[i] = new Point(q.X, -q.Y);
+                    }
                 }
                 combined = Matrix.Multiply(glyphMatrix, combined);
             }
         }
 
-        // The run in pieces of one horizontal glyph scale, each drawn scaled across from its own
+        // Each part in pieces of one horizontal glyph scale, each drawn scaled across from its own
         // glyph space: its positions are divided by the scale so they land where they were.
         var pieces = new List<(GlyphRun Glyphs, double Scale)>();
-        for (int i = 0; i < indices.Count;)
+        foreach (var (typeface, indices, offsets, scales) in parts)
         {
-            double scale = scales?[i] ?? 1;
-            int j = scales == null ? indices.Count : i + 1;
-            while (j < indices.Count && scales![j] == scale) j++;
-            var pieceOffsets = offsets.GetRange(i, j - i);
-            if (scale != 1)
-                for (int n = 0; n < pieceOffsets.Count; n++)
-                    pieceOffsets[n] = new Point(pieceOffsets[n].X / scale, pieceOffsets[n].Y);
-            try
+            for (int i = 0; i < indices.Count;)
             {
-                pieces.Add((new GlyphRun(
-                    typeface,
-                    bidiLevel: 0,
-                    isSideways: false,
-                    renderingEmSize: Math.Abs(run.FontSize),
-                    pixelsPerDip: 1.0f,
-                    glyphIndices: indices.GetRange(i, j - i),
-                    baselineOrigin: new Point(0, 0),
-                    advanceWidths: advances.GetRange(i, j - i),
-                    glyphOffsets: pieceOffsets,
-                    characters: null,
-                    deviceFontName: null,
-                    clusterMap: null,
-                    caretStops: null,
-                    language: null), scale));
+                double scale = scales?[i] ?? 1;
+                int j = scales == null ? indices.Count : i + 1;
+                while (j < indices.Count && scales![j] == scale) j++;
+                var pieceOffsets = offsets.GetRange(i, j - i);
+                if (scale != 1)
+                    for (int n = 0; n < pieceOffsets.Count; n++)
+                        pieceOffsets[n] = new Point(pieceOffsets[n].X / scale, pieceOffsets[n].Y);
+                try
+                {
+                    pieces.Add((new GlyphRun(
+                        typeface,
+                        bidiLevel: 0,
+                        isSideways: false,
+                        renderingEmSize: Math.Abs(run.FontSize),
+                        pixelsPerDip: 1.0f,
+                        glyphIndices: indices.GetRange(i, j - i),
+                        baselineOrigin: new Point(0, 0),
+                        advanceWidths: new double[j - i],
+                        glyphOffsets: pieceOffsets,
+                        characters: null,
+                        deviceFontName: null,
+                        clusterMap: null,
+                        caretStops: null,
+                        language: null), scale));
+                }
+                catch (ArgumentException)
+                {
+                    ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType, "Glyph run rejected by the backend");
+                    return;
+                }
+                i = j;
             }
-            catch (ArgumentException)
-            {
-                ReportUnsupported(cmd, pageNumber, backendFallbacks, PdfFallbackReason.UnsupportedFontType, "Glyph run rejected by the backend");
-                return;
-            }
-            i = j;
         }
 
         int mode = run.RenderingMode;
@@ -598,6 +515,202 @@ internal sealed class WpfDisplayListCompiler
             }
             dc.Pop();
         }
+    }
+
+    /// <summary>
+    /// The faces and glyphs a run is drawn with, one part per face (usually one); null when nothing
+    /// is drawn, with the reason in <paramref name="problem"/> when the backend cannot draw it faithfully.
+    /// </summary>
+    internal List<TextPart>? ResolveText(PdfGlyphRun run, out string? problem)
+    {
+        problem = null;
+        var face = run.Face;
+        GlyphTypeface? typeface = face != null ? _fonts.GetEmbedded(face) : null;
+        if (face != null && typeface == null && !face.ProgramData.IsEmpty &&
+            face.Format is PdfFontProgramFormat.TrueType or PdfFontProgramFormat.OpenTypeCff)
+        {
+            // The author's glyphs exist but the platform rejected the program: another font's
+            // shapes would be silently wrong (ADR-006), so classify instead of substituting.
+            problem = "Embedded font program could not be loaded by the Windows backend";
+            return null;
+        }
+        if (face?.Format == PdfFontProgramFormat.Unsupported && typeface == null)
+        {
+            problem = "Embedded font program format is not loadable by the Windows backend";
+            return null;
+        }
+
+        double sign = run.FontSize < 0 ? -1 : 1;
+        double th = run.HorizontalScaling / 100.0;
+
+        if (typeface != null)
+        {
+            if (Math.Abs(th) < 1e-6) return null;
+            // Embedded program: glyphs by index. All positioning is absolute from the run origin:
+            // PDF glyph placement is authored (ADR-006).
+            var indices = new List<ushort>(run.Glyphs.Count);
+            var offsets = new List<Point>(run.Glyphs.Count);
+            foreach (var glyph in run.Glyphs)
+            {
+                indices.Add(glyph.GlyphId < typeface.GlyphCount ? glyph.GlyphId : (ushort)0);
+                offsets.Add(new Point(glyph.OffsetX / th * sign, glyph.OffsetY * sign));
+            }
+            return new List<TextPart> { new(typeface, indices, offsets, null) };
+        }
+
+        string? fontName = run.FontFamilyName ?? run.FontResourceName;
+        typeface = _fonts.GetSubstitute(face, fontName);
+        if (typeface == null)
+        {
+            problem = "No system substitute for font";
+            return null;
+        }
+        if (Math.Abs(th) < 1e-6) return null;
+
+        bool symbolSubstitute = typeface.Win32FamilyNames.TryGetValue(System.Globalization.CultureInfo.GetCultureInfo("en-US"), out var fam) && fam == "Symbol";
+        // Text whose font is not embedded reaches here as characters: Arabic and Indic words are
+        // shaped with the substitute's own tables, as the Direct2D and Skia backends shape them, and
+        // fitted to the width the document gives them.
+        bool shapeWords = sign > 0 && (face == null || face.ProgramData.IsEmpty);
+
+        // Every glyph of the run in one face when one has them all: the substitute, then (as the
+        // Direct2D backend tries them) faces that cover the text's Unicode.
+        var (_, bold, italic) = WpfFontCache.StyleOf(face, fontName);
+        var chain = new List<(GlyphTypeface Face, bool SymbolCodes)> { (typeface, symbolSubstitute) };
+        if (symbolSubstitute) chain.Add((typeface, false));
+        foreach (var family in CharacterComposition.UnicodeFallbackFamilies)
+            if (_fonts.GetFamily(family, bold, italic) is { } extra && !chain.Exists(c => ReferenceEquals(c.Face, extra) && !c.SymbolCodes))
+                chain.Add((extra, false));
+
+        (TextPart Mapped, int Missing, bool SymbolCodes)? best = null;
+        foreach (var (candidate, symbolCodes) in chain)
+        {
+            if (MapPart(candidate, run, symbolCodes, th, sign, shapeWords, allowMissing: false, out _) is { } whole)
+                return whole.Indices.Count == 0 ? null : new List<TextPart> { whole };
+            // Best effort: the face that has the most of the run's glyphs draws it, leaving out the
+            // ones none of them has.
+            var partial = MapPart(candidate, run, symbolCodes, th, sign, shapeWords, allowMissing: true, out int missing);
+            if (partial != null && (best == null || missing < best.Value.Missing))
+                best = (partial, missing, symbolCodes);
+        }
+        if (best is not { } partialBest)
+            return null;
+
+        // No face has every character: the one with most of them draws its own, and each other
+        // character comes from an installed face that has it, by script, each face's words shaped
+        // with its own tables (as the Direct2D backend composes the run).
+        var primary = partialBest.Mapped.Face;
+        bool primaryCodes = partialBest.SymbolCodes;
+        string? language = null;
+        var found = new Dictionary<GlyphTypeface, bool[]>(ReferenceEqualityComparer.Instance) { [primary] = Has(primary, run, primaryCodes) };
+        var owners = CharacterComposition.Owners(run, primary, found[primary], FaceFor);
+        // The words MapPart shapes: each from one face, so no word is cut in two at a face change.
+        if (shapeWords && !primaryCodes)
+            CharacterComposition.KeepWordsWhole(run, owners, primary, (f, k) => (found.TryGetValue(f, out var has) ? has : found[f] = Has(f, run, false))[k], FaceFor);
+        if (ComposeParts(run, owners, primary, primaryCodes, th, sign, shapeWords) is { } composed)
+            return composed;
+        return partialBest.Mapped.Indices.Count == 0 ? null : new List<TextPart> { partialBest.Mapped };
+
+        GlyphTypeface? FaceFor(int k)
+        {
+            language ??= PdfEngine.Vector.Fonts.CharacterFaces.CjkLanguage(face?.CidOrdering, face?.PostScriptName ?? fontName, CharacterComposition.RunText(run));
+            return _fonts.GetCharacterFace(char.ConvertToUtf32(run.Glyphs[k].Unicode!, 0), language, bold, italic);
+        }
+    }
+
+    /// <summary>
+    /// The parts of a run whose glyphs have the faces in <paramref name="owners"/> (by position; null
+    /// for a glyph not drawn): <paramref name="primary"/>'s first, then each other face in the order
+    /// it first appears (<see cref="CharacterComposition.Parts"/>). Null when no glyph has a face
+    /// other than the primary.
+    /// </summary>
+    internal List<TextPart>? ComposeParts(PdfGlyphRun run, GlyphTypeface?[] owners, GlyphTypeface primary, bool symbolCodes,
+        double th, double sign, bool shapeWords)
+    {
+        if (CharacterComposition.Parts(owners, primary) is not { } order)
+            return null;
+        var parts = new List<TextPart>();
+        foreach (var (f, mine) in order)
+            if (MapPart(f, run, ReferenceEquals(f, primary) && symbolCodes, th, sign, shapeWords, allowMissing: true, out _, mine) is { Indices.Count: > 0 } part)
+                parts.Add(part);
+        return parts.Count == 0 ? null : parts;
+    }
+
+    /// <summary>The code point a substitute shows a glyph by: its symbol code in a symbol font read by codes, else its character.</summary>
+    private static int CodePoint(PdfGlyph glyph, bool symbolCodes) =>
+        symbolCodes && glyph.CharCode >= 0 ? 0xF000 + glyph.CharCode : char.ConvertToUtf32(glyph.Unicode!, 0);
+
+    /// <summary>Which glyphs of the run <paramref name="typeface"/> has, by the lookups <see cref="MapPart"/> makes.</summary>
+    private static bool[] Has(GlyphTypeface typeface, PdfGlyphRun run, bool symbolCodes)
+    {
+        var map = typeface.CharacterToGlyphMap;
+        var has = new bool[run.Glyphs.Count];
+        for (int k = 0; k < run.Glyphs.Count; k++)
+            has[k] = !CharacterComposition.IsBlank(run.Glyphs[k].Unicode) && map.ContainsKey(CodePoint(run.Glyphs[k], symbolCodes));
+        return has;
+    }
+
+    /// <summary>
+    /// The run's glyphs in a substitute, found by their characters, or null when one is missing.
+    /// Arabic and Indic words are shaped with the face's own tables when <paramref name="shapeWords"/>
+    /// is set and the face is not read by symbol codes.
+    /// </summary>
+    /// <param name="allowMissing">Leave out glyphs the face lacks (counted in <paramref name="missing"/>) instead of failing.</param>
+    /// <param name="only">When set, only the glyphs flagged here (by position in the run) are mapped.</param>
+    private TextPart? MapPart(GlyphTypeface typeface, PdfGlyphRun run, bool symbolCodes, double th, double sign, bool shapeWords,
+        bool allowMissing, out int missing, bool[]? only = null)
+    {
+        missing = 0;
+        var indices = new List<ushort>(run.Glyphs.Count);
+        var offsets = new List<Point>(run.Glyphs.Count);
+        List<double>? scales = null; // each glyph's horizontal scale; null while all are 1
+        var map = typeface.CharacterToGlyphMap;
+        var words = shapeWords && !symbolCodes ? SubstituteShaper.Words(run, only) : null;
+        var shaping = words is { Count: > 0 } ? _fonts.GetShapingFont(typeface) : null;
+        int nextWord = 0;
+
+        for (int k = 0; k < run.Glyphs.Count; k++)
+        {
+            if (only != null && !only[k])
+                continue;
+            var glyph = run.Glyphs[k];
+            if (shaping != null && nextWord < words!.Count && words[nextWord].Start == k)
+            {
+                var word = words[nextWord++];
+                if (SubstituteShaper.ShapeWord(shaping, run, word, th) is { } shaped)
+                {
+                    foreach (var (gid, offset, scale) in shaped)
+                    {
+                        if (scale != 1 && scales == null)
+                            scales = Enumerable.Repeat(1.0, indices.Count).ToList();
+                        indices.Add(gid);
+                        offsets.Add(new Point(offset.X, offset.Y));
+                        scales?.Add(scale);
+                    }
+                    k = word.End - 1;
+                    continue;
+                }
+            }
+            string? text = glyph.Unicode;
+            if (CharacterComposition.IsBlank(text))
+                continue; // spacing only; position is carried by the next glyph's offset
+            if (!map.TryGetValue(CodePoint(glyph, symbolCodes), out ushort index))
+            {
+                if (char.IsWhiteSpace(text!, 0) || char.IsControl(text!, 0))
+                    continue;
+                // A substitute lacking the glyph would paint .notdef boxes: leave it out, or fail.
+                if (!allowMissing)
+                    return null;
+                missing++;
+                continue;
+            }
+
+            indices.Add(index);
+            scales?.Add(1);
+            // All positioning is absolute from the run origin: PDF glyph placement is authored (ADR-006).
+            offsets.Add(new Point(glyph.OffsetX / th * sign, glyph.OffsetY * sign));
+        }
+        return new TextPart(typeface, indices, offsets, scales);
     }
 
     private static void ReportUnsupported(DrawGlyphRun cmd, int pageNumber, List<PdfFallbackToken> list, PdfFallbackReason reason, string description)
