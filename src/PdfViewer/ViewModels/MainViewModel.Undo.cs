@@ -88,6 +88,7 @@ public partial class MainViewModel
     {
         // A fresh history rather than Clear(): an undo still running holds the old one's lock,
         // and Clear() would wait for it here, on the thread that undo needs to finish.
+        SelectedAnnotation = null;
         CommandHistory = new CommandHistory(MaxUndo, FeatureGate);
         _historyTail = Task.CompletedTask;
         _knownAnnotationStates.Clear();
@@ -214,6 +215,8 @@ public partial class MainViewModel
             var onPage = Pages[c.Model.PageNumber - 1].AnnotationsOnPage;
             onPage.Insert(c.PageIndex < 0 ? onPage.Count : Math.Min(c.PageIndex, onPage.Count), c.Model);
         }
+
+        SyncAnnotationDrawing();
     }
 
     private void RemoveFromPage(AnnotationModel annot)

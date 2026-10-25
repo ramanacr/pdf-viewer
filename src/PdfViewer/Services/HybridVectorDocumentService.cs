@@ -481,6 +481,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             try
             {
                 _vectorDoc = await PdfVectorDocument.OpenAsync(bytes, CurrentFilePath, cancellationToken: ct, password: IsDecryptedCopy ? null : _password).ConfigureAwait(false);
+                _vectorDoc.SetHiddenAnnotations(_hiddenAnnotations); // a new revision keeps the loaded annotations' numbers
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1252,7 +1253,44 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return list;
     }
 
-    public List<AnnotationModel> LoadExistingAnnotations() =>
+    // The loaded annotations (by object number) the pages leave out while the viewer draws them.
+    private IReadOnlyCollection<int> _hiddenAnnotations = Array.Empty<int>();
+
+    public IReadOnlyList<int> HideChangedAnnotations(IEnumerable<AnnotationModel> annotations)
+    {
+        if (NativeDocument is not { } native) return Array.Empty<int>();
+        _hiddenAnnotations = _native.ChangedOrDeleted(annotations);
+        var pages = native.SetHiddenAnnotations(_hiddenAnnotations);
+        if (pages.Count > 0)
+        {
+            lock (_surfaceSync)
+            {
+                foreach (var node in _surfaceLru.Where(n => pages.Contains(n.Key.Page)).ToList())
+                {
+                    _surfaceLru.Remove(node);
+                    _surfaces.Remove(node.Key);
+                }
+            }
+        }
+        return pages;
+    }
+
+    public bool IsDrawnAsLoaded(AnnotationModel annotation) =>
+        NativeDocument != null ? _native.IsAsLoaded(annotation) : annotation.HasOwnAppearance;
+
+    public byte[]? KeptAppearancePreview(AnnotationModel annotation, double turn, bool black) =>
+        NativeDocument is { } native && _native.Origin(annotation.Id) is { } origin
+            ? PdfEngine.Vector.Annotations.PdfStamps.PreviewOfAppearance(native, origin.Page, origin.Index, turn, black)
+            : null;
+
+    public List<AnnotationModel> LoadExistingAnnotations()
+    {
+        _hiddenAnnotations = Array.Empty<int>();
+        NativeDocument?.SetHiddenAnnotations(_hiddenAnnotations);
+        return LoadExisting();
+    }
+
+    private List<AnnotationModel> LoadExisting() =>
         NativeDocument is { } native ? _native.Load(native)
 #if PDFIUM_RENDERER
         : _bytes != null && UsePdfiumPages ? _pdfiumService.LoadExistingAnnotations()
