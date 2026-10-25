@@ -515,8 +515,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
             // History belongs to a document, not to the window.
             ClearNavigationHistory();
 
-            // Clear collections
+            // Clear collections; a selection on the old pages ends with them.
             _cache.Clear();
+            ClearSelection();
             Pages.Clear();
             Thumbnails.Clear();
             Bookmarks.Clear();
@@ -1473,8 +1474,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         if (HasTextSelection)
         {
-            StatusText = $"{SelectedText.Length} character(s) selected (Ctrl+C to copy)";
+            // Keep the status the selection covers, to show it again when the selection goes.
+            if (_selectionStatus == null || StatusText != _selectionStatus) _statusBeforeSelection = StatusText;
+            _selectionStatus = $"{SelectedText.Length} character(s) selected (Ctrl+C to copy)";
+            StatusText = _selectionStatus;
         }
+    }
+
+    // The selection count the status bar shows, and the status it replaced.
+    private string? _selectionStatus;
+    private string? _statusBeforeSelection;
+
+    // Every way a selection ends (a click, Esc, a new document, a tool) sets this to false:
+    // the count must not stay in the status bar. A status written since then stays.
+    partial void OnHasTextSelectionChanged(bool value)
+    {
+        if (value || _selectionStatus == null) return;
+        if (StatusText == _selectionStatus) StatusText = _statusBeforeSelection ?? "Ready";
+        _selectionStatus = null;
+        _statusBeforeSelection = null;
     }
 
     [RelayCommand]
@@ -1656,6 +1674,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _searchCts = new CancellationTokenSource();
         var ct = _searchCts.Token;
 
+        // A new search is a new action: it ends the text selection.
+        if (HasTextSelection) ClearSelection();
         IsSearching = true;
         SearchSummaryText = "Searching document...";
         SearchMatches.Clear();

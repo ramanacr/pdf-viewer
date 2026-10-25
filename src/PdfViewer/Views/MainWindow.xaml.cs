@@ -939,7 +939,33 @@ public partial class MainWindow : Window
             DocumentScrollViewer.Cursor = Cursors.SizeAll;
             DocumentScrollViewer.CaptureMouse();
             e.Handled = true;
+            return;
         }
+
+        // A click on the grey space around the pages ends the text selection, as a click on
+        // an empty part of a page does. A click on a scroll bar does not.
+        if (e.ChangedButton == MouseButton.Left && _vm.HasTextSelection && IsOffPage(e.OriginalSource as DependencyObject))
+        {
+            _vm.ClearSelection();
+        }
+    }
+
+    /// <summary>
+    /// True when the element is in the document viewport but on no page and on no scroll bar.
+    /// The page area holds the pages (continuous) or the page (single): whatever is inside one
+    /// of its children is on a page; the space around them hits nothing in it.
+    /// </summary>
+    private bool IsOffPage(DependencyObject? element)
+    {
+        if (element == null) return false;
+        for (var node = element; node != null && !ReferenceEquals(node, DocumentScrollViewer);)
+        {
+            if (node is System.Windows.Controls.Primitives.ScrollBar) return false;
+            var parent = node is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+            if (ReferenceEquals(parent, PageArea)) return false;
+            node = parent;
+        }
+        return true;
     }
 
     private void DocumentScrollViewer_PreviewMouseMove(object sender, MouseEventArgs e)
