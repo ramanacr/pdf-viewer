@@ -1,3 +1,6 @@
+using PdfEngine.Vector.Diagnostics;
+using PdfEngine.Vector.Limits;
+
 namespace PdfEngine.Vector.Skia;
 
 /// <summary>
@@ -11,11 +14,25 @@ namespace PdfEngine.Vector.Skia;
 /// Samples come back as stored, as libjpeg returns them (no Adobe inversion is undone here). YCCK
 /// (Adobe transform 2) is converted to CMYK as libjpeg does it (C = 255 − R of the YCbCr triple, K
 /// as stored). Subsampled components are enlarged by replication.
+/// <para>
+/// Every table selector and size read from the data is range-checked, and the image size is held
+/// to <see cref="PdfSecurityLimits.MaxImagePixels"/> and the page budget before anything is
+/// allocated, so hostile data fails with <see cref="InvalidDataException"/>,
+/// <see cref="NotSupportedException"/> or <see cref="PdfResourceLimitException"/> only.
+/// </para>
 /// </remarks>
 internal static class JpegComponentDecoder
 {
-    /// <summary>Largest image decoded (pixels), so hostile data cannot ask for unbounded memory.</summary>
-    private const long MaxPixels = 100_000_000;
+    /// <summary>
+    /// Most 8 x 8 blocks allowed per byte of data after the frame header. A real scan spends at
+    /// least one bit on each block (its DC difference), so eight blocks a byte is the most real data
+    /// holds; 64 still decodes data cut to an eighth of that, and stops a few hundred bytes that
+    /// claim a huge frame from allocating gigabytes.
+    /// </summary>
+    private const long MaxBlocksPerByte = 64;
+
+    /// <summary>Blocks always allowed, whatever the data length (small images).</summary>
+    private const long MinBlockAllowance = 4096;
 
     private static readonly int[] ZigZag =
     {
@@ -147,10 +164,17 @@ internal static class JpegComponentDecoder
     /// Decodes <paramref name="data"/> to interleaved 8-bit samples, <paramref name="components"/>
     /// per pixel, row by row.
     /// </summary>
+    /// <param name="limits">Image size limits; null uses <see cref="PdfSecurityLimits.Default"/>.</param>
+    /// <param name="pagePixels">Pixels of the images already decoded for the page, held to <see cref="PdfSecurityLimits.MaxImagePixelsPerPage"/>.</param>
+    /// <param name="cancellationToken">Polled per MCU row and per block row.</param>
     /// <exception cref="InvalidDataException">The data is not a JPEG this decoder reads.</exception>
     /// <exception cref="NotSupportedException">Arithmetic coding, lossless or hierarchical frames, or a precision other than 8 bits.</exception>
-    public static byte[] Decode(ReadOnlySpan<byte> data, out int width, out int height, out int components)
+    /// <exception cref="PdfResourceLimitException">The frame is over the pixel limits, or far larger than its data can hold.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public static byte[] Decode(ReadOnlySpan<byte> data, out int width, out int height, out int components,
+        PdfSecurityLimits? limits = null, long pagePixels = 0, CancellationToken cancellationToken = default)
     {
+        limits ??= PdfSecurityLimits.Default;
         if (data.Length < 4 || data[0] != 0xFF || data[1] != 0xD8)
             throw new InvalidDataException("Not a JPEG.");
         var quant = new int[4][];
@@ -190,7 +214,7 @@ internal static class JpegComponentDecoder
                     {
                         int pq = seg[i] >> 4, tq = seg[i] & 15;
                         i++;
-                        if (tq > 3) throw new InvalidDataException("Bad quantization table.");
+                        if (pq > 1 || tq > 3) throw new InvalidDataException("Bad quantization table.");
                         var table = new int[64];
                         for (int k = 0; k < 64; k++)
                         {
@@ -210,7 +234,7 @@ internal static class JpegComponentDecoder
                         var counts = seg.Slice(i + 1, 16);
                         int total = 0;
                         foreach (byte c in counts) total += c;
-                        if (th > 3 || i + 17 + total > seg.Length) throw new InvalidDataException("Bad Huffman table.");
+                        if (tc > 1 || th > 3 || i + 17 + total > seg.Length) throw new InvalidDataException("Bad Huffman table.");
                         var table = Huffman.Build(counts, seg.Slice(i + 17, total));
                         if (tc == 0) dcTables[th] = table; else acTables[th] = table;
                         i += 17 + total;
@@ -232,7 +256,11 @@ internal static class JpegComponentDecoder
                     width = seg[3] << 8 | seg[4];
                     components = seg[5];
                     if (width == 0 || height == 0) throw new NotSupportedException("JPEG height set by a DNL marker.");
-                    if ((long)width * height > MaxPixels) throw new InvalidDataException("JPEG image too large.");
+                    long pixels = (long)width * height;
+                    if (pixels > limits.MaxImagePixels)
+                        throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG frame exceeds the pixel limit.");
+                    if (pagePixels + pixels > limits.MaxImagePixelsPerPage)
+                        throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixelsPerPage), "JPEG frame exceeds the page's image pixel budget.");
                     if (components is not (1 or 3 or 4) || seg.Length < 6 + 3 * components) throw new InvalidDataException("Bad JPEG frame.");
                     frame = new Component[components];
                     for (int c = 0; c < components; c++)
@@ -246,6 +274,11 @@ internal static class JpegComponentDecoder
                     }
                     mcusPerLine = (width + 8 * maxH - 1) / (8 * maxH);
                     mcusPerColumn = (height + 8 * maxV - 1) / (8 * maxV);
+                    long blocks = 0;
+                    foreach (var c in frame) blocks += (long)mcusPerLine * c.H * mcusPerColumn * c.V;
+                    // Before any allocation: data far too short for the frame it claims is refused.
+                    if (blocks > MinBlockAllowance + MaxBlocksPerByte * (data.Length - pos))
+                        throw new PdfResourceLimitException(nameof(PdfSecurityLimits.MaxImagePixels), "JPEG frame is far larger than its data.");
                     foreach (var c in frame)
                     {
                         c.BlocksPerLine = ((width * c.H + maxH - 1) / maxH + 7) / 8;
@@ -268,6 +301,8 @@ internal static class JpegComponentDecoder
                     {
                         int id = seg[1 + 2 * s], tables = seg[2 + 2 * s];
                         var c = Array.Find(frame, x => x.Id == id) ?? throw new InvalidDataException("JPEG scan names an unknown component.");
+                        if (tables >> 4 > 3 || (tables & 15) > 3)
+                            throw new InvalidDataException("JPEG scan selects a Huffman table that does not exist.");
                         c.Dc = dcTables[tables >> 4];
                         c.Ac = acTables[tables & 15];
                         scan[s] = c;
@@ -275,7 +310,8 @@ internal static class JpegComponentDecoder
                     int ss = seg[1 + 2 * n], se = seg[2 + 2 * n], ah = seg[3 + 2 * n] >> 4, al = seg[3 + 2 * n] & 15;
                     if (!progressive) { ss = 0; se = 63; ah = al = 0; }
                     if (ss > se || se > 63) throw new InvalidDataException("Bad JPEG spectral selection.");
-                    int end = DecodeScan(data, pos + length, scan, progressive, ss, se, ah, al, restartInterval, mcusPerLine, mcusPerColumn);
+                    int end = DecodeScan(data, pos + length, scan, progressive, ss, se, ah, al, restartInterval, mcusPerLine, mcusPerColumn,
+                        cancellationToken);
                     scanned = true;
                     pos = end;
                     continue;
@@ -285,23 +321,30 @@ internal static class JpegComponentDecoder
         }
 
         if (frame == null || !scanned) throw new InvalidDataException("JPEG without image data.");
-        return Output(frame, width, height, maxH, maxV, quant, adobeTransform);
+        return Output(frame, width, height, maxH, maxV, quant, adobeTransform, cancellationToken);
     }
 
     /// <summary>Decodes one scan's entropy-coded data; returns the position of the marker after it.</summary>
+    /// <remarks>
+    /// Data that ends before the scan's last MCU (a marker or the end of the data) is not an error,
+    /// on purpose: the bits read past it are zeros and the blocks left keep the coefficients they
+    /// have, as libjpeg decodes a truncated scan. A missing restart marker ends the scan the same way.
+    /// </remarks>
     private static int DecodeScan(ReadOnlySpan<byte> data, int start, Component[] scan, bool progressive, int ss, int se, int ah, int al,
-        int restartInterval, int mcusPerLine, int mcusPerColumn)
+        int restartInterval, int mcusPerLine, int mcusPerColumn, CancellationToken ct)
     {
         var reader = new BitReader(data, start);
         foreach (var c in scan) c.Pred = 0;
         int eobrun = 0, acState = 0, acNext = 0, acRun = 0;
         int mcus = scan.Length == 1 ? scan[0].BlocksPerLine * scan[0].BlocksPerColumn : mcusPerLine * mcusPerColumn;
         int interval = restartInterval > 0 ? restartInterval : mcus;
+        int mcusPerRow = scan.Length == 1 ? scan[0].BlocksPerLine : mcusPerLine;
 
         for (int mcu = 0; mcu < mcus;)
         {
             for (int i = 0; i < interval && mcu < mcus; i++, mcu++)
             {
+                if (mcu % mcusPerRow == 0) ct.ThrowIfCancellationRequested();
                 if (scan.Length == 1)
                 {
                     var c = scan[0];
@@ -333,13 +376,13 @@ internal static class JpegComponentDecoder
             var coef = c.Coefficients.AsSpan(offset, 64);
             if (!progressive)
             {
-                int t = r.Decode(c.Dc ?? throw new InvalidDataException("JPEG scan without a DC table."));
+                int t = DcCategory(r.Decode(c.Dc ?? throw new InvalidDataException("JPEG scan without a DC table.")));
                 c.Pred += r.ReceiveExtend(t);
                 coef[0] = (short)c.Pred;
                 var ac = c.Ac ?? throw new InvalidDataException("JPEG scan without an AC table.");
                 for (int k = 1; k < 64;)
                 {
-                    int rs = r.Decode(ac), s = rs & 15, run = rs >> 4;
+                    int rs = r.Decode(ac), s = AcSize(rs), run = rs >> 4;
                     if (s == 0)
                     {
                         if (run < 15) break;
@@ -359,7 +402,7 @@ internal static class JpegComponentDecoder
                 // DC scans of a progressive frame.
                 if (ah == 0)
                 {
-                    int t = r.Decode(c.Dc ?? throw new InvalidDataException("JPEG scan without a DC table."));
+                    int t = DcCategory(r.Decode(c.Dc ?? throw new InvalidDataException("JPEG scan without a DC table.")));
                     c.Pred += r.ReceiveExtend(t) * (1 << al);
                     coef[0] = (short)c.Pred;
                 }
@@ -377,7 +420,7 @@ internal static class JpegComponentDecoder
                 if (eobrun > 0) { eobrun--; return; }
                 for (int k = ss; k <= se;)
                 {
-                    int rs = r.Decode(table), s = rs & 15, run = rs >> 4;
+                    int rs = r.Decode(table), s = AcSize(rs), run = rs >> 4;
                     if (s == 0)
                     {
                         if (run < 15)
@@ -460,6 +503,12 @@ internal static class JpegComponentDecoder
         }
     }
 
+    /// <summary>A DC difference category (T.81 F.1.2.1: 0 to 11 for 8-bit samples).</summary>
+    private static int DcCategory(int t) => t <= 11 ? t : throw new InvalidDataException("JPEG DC difference category out of range.");
+
+    /// <summary>The size of an AC run/size symbol (T.81 F.1.2.2: 0 to 10 for 8-bit samples).</summary>
+    private static int AcSize(int rs) => (rs & 15) <= 10 ? rs & 15 : throw new InvalidDataException("JPEG AC coefficient size out of range.");
+
     /// <summary>The next marker (0xFF and a byte other than 0x00 or 0xFF) at or after <paramref name="pos"/>.</summary>
     private static int FindMarker(ReadOnlySpan<byte> data, int pos)
     {
@@ -470,7 +519,8 @@ internal static class JpegComponentDecoder
     }
 
     /// <summary>Dequantizes, transforms and interleaves the components; applies the colour transform.</summary>
-    private static byte[] Output(Component[] frame, int width, int height, int maxH, int maxV, int[][] quant, int adobeTransform)
+    private static byte[] Output(Component[] frame, int width, int height, int maxH, int maxV, int[][] quant, int adobeTransform,
+        CancellationToken ct)
     {
         int n = frame.Length;
         var planes = new byte[n][];
@@ -482,6 +532,8 @@ internal static class JpegComponentDecoder
             int w = comp.Stride * 8;
             var plane = planes[c] = new byte[checked(w * comp.Rows * 8)];
             for (int by = 0; by < comp.Rows; by++)
+            {
+                ct.ThrowIfCancellationRequested();
                 for (int bx = 0; bx < comp.Stride; bx++)
                 {
                     var coef = comp.Coefficients.AsSpan(64 * (by * comp.Stride + bx), 64);
@@ -491,17 +543,23 @@ internal static class JpegComponentDecoder
                         for (int x = 0; x < 8; x++)
                             plane[(by * 8 + y) * w + bx * 8 + x] = Clamp(block[y * 8 + x] + 128f);
                 }
+            }
         }
 
-        // No Adobe marker: three components are YCbCr (JFIF), four are CMYK as stored.
-        bool transform = adobeTransform switch
+        // The Adobe APP14 transform as libjpeg reads it (jdapimin.c, default_decompress_parms):
+        // three components are YCbCr unless the transform is 0 (RGB), so also without a marker
+        // (JFIF); four components are CMYK as stored without a marker or for transform 0, and YCCK
+        // for 2 and for any other value ("assume it's YCCK"). WIC reads transform 1 as YCCK too.
+        bool transform = n switch
         {
-            -1 => n == 3,
-            0 => false,
-            _ => n >= 3,
+            3 => adobeTransform != 0,
+            4 => adobeTransform > 0,
+            _ => false,
         };
         var output = new byte[checked(width * height * n)];
         for (int y = 0; y < height; y++)
+        {
+            if ((y & 63) == 0) ct.ThrowIfCancellationRequested();
             for (int x = 0; x < width; x++)
             {
                 int o = (y * width + x) * n;
@@ -528,6 +586,7 @@ internal static class JpegComponentDecoder
                     output[o + 2] = b;
                 }
             }
+        }
         return output;
     }
 

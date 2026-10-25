@@ -134,7 +134,9 @@ optionally `SKIA_PARITY_PAGES` (at most 200) and `SKIA_PARITY_OUT` (summary file
    colours match (`CmykJpegTests`). Its inverse DCT is plain floating point, and subsampled
    components are enlarged by replication (libjpeg smooths them). Arithmetic coding and 12-bit
    data are still classified as `ImageDecode` fallback. AC refinement scans of progressive files
-   are implemented, but no test writes one.
+   are implemented, but no test writes one. Hostile data is held to the engine's
+   `PdfSecurityLimits.MaxImagePixels` and `MaxImagePixelsPerPage` (passed to `SkiaVectorRenderer`)
+   and fails as an `ImageDecode` or `ResourceLimit` fallback for that image only.
 2. **Text weight.** Direct2D draws thin features with more ink than Skia: 26 % more on the
    body-text fixture at 96 dpi, and hairlines are heavier too. Large shapes match. Small text
    therefore differs by a level or two along stems (mean 2.05 at 96 dpi, 0.84 at 150 dpi).

@@ -174,13 +174,17 @@ internal sealed class SkiaResources : IDisposable
     private readonly Dictionary<string, LinkedListNode<(string Key, SKImage Image, long Bytes)>> _imageIndex = new(StringComparer.Ordinal);
     private long _imageBytes;
 
-    public SkiaResources(long imageCacheBytes, SkiaFontSource fonts)
+    public SkiaResources(long imageCacheBytes, SkiaFontSource fonts, PdfEngine.Vector.Limits.PdfSecurityLimits? limits = null)
     {
         _imageBudget = Math.Max(0, imageCacheBytes);
         Fonts = fonts;
+        Limits = limits ?? PdfEngine.Vector.Limits.PdfSecurityLimits.Default;
     }
 
     public SkiaFontSource Fonts { get; }
+
+    /// <summary>Image size limits for the JPEG data the backend decodes itself.</summary>
+    public PdfEngine.Vector.Limits.PdfSecurityLimits Limits { get; }
 
     public long CachedImageBytes
     {

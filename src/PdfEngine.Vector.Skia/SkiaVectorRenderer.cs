@@ -48,9 +48,14 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
     /// Where substitutes for non-embedded fonts come from; null uses <see cref="SkiaFontSource"/>
     /// (the installed fonts). A host without installed fonts (WebAssembly) passes its own.
     /// </param>
-    public SkiaVectorRenderer(long imageCacheBytes = 256L * 1024 * 1024, SkiaFontSource? fonts = null)
+    /// <param name="limits">
+    /// Image limits for the JPEG data the backend decodes itself (<see cref="PdfEngine.Vector.Limits.PdfSecurityLimits.MaxImagePixels"/>
+    /// and <see cref="PdfEngine.Vector.Limits.PdfSecurityLimits.MaxImagePixelsPerPage"/>); null uses the defaults.
+    /// </param>
+    public SkiaVectorRenderer(long imageCacheBytes = 256L * 1024 * 1024, SkiaFontSource? fonts = null,
+        PdfEngine.Vector.Limits.PdfSecurityLimits? limits = null)
     {
-        _res = new SkiaResources(imageCacheBytes, fonts ?? new SkiaFontSource());
+        _res = new SkiaResources(imageCacheBytes, fonts ?? new SkiaFontSource(), limits);
     }
 
     /// <summary>

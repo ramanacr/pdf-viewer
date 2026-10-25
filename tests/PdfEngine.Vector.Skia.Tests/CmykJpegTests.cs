@@ -1,4 +1,7 @@
+using PdfEngine.Rendering;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Direct2D;
+using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Skia.Tests.Fixtures;
 using PdfEngine.Vector.Tests.Fixtures;
 using SkiaSharp;
@@ -140,6 +143,7 @@ public class CmykJpegTests
     [Theory]
     [InlineData(false, 0)]
     [InlineData(true, 0)]
+    [InlineData(false, 1)]
     [InlineData(false, 2)]
     [InlineData(false, -1)]
     public void Decoder_AgreesWithWic(bool progressive, int transform)
@@ -209,5 +213,162 @@ public class CmykJpegTests
         var px = pair.Skia.Pixels.Span;
         int at = (30 * pair.Skia.Stride) + 25 * 4;
         Assert.True(px[at + 2] > 200 && px[at + 1] > 200 && px[at] < 150, $"BGR {px[at]} {px[at + 1]} {px[at + 2]}");
+    }
+
+    // ------------------------------------------------------------------ hostile data
+
+    private const string CmykImageDict = "/Width 64 /Height 48 /ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /DCTDecode";
+
+    /// <summary>A flat CMYK JPEG: every block is DC difference 0 (category 0) and an end of block.</summary>
+    private static byte[] FlatCmykJpeg() =>
+        JpegTestEncoder.Encode(Enumerable.Repeat((byte)128, 64 * 48 * 4).ToArray(), 64, 48, 4, new() { AdobeTransform = 0 });
+
+    /// <summary>The position of the first <c>FF marker</c> pair whose segment starts with <paramref name="firstByte"/> (any when negative).</summary>
+    private static int MarkerAt(byte[] jpeg, int marker, int firstByte = -1)
+    {
+        for (int i = 2; i + 4 < jpeg.Length; i++)
+            if (jpeg[i] == 0xFF && jpeg[i + 1] == marker && (firstByte < 0 || jpeg[i + 4] == firstByte))
+                return i;
+        throw new InvalidOperationException($"No marker {marker:X2}.");
+    }
+
+    /// <summary>The flat JPEG with one header value out of range.</summary>
+    private static byte[] Hostile(string damage)
+    {
+        var jpeg = FlatCmykJpeg();
+        int sos = MarkerAt(jpeg, 0xDA);
+        switch (damage)
+        {
+            case "dc-selector": jpeg[sos + 6] = 0x40; break; // first component: DC table 4
+            case "ac-selector": jpeg[sos + 6] = 0x04; break; // AC table 4
+            case "ac-selector-15": jpeg[sos + 6] = 0x0F; break;
+            case "dqt-precision": jpeg[MarkerAt(jpeg, 0xDB) + 4] = 0x20; break; // Pq 2
+            case "dht-class": jpeg[MarkerAt(jpeg, 0xC4, 0x00) + 4] = 0x20; break; // Tc 2
+            case "dc-category":
+                // The symbol of the DC table's first code (category 0, which every block uses) becomes 12.
+                jpeg[MarkerAt(jpeg, 0xC4, 0x00) + 5 + 16] = 12;
+                break;
+            case "ac-size":
+            {
+                // The end-of-block symbol (0x00) of the AC table becomes run 0, size 11.
+                int values = MarkerAt(jpeg, 0xC4, 0x10) + 5 + 16;
+                jpeg[Array.IndexOf(jpeg, (byte)0x00, values)] = 0x0B;
+                break;
+            }
+            default: throw new ArgumentOutOfRangeException(nameof(damage));
+        }
+        return jpeg;
+    }
+
+    /// <summary>Renders page 1 with the Skia backend alone; returns the regions it classified.</summary>
+    private static async Task<IReadOnlyList<PdfFallbackToken>> RenderSkia(byte[] pdf)
+    {
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        var result = await Parity.Skia.RenderAsync(list, new RenderRequest { PageNumber = 1, Dpi = 72 }, null, null, false, CancellationToken.None);
+        using var page = result.Page;
+        // The page around the image is drawn: the light yellow background at its bottom-left corner.
+        var px = page.Pixels.Span;
+        int at = (page.HeightPixels - 5) * page.Stride + 5 * 4;
+        Assert.True(px[at + 2] > 200 && px[at + 1] > 200 && px[at] < 200, $"BGR {px[at]} {px[at + 1]} {px[at + 2]}");
+        return result.Fallbacks.Skip(list.FallbackTokens.Count).ToList();
+    }
+
+    [Theory]
+    [InlineData("dc-selector", "Huffman table that does not exist")]
+    [InlineData("ac-selector", "Huffman table that does not exist")]
+    [InlineData("ac-selector-15", "Huffman table that does not exist")]
+    [InlineData("dqt-precision", "Bad quantization table")]
+    [InlineData("dht-class", "Bad Huffman table")]
+    [InlineData("dc-category", "DC difference category")]
+    [InlineData("ac-size", "AC coefficient size")]
+    public async Task Hostile_OutOfRangeHeaderValue_SkipsTheImageNotThePage(string damage, string reason)
+    {
+        var jpeg = Hostile(damage);
+        var ex = Assert.Throws<InvalidDataException>(() => JpegComponentDecoder.Decode(jpeg, out _, out _, out _));
+        Assert.Contains(reason, ex.Message);
+        var fallbacks = await RenderSkia(ImagePage(CmykImageDict, jpeg));
+        Assert.Contains(fallbacks, f => f.Reason == PdfFallbackReason.ImageDecode);
+    }
+
+    [Fact]
+    public void Hostile_UndamagedFlatImage_Decodes()
+    {
+        // The checks refuse only values out of range: the flat image itself decodes.
+        var decoded = JpegComponentDecoder.Decode(FlatCmykJpeg(), out int w, out int h, out _);
+        Assert.Equal((64, 48), (w, h));
+        Assert.All(decoded, b => Assert.InRange(b, (byte)126, (byte)130));
+    }
+
+    /// <summary>
+    /// A 65535 × 1525 four-component frame (just under the 100-megapixel limit, 1.6 GB to decode)
+    /// with a few hundred bytes of scan data.
+    /// </summary>
+    private static byte[] HugeFrameTinyBody()
+    {
+        var jpeg = new List<byte> { 0xFF, 0xD8, 0xFF, 0xC0, 0x00, 20, 8, 1525 >> 8, 1525 & 0xFF, 0xFF, 0xFF, 4 };
+        for (int c = 1; c <= 4; c++) jpeg.AddRange(new byte[] { (byte)c, 0x11, 0 });
+        jpeg.AddRange(new byte[] { 0xFF, 0xDA, 0x00, 14, 4, 1, 0x00, 2, 0x00, 3, 0x00, 4, 0x00, 0, 63, 0 });
+        jpeg.AddRange(new byte[300]);
+        jpeg.AddRange(new byte[] { 0xFF, 0xD9 });
+        return jpeg.ToArray();
+    }
+
+    [Fact]
+    public void Hostile_HugeFrameWithTinyBody_IsRefusedBeforeAllocating()
+    {
+        var jpeg = HugeFrameTinyBody();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var ex = Assert.Throws<PdfResourceLimitException>(() => JpegComponentDecoder.Decode(jpeg, out _, out _, out _));
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Equal(nameof(PdfEngine.Vector.Limits.PdfSecurityLimits.MaxImagePixels), ex.LimitName);
+        Assert.True(allocated < 1024 * 1024, $"{allocated} bytes allocated");
+    }
+
+    [Fact]
+    public async Task Hostile_HugeFrameWithTinyBody_FallsBackAsResourceLimit()
+    {
+        var fallbacks = await RenderSkia(ImagePage(CmykImageDict, HugeFrameTinyBody()));
+        Assert.Contains(fallbacks, f => f.Reason == PdfFallbackReason.ResourceLimit);
+    }
+
+    [Fact]
+    public void Limits_PixelLimitAndPageBudget_AreTheEngines()
+    {
+        var jpeg = JpegTestEncoder.Encode(Cmyk(64, 48), 64, 48, 4, new() { AdobeTransform = 0 });
+        var small = new PdfEngine.Vector.Limits.PdfSecurityLimits { MaxImagePixels = 64 * 48 - 1 };
+        var single = Assert.Throws<PdfResourceLimitException>(() => JpegComponentDecoder.Decode(jpeg, out _, out _, out _, small));
+        Assert.Equal(nameof(PdfEngine.Vector.Limits.PdfSecurityLimits.MaxImagePixels), single.LimitName);
+        long nearlySpent = PdfEngine.Vector.Limits.PdfSecurityLimits.Default.MaxImagePixelsPerPage - 100;
+        var page = Assert.Throws<PdfResourceLimitException>(() => JpegComponentDecoder.Decode(jpeg, out _, out _, out _, null, nearlySpent));
+        Assert.Equal(nameof(PdfEngine.Vector.Limits.PdfSecurityLimits.MaxImagePixelsPerPage), page.LimitName);
+    }
+
+    [Fact]
+    public void Decoder_Cancelled_ThrowsOperationCanceled()
+    {
+        var jpeg = JpegTestEncoder.Encode(Cmyk(64, 48), 64, 48, 4, new() { AdobeTransform = 0, Progressive = true });
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => JpegComponentDecoder.Decode(jpeg, out _, out _, out _, cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public void Decoder_FourComponents_TransformZeroIsCmykOtherValuesAreYcck()
+    {
+        var stored = Cmyk(48, 32);
+        var ycck = ToYcck(stored);
+        var asCmyk = JpegComponentDecoder.Decode(JpegTestEncoder.Encode(ycck, 48, 32, 4, new() { AdobeTransform = 0 }), out _, out _, out _);
+        var none = JpegComponentDecoder.Decode(JpegTestEncoder.Encode(ycck, 48, 32, 4), out _, out _, out _);
+        var asYcck = JpegComponentDecoder.Decode(JpegTestEncoder.Encode(ycck, 48, 32, 4, new() { AdobeTransform = 2 }), out _, out _, out _);
+        var other = JpegComponentDecoder.Decode(JpegTestEncoder.Encode(ycck, 48, 32, 4, new() { AdobeTransform = 1 }), out _, out _, out _);
+        // Transform 0 or no marker: the samples as stored (here the YCCK values themselves).
+        Assert.True(MeanDifference(ycck, asCmyk) < 2.5, $"mean {MeanDifference(ycck, asCmyk):F2}");
+        Assert.Equal(asCmyk, none);
+        // Transform 2: converted back to the CMYK the YCCK was made from; any other value is read
+        // as YCCK too, as libjpeg and WIC read it (Decoder_AgreesWithWic checks WIC for transform 1).
+        Assert.True(MeanDifference(stored, asYcck) < 3, $"mean {MeanDifference(stored, asYcck):F2}");
+        Assert.True(MeanDifference(asCmyk, asYcck) > 10);
+        Assert.Equal(asYcck, other);
     }
 }
