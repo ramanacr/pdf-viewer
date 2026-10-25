@@ -200,7 +200,7 @@ Every method returns a Promise.
 
 | Method | Result |
 | --- | --- |
-| `getPDFMetadata()` | `{ numPages, pdfTitle, author, subject, keywords, creator, producer, creationDate, modDate, pdfVersion, isEncrypted, isTagged, canCopy, canPrint, wasRepaired, fileSize, fileName, id }`. Dates are `"YYYY-MM-DDTHH:mm:ss"` as written in the file, or `null`. |
+| `getPDFMetadata()` | `{ numPages, pdfTitle, author, subject, keywords, creator, producer, creationDate, modDate, pdfVersion, isEncrypted, isTagged, canCopy, canPrint, wasRepaired, isSigned, certificationLevel, fileSize, fileName, id }`. Dates are `"YYYY-MM-DDTHH:mm:ss"` as written in the file, or `null`. `isSigned` is `true` when the file has a signed signature field or a certification signature; `certificationLevel` is the certification signature's DocMDP level (1, 2 or 3), or `null`. See [signed and certified files](#signed-and-certified-files). |
 | `getCurrentPage()` | The page number. |
 | `gotoLocation(pageNumber, x, y)` | Scrolls the point (x, y) of the page to the top-left of the view. **x and y are PDF points from the top-left corner of the page as shown** (Adobe's are from the bottom-left). Both default to 0. |
 | `getSelectedContent()` | `{ type: 'text', data }`: the selected text, `''` when none. Rejects with `NOT_ALLOWED` when the document forbids copying (see [Copy protection](#copy-protection)). |
@@ -272,13 +272,14 @@ method returns a Promise.
 | `deleteAnnotations(filter)` | Deletes the annotations of the filter (`{}` deletes all); resolves with the deleted ones. |
 | `setConfig(config)` | `{ showToolbar, showCommentsPanel, downloadWithAnnotations, printWithAnnotations, authorName }`, each optional. `authorName` is the author of the reader's new annotations (default `Guest`). |
 | `exportXfdf()` | The annotations as an XFDF document (ISO 19444-1), a string. |
-| `importXfdf(xml)` | Adds the annotations of an XFDF document (the supported types; others are skipped); resolves with them. |
+| `importXfdf(xml)` | Adds the annotations of an XFDF document (the supported types; others are skipped); resolves with them. Long texts are cut to the limits below; an annotation with more than 1000 quadrilaterals is skipped, and the viewer's status line counts the skipped ones. |
 | `registerEventListener(handler, { listenOn })` | See [annotation events](#annotation-events). |
 
 A filter is `{ annotationIds: ['id1', …], pageRange: { startPage, endPage } }` (pages from 1),
 each part optional. Changes reject with `NOT_ALLOWED` when the file was opened with
-`hasReadOnlyAccess` or the document forbids annotations, and with `INVALID_ARGUMENT` (and a
-message that says what) for an annotation that is not valid.
+`hasReadOnlyAccess` or the document forbids annotations (its permissions, or a
+[signature](#signed-and-certified-files)), and with `INVALID_ARGUMENT` (and a message that
+says what) for an annotation that is not valid.
 
 ### Annotation JSON
 
@@ -321,7 +322,17 @@ upper-left, upper-right, lower-left, lower-right. For markup, `boundingBox` can 
 Every value is checked: types, string lengths, colours (`#RRGGBB`), finite numbers, and the
 geometry: on a page of the document and inside its media box (2 points of tolerance plus the
 line width). Limits: 1000 annotations per call, 10 000 per document, 1000 quadrilaterals per
-markup, 100 strokes and 10 000 points per stroke (50 000 points) per ink annotation.
+markup, 100 strokes and 10 000 points per stroke (50 000 points) per ink annotation, and
+**1 000 000 ink and quadrilateral points per document** (a quadrilateral has 4), counted when
+annotations are added and when an update makes one larger: past it, `INVALID_ARGUMENT`. Texts:
+`bodyValue` 10 000 characters, `creator.name` 256.
+
+XFDF (`importXfdf`) is read as a stream: no DTD, no external entities, at most 8 MB of text,
+**100 000 elements** and 64 attributes per element (past them, `INVALID_ARGUMENT`); unknown
+elements are skipped without being built. Its texts are cut to the same limits as the
+annotation JSON (title, subject and name 256 characters, contents 10 000), so one long field
+does not refuse the whole import. A dash pattern must have 1 to 16 numbers, none negative and
+not all zero, else it is `[3]`.
 
 The file's annotations of these types are managed with `includePDFAnnotations` (not replies,
 hidden ones or other types: links, stamps, form fields and the like stay as they are). Their
@@ -369,8 +380,17 @@ focus (the reader goes back to your page) with changes not saved.
   and their signatures stay as they were). It is transferred to your page, not copied.
 - `options` is `{ reason }`: `button`, `shortcut`, `autosave` or `focus`.
 - Resolve with `{ code: 'SUCCESS' }` and the viewer shows "Saved" and counts the document as
-  saved; anything else (`FAIL`, a throw, a rejection) shows "The file was not saved." and keeps
-  the changes as unsaved. `data.metaData.fileName` renames the file in the viewer.
+  saved (the version it posted: changes made while your callback ran stay unsaved); anything
+  else (`FAIL`, a throw, a rejection) shows "The file was not saved." and keeps the changes as
+  unsaved. `data.metaData.fileName` renames the file in the viewer.
+- One save runs at a time. The button, `Ctrl`+`S`, autosave and focus polling do not start a
+  second one while a save waits for the changes to be written or for your answer, and the SDK
+  calls your callback for one save after another (never two at once), so an older, slower save
+  cannot finish after a newer one. A save stays in flight until your callback answers or the
+  viewer closes: after 120 seconds the viewer only says "Still saving…".
+- If the viewer cannot write the reader's latest changes into the document, it shows an error,
+  keeps the changes as unsaved and does not call your callback: it never posts a file without
+  the changes it shows.
 
 Without a `SAVE_API` callback, `Ctrl`+`S` downloads the annotated document (when
 `showDownloadPDF` is on). Nothing is sent anywhere but to your callback.
@@ -386,6 +406,35 @@ functions (`AFSimple_Calculate`, `AFNumber_Format`, `AFRange_Validate`, …) and
 field notation are recognised, **never run: document JavaScript is never executed**. A value
 that a validation refuses is not kept, and the viewer says why. Saving (SAVE_API, or Download
 with `downloadWithAnnotations`) writes the values into the PDF. XFA forms are not supported.
+
+Values are checked as the reader enters them: a combo box (unless it is editable) and a list
+box take only their options (export value or display text), a text field takes at most its
+`/MaxLen` characters, every value at most 10 000 characters, and at most 10 000 fields change at
+once. A refused value is not kept, and the viewer shows why.
+
+**There is no API to set form values from your page in this version:** form fields take the
+reader's input only. The saved file (SAVE_API) has the values; read them on your server.
+
+### Signed and certified files
+
+The viewer follows Acrobat's rules for a file with signatures, so that its changes never
+break them silently:
+
+| The file | Annotations | Form filling |
+| --- | --- | --- |
+| Certified, DocMDP `P=1` (no changes) | No | No |
+| Certified, `P=2` (form filling and signing) | No | Yes |
+| Certified, `P=3` (also annotations) | Yes | Yes |
+| Signed, not certified | Yes | Yes |
+| Signed (or certified) and damaged, so that a save would rewrite the whole file | No | No |
+
+When changes are allowed, the viewer tells the reader once, at the first change, that
+changes are added as a new revision: existing signatures stay valid, but they show that the
+document was modified after signing. Saves are incremental updates, so the signed bytes stay
+as they were (they are a prefix of the saved file). When changes are not allowed, the viewer
+says why, the tools stay hidden, and the annotation manager's changes reject with
+`NOT_ALLOWED`. `getPDFMetadata()` reports `isSigned` and `certificationLevel`. The viewer does
+not check signatures (the Windows viewer does).
 
 ## In the viewer
 
@@ -425,7 +474,8 @@ from a PDF application.
     same way, only to the SAVE_API callback.
   - Annotations, filters, XFDF and save results from your page are untrusted data to the viewer:
     every value is checked for type, length and range (see [annotation JSON](#annotation-json)),
-    and an XFDF document is read without a DTD or external entities.
+    and an XFDF document is read as a stream without a DTD or external entities, with element,
+    attribute and length limits.
   - A message longer than 2 MB of JSON (the file's bytes do not count) is refused with
     `INVALID_ARGUMENT` before it is parsed.
 - **No storage.** The embedded viewer keeps nothing in the browser's storage (the stand-alone
@@ -502,7 +552,7 @@ Firefox and Safari are not tested yet.
 | Loading | The whole file is read before the first page shows. |
 | Selection | One page at a time; dragging does not scroll. |
 | Annotations | The eight types above; no replies, stamps, lines, polygons or callouts yet. Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
-| Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. |
+| Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. No API to set form values from the host page yet. Simplified field notation nested deeper than 64 levels is not calculated. |
 | Language | The viewer is in English. |
 
 ## Planned
