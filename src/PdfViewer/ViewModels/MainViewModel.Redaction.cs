@@ -26,7 +26,7 @@ public partial class MainViewModel
 
     partial void OnIsMarkingRedactionChanged(bool value)
     {
-        if (value) { ActiveAnnotationTool = null; IsPlacingSignature = false; }
+        if (value) { ActiveAnnotationTool = null; IsPlacingSignature = false; ActiveMeasureTool = null; ActiveStamp = null; }
         OnPropertyChanged(nameof(RedactionMarkCount));
     }
 

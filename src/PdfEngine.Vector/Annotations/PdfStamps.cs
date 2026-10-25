@@ -124,13 +124,14 @@ public static class PdfStamps
 
     /// <summary>
     /// A one-page PDF the size of the stamp with the stamp on it, for showing it before it is
-    /// placed (its appearance is drawn exactly as it will be in the document).
+    /// placed (its appearance is drawn exactly as it will be in the document). On a black page
+    /// when <paramref name="black"/>: a render on white and one on black give the stamp's alpha.
     /// </summary>
-    public static byte[] Preview(PdfAnnotation stamp)
+    public static byte[] Preview(PdfAnnotation stamp, bool black = false)
     {
         ArgumentNullException.ThrowIfNull(stamp);
         var rect = stamp.Rect;
-        byte[] blank = BlankPage(Math.Max(1, rect.Width), Math.Max(1, rect.Height));
+        byte[] blank = BlankPage(Math.Max(1, rect.Width), Math.Max(1, rect.Height), black);
         using var doc = PdfVectorDocument.Open(new MemoryByteSource(blank));
         var copy = Clone(stamp);
         copy.PageNumber = 1;
@@ -138,9 +139,11 @@ public static class PdfStamps
         return PdfAnnotationEditor.Apply(doc, blank, e => e.Add(copy));
     }
 
-    /// <summary>A one-page PDF with nothing on its page.</summary>
-    internal static byte[] BlankPage(double width, double height)
+    /// <summary>A one-page PDF with nothing on its page (or black all over it).</summary>
+    internal static byte[] BlankPage(double width, double height, bool black = false)
     {
+        string w = PdfObjectWriter.FormatReal(Math.Round(width, 4)), h = PdfObjectWriter.FormatReal(Math.Round(height, 4));
+        string content = black ? $"0 g 0 0 {w} {h} re f" : string.Empty;
         var sb = new StringBuilder("%PDF-1.7\n");
         var offsets = new List<int>();
         void Obj(string body)
@@ -150,8 +153,8 @@ public static class PdfStamps
         }
         Obj("<< /Type /Catalog /Pages 2 0 R >>");
         Obj("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-        Obj(string.Create(CultureInfo.InvariantCulture, $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PdfObjectWriter.FormatReal(Math.Round(width, 4))} {PdfObjectWriter.FormatReal(Math.Round(height, 4))}] /Resources << >> /Contents 4 0 R >>"));
-        Obj("<< /Length 0 >>\nstream\n\nendstream");
+        Obj($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources << >> /Contents 4 0 R >>");
+        Obj($"<< /Length {content.Length} >>\nstream\n{content}\nendstream");
         int xref = sb.Length;
         sb.Append(CultureInfo.InvariantCulture, $"xref\n0 {offsets.Count + 1}\n0000000000 65535 f \n");
         foreach (int o in offsets) sb.Append(CultureInfo.InvariantCulture, $"{o:D10} 00000 n \n");

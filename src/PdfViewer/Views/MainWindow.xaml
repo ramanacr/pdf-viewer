@@ -245,6 +245,67 @@
                 </MenuItem>
             </MenuItem>
 
+            <MenuItem Header="_Comment">
+                <MenuItem Header="_Stamp" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="_Dynamic (name, date and time)"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                        <MenuItem Header="_Approved" Command="{Binding ChooseStampCommand}" CommandParameter="D:Approved"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Confidential" Command="{Binding ChooseStampCommand}" CommandParameter="D:Confidential"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Received" Command="{Binding ChooseStampCommand}" CommandParameter="D:Received"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Re_viewed" Command="{Binding ChooseStampCommand}" CommandParameter="D:SBReviewed"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Rev_ised" Command="{Binding ChooseStampCommand}" CommandParameter="D:SBRevised"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    </MenuItem>
+                    <MenuItem Header="Standard _Business"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                        <MenuItem Header="_Approved" Command="{Binding ChooseStampCommand}" CommandParameter="S:Approved"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Completed" Command="{Binding ChooseStampCommand}" CommandParameter="S:SBCompleted"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Con_fidential" Command="{Binding ChooseStampCommand}" CommandParameter="S:Confidential"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Draft" Command="{Binding ChooseStampCommand}" CommandParameter="S:Draft"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="F_inal" Command="{Binding ChooseStampCommand}" CommandParameter="S:Final"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="For C_omment" Command="{Binding ChooseStampCommand}" CommandParameter="S:ForComment"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="For _Public Release" Command="{Binding ChooseStampCommand}" CommandParameter="S:ForPublicRelease"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Information _Only" Command="{Binding ChooseStampCommand}" CommandParameter="S:SBInformationOnly"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Not Approved" Command="{Binding ChooseStampCommand}" CommandParameter="S:NotApproved"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Not For P_ublic Release" Command="{Binding ChooseStampCommand}" CommandParameter="S:NotForPublicRelease"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Pre_liminary Results" Command="{Binding ChooseStampCommand}" CommandParameter="S:SBPreliminaryResults"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Received" Command="{Binding ChooseStampCommand}" CommandParameter="S:Received"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Re_viewed" Command="{Binding ChooseStampCommand}" CommandParameter="S:SBReviewed"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="Rev_ised" Command="{Binding ChooseStampCommand}" CommandParameter="S:SBRevised"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Void" Command="{Binding ChooseStampCommand}" CommandParameter="S:SBVoid"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Expired" Command="{Binding ChooseStampCommand}" CommandParameter="S:Expired"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_Top Secret" Command="{Binding ChooseStampCommand}" CommandParameter="S:TopSecret"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="A_s Is" Command="{Binding ChooseStampCommand}" CommandParameter="S:AsIs"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    </MenuItem>
+                    <MenuItem Header="_Custom" ItemsSource="{Binding CustomStamps}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                        <MenuItem.ItemContainerStyle>
+                            <Style TargetType="MenuItem">
+                                <Setter Property="Header" Value="{Binding Name}" />
+                                <Setter Property="Command" Value="{Binding DataContext.ActiveDocument.ChooseStampCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                <Setter Property="CommandParameter" Value="{Binding Id, StringFormat=C:{0}}" />
+                            </Style>
+                        </MenuItem.ItemContainerStyle>
+                    </MenuItem>
+                    <MenuItem Header="Create Custom Stamp from _Picture..." Command="{Binding CreateStampFromImageCommand}" ToolTip="Makes a PNG or JPEG picture into a stamp, kept on this computer."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.AddImage}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="Create Custom Stamp from P_DF Page..." Command="{Binding CreateStampFromPdfCommand}" ToolTip="Makes a page of a PDF into a stamp, kept on this computer."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.CreatePdf}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Remove Custom Stamp" ItemsSource="{Binding CustomStamps}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Delete}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                        <MenuItem.ItemContainerStyle>
+                            <Style TargetType="MenuItem">
+                                <Setter Property="Header" Value="{Binding Name}" />
+                                <Setter Property="Command" Value="{Binding DataContext.ActiveDocument.RemoveCustomStampCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                <Setter Property="CommandParameter" Value="{Binding}" />
+                            </Style>
+                        </MenuItem.ItemContainerStyle>
+                    </MenuItem>
+                    <Separator />
+                    <MenuItem Header="R_otate New Stamps"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                        <MenuItem Header="_Upright" Command="{Binding SetStampRotationCommand}" CommandParameter="0" IsCheckable="True" IsChecked="{Binding StampRotation, Converter={StaticResource EnumToBool}, ConverterParameter=0, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_90° Left" Command="{Binding SetStampRotationCommand}" CommandParameter="90" IsCheckable="True" IsChecked="{Binding StampRotation, Converter={StaticResource EnumToBool}, ConverterParameter=90, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_180°" Command="{Binding SetStampRotationCommand}" CommandParameter="180" IsCheckable="True" IsChecked="{Binding StampRotation, Converter={StaticResource EnumToBool}, ConverterParameter=180, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_90° Right" Command="{Binding SetStampRotationCommand}" CommandParameter="270" IsCheckable="True" IsChecked="{Binding StampRotation, Converter={StaticResource EnumToBool}, ConverterParameter=270, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="_45° Left" Command="{Binding SetStampRotationCommand}" CommandParameter="45" IsCheckable="True" IsChecked="{Binding StampRotation, Converter={StaticResource EnumToBool}, ConverterParameter=45, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                        <MenuItem Header="45° _Right" Command="{Binding SetStampRotationCommand}" CommandParameter="315" IsCheckable="True" IsChecked="{Binding StampRotation, Converter={StaticResource EnumToBool}, ConverterParameter=315, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    </MenuItem>
+                    <MenuItem Header="_Name on Dynamic Stamps..." Command="{Binding SetStampIdentityCommand}" ToolTip="The name dynamic stamps show, kept in this computer's settings and never sent anywhere."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Identity}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                </MenuItem>
+            </MenuItem>
             <MenuItem Header="_View">
                 <MenuItem Header="_Back" Command="{Binding GoBackCommand}" InputGestureText="Alt+Left"
                           ToolTip="Returns to the page you jumped away from."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Back}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
@@ -302,6 +363,14 @@
             <MenuItem Header="_Tools">
                 <MenuItem Header="_Find Text..." Command="{Binding ToggleSearchCommand}" InputGestureText="Ctrl+F" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Find}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Hand / Pan Tool" Command="{Binding TogglePanToolCommand}" IsCheckable="True" IsChecked="{Binding IsPanningEnabled}" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Pan}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="_Measure" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Measure}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="_Distance" Command="{Binding StartMeasureCommand}" CommandParameter="Distance" IsCheckable="True" IsChecked="{Binding ActiveMeasureTool, Converter={StaticResource EnumToBool}, ConverterParameter=Distance, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Measure}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Perimeter" Command="{Binding StartMeasureCommand}" CommandParameter="Perimeter" IsCheckable="True" IsChecked="{Binding ActiveMeasureTool, Converter={StaticResource EnumToBool}, ConverterParameter=Perimeter, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Measure}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Area" Command="{Binding StartMeasureCommand}" CommandParameter="Area" IsCheckable="True" IsChecked="{Binding ActiveMeasureTool, Converter={StaticResource EnumToBool}, ConverterParameter=Area, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Measure}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <Separator />
+                    <MenuItem Header="Set _Scale and Units..." Command="{Binding SetMeasureScaleCommand}" ToolTip="The scale this document is measured at when its pages give none, e.g. 1 in = 10 ft. Remembered for this document on this computer."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Settings}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="S_nap to Content" IsCheckable="True" IsChecked="{Binding SnapToContent}" ToolTip="Points snap to the ends, middles and lines of the page's drawing (hold Shift to place freely)."><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Measure}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                </MenuItem>
                 <Separator />
                 <MenuItem Header="Recognise _Text on Page (OCR)"
                           Command="{Binding RecognizeTextOnPageCommand}"
@@ -1175,6 +1244,41 @@
                     </Border>
                 </Grid>
 
+                <!-- Measurement info: live while a measuring tool is on -->
+                <Border x:Name="MeasurementInfoPanel"
+                        Visibility="{Binding IsMeasuring, Converter={StaticResource BoolToVis}}"
+                        HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,28" Panel.ZIndex="25"
+                        Width="260" Padding="12,10" CornerRadius="6"
+                        Background="{DynamicResource SurfaceBgBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                        AutomationProperties.Name="Measurement info" AutomationProperties.LiveSetting="Polite">
+                    <StackPanel DataContext="{Binding Measurement}">
+                        <StackPanel.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                <Setter Property="FontSize" Value="12" />
+                                <Setter Property="TextWrapping" Value="Wrap" />
+                                <Setter Property="Margin" Value="0,1" />
+                                <Style.Triggers>
+                                    <Trigger Property="Text" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Resources>
+                        <TextBlock Text="{Binding Tool}" FontWeight="SemiBold" FontSize="13" />
+                        <TextBlock Text="{Binding Scale}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                        <TextBlock Text="{Binding Segments}" FontFamily="Consolas" Margin="0,4,0,0" />
+                        <TextBlock Text="{Binding Total}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Area}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Angle}" />
+                        <TextBlock Text="{Binding Cursor}" FontFamily="Consolas" />
+                        <TextBlock Text="{Binding Snap}" Foreground="{DynamicResource AccentBrush}" FontSize="11" />
+                        <TextBlock Text="{Binding Hint}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="10" Margin="0,4,0,0" />
+                        <Button Content="Set Scale and Units..." HorizontalAlignment="Left" Margin="0,6,0,0" Padding="8,2"
+                                Command="{Binding DataContext.SetMeasureScaleCommand, ElementName=MeasurementInfoPanel}" />
+                    </StackPanel>
+                </Border>
+
                 <!-- Signature banner: the verdict over every signature, over the top of the page -->
                 <Border x:Name="SignatureBannerBar"
                         VerticalAlignment="Top"
@@ -1535,6 +1639,23 @@
                                                                   StrokeEndLineCap="Round"
                                                                   Opacity="{Binding Opacity}"
                                                                   Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}" />
+
+                                                            <!-- Measurement: its line or outline and its result (one read from the file is drawn by the page) -->
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Measurement}">
+                                                                <Grid Visibility="{Binding HasOwnAppearance, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Path Data="{Binding MeasureGeometry}" Stretch="Fill"
+                                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          StrokeThickness="1.5" StrokeLineJoin="Round" />
+                                                                    <Border Background="#E6FFFFFF" CornerRadius="2" Padding="3,0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                            BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0.5">
+                                                                        <TextBlock Text="{Binding Contents}" FontSize="10" Foreground="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" />
+                                                                    </Border>
+                                                                </Grid>
+                                                            </Grid>
+
+                                                            <!-- Stamp: drawn by the engine as it will be in the document -->
+                                                            <Image Source="{Binding StampPreview}" Stretch="Fill"
+                                                                   Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}" />
                                                         </Grid>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
@@ -1862,6 +1983,23 @@
                                                       StrokeEndLineCap="Round"
                                                       Opacity="{Binding Opacity}"
                                                       Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}" />
+
+                                                <!-- Measurement: its line or outline and its result (one read from the file is drawn by the page) -->
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Measurement}">
+                                                    <Grid Visibility="{Binding HasOwnAppearance, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Path Data="{Binding MeasureGeometry}" Stretch="Fill"
+                                                              Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              StrokeThickness="1.5" StrokeLineJoin="Round" />
+                                                        <Border Background="#E6FFFFFF" CornerRadius="2" Padding="3,0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0.5">
+                                                            <TextBlock Text="{Binding Contents}" FontSize="10" Foreground="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Grid>
+
+                                                <!-- Stamp: drawn by the engine as it will be in the document -->
+                                                <Image Source="{Binding StampPreview}" Stretch="Fill"
+                                                       Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}" />
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>

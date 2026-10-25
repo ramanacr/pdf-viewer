@@ -145,6 +145,27 @@ public partial class MainWindow : Window
             var dialog = new SignDocumentDialog(placement, document.Metadata?.FilePath ?? string.Empty, canCertify) { Owner = this };
             return dialog.ShowDialog() == true ? dialog.Result : null;
         };
+        document.ShowMeasureScaleFunc = current => MeasureStampDialogs.AskScale(this, current);
+        document.RequestStampIdentityFunc = initial => MeasureStampDialogs.AskText(this, "Name on Dynamic Stamps",
+            "The name dynamic stamps show with the date and time. It is kept in this computer's settings and never sent anywhere.", initial);
+        document.RequestStampNameFunc = initial => MeasureStampDialogs.AskText(this, "Custom Stamp", "A name for the stamp in the Stamp menu:", initial);
+        document.PickStampPdfFunc = () =>
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Choose the PDF whose page becomes a stamp", Filter = "PDF files|*.pdf" };
+            if (dialog.ShowDialog(this) != true) return null;
+            int pages;
+            try
+            {
+                using var doc = PdfEngine.Vector.Document.PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.MemoryByteSource(File.ReadAllBytes(dialog.FileName)));
+                pages = doc.PageCount;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                MessageBox.Show(this, $"The PDF could not be read:\n\n{ex.Message}", "Custom Stamp", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return null;
+            }
+            return MeasureStampDialogs.AskPage(this, pages) is int page ? (dialog.FileName, page) : null;
+        };
         document.ScrollToPageAction = ScrollToPage;
         document.ScrollToMatchAction = ScrollToMatch;
         document.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
@@ -163,6 +184,10 @@ public partial class MainWindow : Window
                      e.PropertyName == nameof(MainViewModel.IsPanningEnabled))
             {
                 ResetPageCanvasCursors();
+            }
+            else if (e.PropertyName is nameof(MainViewModel.ActiveMeasureTool) or nameof(MainViewModel.MeasurePreviewPoints))
+            {
+                RefreshMeasurePreview();
             }
             else if (e.PropertyName == nameof(MainViewModel.WindowTitle))
             {
@@ -525,6 +550,31 @@ public partial class MainWindow : Window
         {
             case Key.F11:
                 ToggleFullScreen();
+                e.Handled = true;
+                break;
+
+            case Key.Escape when _vm.IsMeasuring:
+                if (_vm.MeasurePreviewPoints.Count > 0) _vm.CancelMeasurement();
+                else { _vm.ActiveMeasureTool = null; _vm.StatusText = "Measuring stopped."; }
+                RefreshMeasurePreview();
+                e.Handled = true;
+                break;
+
+            case Key.Enter when _vm.IsMeasuring:
+                _vm.FinishMeasurement();
+                RefreshMeasurePreview();
+                e.Handled = true;
+                break;
+
+            case Key.Back when _vm.IsMeasuring:
+                _vm.UndoMeasurePoint();
+                RefreshMeasurePreview();
+                e.Handled = true;
+                break;
+
+            case Key.Escape when _vm.IsPlacingStamp:
+                _vm.ActiveStamp = null;
+                _vm.StatusText = "Stamp cancelled.";
                 e.Handled = true;
                 break;
 
@@ -1045,6 +1095,43 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Measuring: each click places a point (snapped unless Shift is held); a double-click finishes.
+        if (_vm.IsMeasuring)
+        {
+            e.Handled = true;
+            var norm = MeasurePointer(canvas, page, e, out _);
+            if (e.ClickCount >= 2)
+            {
+                _vm.FinishMeasurement();
+                RefreshMeasurePreview();
+                return;
+            }
+            _measureCanvas = canvas;
+            _ = PlaceMeasurePointAsync(page.PageNumber, norm);
+            return;
+        }
+
+        // Placing a stamp: a click puts it there at its usual size, a drag gives its box.
+        if (_vm.IsPlacingStamp)
+        {
+            _annotStartPoint = e.GetPosition(canvas);
+            _isPlacingStampBox = true;
+            _isDrawingAnnotation = true; // the drag preview follows the pointer
+            canvas.CaptureMouse();
+            _previewShape = new System.Windows.Shapes.Rectangle
+            {
+                Stroke = new SolidColorBrush(Color.FromRgb(0x1F, 0x4F, 0xD8)),
+                StrokeDashArray = new DoubleCollection { 4, 3 },
+                StrokeThickness = 1.5,
+                Fill = new SolidColorBrush(Color.FromArgb(0x18, 0x1F, 0x4F, 0xD8)),
+            };
+            Canvas.SetLeft(_previewShape, _annotStartPoint.X);
+            Canvas.SetTop(_previewShape, _annotStartPoint.Y);
+            canvas.Children.Add(_previewShape);
+            e.Handled = true;
+            return;
+        }
+
         // Mode 1: Active Annotation Tool is drawing
         if (_vm.ActiveAnnotationTool != null)
         {
@@ -1299,6 +1386,21 @@ public partial class MainWindow : Window
     {
         if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
 
+        // 0. Measuring: the pointer snaps, the info panel and the rubber band follow it.
+        if (_vm.IsMeasuring)
+        {
+            canvas.Cursor = Cursors.Cross;
+            var norm = MeasurePointer(canvas, page, e, out var kind);
+            _vm.MeasureMove(page.PageNumber, norm, kind);
+            if (_vm.MeasurePageNumber == 0 || _vm.MeasurePageNumber == page.PageNumber)
+            {
+                _measureCanvas = canvas;
+                _measureCursor = (page, norm, kind);
+                RefreshMeasurePreview();
+            }
+            return;
+        }
+
         // 1. Updating annotation drawing preview
         if (_isDrawingAnnotation)
         {
@@ -1332,7 +1434,7 @@ public partial class MainWindow : Window
         }
 
         // 3. Placing a signature: crosshair. Hovering over text: I-beam cursor
-        if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
+        if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction || _vm.IsPlacingStamp)
         {
             canvas.Cursor = Cursors.Cross;
         }
@@ -1393,6 +1495,28 @@ public partial class MainWindow : Window
     private void PageCanvas_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page) return;
+
+        // Stamp placed: at the click at its usual size, or in the dragged box.
+        if (_isPlacingStampBox)
+        {
+            _isPlacingStampBox = false;
+            _isDrawingAnnotation = false;
+            canvas.ReleaseMouseCapture();
+            if (_previewShape != null)
+            {
+                canvas.Children.Remove(_previewShape);
+                _previewShape = null;
+            }
+            var end = e.GetPosition(canvas);
+            double w = page.UnrotatedDisplayWidth, h = page.UnrotatedDisplayHeight;
+            var centre = new Point(Math.Clamp(end.X / w, 0, 1), Math.Clamp(end.Y / h, 0, 1));
+            Rect? box = null;
+            if (Math.Abs(end.X - _annotStartPoint.X) > 6 && Math.Abs(end.Y - _annotStartPoint.Y) > 6)
+                box = new Rect(new Point(_annotStartPoint.X / w, _annotStartPoint.Y / h), new Point(end.X / w, end.Y / h));
+            e.Handled = true;
+            _ = _vm.PlaceStampAsync(page.PageNumber, centre, box);
+            return;
+        }
 
         // Signature box placed: sign into it.
         if (_isPlacingSignatureBox)

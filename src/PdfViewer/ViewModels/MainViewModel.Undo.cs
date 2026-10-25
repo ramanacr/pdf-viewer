@@ -144,6 +144,7 @@ public partial class MainViewModel
         AnnotationType.StrikeOut => "Strikeout",
         AnnotationType.FreeText => "Text Box",
         AnnotationType.Ink => "Drawing",
+        AnnotationType.Measurement => "Measurement",
         _ => type.ToString(),
     };
 
@@ -270,9 +271,23 @@ public partial class MainViewModel
         private string Title { get; init; } = string.Empty;
         private DateTime CreationDate { get; init; }
         private DateTime ModifiedDate { get; init; }
+        private Point[] Vertices { get; init; } = Array.Empty<Point>();
+        private PdfEngine.Vector.Annotations.PdfMeasurementKind MeasureKind { get; init; }
+        private PdfEngine.Vector.Annotations.PdfMeasure? Measure { get; init; }
+        private string StampName { get; init; } = string.Empty;
+        private string? StampSubtitle { get; init; }
+        private double StampRotation { get; init; }
+        private Size StampSize { get; init; }
 
         public static AnnotationState Of(AnnotationModel a) => new()
         {
+            Vertices = a.Vertices.ToArray(),
+            MeasureKind = a.MeasureKind,
+            Measure = a.Measure,
+            StampName = a.StampName,
+            StampSubtitle = a.StampSubtitle,
+            StampRotation = a.StampRotation,
+            StampSize = a.StampSize,
             PageNumber = a.PageNumber,
             Type = a.Type,
             Box = new Rect(a.X, a.Y, a.Width, a.Height),
@@ -302,6 +317,13 @@ public partial class MainViewModel
             a.Title = Title;
             a.CreationDate = CreationDate;
             a.ModifiedDate = ModifiedDate;
+            a.MeasureKind = MeasureKind;
+            a.Measure = Measure;
+            a.Vertices = Vertices.ToList();
+            a.StampName = StampName;
+            a.StampSubtitle = StampSubtitle;
+            a.StampRotation = StampRotation;
+            a.StampSize = StampSize;
         }
 
         public bool EqualsIgnoringModified(AnnotationState other) =>
@@ -309,7 +331,10 @@ public partial class MainViewModel
             && Quads.AsSpan().SequenceEqual(other.Quads)
             && Ink.Length == other.Ink.Length && Ink.Zip(other.Ink).All(p => p.First.AsSpan().SequenceEqual(p.Second))
             && ColorHex == other.ColorHex && Opacity.Equals(other.Opacity) && StrokeThickness.Equals(other.StrokeThickness)
-            && Contents == other.Contents && Author == other.Author && Title == other.Title && CreationDate == other.CreationDate;
+            && Contents == other.Contents && Author == other.Author && Title == other.Title && CreationDate == other.CreationDate
+            && Vertices.AsSpan().SequenceEqual(other.Vertices) && MeasureKind == other.MeasureKind
+            && (Measure == null ? other.Measure == null : Measure.SameAs(other.Measure))
+            && StampName == other.StampName && StampSubtitle == other.StampSubtitle && StampRotation.Equals(other.StampRotation) && StampSize == other.StampSize;
 
         public bool Equals(AnnotationState? other) => other != null && EqualsIgnoringModified(other) && ModifiedDate == other.ModifiedDate;
         public override bool Equals(object? obj) => Equals(obj as AnnotationState);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -17,7 +18,11 @@ public enum AnnotationType
     FreeText,
     Ink,
     Rectangle,
-    Ellipse
+    Ellipse,
+    /// <summary>A distance, perimeter or area measurement (Line, PolyLine or Polygon with /Measure).</summary>
+    Measurement,
+    /// <summary>A stamp: a standard or dynamic one, a picture or a PDF page.</summary>
+    Stamp
 }
 
 /// <summary>
@@ -129,6 +134,87 @@ public partial class AnnotationModel : ObservableObject
     private List<Rect> _quads = new();
 
     public bool HasQuads => _quads.Count > 1;
+
+    // ------------------------------------------------------------------ measurements and stamps
+
+    /// <summary>A measurement's points, normalized like the box (two for a distance).</summary>
+    public List<Point> Vertices
+    {
+        get => _vertices;
+        set
+        {
+            _vertices = value ?? new();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MeasureGeometry));
+        }
+    }
+    private List<Point> _vertices = new();
+
+    /// <summary>What a measurement measures.</summary>
+    [ObservableProperty]
+    private PdfEngine.Vector.Annotations.PdfMeasurementKind _measureKind;
+
+    /// <summary>A measurement's scale and units (its /Measure).</summary>
+    [ObservableProperty]
+    private PdfEngine.Vector.Annotations.PdfMeasure? _measure;
+
+    /// <summary>A stamp's /Name (for a custom stamp, its library name).</summary>
+    [ObservableProperty]
+    private string _stampName = string.Empty;
+
+    /// <summary>The second line of a dynamic stamp (who and when), drawn into its appearance.</summary>
+    [ObservableProperty]
+    private string? _stampSubtitle;
+
+    /// <summary>The stamp's turn, degrees counter-clockwise.</summary>
+    [ObservableProperty]
+    private double _stampRotation;
+
+    /// <summary>The stamp's size before it is turned, in points.</summary>
+    [ObservableProperty]
+    private Size _stampSize;
+
+    /// <summary>A custom stamp's picture (the PNG or JPEG file) or one-page PDF.</summary>
+    public byte[]? StampImage { get; set; }
+    public byte[]? StampPdf { get; set; }
+
+    /// <summary>The stamp as it will look in the document, drawn by the engine (null until drawn, and for stamps read from the file).</summary>
+    [ObservableProperty]
+    private System.Windows.Media.ImageSource? _stampPreview;
+
+    /// <summary>
+    /// Read from the file with its own appearance, which the page already shows: the overlay only
+    /// marks where it is. Measurements and stamps made here are drawn by the overlay.
+    /// </summary>
+    public bool HasOwnAppearance { get; set; }
+
+    partial void OnMeasureChanged(PdfEngine.Vector.Annotations.PdfMeasure? value) => OnPropertyChanged(nameof(MeasureGeometry));
+
+    /// <summary>A measurement's line or outline relative to the box (0–1), drawn stretched over it.</summary>
+    public System.Windows.Media.Geometry? MeasureGeometry
+    {
+        get
+        {
+            if (_vertices.Count < 2 || Width <= 0 || Height <= 0) return null;
+            var figure = new System.Windows.Media.PathFigure
+            {
+                StartPoint = Relative(_vertices[0]),
+                IsClosed = MeasureKind == PdfEngine.Vector.Annotations.PdfMeasurementKind.Area,
+            };
+            foreach (var p in _vertices.Skip(1)) figure.Segments.Add(new System.Windows.Media.LineSegment(Relative(p), true));
+            var path = new System.Windows.Media.PathGeometry();
+            path.Figures.Add(figure);
+            var group = new System.Windows.Media.GeometryGroup();
+            // Corner marks pin the geometry's bounds to the whole box, so Stretch=Fill maps 0–1 exactly.
+            group.Children.Add(new System.Windows.Media.RectangleGeometry(new Rect(0, 0, 1e-6, 1e-6)));
+            group.Children.Add(new System.Windows.Media.RectangleGeometry(new Rect(1 - 1e-6, 1 - 1e-6, 1e-6, 1e-6)));
+            group.Children.Add(path);
+            group.Freeze();
+            return group;
+        }
+    }
+
+    private Point Relative(Point p) => new((p.X - X) / Width, (p.Y - Y) / Height);
 
     // Moving or resizing the annotation carries its lines with it.
     partial void OnXChanged(double oldValue, double newValue) => MoveQuads(newValue - oldValue, 0, 1, 1);
