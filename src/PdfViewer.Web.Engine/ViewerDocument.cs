@@ -37,7 +37,10 @@ public sealed class ViewerOptions
     /// <summary>Largest bitmap a render produces (pixels); a larger request is rendered at the largest scale that fits.</summary>
     public long MaxBitmapPixels { get; init; } = 4096L * 4096;
 
-    /// <summary>Substitutes for fonts a document does not embed; null uses the platform's installed fonts (none in a browser).</summary>
+    /// <summary>
+    /// Substitutes for fonts a document does not embed; null uses the platform's installed fonts (none
+    /// in a browser). An <see cref="OnDemandFontSource"/> is fetched from as pages need its faces.
+    /// </summary>
     public SkiaFontSource? Fonts { get; init; }
 }
 
@@ -98,14 +101,19 @@ public sealed class ViewerDocument : IAsyncDisposable
     private readonly ViewerOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private SkiaVectorRenderer _renderer;
+    private SkiaFontSource? _fonts;
     private bool _disposed;
+
+    /// <summary>Most times a page is drawn again after fetching the fonts it asked for (each time fetches at least one face).</summary>
+    private const int MaxFontRounds = 4;
 
     private ViewerDocument(PdfVectorDocument document, ViewerOptions options, IReadOnlyList<ViewerPage> pages)
     {
         _document = document;
         _options = options;
         Pages = pages;
-        _renderer = new SkiaVectorRenderer(options.ImageCacheBytes, options.Fonts);
+        _fonts = options.Fonts;
+        _renderer = new SkiaVectorRenderer(options.ImageCacheBytes, _fonts);
     }
 
     public int PageCount => Pages.Count;
@@ -217,6 +225,18 @@ public sealed class ViewerDocument : IAsyncDisposable
             }
 
             var result = await _renderer.RenderAsync(list, request, null, null, night, cancellationToken).ConfigureAwait(false);
+            // Fonts fetched on demand: the page asked for faces that are not here yet. Fetch them and
+            // draw it again with a fresh renderer (the old one remembers those faces as missing).
+            // Each round settles every face asked for (loaded, or failed and then skipped), so a
+            // failed face lets the text fall through to the next substitute on the next round.
+            for (int round = 0; round < MaxFontRounds && _fonts is OnDemandFontSource lazy && lazy.HasPendingRequests; round++)
+            {
+                await lazy.LoadRequestedAsync(cancellationToken).ConfigureAwait(false);
+                result.Page.Dispose();
+                _renderer.Dispose();
+                _renderer = new SkiaVectorRenderer(_options.ImageCacheBytes, _fonts);
+                result = await _renderer.RenderAsync(list, request, null, null, night, cancellationToken).ConfigureAwait(false);
+            }
             // The Skia backend's pages own a plain array (disposing them frees nothing): keep it, no copy.
             using var rendered = result.Page;
             var pixels = MemoryMarshal.TryGetArray(rendered.Pixels, out var segment) && segment.Count == rendered.WidthPixels * 4 * rendered.HeightPixels
@@ -338,6 +358,7 @@ public sealed class ViewerDocument : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _renderer.Dispose();
+            _fonts = fonts;
             _renderer = new SkiaVectorRenderer(_options.ImageCacheBytes, fonts);
         }
         finally

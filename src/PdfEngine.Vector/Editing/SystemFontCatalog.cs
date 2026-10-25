@@ -116,6 +116,35 @@ public sealed class SystemFontCatalog
         return map;
     }
 
+    /// <summary>
+    /// The families substitution asks for and the Liberation family that stands in for each: Sans
+    /// for Arial and Helvetica (and the other sans-serif families), Serif for Times New Roman and
+    /// Times, Mono for Courier New and Courier. Liberation Sans, Serif and Mono have the metrics of
+    /// Arial, Times New Roman and Courier New, so text keeps its widths. Symbol, Wingdings and the
+    /// other symbol, math and script families have no Liberation equivalent and are not mapped.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string[]> LiberationFamilyAliases { get; } = BuildLiberationAliases();
+
+    private static Dictionary<string, string[]> BuildLiberationAliases()
+    {
+        string[] sans = { "Liberation Sans" }, serif = { "Liberation Serif" }, mono = { "Liberation Mono" };
+        var map = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in new[] { "Arial", "Arial Narrow", "Helvetica", "Segoe UI", "Calibri", "Verdana", "Tahoma", "Century Gothic", "Gill Sans MT", "Lucida Sans Unicode", "Franklin Gothic" })
+            map[f] = sans;
+        foreach (var f in new[] { "Times New Roman", "Times", "Georgia", "Cambria", "Palatino Linotype", "Book Antiqua", "Garamond", "Century Schoolbook", "Bookman Old Style" })
+            map[f] = serif;
+        foreach (var f in new[] { "Courier New", "Courier", "Consolas", "Lucida Console" })
+            map[f] = mono;
+        return map;
+    }
+
+    /// <summary>
+    /// A catalog of faces a host describes itself (fonts it bundles and loads on demand, so that
+    /// there is no folder to scan yet), with optional family aliases as in <see cref="WithFamilyAliases"/>.
+    /// </summary>
+    public static SystemFontCatalog FromFaces(IEnumerable<SystemFontFace> faces, IReadOnlyDictionary<string, string[]>? aliases = null) =>
+        new(faces.ToArray(), aliases);
+
     /// <summary>A catalog without faces.</summary>
     private static readonly SystemFontCatalog None = new(Array.Empty<SystemFontFace>());
 

@@ -276,4 +276,39 @@ public class Direct2DRendererTests
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr GetDesktopWindow();
+
+    [Fact]
+    public async Task Direct2D_RejectsABufferBeyondThePixelLimitWithATypedError()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("0 0 100 100 re f", "");
+        using var renderer = new Direct2DVectorRenderer();
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        var request = new RenderRequest { PageNumber = 1, TargetWidthPixels = 40000, TargetHeightPixels = 40000 };
+
+        var ex = await Assert.ThrowsAsync<PdfEngine.Vector.Diagnostics.PdfResourceLimitException>(
+            () => renderer.RenderDisplayListAsync(list, request).AsTask());
+
+        Assert.Equal(PdfEngine.Vector.Diagnostics.PdfVectorErrorKind.ResourceLimit, ex.Kind);
+        Assert.Equal(nameof(Direct2DVectorRenderer.MaxRenderPixelCount), ex.LimitName);
+        Assert.Contains("40000 x 40000", ex.Message);
+    }
+
+    [Fact]
+    public async Task Direct2D_RejectsABufferWhoseByteCountLeavesIntRangeWithATypedError()
+    {
+        // 23171 x 23171 is about 537M pixels: under 2^30, but at 4 bytes a pixel past int.MaxValue.
+        var b = new VectorPdfBuilder();
+        b.AddPage("0 0 100 100 re f", "");
+        using var renderer = new Direct2DVectorRenderer();
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        var request = new RenderRequest { PageNumber = 1, TargetWidthPixels = 23171, TargetHeightPixels = 23171 };
+
+        var ex = await Assert.ThrowsAsync<PdfEngine.Vector.Diagnostics.PdfResourceLimitException>(
+            () => renderer.RenderDisplayListAsync(list, request).AsTask());
+
+        Assert.Equal(nameof(Direct2DVectorRenderer.MaxRenderPixelCount), ex.LimitName);
+    }
 }

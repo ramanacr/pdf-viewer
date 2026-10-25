@@ -35,13 +35,16 @@ public sealed partial class Viewer : IAsyncDisposable
     /// <summary>Canvases more than this many pages from the current one are emptied.</summary>
     private const int KeepDrawnPages = 4;
 
-    /// <summary>Session limits; the font source is the device's fonts once the user lent them, else none (a browser has no installed fonts).</summary>
+    /// <summary>
+    /// Session limits; the font source is the device's fonts once the user lent them, else the
+    /// bundled Liberation fonts, fetched as pages need them (a browser has no installed fonts).
+    /// </summary>
     private ViewerOptions Options => new()
     {
         MaxFileBytes = 512L * 1024 * 1024,
         ImageCacheBytes = 64L * 1024 * 1024,
         MaxBitmapPixels = 4096L * 4096,
-        Fonts = _lentFonts,
+        Fonts = _lentFonts ?? _bundledFonts,
     };
 
     /// <summary>Families the font substitutes are chosen from (the Skia backend's chain), read from the device on request.</summary>
@@ -109,6 +112,17 @@ public sealed partial class Viewer : IAsyncDisposable
     private int _localFontCount;
     private SkiaFontSource? _lentFonts;
 
+    // Bundled fonts (wwwroot/fonts): fetched the first time a page needs a face, kept for the session.
+    private readonly OnDemandFontSource _bundledFonts;
+
+    public Viewer()
+    {
+        _bundledFonts = OnDemandFontSource.Liberation(FetchBundledFontAsync);
+    }
+
+    private async Task<byte[]?> FetchBundledFontAsync(string file, CancellationToken cancellationToken) =>
+        _module == null ? null : await _module.InvokeAsync<byte[]?>("fetchFont", cancellationToken, file);
+
     // Focus moves into a dialog when it opens, and back to the pages when it closes.
     private Dialog _focusedDialog;
 
@@ -134,7 +148,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=1");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=2");
             await _module.InvokeVoidAsync("init", _self, "pages");
             _theme = CanvasInterop.ReadSetting("theme") is "light" or "dark" ? CanvasInterop.ReadSetting("theme")! : "system";
             _sidebarOpen = CanvasInterop.ReadSetting("sidebar") != "closed";
@@ -397,7 +411,8 @@ public sealed partial class Viewer : IAsyncDisposable
         if (bitmap.TextRegionsWithoutFont > 0 && !_localFontsLoaded)
         {
             _noticeIsFonts = true;
-            _notice = "Some text on this page uses fonts that the PDF does not embed. A browser has no installed fonts for the engine to draw it with, so that text is missing." +
+            // Shown only for text that the bundled fonts (Liberation Sans, Serif and Mono) do not cover either: Symbol, Dingbats, other scripts.
+            _notice = "Some text on this page uses fonts that the PDF does not embed and that the viewer's own fonts do not cover (for example Symbol, Dingbats or other scripts), so that text is missing." +
                       (_canUseLocalFonts ? " This browser can let the page read your device's fonts (they stay on your device)." : " Chrome and Edge can lend the page your device's fonts.");
             StateHasChanged();
         }

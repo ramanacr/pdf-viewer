@@ -48,7 +48,12 @@ the regions that this backend cannot draw.
    render modes use the same outlines.
 6. **Fonts on other platforms.** Substitutes come from a `SkiaFontSource`. The default reads the
    installed fonts. A host without installed fonts (a browser) passes a catalog of the fonts it
-   bundles (`SystemFontCatalog.ForDirectory`) or overrides `Load` and `MatchFamily`.
+   bundles (`SystemFontCatalog.ForDirectory`) or overrides `Load` and `MatchFamily`. A source
+   that fetches its faces on demand also overrides `IsPending`: a run whose substitute is still
+   being fetched waits for it (it is reported as not drawn, and the host draws the page again
+   once the face is there) instead of falling through to the next face of the chain. The web
+   demo's `OnDemandFontSource` serves the Liberation fonts this way. A substitute that has none
+   of a run's glyphs is not used as a best effort, so the run stays reported as not drawn.
 7. **Images.** The engine decodes most images to BGRA (masks and `/Decode` applied). JPEG data is
    decoded with Skia's codec (`SKCodec`). For a JPEG whose colours the core must map, the raw gray
    or RGB samples go to `MapJpegComponents`. JPEG soft masks are decoded as gray. Sampling matches
@@ -124,7 +129,8 @@ optionally `SKIA_PARITY_PAGES` (at most 200) and `SKIA_PARITY_OUT` (summary file
    body-text fixture at 96 dpi, and hairlines are heavier too. Large shapes match. Small text
    therefore differs by a level or two along stems (mean 2.05 at 96 dpi, 0.84 at 150 dpi).
 3. **Fonts outside Windows.** The substitute and Unicode fallback family names are Windows fonts.
-   A web or Android host must supply its own fonts through `SkiaFontSource`. Bare Type 1 and CFF
+   A web or Android host must supply its own fonts through `SkiaFontSource` (the web demo
+   bundles Liberation, which stands in by `SystemFontCatalog.LiberationFamilyAliases`). Bare Type 1 and CFF
    programs that the engine does not wrap as sfnt are substituted, as in Direct2D.
 4. **Only tested on Windows.** The library is portable, but it has run only with
    `SkiaSharp.NativeAssets.Win32`. WebAssembly and Android need their own SkiaSharp native assets,
