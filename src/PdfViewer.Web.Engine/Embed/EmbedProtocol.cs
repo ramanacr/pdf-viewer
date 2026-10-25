@@ -18,6 +18,9 @@ public static class EmbedErrors
     public const string NoDocument = "NO_DOCUMENT";
     public const string NotEnabled = "NOT_ENABLED";
     public const string SearchEnded = "SEARCH_ENDED";
+    public const string NotAllowed = "NOT_ALLOWED";
+    public const string Closed = "CLOSED";
+    public const string ViewerError = "VIEWER_ERROR";
 
     /// <summary>The code for a document that cannot be opened.</summary>
     public static string FromOpenFailure(ViewerOpenFailure failure) => failure switch
@@ -50,6 +53,44 @@ public sealed class EmbedProtocolException(string code, string message, int requ
 
     /// <summary>The request to answer, 0 when the message had none.</summary>
     public int RequestId { get; } = requestId;
+}
+
+/// <summary>
+/// What the frame's URL says (index.html?embed=1&amp;mode=SIZED_CONTAINER&amp;origin=https%3A%2F%2Fexample.com):
+/// the mode the host page lays the frame out for, and the host's origin, null when it is missing or
+/// not a valid http or https origin (the viewer then refuses to listen).
+/// </summary>
+public sealed record EmbedFrame(EmbedMode Mode, string? Origin)
+{
+    /// <summary>The frame's settings from a URL query ("?embed=1&amp;…"), or null when the page is not embedded.</summary>
+    public static EmbedFrame? FromQuery(string? query)
+    {
+        if (string.IsNullOrEmpty(query)) return null;
+        string? embed = null, mode = null, origin = null;
+        foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int eq = part.IndexOf('=');
+            string key = eq < 0 ? part : part[..eq];
+            string value;
+            try
+            {
+                value = eq < 0 ? "" : Uri.UnescapeDataString(part[(eq + 1)..].Replace('+', ' '));
+            }
+            catch (UriFormatException)
+            {
+                continue;
+            }
+            switch (key)
+            {
+                case "embed": embed ??= value; break;
+                case "mode": mode ??= value; break;
+                case "origin": origin ??= value; break;
+            }
+        }
+        if (embed == null) return null;
+        return new EmbedFrame(EmbedConfig.ParseMode(mode) ?? EmbedMode.FullWindow,
+            embed == EmbedProtocol.Version.ToString(CultureInfo.InvariantCulture) ? EmbedProtocol.ParseOrigin(origin) : null);
+    }
 }
 
 /// <summary>A message from the host page.</summary>

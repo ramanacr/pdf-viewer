@@ -49,6 +49,26 @@ public class EmbedSdkTests
     [InlineData("example.com")]
     public void Origin_RefusesAnythingButAnHttpOrigin(string? given) => Assert.Null(EmbedProtocol.ParseOrigin(given));
 
+    [Fact]
+    public void FrameUrl_GivesTheModeAndTheHostOrigin()
+    {
+        Assert.Null(EmbedFrame.FromQuery(null));
+        Assert.Null(EmbedFrame.FromQuery(""));
+        Assert.Null(EmbedFrame.FromQuery("?mode=IN_LINE"));
+        Assert.Equal(new EmbedFrame(EmbedMode.SizedContainer, "https://example.com"),
+            EmbedFrame.FromQuery("?embed=1&mode=SIZED_CONTAINER&origin=https%3A%2F%2Fexample.com"));
+        Assert.Equal(new EmbedFrame(EmbedMode.FullWindow, "http://127.0.0.1:8081"), EmbedFrame.FromQuery("embed=1&origin=http://127.0.0.1:8081"));
+        // The first value counts, so an appended parameter cannot replace the origin.
+        Assert.Equal("https://a.test", EmbedFrame.FromQuery("?embed=1&origin=https%3A%2F%2Fa.test&origin=https%3A%2F%2Fb.test")!.Origin);
+        // Embedded, but nothing to listen to: no origin, a bad one, or another protocol version.
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&mode=LIGHT_BOX")!.Origin);
+        Assert.Equal(EmbedMode.LightBox, EmbedFrame.FromQuery("?embed=1&mode=LIGHT_BOX")!.Mode);
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&origin=null")!.Origin);
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&origin=%")!.Origin);
+        Assert.Null(EmbedFrame.FromQuery("?embed=2&origin=https%3A%2F%2Fexample.com")!.Origin);
+        Assert.Equal(EmbedMode.FullWindow, EmbedFrame.FromQuery("?embed=1&mode=POPUP")!.Mode);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("not json")]
