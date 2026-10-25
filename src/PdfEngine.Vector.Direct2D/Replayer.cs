@@ -1841,8 +1841,10 @@ internal sealed partial class Replayer : IDisposable
         var resolved = ResolveText(cmd, out _);
         if (resolved == null || cmd.Run.FontSize == 0)
             return;
-        // A run drawn from several faces is described part by part only when it has one: the parts
-        // hold the run's glyphs out of order, so their text cannot be told glyph by glyph.
+        // Only a run drawn from one face gets its text description (printing keeps it as text). Each
+        // GlyphRun takes one GlyphRunDescription, and Describe gives one for a contiguous range of
+        // the run's glyphs; a part of a run drawn from several faces holds glyphs from positions
+        // spread over the run, and does not record which, so its text is not described.
         int total = resolved.Count == 1 ? resolved[0].Indices.Length : -1;
         foreach (var r in resolved)
             if (r.Indices.Length > 0)
