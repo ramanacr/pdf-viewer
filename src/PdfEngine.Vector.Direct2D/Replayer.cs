@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Editing;
 using SubstituteShaper = PdfEngine.Vector.Text.SubstituteShaper;
+using CharacterComposition = PdfEngine.Vector.Text.CharacterComposition;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.DCommon;
@@ -1416,7 +1417,7 @@ internal sealed partial class Replayer : IDisposable
         if (installed != null) chain.Add((installed, installed.Family, bold, italic, false));
         if (family != null) chain.Add((null, family, bold, italic, isSymbol));
         if (isSymbol) chain.Add((null, family!, bold, italic, false));
-        foreach (var extra in UnicodeFallbackFamilies)
+        foreach (var extra in CharacterComposition.UnicodeFallbackFamilies)
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
         // Text whose font is not embedded reaches here as characters, not shaped glyphs: Arabic and
@@ -1452,15 +1453,6 @@ internal sealed partial class Replayer : IDisposable
         return null;
     }
 
-    /// <summary>The run's text, for choosing a CJK face by the language of its characters.</summary>
-    private static string RunText(PdfGlyphRun run)
-    {
-        if (run.FullText != null) return run.FullText;
-        var sb = new System.Text.StringBuilder(run.Glyphs.Count);
-        foreach (var g in run.Glyphs) sb.Append(g.Unicode);
-        return sb.ToString();
-    }
-
     /// <summary>
     /// The run drawn from several faces: each glyph from <paramref name="primary"/> (the substitute
     /// that has most of them) when it has it, else from the installed face for its character
@@ -1471,72 +1463,27 @@ internal sealed partial class Replayer : IDisposable
     private ResolvedPart[]? ComposeByCharacter(PdfGlyphRun run, IDWriteFontFace primary, bool symbolCodes, bool bold, bool italic,
         (string? Name, string? Ordering) hint, double th, double sign, Func<IDWriteFontFace, TrueTypeFontFile?>? shaping)
     {
-        var owners = new IDWriteFontFace?[run.Glyphs.Count];
         string? language = null;
         var primaryFound = PrimaryGlyphs(primary, run, symbolCodes);
-        for (int i = 0; i < run.Glyphs.Count; i++)
-        {
-            var g = run.Glyphs[i];
-            string? text = g.Unicode;
-            if (string.IsNullOrEmpty(text) || text == " " || text == "\u00A0") continue;
-            if (primaryFound[i])
-            {
-                owners[i] = primary;
-                continue;
-            }
-            if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0)) continue;
-            owners[i] = FaceFor(i);
-        }
+        var owners = CharacterComposition.Owners(run, primary, primaryFound, FaceFor);
         // The words MapByUnicode shapes: each from one face, so no word is cut in two at a face change.
         if (shaping != null && !symbolCodes && sign > 0)
         {
             var found = new Dictionary<IDWriteFontFace, bool[]>(ReferenceEqualityComparer.Instance) { [primary] = primaryFound };
-            KeepWordsWhole(run, owners, primary, (f, k) => (found.TryGetValue(f, out var has) ? has : found[f] = PrimaryGlyphs(f, run, false))[k], FaceFor);
+            CharacterComposition.KeepWordsWhole(run, owners, primary, (f, k) => (found.TryGetValue(f, out var has) ? has : found[f] = PrimaryGlyphs(f, run, false))[k], FaceFor);
         }
         return ComposeParts(run, owners, primary, symbolCodes, th, sign, shaping);
 
         IDWriteFontFace? FaceFor(int k)
         {
-            language ??= Fonts.CharacterFaces.CjkLanguage(hint.Ordering, hint.Name, RunText(run));
+            language ??= Fonts.CharacterFaces.CjkLanguage(hint.Ordering, hint.Name, CharacterComposition.RunText(run));
             return _res.GetCharacterFace(char.ConvertToUtf32(run.Glyphs[k].Unicode!, 0), language, bold, italic);
         }
     }
 
-    /// <summary>
-    /// Gives each Arabic or Indic word of the run (<see cref="SubstituteShaper.Words"/>) to one face in
-    /// <paramref name="owners"/>, so that face shapes the whole word: <paramref name="primary"/> when it
-    /// has every glyph of the word, else the first face a character of the word asks for
-    /// (<paramref name="faceFor"/>) that has every glyph of it. A word that no such face has whole
-    /// keeps the face of each glyph (each piece is drawn unshaped where the word is cut).
-    /// </summary>
-    /// <param name="has">Whether a face has the glyph at a position of the run.</param>
+    /// <summary>The run's Arabic and Indic words each to one face (<see cref="CharacterComposition.KeepWordsWhole"/>).</summary>
     internal static void KeepWordsWhole<TFace>(PdfGlyphRun run, TFace?[] owners, TFace primary, Func<TFace, int, bool> has, Func<int, TFace?> faceFor)
-        where TFace : class
-    {
-        if (SubstituteShaper.Words(run) is not { } words)
-            return;
-        foreach (var word in words)
-        {
-            TFace? owner = Whole(primary) ? primary : null;
-            for (int k = word.Start; owner == null && k < word.End; k++)
-                if (!IsJoiner(k) && faceFor(k) is { } candidate && !ReferenceEquals(candidate, primary) && Whole(candidate))
-                    owner = candidate;
-            if (owner == null)
-                continue;
-            for (int k = word.Start; k < word.End; k++)
-                owners[k] = owner;
-
-            bool Whole(TFace face)
-            {
-                for (int k = word.Start; k < word.End; k++)
-                    if (!IsJoiner(k) && !has(face, k)) return false;
-                return true;
-            }
-        }
-
-        // Zero-width joiners are shaped with the word and drawn as no glyph: no face needs one.
-        bool IsJoiner(int k) => run.Glyphs[k].Unicode!.All(c => c is '\u200C' or '\u200D');
-    }
+        where TFace : class => CharacterComposition.KeepWordsWhole(run, owners, primary, has, faceFor);
 
     /// <summary>
     /// The parts of a run whose glyphs have the faces in <paramref name="owners"/> (by position; null
@@ -1546,15 +1493,11 @@ internal sealed partial class Replayer : IDisposable
     internal static ResolvedPart[]? ComposeParts(PdfGlyphRun run, IDWriteFontFace?[] owners, IDWriteFontFace primary, bool symbolCodes,
         double th, double sign, Func<IDWriteFontFace, TrueTypeFontFile?>? shaping)
     {
-        var order = new List<IDWriteFontFace> { primary };
-        foreach (var o in owners)
-            if (o != null && !order.Contains(o)) order.Add(o);
-        if (order.Count == 1)
+        if (CharacterComposition.Parts(owners, primary) is not { } order)
             return null;
         var parts = new List<ResolvedPart>();
-        foreach (var f in order)
+        foreach (var (f, mine) in order)
         {
-            var mine = Array.ConvertAll(owners, o => ReferenceEquals(o, f));
             var part = MapByUnicode(f, run, ReferenceEquals(f, primary) && symbolCodes, th, sign, allowMissing: true, out _, shaping, mine);
             if (part != null && part.Indices.Length > 0) parts.Add(part);
         }
@@ -1582,9 +1525,6 @@ internal sealed partial class Replayer : IDisposable
         return has;
     }
 
-    /// <summary>Faces tried after the metric-compatible substitute, for glyphs it lacks (symbols, dingbats, other scripts).</summary>
-    private static readonly string[] UnicodeFallbackFamilies =
-        { "Segoe UI Symbol", "Arial", "Segoe UI", "Cambria Math", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic", "Nirmala UI", "Ebrima" };
 
     /// <summary>
     /// Glyph indices for every drawable glyph of a run in <paramref name="face"/>, or null if one is
