@@ -499,6 +499,9 @@ public static class EmbedProtocol
         w.WriteBoolean("canCopy", m.CanCopy);
         w.WriteBoolean("canPrint", m.CanPrint);
         w.WriteBoolean("wasRepaired", m.WasRepaired);
+        w.WriteBoolean("isSigned", m.IsSigned);
+        if (m.CertificationLevel is int level) w.WriteNumber("certificationLevel", level);
+        else w.WriteNull("certificationLevel");
         w.WriteNumber("fileSize", m.FileSizeBytes);
         w.WriteString("fileName", fileName);
         if (fileId == null) w.WriteNull("id");

@@ -157,6 +157,14 @@ public sealed class PdfSignatureCheck
     internal long SignedEnd { get; init; }
 }
 
+/// <summary>The signatures of a document as read, not checked: <see cref="PdfSignatureValidator.ReadSignedState"/>.</summary>
+/// <param name="Signatures">Signed signature fields.</param>
+/// <param name="CertificationLevel">The certification signature's DocMDP /P (1 to 3), null when the document is not certified.</param>
+public sealed record PdfSignedState(int Signatures, int? CertificationLevel)
+{
+    public bool IsSigned => Signatures > 0 || CertificationLevel != null;
+}
+
 /// <summary>
 /// Validates the signatures of a document without the network: integrity (the CMS signature
 /// and its message digest over the /ByteRange bytes), the signer's chain against this machine's
@@ -896,6 +904,36 @@ public static partial class PdfSignatureValidator
         }
         if (ends.Count == 0) ends.Add(file.Length);
         return ends;
+    }
+
+    /// <summary>
+    /// What a viewer needs to know before it edits: how many signed signature fields the document
+    /// has and the DocMDP level of its certification signature (1 no changes, 2 form filling and
+    /// signing, 3 also annotations), without checking any signature. A damaged form or /Perms
+    /// entry reads as absent.
+    /// </summary>
+    public static PdfSignedState ReadSignedState(PdfVectorDocument doc)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        int signatures;
+        try
+        {
+            signatures = SignedFields(doc).Count;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+        {
+            signatures = 0;
+        }
+        int? level;
+        try
+        {
+            level = CertificationLevel(doc);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+        {
+            level = null;
+        }
+        return new PdfSignedState(signatures, level);
     }
 
     /// <summary>The DocMDP permission level of the document's certification signature, if any.</summary>

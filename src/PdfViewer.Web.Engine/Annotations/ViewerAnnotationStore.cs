@@ -1,3 +1,5 @@
+using PdfEngine.Vector.Annotations;
+
 namespace PdfViewer.Web.Engine.Annotations;
 
 /// <summary>Which annotations a host page asks for: by id, by page range (1-based, inclusive), or all when both are null.</summary>
@@ -27,15 +29,20 @@ public sealed class ViewerAnnotationStore
     /// <summary>Most annotations in one call of the host page.</summary>
     public const int MaxPerCall = 1000;
 
-    /// <summary>Longest text (/Contents) of one annotation, in characters.</summary>
-    public const int MaxContentsLength = 10000;
+    // The limits shared with the XFDF reader (PdfAnnotationLimits), so an import is never refused for one of them.
 
-    public const int MaxAuthorLength = 256;
+    /// <summary>Longest text (/Contents) of one annotation, in characters.</summary>
+    public const int MaxContentsLength = PdfAnnotationLimits.MaxContentsLength;
+
+    public const int MaxAuthorLength = PdfAnnotationLimits.MaxTextLength;
     public const int MaxIdLength = 200;
-    public const int MaxQuads = 1000;
-    public const int MaxInkStrokes = 100;
-    public const int MaxInkPointsPerStroke = 10000;
-    public const int MaxInkPoints = 50000;
+    public const int MaxQuads = PdfAnnotationLimits.MaxQuads;
+    public const int MaxInkStrokes = PdfAnnotationLimits.MaxInkStrokes;
+    public const int MaxInkPointsPerStroke = PdfAnnotationLimits.MaxInkPointsPerStroke;
+    public const int MaxInkPoints = PdfAnnotationLimits.MaxInkPoints;
+
+    /// <summary>Most ink and quadrilateral points of all the document's annotations together.</summary>
+    public const int MaxPoints = PdfAnnotationLimits.MaxPointsPerDocument;
     public const double MaxStrokeWidth = 100;
     public const double MinFontSize = 4, MaxFontSize = 144;
 
@@ -91,6 +98,7 @@ public sealed class ViewerAnnotationStore
             Check(a);
             added.Add(a with { SourceIndex = -1 });
         }
+        if (Points(added) is > 0 and long more) CheckPoints(Points(Current) + more);
         Commit(Ordered(Current.Concat(added)));
         return added;
     }
@@ -103,6 +111,7 @@ public sealed class ViewerAnnotationStore
         // Moved to another page, a file's annotation is written as a new one there (and removed from its page).
         var updated = annotation with { SourceIndex = annotation.Page == old.Page ? old.SourceIndex : -1 };
         Check(updated);
+        if (Points(updated) > Points(old)) CheckPoints(Points(Current) - Points(old) + Points(updated));
         Commit(Ordered(Current.Select(a => a.Id == updated.Id ? updated : a)));
         return updated;
     }
@@ -155,6 +164,17 @@ public sealed class ViewerAnnotationStore
         list.Select((a, i) => (a, i)).OrderBy(x => x.a.Page).ThenBy(x => x.i).Select(x => x.a).ToList();
 
     public static string NewId() => Guid.NewGuid().ToString();
+
+    /// <summary>The ink and quadrilateral points of the annotations (x, y pairs).</summary>
+    public static long Points(IEnumerable<ViewerAnnotation> annotations) => annotations.Sum(a => Points(a));
+
+    public static long Points(ViewerAnnotation a) => a.QuadPoints.Count / 2 + a.InkList.Sum(s => (long)(s.Count / 2));
+
+    private static void CheckPoints(long total)
+    {
+        if (total > MaxPoints)
+            throw new ViewerAnnotationException($"The document's annotations can have at most {MaxPoints} ink and quadPoints points together.");
+    }
 
     /// <summary>Refuses an annotation that is not on a page of this document or does not fit its media box and the limits.</summary>
     public void Check(ViewerAnnotation a)

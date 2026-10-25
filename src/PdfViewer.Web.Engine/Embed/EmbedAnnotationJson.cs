@@ -47,7 +47,16 @@ public static class EmbedAnnotationJson
         if (n == 0 || n > ViewerAnnotationStore.MaxPerCall) throw Bad(requestId, $"addAnnotations: give 1 to {ViewerAnnotationStore.MaxPerCall} annotations.");
         var list = new List<ViewerAnnotation>(n);
         int i = 0;
-        foreach (var item in e.EnumerateArray()) list.Add(Parse(item, requestId, author, now, requireId: false, $"annotation {i++}"));
+        long points = 0;
+        foreach (var item in e.EnumerateArray())
+        {
+            var a = Parse(item, requestId, author, now, requireId: false, $"annotation {i++}");
+            // The document-wide budget, checked again by the store against what the document has.
+            points += ViewerAnnotationStore.Points(a);
+            if (points > ViewerAnnotationStore.MaxPoints)
+                throw Bad(requestId, $"addAnnotations: the annotations have more than {ViewerAnnotationStore.MaxPoints} ink and quadPoints points together.");
+            list.Add(a);
+        }
         return list;
     }
 

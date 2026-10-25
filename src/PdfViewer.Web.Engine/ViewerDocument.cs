@@ -32,7 +32,7 @@ public sealed record ViewerOutlineItem(string Title, int? Page, IReadOnlyList<Vi
 public sealed record ViewerMetadata(
     int PageCount, string Title, string Author, string Subject, string Keywords, string Creator, string Producer,
     DateTime? CreationDate, DateTime? ModificationDate, string PdfVersion, bool IsEncrypted, bool IsTagged,
-    bool CanCopy, bool CanPrint, bool WasRepaired, long FileSizeBytes);
+    bool CanCopy, bool CanPrint, bool WasRepaired, long FileSizeBytes, bool IsSigned = false, int? CertificationLevel = null);
 
 /// <summary>Limits and resources of a viewer session.</summary>
 public sealed class ViewerOptions
@@ -138,7 +138,13 @@ public sealed class ViewerDocument : IAsyncDisposable
         Pages = pages;
         _fonts = options.Fonts;
         _renderer = new SkiaVectorRenderer(options.ImageCacheBytes, _fonts);
+        _signed = PdfEngine.Vector.Signatures.PdfSignatureValidator.ReadSignedState(document);
+        _incremental = PdfEngine.Vector.Services.PdfUpdate.TakesIncrementalUpdate(document, bytes);
     }
+
+    // Signatures of the file as opened, and whether it takes an incremental update (else an edit rewrites it whole).
+    private readonly PdfEngine.Vector.Signatures.PdfSignedState _signed;
+    private readonly bool _incremental;
 
     public int PageCount => Pages.Count;
 
@@ -174,13 +180,52 @@ public sealed class ViewerDocument : IAsyncDisposable
     public bool CanCopy => _document.Security is not { } s
                            || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanCopy;
 
-    /// <summary>The document lets the reader add and change annotations (ISO 32000-2 Table 22, bit 6), as <see cref="CanCopy"/>.</summary>
-    public bool CanAnnotate => _document.Security is not { } s
-                               || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanAnnotate;
+    /// <summary>
+    /// The document lets the reader add and change annotations: its permissions (ISO 32000-2
+    /// Table 22, bit 6, as <see cref="CanCopy"/>) and its signatures (<see cref="EditRestriction"/>)
+    /// allow it. A certification signature allows annotations only at level 3.
+    /// </summary>
+    public bool CanAnnotate => SignaturesAllowEdits && _signed.CertificationLevel is null or 3
+                               && (_document.Security is not { } s
+                                   || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanAnnotate);
 
-    /// <summary>The document lets the reader fill its form fields (bits 6 or 9), as <see cref="CanCopy"/>.</summary>
-    public bool CanFillForms => _document.Security is not { } s
-                                || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanFillForms;
+    /// <summary>
+    /// The document lets the reader fill its form fields: its permissions (bits 6 or 9, as
+    /// <see cref="CanCopy"/>) and its signatures allow it. A certification signature allows form
+    /// filling at levels 2 and 3.
+    /// </summary>
+    public bool CanFillForms => SignaturesAllowEdits && _signed.CertificationLevel is not 1
+                                && (_document.Security is not { } s
+                                    || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanFillForms);
+
+    /// <summary>True when the file as opened has a signed signature field or a certification signature.</summary>
+    public bool IsSigned => _signed.IsSigned;
+
+    /// <summary>The certification signature's DocMDP level (1 no changes, 2 form filling, 3 also annotations); null when the file is not certified.</summary>
+    public int? CertificationLevel => _signed.CertificationLevel;
+
+    /// <summary>
+    /// A signed file that cannot take an incremental update (it was repaired, or has no
+    /// startxref) would be written whole, which breaks every signature: it is not edited at all.
+    /// </summary>
+    private bool SignaturesAllowEdits => !_signed.IsSigned || _incremental;
+
+    /// <summary>Why the signatures stop or limit editing (Acrobat's rules), or null when they do not.</summary>
+    public string? EditRestriction =>
+        !_signed.IsSigned ? null
+        : !_incremental ? "This signed document is damaged: saving changes would rewrite the whole file and break its signatures, so it cannot be changed here."
+        : _signed.CertificationLevel switch
+        {
+            1 => "This document is certified, and its certification does not allow changes.",
+            2 => "This document is certified for form filling only: annotations cannot be added or changed.",
+            _ => null,
+        };
+
+    /// <summary>What a reader of a signed document is told before the first change, or null for an unsigned one or one that cannot be changed.</summary>
+    public string? EditNotice =>
+        _signed.IsSigned && SignaturesAllowEdits && _signed.CertificationLevel is not 1
+            ? "Changes will be added as a new revision; existing signatures stay valid but will show that the document was modified after signing."
+            : null;
 
     /// <summary>The document lets the reader print it (ISO 32000-2 Table 22, bit 3), as <see cref="CanCopy"/>.</summary>
     public bool CanPrint => _document.Security is not { } s
@@ -219,7 +264,8 @@ public sealed class ViewerDocument : IAsyncDisposable
             }
             return new ViewerMetadata(PageCount, m.Title ?? "", m.Author ?? "", m.Subject ?? "", Info("Keywords") ?? "", m.Creator ?? "", m.Producer ?? "",
                 PdfEngine.Vector.Services.PdfTextStrings.ParseDate(Info("CreationDate")), PdfEngine.Vector.Services.PdfTextStrings.ParseDate(Info("ModDate")),
-                _document.HeaderVersion ?? m.PdfVersion, _document.IsEncrypted, tagged, CanCopy, CanPrint, WasRepaired, _fileSize);
+                _document.HeaderVersion ?? m.PdfVersion, _document.IsEncrypted, tagged, CanCopy, CanPrint, WasRepaired, _fileSize,
+                _signed.IsSigned, _signed.CertificationLevel);
         }
         finally
         {
@@ -616,8 +662,12 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// streams, and reads it again: pages, text and search then show the edits. Every call starts
     /// from the bytes as opened, so the file does not grow with the number of edits. Throws
     /// <see cref="PdfEngine.Vector.Forms.PdfFieldValidationException"/> (or an argument, key or
-    /// invalid-operation exception) when a form value is refused; nothing changes then. Returns
-    /// the form fields written (the values given and the fields calculated from them).
+    /// invalid-operation exception) when a form value is refused; nothing changes then. Changes
+    /// that the document's signatures or permissions do not allow (<see cref="CanAnnotate"/>,
+    /// <see cref="CanFillForms"/>) throw <see cref="InvalidOperationException"/>. A signed file
+    /// is only ever changed by an incremental update, so its bytes as opened stay a prefix of
+    /// <see cref="Bytes"/>. Returns the form fields written (the values given and the fields
+    /// calculated from them).
     /// </summary>
     public async Task<IReadOnlyList<string>> ApplyEditsAsync(IReadOnlyList<Annotations.ViewerAnnotation> fromFile, IReadOnlyList<Annotations.ViewerAnnotation> annotations,
         IReadOnlyList<(string Name, IReadOnlyList<string> Values)> formValues, CancellationToken cancellationToken = default)
@@ -630,8 +680,12 @@ public sealed class ViewerDocument : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!SignaturesAllowEdits) throw new InvalidOperationException(EditRestriction);
+            if (formValues.Count > 0 && !CanFillForms) throw new InvalidOperationException(EditRestriction ?? "This document does not allow form filling.");
             var (baseDoc, baseBytes) = await EditBaseAsync(cancellationToken).ConfigureAwait(false);
             byte[] bytes = Annotations.ViewerAnnotationPdf.Write(baseDoc, baseBytes, fromFile, annotations) ?? baseBytes;
+            if (!ReferenceEquals(bytes, baseBytes) && !CanAnnotate)
+                throw new InvalidOperationException(EditRestriction ?? "This document does not allow annotations.");
             PdfVectorDocument? doc = ReferenceEquals(bytes, baseBytes) ? baseDoc : null;
             IReadOnlyList<string> filled = [];
             if (formValues.Count > 0)
