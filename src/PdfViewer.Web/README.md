@@ -115,17 +115,7 @@ path can make the native link exceed the 260-character path limit; a short path 
 
 ## Publishing
 
-`.github/workflows/web-demo.yml` publishes the app on every pull request and push to `main`, and
-deploys `main` to GitHub Pages under `/pdf-viewer/`. The deploy job runs only after a one-time
-switch by the repository owner:
-
-1. **Settings → Pages → Source: GitHub Actions.**
-2. **Settings → Secrets and variables → Actions → Variables:** `WEB_DEMO_PAGES` = `true`.
-
-Until then the workflow builds, rewrites the base href, reports the sizes and stops, and the
-existing site (Pages from `main` `/docs`) is untouched. After the switch, Pages serves only what
-the workflow deploys. To keep the `/docs` pages as well, copy `docs/` into the artifact next to
-the app (one more step in the workflow) or move the demo to a subfolder of it.
+`.github/workflows/web-demo.yml` publishes the app on every pull request and push to `main`. From `main` it deploys one Pages site: the documentation in `docs/` (home page, privacy policy) built with Jekyll at the site root, and this app under `/pdf-viewer/demo/`. The deploy runs when Pages uses GitHub Actions as its source and the repository variable `WEB_DEMO_PAGES` is `true`.
 
 ## Limits
 

@@ -93,6 +93,19 @@ public partial class MainWindow : Window
         document.ShowPageMarkDialogFunc = vm => PageMarkDialogs.Show(vm, this);
         document.ShowPdfAAction = vm => new PdfAWindow(vm, path => document.RequestOpenDocumentAsync?.Invoke(path) ?? document.LoadDocumentAsync(path)) { Owner = this }.Show();
         document.ShowAccessibilityCheckAction = vm => new AccessibilityCheckWindow(vm, document.ClearAccessibilityHighlight) { Owner = this }.Show();
+        document.ShowPreflightAction = vm => new PreflightWindow(vm, document.ClearAccessibilityHighlight) { Owner = this }.Show();
+        document.ShowOutputPreviewAction = vm =>
+        {
+            // The preview follows the page the main window shows.
+            var window = new OutputPreviewWindow(vm) { Owner = this };
+            void OnPage(object? s, System.ComponentModel.PropertyChangedEventArgs e)
+            {
+                if (e.PropertyName == nameof(MainViewModel.CurrentPageNumber)) window.ShowPage(document.CurrentPageNumber);
+            }
+            document.PropertyChanged += OnPage;
+            window.Closed += (_, _) => document.PropertyChanged -= OnPage;
+            window.Show();
+        };
         // The tagged copy opens (in its own tab) and is checked there.
         document.ShowMakeAccessibleAction = vm => new MakeAccessibleWindow(vm, async path =>
         {

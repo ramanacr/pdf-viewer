@@ -33,6 +33,12 @@ public sealed class PdfImageSource : IPdfImageSource
 
     public string CacheKey { get; }
 
+    /// <summary>
+    /// For a JPEG 2000 image without /ColorSpace, maps the space its components select (gray, RGB or CMYK)
+    /// before conversion: how a separation draws such an image's plates.
+    /// </summary>
+    internal Func<PdfColorSpace, PdfColorSpace>? MapColorSpace { get; init; }
+
     public PdfImageSource(
         string cacheKey,
         PdfStream stream,
@@ -213,7 +219,8 @@ public sealed class PdfImageSource : IPdfImageSource
 
             long smaskInData = dict.GetInteger("SMaskInData") ?? 0;
             int colourCount = smaskInData != 0 && count > 1 ? count - 1 : count; // the opacity channel is not colour
-            var cs = _colorSpace ?? (colourCount >= 4 ? PdfColorSpace.DeviceCmyk : colourCount >= 3 ? PdfColorSpace.DeviceRgb : PdfColorSpace.DeviceGray);
+            var own = colourCount >= 4 ? PdfColorSpace.DeviceCmyk : colourCount >= 3 ? PdfColorSpace.DeviceRgb : PdfColorSpace.DeviceGray;
+            var cs = _colorSpace ?? MapColorSpace?.Invoke(own) ?? own;
             int n = Math.Max(1, cs.NumberOfComponents);
             if (count < n)
                 throw new PdfUnsupportedFeatureException(PdfFallbackReason.ImageDecode, "JPEG 2000 has fewer components than its colour space.");

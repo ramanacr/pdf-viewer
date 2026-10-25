@@ -13,6 +13,8 @@ images, converts to PDF/A, and exports to Word, Excel and PowerPoint.
 - **Safe by design:** document JavaScript and launch actions are never run.
 - **Open source:** MIT licence. Every release ships CycloneDX and SPDX bills of materials.
 
+**Try it in your browser:** [PDF Viewer web demo](demo/). The engine runs in the page as WebAssembly; nothing is uploaded.
+
 ## Download
 
 Get the latest installer (`PdfViewerSetup.exe`) or the portable `PdfViewer.exe` from the

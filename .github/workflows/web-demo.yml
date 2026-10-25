@@ -1,15 +1,11 @@
 name: Web Demo (Blazor WebAssembly)
 
-# Builds the browser demo (src/PdfViewer.Web) on every pull request and push to main, and
-# deploys it to GitHub Pages from main.
+# Builds the browser demo (src/PdfViewer.Web) on every pull request and push to main, and from
+# main deploys the whole GitHub Pages site: the documentation in docs/ (home page, privacy policy)
+# at the root, built with Jekyll, and the demo under /demo/.
 #
-# One-time switch by the repository owner, before the deploy job can run:
-#   1. Settings > Pages > Build and deployment > Source: "GitHub Actions". (Today Pages serves
-#      main /docs; that site keeps working until this switch, and the workflow never touches it.)
-#   2. Settings > Secrets and variables > Actions > Variables: add WEB_DEMO_PAGES = true.
-# Until both are done, the deploy job is skipped and the workflow only builds and checks the site.
-# Note: once Pages serves from Actions, /docs is no longer published at the site root; see
-# src/PdfViewer.Web/README.md ("Publishing") for keeping both.
+# The deploy job runs when Settings > Pages > Source is "GitHub Actions" and the repository
+# variable WEB_DEMO_PAGES is true; otherwise the workflow only builds and checks the site.
 
 on:
   push:
@@ -64,7 +60,7 @@ jobs:
       shell: bash
       run: |
         site=publish/web/wwwroot
-        base="/${GITHUB_REPOSITORY#*/}/"
+        base="/${GITHUB_REPOSITORY#*/}/demo/"
         sed -i "s|<base href=\"/\" />|<base href=\"$base\" />|" "$site/index.html"
         grep -q "<base href=\"$base\" />" "$site/index.html"
         find "$site" -name '*.br' -delete
@@ -82,11 +78,31 @@ jobs:
           echo "| Site, gzip-compressed (about what Pages transfers) | $(tar -C "$site" -cf - . | gzip -6 | wc -c | numfmt --to=iec) |"
         } >> "$GITHUB_STEP_SUMMARY"
 
+    # Pages serves only what this workflow deploys, so the documentation site in docs/ (home page,
+    # privacy policy) is built here too and kept at the site root; the demo goes under /demo/.
+    - name: Build the documentation site
+      if: github.event_name != 'pull_request'
+      uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697 # v1.0.13
+      with:
+        source: ./docs
+        destination: ./publish/pages
+
+    - name: Put the demo under /demo/
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        sudo chown -R "$(id -u)":"$(id -g)" publish/pages
+        test -f publish/pages/index.html
+        test -f publish/pages/privacy/index.html
+        mkdir -p publish/pages/demo
+        cp -r publish/web/wwwroot/. publish/pages/demo/
+        touch publish/pages/.nojekyll
+
     - name: Upload the Pages artifact
       if: github.event_name != 'pull_request'
       uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
       with:
-        path: publish/web/wwwroot
+        path: publish/pages
 
   deploy:
     needs: build

@@ -407,6 +407,48 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         }
     }
 
+    /// <summary>
+    /// The page as it prints (see <see cref="GetPagePrintDisplayListAsync"/>), with its colours replaced by the
+    /// values of the plates <paramref name="request"/> asks for (print production: separations). Not cached.
+    /// </summary>
+    public ValueTask<IPdfDisplayList> GetPlateDisplayListAsync(int pageNumber, PdfEngine.Vector.PrintProduction.PdfPlateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return BuildForPrintProductionAsync(pageNumber, request, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Interprets the page as it prints and reports every painting operation to <paramref name="observer"/>
+    /// (print production: colorants, preflight). Returns the print display list that was built.
+    /// </summary>
+    public ValueTask<IPdfDisplayList> ObservePageAsync(int pageNumber, PdfEngine.Vector.PrintProduction.IPdfPaintObserver observer,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(observer);
+        return BuildForPrintProductionAsync(pageNumber, null, observer, cancellationToken);
+    }
+
+    private async ValueTask<IPdfDisplayList> BuildForPrintProductionAsync(int pageNumber, PdfEngine.Vector.PrintProduction.PdfPlateRequest? plate,
+        PdfEngine.Vector.PrintProduction.IPdfPaintObserver? observer, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        int idx = pageNumber - 1;
+        if (idx < 0 || idx >= _pageTree.Count)
+            throw new ArgumentOutOfRangeException(nameof(pageNumber));
+        var pageNode = _pageTree.Pages[idx];
+        await _buildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => _interpreter.BuildDisplayList(pageNode, cancellationToken, forPrinting: true, plate, observer), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _buildGate.Release();
+        }
+    }
+
     private bool PrintsDifferently(PdfPageNode page)
     {
         if (_resolver.Resolve(page.Dictionary["Annots"]) is not PdfArray annots)
