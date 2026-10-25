@@ -213,8 +213,16 @@ public sealed class PdfAnnotationEditor
 
         // A stamp keeps the appearance it has (a picture, a page, a dynamic stamp's name and date)
         // unless it is given a new one: moving or resizing it only changes /Rect, which 12.5.5 fits it to.
-        if (a.Subtype == "Stamp" && a.Stamp == null && existing != null && _update.Resolve(existing["AP"]) is PdfDictionary)
+        // Turned, it keeps that appearance too, with the turn added to its form's /Matrix.
+        if (a.Subtype == "Stamp" && a.Stamp == null && existing != null && _update.Resolve(existing["AP"]) is PdfDictionary keptAp)
+        {
+            if (PdfStamps.NormalizeDegrees(a.AppearanceTurn) != 0 && _update.Resolve(keptAp["N"]) is PdfStream normal)
+            {
+                var ap = new Dictionary<string, PdfObject>(keptAp.Entries) { ["N"] = _update.AddRef(PdfStampForms.Turned(normal, a.AppearanceTurn, _update.Resolver)) };
+                e["AP"] = new PdfDictionary(ap);
+            }
             return new PdfDictionary(e);
+        }
 
         // A new normal appearance in place of the old one; a type the generator does not draw keeps what it had.
         var draft = new PdfDictionary(e);

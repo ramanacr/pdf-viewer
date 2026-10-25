@@ -139,6 +139,54 @@ public static class PdfStamps
         return PdfAnnotationEditor.Apply(doc, blank, e => e.Add(copy));
     }
 
+    /// <summary>
+    /// A one-page PDF with the annotation at <paramref name="index"/> on page <paramref name="pageNumber"/>
+    /// drawn from its own normal appearance, turned by <paramref name="turn"/> degrees counter-clockwise
+    /// (as <see cref="PdfAnnotation.AppearanceTurn"/> turns it when saved), on a page the size of the
+    /// turned box (white, or black when <paramref name="black"/>). Null when it has no appearance stream.
+    /// For showing a stamp read from a document while it is moved, sized or turned.
+    /// </summary>
+    public static byte[]? PreviewOfAppearance(PdfVectorDocument document, int pageNumber, int index, double turn = 0, bool black = false)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        if (pageNumber < 1 || pageNumber > document.PageCount) return null;
+        var r = document.Resolver;
+        if (r.Resolve(document.PageTree.Pages[pageNumber - 1].Dictionary["Annots"]) is not PdfArray annots || index < 0 || index >= annots.Count) return null;
+        if (r.Resolve(annots[index]) is not PdfDictionary annot || r.Resolve(annot["AP"]) is not PdfDictionary ap || r.Resolve(ap["N"]) is not PdfStream normal) return null;
+        if (PdfDocumentInfo.ReadRect(annot["Rect"], r) is not { IsEmpty: false } rect || PdfDocumentInfo.ReadRect(normal.Dictionary["BBox"], r) is not { IsEmpty: false } bbox) return null;
+        var before = (PdfDocumentInfo.Numbers(r.Resolve(normal.Dictionary["Matrix"]), r) is { Length: 6 } m
+            ? new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]) : PdfMatrix.Identity).Transform(bbox);
+        var form = PdfStampForms.Turned(normal, turn, r);
+        var after = PdfStampForms.MatrixOf(form, r).Transform(bbox);
+        if (before.Width <= 0 || before.Height <= 0 || after.Width <= 0 || after.Height <= 0) return null;
+        // The scale /Rect gives it now, kept as it turns.
+        double scale = (rect.Width / before.Width + rect.Height / before.Height) / 2;
+        double w = Math.Max(1, after.Width * scale), h = Math.Max(1, after.Height * scale);
+        byte[] blank = BlankPage(w, h);
+        using var doc = PdfVectorDocument.Open(new MemoryByteSource(blank));
+        var update = new PdfUpdate(doc, blank);
+        int fm = update.Add(PdfStampForms.CopyInto(update, form, r));
+        double opacity = Math.Clamp(r.Resolve(annot["CA"]) switch { PdfReal x => x.Value, PdfInteger n => n.Value, _ => 1.0 }, 0, 1);
+        var resources = new Dictionary<string, PdfObject> { ["XObject"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["Fm0"] = new PdfIndirectRef(fm) }) };
+        var content = new StringBuilder();
+        if (black) content.Append(CultureInfo.InvariantCulture, $"0 g 0 0 {F(w)} {F(h)} re f\n");
+        if (opacity < 1)
+        {
+            resources["ExtGState"] = new PdfDictionary(new Dictionary<string, PdfObject>
+            {
+                ["GS0"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["Type"] = new PdfName("ExtGState"), ["CA"] = new PdfReal(opacity), ["ca"] = new PdfReal(opacity) }),
+            });
+            content.Append("/GS0 gs\n");
+        }
+        double sx = w / after.Width, sy = h / after.Height;
+        content.Append(CultureInfo.InvariantCulture, $"q {F(sx)} 0 0 {F(sy)} {F(-after.Left * sx)} {F(-after.Top * sy)} cm /Fm0 Do Q\n");
+        var (pageNo, page) = update.Page(1);
+        update.Set(pageNo, PdfUpdate.With(page, ("Resources", new PdfDictionary(resources)), ("Contents", update.AddRef(PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>(), Encoding.Latin1.GetBytes(content.ToString()))))));
+        return update.Commit(forceFullRewrite: true);
+    }
+
+    private static string F(double v) => PdfObjectWriter.FormatReal(Math.Round(v, 4));
+
     /// <summary>A one-page PDF with nothing on its page (or black all over it).</summary>
     internal static byte[] BlankPage(double width, double height, bool black = false)
     {
@@ -253,6 +301,35 @@ internal static class PdfStampForms
         if (group) dict["Group"] = Dict(("Type", new PdfName("Group")), ("S", new PdfName("Transparency")));
         return PdfObjectWriter.NewStream(dict, ContentRedactor.Deflate(Encoding.Latin1.GetBytes(content)));
     }
+
+    /// <summary>
+    /// A copy of a form XObject turned by <paramref name="degrees"/> counter-clockwise: its /Matrix
+    /// followed by the turn (an appearance kept when a stamp is turned). The data is copied as it
+    /// is read (decrypted, still filtered).
+    /// </summary>
+    internal static PdfStream Turned(PdfStream form, double degrees, PdfObjectResolver r)
+    {
+        var matrix = PdfDocumentInfo.Numbers(r.Resolve(form.Dictionary["Matrix"]), r) is { Length: 6 } m
+            ? new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5])
+            : PdfMatrix.Identity;
+        var turned = matrix.Multiply(PdfMatrix.CreateRotation(PdfStamps.NormalizeDegrees(degrees) * Math.PI / 180));
+        var entries = new Dictionary<string, PdfObject>(form.Dictionary.Entries)
+        {
+            ["Matrix"] = new PdfArray(new[] { turned.A, turned.B, turned.C, turned.D, turned.E, turned.F }.Select(v => (PdfObject)new PdfReal(Math.Round(v, 6))).ToList()),
+        };
+        entries.Remove("Length");
+        byte[] raw = form.GetRawBytes().ToArray();
+        return PdfObjectWriter.NewStream(entries, raw);
+    }
+
+    /// <summary>A form's /Matrix, identity when it has none.</summary>
+    internal static PdfMatrix MatrixOf(PdfStream form, PdfObjectResolver r) =>
+        PdfDocumentInfo.Numbers(r.Resolve(form.Dictionary["Matrix"]), r) is { Length: 6 } m
+            ? new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5])
+            : PdfMatrix.Identity;
+
+    /// <summary>Another document's form with everything it uses, copied into the update.</summary>
+    internal static PdfObject CopyInto(PdfUpdate update, PdfStream form, PdfObjectResolver r) => Copy(update, form, r, new Dictionary<int, int>(), 0);
 
     // Another document's object and what it refers to, renumbered into the update (each once, cycles kept).
     private static PdfObject Copy(PdfUpdate update, PdfObject? obj, PdfObjectResolver r, Dictionary<int, int> copies, int depth)
