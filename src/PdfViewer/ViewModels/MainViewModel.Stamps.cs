@@ -131,7 +131,8 @@ public partial class MainViewModel
     public void CreateStampFromImage()
     {
         if (PickImageFileFunc?.Invoke() is not { } path) return;
-        string? name = RequestStampNameFunc?.Invoke(System.IO.Path.GetFileNameWithoutExtension(path)) ?? System.IO.Path.GetFileNameWithoutExtension(path);
+        string fallback = System.IO.Path.GetFileNameWithoutExtension(path);
+        string? name = RequestStampNameFunc is { } ask ? ask(fallback) : fallback; // null from the dialog means Cancel
         if (string.IsNullOrWhiteSpace(name)) return;
         try
         {
@@ -150,7 +151,8 @@ public partial class MainViewModel
     public void CreateStampFromPdf()
     {
         if (PickStampPdfFunc?.Invoke() is not { } pick) return;
-        string? name = RequestStampNameFunc?.Invoke(System.IO.Path.GetFileNameWithoutExtension(pick.Path)) ?? System.IO.Path.GetFileNameWithoutExtension(pick.Path);
+        string fallback = System.IO.Path.GetFileNameWithoutExtension(pick.Path);
+        string? name = RequestStampNameFunc is { } ask ? ask(fallback) : fallback; // null from the dialog means Cancel
         if (string.IsNullOrWhiteSpace(name)) return;
         try
         {

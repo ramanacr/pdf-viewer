@@ -382,4 +382,21 @@ public class MeasureAndStampViewerTests : IDisposable
         Assert.Null(vm.ActiveMeasureTool); // the same tool again turns it off
         Assert.Equal(string.Empty, vm.Measurement.Tool);
     }
+
+    [Fact]
+    public async Task CancellingTheCustomStampName_MakesNoStamp()
+    {
+        string png = Path.Combine(_dir, "logo.png");
+        var bmp = BitmapSource.Create(4, 4, 96, 96, PixelFormats.Bgra32, null, new byte[4 * 4 * 4], 16);
+        using (var fs = File.Create(png)) { var enc = new PngBitmapEncoder(); enc.Frames.Add(BitmapFrame.Create(bmp)); enc.Save(fs); }
+        using var vm = await Open(Drawing("cancel.pdf"));
+        vm.RefreshCustomStamps();
+        int before = vm.CustomStamps.Count;
+        vm.PickImageFileFunc = () => png;
+        vm.RequestStampNameFunc = _ => null; // the user clicks Cancel
+
+        vm.CreateStampFromImage();
+
+        Assert.Equal(before, vm.CustomStamps.Count);
+    }
 }
