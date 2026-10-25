@@ -6,7 +6,8 @@
     <title>PDF Viewer Native: web demo</title>
     <meta name="description" content="A PDF viewer whose own C# engine runs in your browser as WebAssembly. Files never leave your device." />
     <meta name="color-scheme" content="light dark" />
-    <!-- No third-party requests: everything below is served from this site. -->
+    <!-- No third-party requests: everything below is served from this site. A <meta> policy cannot
+         set frame-ancestors: when you host the viewer, send it as a header (docs/sdk, "Who can frame the viewer"). -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
     <meta name="referrer" content="no-referrer" />

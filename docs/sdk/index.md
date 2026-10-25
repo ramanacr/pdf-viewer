@@ -33,7 +33,8 @@ file picker, React and Angular.
 
 ```html
 <div id="viewer" style="height: 600px"></div>
-<script src="https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.js"></script>
+<script src="https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.js"
+        integrity="sha384-REPLACE_ME" crossorigin="anonymous"></script>
 <script>
   const view = new PdfViewer.View({ divId: 'viewer' });
   view.previewFile(
@@ -51,6 +52,14 @@ const view = new View({ divId: 'viewer' });
 
 Your page must be served over `http` or `https` (not opened as a `file:`).
 
+Replace `sha384-REPLACE_ME` with the current value: copy it from
+<https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.integrity.json> (each deploy writes it).
+With `integrity`, the browser runs the script only when its bytes match the hash. The value changes
+when the script changes, and then the old value stops the script from loading: for a page that must
+keep working, see [Production](#production). For the ES module, `import` takes no `integrity`
+attribute; an [import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap)
+with an `integrity` entry does, in the browsers that support it.
+
 ### Host the viewer yourself
 
 The SDK script lives next to the viewer: `pdfviewer-embed.js` is in the viewer's folder (`/demo/`
@@ -64,6 +73,20 @@ folder:
 new PdfViewer.View({ divId: 'viewer', baseUrl: 'https://cdn.example.com/pdf-viewer/' });
 ```
 
+### Production
+
+The files on this site change on each deploy, without notice. `integrity` on the script tag pins
+only the SDK script: the viewer that it loads in the frame (`index.html`, the app and the engine)
+is not pinned by it. For production:
+
+1. Host a copy of the viewer and the SDK yourself, from a release or a commit that you chose
+   (see [Host the viewer yourself](#host-the-viewer-yourself)). Update it when you decide to.
+2. Serve the viewer from another origin than your pages, for example `https://pdf.example.com`
+   for pages on `https://www.example.com` (see [Same-origin viewer](#same-origin-viewer)), and
+   set `isolation: 'require'`.
+3. Send a `frame-ancestors` header for the viewer (see [Who can frame the viewer](#who-can-frame-the-viewer)).
+4. Load the SDK script with `integrity`, the hash of your copy.
+
 ## `new PdfViewer.View(options)`
 
 | Option | Meaning |
@@ -71,6 +94,7 @@ new PdfViewer.View({ divId: 'viewer', baseUrl: 'https://cdn.example.com/pdf-view
 | `divId` | The id of the element that holds the viewer. Required. |
 | `baseUrl` | Where the viewer files are. Default: the folder of `pdfviewer-embed.js`. |
 | `locale` | Accepted. The viewer is in English only for now. |
+| `isolation` | `'warn'` (default) or `'require'`: what to do when the viewer has the same origin as your page. `'warn'` writes one console warning; `'require'` throws `INVALID_ARGUMENT`. See [Same-origin viewer](#same-origin-viewer). |
 
 `view.destroy()` removes the viewer from the page (not in the Adobe API).
 
@@ -99,7 +123,9 @@ same View.
   viewer, so your buffer stays usable.
 - **`metaData.fileName`** is shown in the viewer and used for Download. **`id`** comes back in
   `getPDFMetadata()`. **`hasReadOnlyAccess`** is accepted; the viewer has no editing tools yet.
-- Largest file: 512 MB.
+- Largest file: 512 MB. For `location`, the SDK counts the bytes as they arrive and stops the
+  download (`TOO_LARGE`) as soon as there are more; a `Content-Length` that is already too large
+  fails at once. A Blob is checked by its size before it is read.
 
 ### Config
 
@@ -167,9 +193,9 @@ Every method returns a Promise.
 | `getPDFMetadata()` | `{ numPages, pdfTitle, author, subject, keywords, creator, producer, creationDate, modDate, pdfVersion, isEncrypted, isTagged, canCopy, canPrint, wasRepaired, fileSize, fileName, id }`. Dates are `"YYYY-MM-DDTHH:mm:ss"` as written in the file, or `null`. |
 | `getCurrentPage()` | The page number. |
 | `gotoLocation(pageNumber, x, y)` | Scrolls the point (x, y) of the page to the top-left of the view. **x and y are PDF points from the top-left corner of the page as shown** (Adobe's are from the bottom-left). Both default to 0. |
-| `getSelectedContent()` | `{ type: 'text', data }`: the selected text, `''` when none. Rejects with `NOT_ALLOWED` when the document forbids copying. |
+| `getSelectedContent()` | `{ type: 'text', data }`: the selected text, `''` when none. Rejects with `NOT_ALLOWED` when the document forbids copying (see [Copy protection](#copy-protection)). |
 | `getZoomAPIs()` | `{ zoomIn(), zoomOut(), setZoomLevel(level), getZoomLimits() }`. The first three resolve with the new zoom; the limits are `{ minZoom: 0.1, maxZoom: 8 }`. |
-| `search(term)` | Needs `enableSearchAPIs: true`. Resolves with a search object: `onResultsUpdate(callback)`, `next()`, `previous()`, `clear()`. |
+| `search(term)` | Needs `enableSearchAPIs: true`. Resolves with a search object: `onResultsUpdate(callback)`, `next()`, `previous()`, `clear()`. Works in documents that forbid copying too (see [Copy protection](#copy-protection)). |
 
 The search callback receives `{ currentResult: { pageNumber, index }, totalResults, status }`.
 `index` counts from 1 over the whole document; `status` is `IN_PROGRESS` while pages are read and
@@ -213,9 +239,8 @@ from a PDF application.
 - **Isolation.** The viewer runs in an `iframe` with
   `sandbox="allow-scripts allow-same-origin allow-downloads allow-modals"`: scripts (the engine),
   its own origin (its files and fonts), downloads (Download) and modal dialogs (Print). It cannot
-  navigate your page, open pop-ups or submit forms. When your page and the viewer have the same
-  origin, the sandbox does not separate them (browsers warn about this); host the viewer on its
-  own origin to keep them apart.
+  navigate your page, open pop-ups or submit forms, as long as it has another origin than your
+  page (see [Same-origin viewer](#same-origin-viewer)).
 - **Messages.** The two sides talk only by `postMessage`, with a versioned protocol
   (`{ protocol: 'pdfviewer-embed', version: 1, type, ... }`):
   - The SDK accepts messages only from its own frame (`event.source`) and the viewer's origin
@@ -227,10 +252,65 @@ from a PDF application.
     unit tests): unknown protocols, versions and types are ignored; bad arguments are refused
     with a code.
   - The file goes to the viewer as a transferred `ArrayBuffer`.
+  - A message longer than 2 MB of JSON (the file's bytes do not count) is refused with
+    `INVALID_ARGUMENT` before it is parsed.
 - **No storage.** The embedded viewer keeps nothing in the browser's storage (the stand-alone
   demo keeps its theme and side-panel choice).
 - **No telemetry, no uploads.** The viewer requests only its own files (the app, and fonts when
   a page needs them). Document JavaScript is never run.
+
+### Same-origin viewer
+
+The sandbox of the frame keeps the viewer apart from your page only when the two have different
+origins. With `allow-scripts allow-same-origin` on the same origin, the viewer's scripts could
+reach your page (its DOM, cookies and storage), so a fault in the viewer would be a fault in your
+page. The viewer needs both flags: it runs WebAssembly and loads its own files and fonts.
+
+When the viewer has the origin of your page, the SDK writes one warning to the console. The
+examples on this site do this: they load the viewer from `/pdf-viewer/demo/` on the same origin.
+For production, serve the viewer from another origin, for example a subdomain
+(`https://pdf.example.com` for pages on `https://www.example.com`), and make the SDK refuse a
+same-origin viewer:
+
+```js
+new PdfViewer.View({ divId: 'viewer', baseUrl: 'https://pdf.example.com/', isolation: 'require' });
+```
+
+With `isolation: 'require'`, the constructor throws a `PdfViewerError` with the code
+`INVALID_ARGUMENT` when the origins are the same.
+
+### Who can frame the viewer
+
+Any site can put the viewer in a frame. The viewer still talks only to the origin that its frame
+URL names, and the browser delivers its messages only to that origin, so another site gets only
+the files that it sends itself. But it can show them under the viewer's address, and it can lay
+its own content over the frame (clickjacking).
+
+A Content-Security-Policy `<meta>` tag cannot set `frame-ancestors` (browsers ignore it there), and
+GitHub Pages cannot send response headers. If you host the viewer, send this header with the
+viewer's `index.html`, and name the sites that may embed it:
+
+```
+Content-Security-Policy: frame-ancestors https://www.example.com https://intranet.example.com
+```
+
+For example, in nginx:
+`add_header Content-Security-Policy "frame-ancestors https://www.example.com" always;`.
+The header adds to the `<meta>` policy of `index.html`; the browser applies both.
+
+For the public demo on this site, the impact is low: it has no accounts, no cookies and no stored
+documents, it shows only the files that the embedding page sends, and it is open source, so anyone
+can host the same viewer anyway.
+
+### Copy protection
+
+A PDF can forbid copying its text. In such a document:
+
+- `getSelectedContent()` rejects with `NOT_ALLOWED`.
+- `Ctrl`+`C` copies nothing, and no `TEXT_COPY` event is sent.
+- Search still works, from the search box and from `search()`, as in Adobe Acrobat, which allows
+  search in copy-protected documents. `search()` gives your page only page numbers and counts, not
+  the text of the document.
 
 ## Browser support
 

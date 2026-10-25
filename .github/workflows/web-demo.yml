@@ -131,6 +131,25 @@ jobs:
         cp -r publish/web/wwwroot/. publish/pages/demo/
         touch publish/pages/.nojekyll
 
+    # Subresource Integrity (SRI) hashes of the SDK scripts as deployed, for pages that load them
+    # with integrity="sha384-...": /demo/pdfviewer-embed.integrity.json and the step summary.
+    - name: Write the SRI hashes of the embed SDK
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        cd publish/pages/demo
+        js="sha384-$(openssl dgst -sha384 -binary pdfviewer-embed.js | openssl base64 -A)"
+        mjs="sha384-$(openssl dgst -sha384 -binary pdfviewer-embed.mjs | openssl base64 -A)"
+        printf '{\n  "pdfviewer-embed.js": "%s",\n  "pdfviewer-embed.mjs": "%s"\n}\n' "$js" "$mjs" > pdfviewer-embed.integrity.json
+        python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' pdfviewer-embed.integrity.json
+        {
+          echo "### Embed SDK integrity"
+          echo "| File | integrity |"
+          echo "|---|---|"
+          echo "| pdfviewer-embed.js | \`$js\` |"
+          echo "| pdfviewer-embed.mjs | \`$mjs\` |"
+        } >> "$GITHUB_STEP_SUMMARY"
+
     # The SDK script is served from /demo/ next to the viewer, its default baseUrl; Jekyll copies
     # the documentation and the examples (docs/sdk) to /sdk/.
     - name: Check the embed SDK pages
@@ -138,6 +157,7 @@ jobs:
       shell: bash
       run: |
         test -f publish/pages/demo/pdfviewer-embed.js
+        test -s publish/pages/demo/pdfviewer-embed.integrity.json
         test -f publish/pages/sdk/index.html
         test -f publish/pages/sdk/examples/index.html
         test -f publish/pages/sdk/examples/sample-pdf.js

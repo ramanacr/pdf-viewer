@@ -1,7 +1,11 @@
 // PDF Viewer embed SDK in a React app. Copy into your app: this file is not run here.
 //
 // 1. Load the SDK once, in index.html (or with a script loader), from where you serve the viewer:
-//      <script src="https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.js"></script>
+//      <script src="https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.js"
+//              integrity="sha384-REPLACE_ME" crossorigin="anonymous"></script>
+//    Copy the current integrity value from
+//    https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.integrity.json. For production,
+//    host a pinned copy of the viewer and the SDK yourself (see "Production" in docs/sdk/index.md).
 //    It defines window.PdfViewer. There is no npm package and nothing to install.
 // 2. Use the component:
 //      <PdfViewerEmbed url="/files/report.pdf" fileName="report.pdf"

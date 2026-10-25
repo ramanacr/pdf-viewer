@@ -16,21 +16,40 @@
 <script src="../../demo/pdfviewer-embed.js"></script>
 <script src="sample-pdf.js"></script>
 <script>
-    // ?url=https://example.com/file.pdf opens another PDF. The fetch runs in this page, so the
-    // server must allow this page to read the file (CORS).
-    const url = new URLSearchParams(location.search).get('url');
-    const name = url ? decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || 'document.pdf') : 'Quarterly report.pdf';
-    const view = new PdfViewer.View({ divId: 'viewer' });
-    view.previewFile({
-        content: { location: { url: url || samplePdfUrl() } },
-        metaData: { fileName: name },
-    }, {
-        embedMode: 'FULL_WINDOW',
-        showThumbnails: true,
-        showBookmarks: true,
-    }).catch(error => {
-        document.getElementById('status').textContent = error.code + ': ' + error.message;
-    });
+    // ?url=/path/file.pdf opens another PDF of this site. Only URLs of this page's own origin are
+    // accepted: otherwise anyone could send a link that makes this page fetch and show a file of
+    // their choice (with this page's cookies when that server allows it), under this site's name.
+    (function () {
+        const status = document.getElementById('status');
+        const given = new URLSearchParams(location.search).get('url');
+        let url = null;
+        if (given) {
+            try {
+                const parsed = new URL(given, location.href);
+                if (parsed.origin === location.origin) url = parsed.href;
+            } catch { /* not a URL: refused below */ }
+            if (!url) {
+                status.textContent = 'INVALID_ARGUMENT: ?url= must be a URL of this site (' + location.origin + ').';
+                return;
+            }
+        }
+        let name = 'Quarterly report.pdf';
+        if (url) {
+            const last = new URL(url).pathname.split('/').pop();
+            try { name = decodeURIComponent(last) || 'document.pdf'; } catch { name = last || 'document.pdf'; }
+        }
+        const view = new PdfViewer.View({ divId: 'viewer' });
+        view.previewFile({
+            content: { location: { url: url || samplePdfUrl() } },
+            metaData: { fileName: name },
+        }, {
+            embedMode: 'FULL_WINDOW',
+            showThumbnails: true,
+            showBookmarks: true,
+        }).catch(error => {
+            status.textContent = error.code + ': ' + error.message;
+        });
+    })();
 </script>
 </body>
 </html>
