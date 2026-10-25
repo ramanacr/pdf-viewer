@@ -244,7 +244,13 @@ oracle the engine is tested against; the published application does not contain 
 - **Stamps** (*Comment → Stamp*):
   - The standard business stamps (Approved, Completed, Confidential, Draft, Final, For Comment, Not Approved, Received, Reviewed, Revised, Void and more) and dynamic stamps that add your name and the date and time, all drawn as clean vector appearances of our own design. Your name is asked for once and kept in the viewer's settings, never sent anywhere.
   - Custom stamps from a PNG or JPEG picture or a page of a PDF, kept in a local stamp library under `%LOCALAPPDATA%\PdfViewerNative`.
-  - Click to place a stamp at its usual size or drag its box; *Rotate New Stamps* turns it. It is a Stamp annotation with `/Name` and its own appearance, so Acrobat and other readers show it the same; it survives saving, flattening, PDF/A conversion and printing, and is undoable.
+  - Click to place a stamp at its usual size or drag its box; *Rotate New Stamps* turns it, and once placed its handles move, size and turn it. It is a Stamp annotation with `/Name` and its own appearance, so Acrobat and other readers show it the same; it survives saving, flattening, PDF/A conversion and printing, and is undoable.
+- **Editing placed annotations**: click an annotation to select it (double-click or `Enter` opens its comment).
+  - Drag it to move it; drag a corner or edge handle to resize it (`Shift` keeps the proportions; stamps keep them anyway, and `Shift` frees a designed stamp that is not turned at an angle).
+  - Turn a stamp with its rotation handle (`Shift` snaps to 15°). A stamp read from a file keeps its own appearance: moving or sizing it changes its `/Rect`, turning it adds the turn to its appearance's `/Matrix`.
+  - Drag the points of a measurement: they snap to the page's drawing (`Shift`: no snapping) and the result is measured again as they move. A drawing with up to 24 points gets a handle on each point; a freehand one is sized as a whole.
+  - Arrow keys nudge the selection by 1 pt (`Shift`: 10 pt) in the direction you see, at any page rotation; `Delete` removes it, `Esc` lets go of it (or puts back a drag in progress), `Tab` / `Shift+Tab` go through the page's annotations.
+  - Every change is one undo step and is saved with a new appearance (a stamp's own appearance is kept, as above). Handles keep their size at any zoom, turn with the page, and are listed to screen readers as named thumbs.
 - **Annotations & Markup**:
   - Highlights, Underlines, Strikethrough, Notes, FreeText, Rectangles, Ellipses, and Freehand Ink.
   - **Multi-Mode Saving**:
@@ -565,6 +571,12 @@ dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the published conf
 | `Backspace` | Measuring | Take back the last point |
 | `Shift` (held) | Measuring | Place a point without snapping |
 | `Esc` | Measuring / placing a stamp | Drop the measurement being drawn (again: stop measuring) / cancel the stamp |
+| Click / `Tab` / `Shift + Tab` | Page | Select an annotation / the next / the previous on the page |
+| Double-click / `Enter` | Annotation selected | Edit its comment |
+| `Left` / `Right` / `Up` / `Down` | Annotation selected | Nudge it 1 pt as the page is seen (`Shift`: 10 pt) |
+| `Delete` | Annotation selected | Delete it |
+| `Esc` | Annotation selected | Let go of it (while dragging: put it back) |
+| `Shift` (held) | Dragging a handle | Keep the proportions / snap a turn to 15° / place a measurement point without snapping |
 | `PageDown` / `Right` | Viewport | Go to Next Page |
 | `PageUp` / `Left` | Viewport | Go to Previous Page |
 | `Home` | Viewport | Jump to First Page |
