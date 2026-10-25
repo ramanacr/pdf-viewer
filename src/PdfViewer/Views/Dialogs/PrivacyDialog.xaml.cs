@@ -22,6 +22,9 @@ public partial class PrivacyDialog : Window
         StatementText.Text = PrivacySettings.PrivacyStatement;
         GuaranteeList.ItemsSource = BuildGuarantees();
         UpdateCheckBox.IsChecked = PrivacySettings.AutomaticUpdateChecksEnabled ?? false;
+
+        // The Store updates a packaged install, so the update check is not offered there.
+        if (PackagedApp.IsPackaged) UpdateCheckBox.Visibility = Visibility.Collapsed;
     }
 
     internal static IReadOnlyList<Guarantee> BuildGuarantees() =>
@@ -40,11 +43,16 @@ public partial class PrivacyDialog : Window
                 "and no cloud storage."),
             new("Documents stay on this machine.",
                 "Files are read from and written to local paths you choose. Nothing is uploaded."),
-            new("Optional parts are downloaded only if you ask.",
-                "Read Aloud is not shipped in the installer, so you do not carry it unless you want " +
-                "it. If you choose to install it, the file is fetched from this project's GitHub " +
-                "releases and checked against a checksum built into this application; anything that " +
-                "does not match is discarded rather than loaded."),
+            PackagedApp.IsPackaged
+                ? new("Nothing is downloaded.",
+                    "This is the Microsoft Store package. Read Aloud ships inside it, so nothing is " +
+                    "fetched to add it, and the Store delivers updates, so the application does not " +
+                    "check for them.")
+                : new("Optional parts are downloaded only if you ask.",
+                    "Read Aloud is not shipped in the installer, so you do not carry it unless you want " +
+                    "it. If you choose to install it, the file is fetched from this project's GitHub " +
+                    "releases and checked against a checksum built into this application; anything that " +
+                    "does not match is discarded rather than loaded."),
 
             new("The bill of materials is published.",
                 "Every release ships CycloneDX and SPDX SBOMs listing each component and version, so " +
@@ -77,7 +85,7 @@ public partial class PrivacyDialog : Window
 
     private void ConfirmButton_Click(object sender, RoutedEventArgs e)
     {
-        PrivacySettings.SetAutomaticUpdateChecks(UpdateCheckBox.IsChecked == true);
+        if (!PackagedApp.IsPackaged) PrivacySettings.SetAutomaticUpdateChecks(UpdateCheckBox.IsChecked == true);
         DialogResult = true;
         Close();
     }
