@@ -13,48 +13,81 @@ namespace PdfViewer.Web.Components;
 public sealed partial class Viewer
 {
     private EmbedSaveOptions _save = EmbedSaveOptions.None;
-    private int _saveId, _pendingSave, _pendingSaveVersion;
-    private bool _saving;
     private CancellationTokenSource? _autoSaveCts;
 
-    /// <summary>How long the viewer waits for the host page's answer to a save.</summary>
-    private const int SaveTimeoutMs = 120000;
+    /// <summary>
+    /// How long the viewer waits for the host page's answer before it says that the save is still
+    /// going on. The save stays in flight until the host page answers or the frame closes.
+    /// </summary>
+    private const int SaveSlowMs = 120000;
 
     private bool ShowsSaveButton => Listening && _save.Enabled && _save.ShowSaveButton && _doc != null;
 
-    private async Task SaveAsync(string reason)
+    /// <summary>
+    /// Saves (posts the document to the host page's SAVE_API callback, or downloads it on Ctrl+S
+    /// without one). Returns false when nothing was saved or posted: no document, a save under
+    /// way already, or edits that could not be written into the document (the reader sees an
+    /// error then, never "Saved"). One save runs at a time, from before the edits are awaited
+    /// until the host page answers, so a blur, an autosave and Ctrl+S cannot post twice.
+    /// </summary>
+    private async Task<bool> SaveAsync(string reason)
     {
         var doc = _doc;
-        if (doc == null) return;
+        if (doc == null) return false;
         if (!Listening || !_save.Enabled)
         {
-            if (reason is "shortcut" && (!Embedded || _config.ShowDownload))
+            if (reason is not "shortcut" || Embedded && !_config.ShowDownload) return false;
+            bool ready = await WaitForEditsAsync();
+            if (_doc != doc) return false;
+            if (!ready)
             {
-                await WaitForEditsAsync();
-                DownloadEdited();
+                NotSaved();
+                return false;
             }
-            return;
+            DownloadEdited();
+            return true;
         }
-        if (_saving) return;
-        await WaitForEditsAsync();
-        if (_doc != doc) return;
-        _saving = true;
-        _pendingSave = ++_saveId;
-        _pendingSaveVersion = _editVersion;
-        _status = "Saving…";
-        StateHasChanged();
-        CanvasInterop.EmbedPostBytes(EmbedProtocol.SaveRequest(_pendingSave, DownloadName, _fileId, reason), doc.Bytes);
-        _ = SaveTimeoutAsync(_pendingSave);
+        if (!_edits.TryBeginSave()) return false;
+        bool posted = false;
+        try
+        {
+            _status = "Saving…";
+            StateHasChanged();
+            bool current = await WaitForEditsAsync();
+            // Another document was opened (or this one closed) meanwhile: its state is not this save's.
+            if (_doc != doc || !_edits.Saving) return false;
+            int saveId = current ? _edits.Post() : 0;
+            if (saveId == 0)
+            {
+                NotSaved();
+                return false;
+            }
+            // The bytes posted are the ones Post recorded the version of: nothing runs in between.
+            CanvasInterop.EmbedPostBytes(EmbedProtocol.SaveRequest(saveId, DownloadName, _fileId, reason), doc.Bytes);
+            posted = true;
+            _ = SaveSlowAsync(saveId);
+            return true;
+        }
+        finally
+        {
+            if (!posted && _doc == doc) _edits.EndSave();
+            StateHasChanged();
+        }
     }
 
-    private async Task SaveTimeoutAsync(int saveId)
+    /// <summary>The latest edits are not in the document's bytes: nothing is posted, and the reader is told.</summary>
+    private void NotSaved()
     {
-        await Task.Delay(SaveTimeoutMs);
-        if (_pendingSave == saveId)
+        _status = "Not saved";
+        _error = "The file was not saved: the latest changes could not be written into the document.";
+    }
+
+    private async Task SaveSlowAsync(int saveId)
+    {
+        await Task.Delay(SaveSlowMs);
+        if (_edits.Saving && _edits.PendingSave == saveId)
         {
-            _pendingSave = 0;
-            _saving = false;
-            _status = "The page did not answer the save.";
+            _status = "Still saving… (the page has not answered yet)";
             StateHasChanged();
         }
     }
@@ -62,15 +95,12 @@ public sealed partial class Viewer
     /// <summary>The host page's answer to a save (saveResult).</summary>
     private string SaveResult(EmbedCall call)
     {
-        if (call.SaveId == _pendingSave && _saving)
+        if (_edits.Answer(call.SaveId, call.Saved))
         {
-            _pendingSave = 0;
-            _saving = false;
             if (call.Saved)
             {
-                _savedVersion = _pendingSaveVersion;
                 if (call.SavedFileName is { } name) _fileName = name;
-                _status = "Saved";
+                _status = IsDirty ? "Saved (newer changes are not saved yet)" : "Saved";
             }
             else
             {
@@ -103,7 +133,7 @@ public sealed partial class Viewer
             while (!token.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(seconds), token);
-                if (IsDirty && !_saving) await SaveAsync("autosave");
+                if (IsDirty && !Saving) await SaveAsync("autosave");
             }
         }
         catch (OperationCanceledException)
@@ -115,7 +145,7 @@ public sealed partial class Viewer
     [JSInvokable]
     public async Task OnViewerBlur()
     {
-        if (_save.Enabled && _save.FocusPolling && IsDirty && !_saving) await SaveAsync("focus");
+        if (_save.Enabled && _save.FocusPolling && IsDirty && !Saving) await SaveAsync("focus");
     }
 
     /// <summary>The document with the reader's annotations and form data, as a download.</summary>

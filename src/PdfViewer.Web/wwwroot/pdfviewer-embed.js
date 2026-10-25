@@ -414,6 +414,8 @@
             this._managers = [];
             this._saveHandler = null;
             this._saveOptions = null;
+            // SAVE_API calls run one after another, so an older slow save cannot finish after a newer one.
+            this._saveChain = Promise.resolve();
             this._pending = new Map();
             this._searches = new Map();
             this._nextId = 1;
@@ -618,6 +620,8 @@
             for (const pending of this._pending.values()) pending.reject(fail(ErrorCode.CLOSED, 'The viewer was closed.'));
             this._pending.clear();
             this._searches.clear();
+            // A handler still running for the closed frame does not hold up the next one.
+            this._saveChain = Promise.resolve();
         }
 
         _post(message, transfer) {
@@ -646,9 +650,16 @@
             }
         }
 
-        /** The reader saved: the SAVE_API handler gets the file; its answer goes back to the viewer. */
-        async _save(m) {
-            const documentId = this._document;
+        /** The reader saved: the save waits for the ones before it to finish (the chain never rejects). */
+        _queueSave(m) {
+            const documentId = this._document, frame = this._frame;
+            this._saveChain = this._saveChain.then(() => this._save(m, documentId, frame)).catch(() => { });
+        }
+
+        /** The SAVE_API handler gets the file; its answer goes back to the viewer that asked, if it is still open. */
+        async _save(m, documentId, frame) {
+            // Another document (or no frame) by the time this save's turn came: it is not handed over.
+            if (this._frame !== frame || this._document !== documentId) return;
             const metaData = { fileName: typeof m.fileName === 'string' ? m.fileName : 'document.pdf', id: typeof m.fileId === 'string' ? m.fileId : undefined };
             let code = ApiResponseCode.FAIL, fileName = null;
             try {
@@ -659,7 +670,7 @@
             } catch (e) {
                 console.error('PdfViewer: the SAVE_API callback threw', e);
             }
-            if (this._document === documentId) this._call('saveResult', [m.saveId, code, fileName]).catch(() => { });
+            if (this._frame === frame && this._document === documentId) this._call('saveResult', [m.saveId, code, fileName]).catch(() => { });
         }
 
         /** Only the viewer's own frame, from the viewer's origin, with this protocol, is heard. */
@@ -690,7 +701,7 @@
                     }
                     break;
                 case 'save':
-                    if (Number.isInteger(m.saveId) && m.saveId > 0 && m.data instanceof ArrayBuffer) this._save(m);
+                    if (Number.isInteger(m.saveId) && m.saveId > 0 && m.data instanceof ArrayBuffer) this._queueSave(m);
                     break;
                 case 'search': {
                     const search = this._searches.get(m.searchId);

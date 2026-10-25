@@ -22,11 +22,23 @@ public sealed partial class Viewer
 
     private string DownloadName => _fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? _fileName : _fileName + ".pdf";
 
-    private void Download()
+    private async Task Download()
     {
-        if (_doc == null || _docBytes == null) return;
-        // The reader's annotations and form data go with it when the config asks (always in the demo).
-        CanvasInterop.DownloadBytes(_config.DownloadWithAnnotations ? _doc.Bytes : _doc.OriginalBytes, DownloadName);
+        var doc = _doc;
+        if (doc == null || _docBytes == null) return;
+        // The reader's annotations and form data go with it when the config asks (always in the demo),
+        // and only when the document has all of them.
+        if (_config.DownloadWithAnnotations)
+        {
+            bool ready = await WaitForEditsAsync();
+            if (_doc != doc) return;
+            if (!ready)
+            {
+                NotSaved();
+                return;
+            }
+        }
+        CanvasInterop.DownloadBytes(_config.DownloadWithAnnotations ? doc.Bytes : doc.OriginalBytes, DownloadName);
         _status = $"Saved {DownloadName}";
         Emit(EmbedEvents.DocumentDownload, w => w.WriteString("fileName", DownloadName));
     }

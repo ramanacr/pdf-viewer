@@ -41,8 +41,10 @@ public sealed partial class Viewer
     private bool _readOnly;
 
     // Edits (annotations and form values) are counted; the document is written again until it has the latest.
-    private int _editVersion, _appliedVersion, _savedVersion;
+    private readonly ViewerEditState _edits = new();
     private bool _applying;
+    // A signed document's notice ("changes are a new revision") is shown once, at the first change.
+    private bool _signedNoticeShown;
     private bool _appearanceFontsReady;
 
     /// <summary>The reader or the host page may change annotations.</summary>
@@ -56,7 +58,9 @@ public sealed partial class Viewer
     /// <summary>Annotations can be clicked (selected) on the pages.</summary>
     private bool AnnotationsClickable => _store != null && _tool == Tool.Select && (_config.HasAnnotationTools || _config.EnableAnnotationApis);
 
-    private bool IsDirty => _editVersion != _savedVersion;
+    private bool IsDirty => _edits.IsDirty;
+
+    private bool Saving => _edits.Saving;
 
     private ViewerAnnotation? Selected => _selectedId == null ? null : _store?.Find(_selectedId);
 
@@ -114,7 +118,8 @@ public sealed partial class Viewer
         CanvasInterop.SetTool(ToolNames[0]);
         _selectedId = _editingId = null;
         _showAnnotationToolbar = _showCommentsPanel = true;
-        _editVersion = _appliedVersion = _savedVersion = 0;
+        _edits.Reset();
+        _signedNoticeShown = false;
         _formValues.Clear();
         _annotsVersion = -1;
         IReadOnlyList<ViewerAnnotation> fromFile = [];
@@ -141,7 +146,7 @@ public sealed partial class Viewer
         _formWidgets = [];
         _formWidgetsByPage = _formWidgets.ToLookup(w => w.Page);
         _autoSaveCts?.Cancel();
-        _saving = false;
+        _edits.Reset();
     }
 
     // ---------------------------------------------------------------- writing the edits
@@ -149,17 +154,34 @@ public sealed partial class Viewer
     /// <summary>Something changed: the document is written again (once at a time, until it has the latest edit).</summary>
     private async Task CommitEditsAsync()
     {
-        _editVersion++;
+        _edits.Edit();
+        ShowSignedNotice();
         StateHasChanged();
+        await ApplyEditsAsync();
+    }
+
+    /// <summary>A signed document: the reader is told once, at the first change, that changes are a new revision.</summary>
+    private void ShowSignedNotice()
+    {
+        if (_signedNoticeShown || _doc?.EditNotice is not { } notice) return;
+        _signedNoticeShown = true;
+        _noticeIsFonts = false;
+        _noticeDismissed = false;
+        _notice = notice;
+    }
+
+    /// <summary>Writes the edits into the document (once at a time, until it has the latest or writing fails).</summary>
+    private async Task ApplyEditsAsync()
+    {
         if (_applying) return;
         _applying = true;
         var doc = _doc;
         try
         {
             int attempts = 0;
-            while (doc != null && _doc == doc && _store != null && _appliedVersion != _editVersion && attempts++ < 50)
+            while (doc != null && _doc == doc && _store != null && _edits.NeedsApply && attempts++ < 50)
             {
-                int version = _editVersion;
+                int version = _edits.EditVersion;
                 var store = _store;
                 if (store.Current.Any(a => a.Kind == ViewerAnnotationKind.FreeText)) await EnsureAppearanceFontsAsync();
                 var values = _formValues.Select(p => (p.Key, p.Value)).ToList();
@@ -178,8 +200,10 @@ public sealed partial class Viewer
                 }
                 catch (Exception ex) when (ex is KeyNotFoundException or ArgumentException or InvalidOperationException && _lastFormField != null && _formValues.ContainsKey(_lastFormField))
                 {
+                    // The engine's message names the field and the rule (an option, a length), never other content.
                     _formValues.Remove(_lastFormField!);
-                    _status = $"That value is not accepted ({ex.GetType().Name}).";
+                    _status = "That value is not accepted.";
+                    _error = ex is ArgumentException ? ex.Message : $"That value is not accepted ({ex.GetType().Name}).";
                     continue;
                 }
                 catch (ObjectDisposedException)
@@ -188,12 +212,15 @@ public sealed partial class Viewer
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    // Type names only, never document content.
-                    _error = $"The changes could not be written into the document ({ex.GetType().Name}).";
-                    _appliedVersion = version;
+                    // Type names only, never document content. The version is not applied: the
+                    // document stays dirty, and a save refuses bytes that lack these edits.
+                    _edits.Failed(version);
+                    _error = $"The changes could not be written into the document ({ex.GetType().Name}). They are not saved.";
+                    _status = "Changes not written";
+                    StateHasChanged();
                     break;
                 }
-                _appliedVersion = version;
+                _edits.Applied(version);
                 if (_doc != doc) return;
                 _cache.Clear();
                 _drawn.Clear();
@@ -218,14 +245,26 @@ public sealed partial class Viewer
         }
     }
 
-    /// <summary>Waits until the document has every edit made so far.</summary>
-    private async Task WaitForEditsAsync()
+    /// <summary>
+    /// Waits until the document has every edit made so far, or writing the latest failed. Returns
+    /// true when the document's bytes have every edit.
+    /// </summary>
+    private async Task<bool> WaitForEditsAsync()
     {
-        for (int i = 0; i < 600 && (_applying || _appliedVersion != _editVersion); i++)
+        // A write under way always ends (it clears _applying when it does); new writes are tried a few times.
+        int tries = 0;
+        while (_applying || _edits.NeedsApply)
         {
-            if (!_applying && _appliedVersion != _editVersion) await CommitEditsAsync();
-            else await Task.Delay(20);
+            if (_applying)
+            {
+                await Task.Delay(20);
+                continue;
+            }
+            if (++tries > 20) break;
+            await ApplyEditsAsync();
+            if (_doc == null) return false;
         }
+        return !_applying && _edits.IsCurrent;
     }
 
     /// <summary>
@@ -610,7 +649,7 @@ public sealed partial class Viewer
         var store = _store;
         bool writes = call.Method is EmbedMethod.AddAnnotations or EmbedMethod.UpdateAnnotation or EmbedMethod.DeleteAnnotations or EmbedMethod.ImportXfdf;
         if (writes && !CanEditAnnotations)
-            return EmbedProtocol.Error(id, EmbedErrors.NotAllowed, _readOnly ? "The file was opened with hasReadOnlyAccess." : "This document does not allow annotations.");
+            return EmbedProtocol.Error(id, EmbedErrors.NotAllowed, _readOnly ? "The file was opened with hasReadOnlyAccess." : _doc?.EditRestriction ?? "This document does not allow annotations.");
         var now = DateTimeOffset.UtcNow;
         try
         {
@@ -673,7 +712,13 @@ public sealed partial class Viewer
                     List<PdfEngine.Vector.Services.PdfAnnotation> read;
                     try
                     {
-                        read = PdfAnnotationXfdf.Import(call.Xfdf!);
+                        var import = PdfAnnotationXfdf.ImportWithReport(call.Xfdf!);
+                        read = import.Annotations;
+                        if (import.Skipped > 0)
+                        {
+                            _status = $"{import.Skipped} XFDF {(import.Skipped == 1 ? "annotation was" : "annotations were")} skipped (unreadable, or larger than the limits).";
+                            StateHasChanged();
+                        }
                     }
                     catch (FormatException ex)
                     {

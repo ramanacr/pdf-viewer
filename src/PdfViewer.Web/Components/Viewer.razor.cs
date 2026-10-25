@@ -306,6 +306,12 @@ public sealed partial class Viewer : IAsyncDisposable
         _panel = Panel.Outline;
         _noticeDismissed = false;
         _notice = null;
+        if (doc.EditRestriction is { } restriction && !(Embedded && _openReadOnly) && (_config.HasAnnotationTools || _config.EnableFormFilling))
+        {
+            // A signed or certified file that may not be changed (or only partly): the reader is told why.
+            _noticeIsFonts = false;
+            _notice = restriction;
+        }
         _query = _query.Trim();
         _loading = false;
         _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {opened.TotalMilliseconds:0} ms" +

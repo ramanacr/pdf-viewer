@@ -86,8 +86,8 @@
         <div class="group end">
             @if (ShowsSaveButton)
             {
-                <button type="button" class="button@(IsDirty ? " primary" : "")" title="Save (Ctrl+S)" disabled="@(_saving || !IsDirty)" @onclick="SaveFromButton">
-                    <Icon Name="save" /><span class="label">@(_saving ? "Saving…" : "Save")</span>
+                <button type="button" class="button@(IsDirty ? " primary" : "")" title="Save (Ctrl+S)" disabled="@(Saving || !IsDirty)" @onclick="SaveFromButton">
+                    <Icon Name="save" /><span class="label">@(Saving ? "Saving…" : "Save")</span>
                 </button>
             }
             @if (_doc != null && _config.ShowDownload)
@@ -161,7 +161,7 @@
     @if (_notice != null && _error == null)
     {
         <div class="banner notice" role="status">
-            <Icon Name="font" />
+            <Icon Name="@(_noticeIsFonts ? "font" : "info")" />
             <p>@_notice</p>
             @if (_canUseLocalFonts && !_localFontsLoaded && _noticeIsFonts)
             {
