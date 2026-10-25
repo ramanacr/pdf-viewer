@@ -676,14 +676,19 @@ public static class PdfFormScripts
         }
     }
 
+    /// <summary>Deepest nesting of parentheses and signs in a simplified field notation calculation.</summary>
+    internal const int MaxExpressionDepth = 64;
+
     /// <summary>
     /// Simplified field notation (Acrobat's "Simplified field notation" calculations): numbers,
     /// field names (dots allowed; a backslash escapes other characters), + - * / and parentheses.
-    /// Division by zero gives an empty result, as Acrobat shows nothing.
+    /// Division by zero gives an empty result, as Acrobat shows nothing. Parentheses and signs nest
+    /// at most <see cref="MaxExpressionDepth"/> deep: a deeper expression is an unsupported
+    /// calculation (null), not a stack overflow.
     /// </summary>
     internal static decimal? Evaluate(string expression, Func<string, IEnumerable<decimal>> field)
     {
-        int pos = 0;
+        int pos = 0, depth = 0;
         try
         {
             decimal v = Expr();
@@ -719,6 +724,18 @@ public static class PdfFormScripts
             }
         }
         decimal Factor()
+        {
+            if (++depth > MaxExpressionDepth) throw new FormatException();
+            try
+            {
+                return Primary();
+            }
+            finally
+            {
+                depth--;
+            }
+        }
+        decimal Primary()
         {
             Space();
             if (pos >= expression.Length) throw new FormatException();

@@ -11,12 +11,16 @@ using PdfEngine.Vector.Services;
 
 namespace PdfEngine.Vector.Annotations;
 
+/// <summary>The annotations an XFDF document gave, and how many of a supported type were skipped.</summary>
+public sealed record PdfXfdfImport(List<PdfAnnotation> Annotations, int Skipped);
+
 /// <summary>
 /// Annotations as XFDF (ISO 19444-1, the <c>&lt;annots&gt;</c> element), in PDF user space: the
 /// markup and comment types a reader makes (highlight, underline, strike-out, squiggly, note, free
 /// text, ink, square, circle, line). Export writes <see cref="PdfAnnotation"/>s; import reads them
 /// back, ready for <see cref="Services.PdfAnnotationEditor.Add"/>. Imported XML is untrusted: no DTD,
-/// no external entities, a size limit, finite numbers only, and elements of other types skipped.
+/// no external entities, a size limit, an element limit, finite numbers only, and elements of other
+/// types skipped.
 /// </summary>
 public static class PdfAnnotationXfdf
 {
@@ -28,8 +32,17 @@ public static class PdfAnnotationXfdf
     /// <summary>Most annotations read from one document.</summary>
     public const int MaxAnnotations = 10000;
 
-    /// <summary>Most points in one ink stroke, and strokes in one ink annotation.</summary>
-    public const int MaxInkPoints = 10000, MaxInkStrokes = 100;
+    /// <summary>Most points in one ink stroke, and strokes in one ink annotation (<see cref="PdfAnnotationLimits"/>).</summary>
+    public const int MaxInkPoints = PdfAnnotationLimits.MaxInkPointsPerStroke, MaxInkStrokes = PdfAnnotationLimits.MaxInkStrokes;
+
+    /// <summary>Most elements read from one document (a skipped element counts once, with its content).</summary>
+    public const int MaxElements = 100_000;
+
+    /// <summary>Most attributes of one element.</summary>
+    public const int MaxAttributes = 64;
+
+    /// <summary>Most numbers in a dash pattern.</summary>
+    public const int MaxDashes = 16;
 
     private static readonly Dictionary<string, string> ElementForSubtype = new(StringComparer.Ordinal)
     {
@@ -94,93 +107,246 @@ public static class PdfAnnotationXfdf
     /// page or rectangle cannot be read, are skipped. Throws <see cref="FormatException"/> when the
     /// text is not XFDF (not XML, a DTD, too long, another root element) or has too many annotations.
     /// </summary>
-    public static List<PdfAnnotation> Import(string xml)
+    public static List<PdfAnnotation> Import(string xml) => ImportWithReport(xml).Annotations;
+
+    /// <summary>
+    /// <see cref="Import"/>, with the number of annotations of a supported type that were skipped:
+    /// unreadable (no page or rectangle, an ink annotation without points) or larger than
+    /// <see cref="PdfAnnotationLimits"/> allows (more than <see cref="PdfAnnotationLimits.MaxQuads"/>
+    /// quadrilaterals). Long texts are cut to the limits instead (author, subject and name to
+    /// <see cref="PdfAnnotationLimits.MaxTextLength"/>, contents to <see cref="PdfAnnotationLimits.MaxContentsLength"/>),
+    /// so one long field does not refuse the whole import. The XML is read as a stream: no DTD, no
+    /// resolver, at most <see cref="MaxElements"/> elements and <see cref="MaxAttributes"/>
+    /// attributes per element; unknown elements are skipped without being built.
+    /// </summary>
+    public static PdfXfdfImport ImportWithReport(string xml)
     {
         ArgumentNullException.ThrowIfNull(xml);
         if (xml.Length > MaxCharacters) throw new FormatException($"The XFDF document is longer than {MaxCharacters / (1024 * 1024)} MB.");
-        XDocument doc;
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = MaxCharacters,
+            MaxCharactersFromEntities = 0,
+            IgnoreProcessingInstructions = true,
+            IgnoreComments = true,
+        };
+        var result = new List<PdfAnnotation>();
+        int skipped = 0;
         try
         {
-            var settings = new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit,
-                XmlResolver = null,
-                MaxCharactersInDocument = MaxCharacters,
-                MaxCharactersFromEntities = 0,
-                IgnoreProcessingInstructions = true,
-            };
             using var reader = XmlReader.Create(new StringReader(xml), settings);
-            doc = XDocument.Load(reader);
+            var counter = new ElementCounter();
+            if (reader.MoveToContent() != XmlNodeType.Element || reader.LocalName != "xfdf")
+                throw new FormatException("The document is not XFDF (its root element is not <xfdf>).");
+            counter.Count(reader);
+            Children(reader, counter, r =>
+            {
+                if (r.LocalName != "annots")
+                {
+                    r.Skip();
+                    return;
+                }
+                Children(r, counter, e =>
+                {
+                    if (!SubtypeForElement.TryGetValue(e.LocalName, out var subtype))
+                    {
+                        e.Skip();
+                        return;
+                    }
+                    if (result.Count >= MaxAnnotations) throw new FormatException($"The XFDF document has more than {MaxAnnotations} annotations.");
+                    var element = ReadElement(e, counter, subtype);
+                    if (element.TooLarge || Read(element, subtype) is not { } a) skipped++;
+                    else result.Add(a);
+                });
+            });
+            // Whatever follows the root element must still be well-formed.
+            while (reader.Read()) { }
         }
         catch (XmlException ex)
         {
             throw new FormatException("The text is not a well-formed XFDF document.", ex);
         }
-        var root = doc.Root;
-        if (root == null || root.Name.LocalName != "xfdf") throw new FormatException("The document is not XFDF (its root element is not <xfdf>).");
-        var result = new List<PdfAnnotation>();
-        foreach (var annots in root.Elements().Where(e => e.Name.LocalName == "annots"))
-        {
-            foreach (var e in annots.Elements())
-            {
-                if (!SubtypeForElement.TryGetValue(e.Name.LocalName, out var subtype)) continue;
-                if (result.Count >= MaxAnnotations) throw new FormatException($"The XFDF document has more than {MaxAnnotations} annotations.");
-                if (Read(e, subtype) is { } a) result.Add(a);
-            }
-        }
-        return result;
+        return new PdfXfdfImport(result, skipped);
     }
 
-    private static PdfAnnotation? Read(XElement e, string subtype)
+    /// <summary>Counts the elements read and refuses an element with too many attributes.</summary>
+    private sealed class ElementCounter
     {
-        if (!int.TryParse((string?)e.Attribute("page"), NumberStyles.None, CultureInfo.InvariantCulture, out int page) || page < 0 || page > 1_000_000) return null;
-        if (Numbers((string?)e.Attribute("rect")) is not { Length: 4 } r) return null;
+        private int _elements;
+
+        public void Count(XmlReader r)
+        {
+            if (++_elements > MaxElements) throw new FormatException($"The XFDF document has more than {MaxElements} elements.");
+            if (r.AttributeCount > MaxAttributes) throw new FormatException($"An element of the XFDF document has more than {MaxAttributes} attributes.");
+        }
+    }
+
+    /// <summary>
+    /// With the reader on a start element: calls <paramref name="element"/> for each child element
+    /// (which must read past it, with <see cref="XmlReader.Skip"/> at least) and <paramref name="text"/>
+    /// for each piece of text, then leaves the reader after the element's end.
+    /// </summary>
+    private static void Children(XmlReader r, ElementCounter counter, Action<XmlReader> element, Action<string>? text = null)
+    {
+        if (r.IsEmptyElement)
+        {
+            r.Read();
+            return;
+        }
+        int depth = r.Depth;
+        r.Read();
+        while (!r.EOF)
+        {
+            switch (r.NodeType)
+            {
+                case XmlNodeType.EndElement when r.Depth == depth:
+                    r.Read();
+                    return;
+                case XmlNodeType.Element:
+                    counter.Count(r);
+                    element(r);
+                    break;
+                case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace:
+                    text?.Invoke(r.Value);
+                    r.Read();
+                    break;
+                default:
+                    r.Read();
+                    break;
+            }
+        }
+    }
+
+    /// <summary>The text of the element (child elements skipped), cut to <paramref name="max"/> characters; the reader goes past it.</summary>
+    private static string Text(XmlReader r, ElementCounter counter, int max)
+    {
+        var sb = new StringBuilder();
+        Children(r, counter, e => e.Skip(), t =>
+        {
+            if (sb.Length < max) sb.Append(t, 0, Math.Min(t.Length, max - sb.Length));
+        });
+        return sb.ToString();
+    }
+
+    /// <summary>What one annotation element says: its attributes and the children this reader knows.</summary>
+    private sealed class XfdfElement
+    {
+        public readonly Dictionary<string, string> Attributes = new(StringComparer.Ordinal);
+        public string? Contents, DefaultAppearance;
+        public readonly List<string> Gestures = new();
+        public Dictionary<string, string>? Popup;
+        public bool TooLarge;
+
+        public string? this[string name] => Attributes.TryGetValue(name, out var v) ? v : null;
+    }
+
+    private static Dictionary<string, string> Attributes(XmlReader r)
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (r.MoveToFirstAttribute())
+        {
+            do
+            {
+                if (r.NamespaceURI.Length == 0) attributes[r.LocalName] = r.Value;
+            }
+            while (r.MoveToNextAttribute());
+            r.MoveToElement();
+        }
+        return attributes;
+    }
+
+    private static XfdfElement ReadElement(XmlReader r, ElementCounter counter, string subtype)
+    {
+        var e = new XfdfElement();
+        foreach (var (k, v) in Attributes(r)) e.Attributes[k] = v;
+        // More quadrilaterals than the limit: the annotation is skipped, not cut (a cut highlight would mark the wrong text).
+        if (e["coords"] is { } coords && CountNumbers(coords) > 8 * PdfAnnotationLimits.MaxQuads) e.TooLarge = true;
+        Children(r, counter, c =>
+        {
+            switch (c.LocalName)
+            {
+                case "contents" when e.Contents == null:
+                    e.Contents = Text(c, counter, PdfAnnotationLimits.MaxContentsLength);
+                    break;
+                case "defaultappearance" when e.DefaultAppearance == null && subtype == "FreeText":
+                    e.DefaultAppearance = Text(c, counter, 1000);
+                    break;
+                case "inklist" when subtype == "Ink":
+                    Children(c, counter, g =>
+                    {
+                        if (g.LocalName == "gesture" && e.Gestures.Count < MaxInkStrokes) e.Gestures.Add(Text(g, counter, MaxCharacters));
+                        else g.Skip();
+                    });
+                    break;
+                case "popup" when e.Popup == null:
+                    e.Popup = Attributes(c);
+                    c.Skip();
+                    break;
+                default:
+                    c.Skip();
+                    break;
+            }
+        });
+        return e;
+    }
+
+    private static int CountNumbers(string text) =>
+        text.Split([',', ' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Length;
+
+    private static PdfAnnotation? Read(XfdfElement e, string subtype)
+    {
+        if (!int.TryParse(e["page"], NumberStyles.None, CultureInfo.InvariantCulture, out int page) || page < 0 || page > 1_000_000) return null;
+        if (Numbers(e["rect"]) is not { Length: 4 } r) return null;
         var a = new PdfAnnotation
         {
             PageNumber = page + 1,
             Subtype = subtype,
             Rect = new PdfRect(Math.Min(r[0], r[2]), Math.Min(r[1], r[3]), Math.Abs(r[2] - r[0]), Math.Abs(r[3] - r[1])),
-            Color = Colour((string?)e.Attribute("color")),
-            InteriorColor = Colour((string?)e.Attribute("interior-color")),
-            Opacity = double.TryParse((string?)e.Attribute("opacity"), NumberStyles.Float, CultureInfo.InvariantCulture, out double o) && double.IsFinite(o) ? Math.Clamp(o, 0, 1) : 1,
-            Author = Limit((string?)e.Attribute("title")),
-            Subject = Limit((string?)e.Attribute("subject")),
-            Name = Limit((string?)e.Attribute("name")),
-            ModifiedDate = Limit((string?)e.Attribute("date")),
-            CreationDate = Limit((string?)e.Attribute("creationdate")),
-            Contents = Limit(e.Elements().FirstOrDefault(c => c.Name.LocalName == "contents")?.Value, 100_000),
+            Color = Colour(e["color"]),
+            InteriorColor = Colour(e["interior-color"]),
+            Opacity = double.TryParse(e["opacity"], NumberStyles.Float, CultureInfo.InvariantCulture, out double o) && double.IsFinite(o) ? Math.Clamp(o, 0, 1) : 1,
+            Author = Limit(e["title"], PdfAnnotationLimits.MaxTextLength),
+            Subject = Limit(e["subject"], PdfAnnotationLimits.MaxTextLength),
+            Name = Limit(e["name"], PdfAnnotationLimits.MaxTextLength),
+            ModifiedDate = Limit(e["date"], 64),
+            CreationDate = Limit(e["creationdate"], 64),
+            Contents = e.Contents,
         };
-        if ((string?)e.Attribute("flags") is { } flags)
+        if (e["flags"] is { } flags)
         {
             int f = 0;
             foreach (var part in flags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 f |= FlagNames.FirstOrDefault(n => n.Name.Equals(part, StringComparison.OrdinalIgnoreCase)).Bit;
             a.Flags = f;
         }
-        if (double.TryParse((string?)e.Attribute("width"), NumberStyles.Float, CultureInfo.InvariantCulture, out double w) && double.IsFinite(w) && w >= 0 && w <= 1000)
+        if (double.TryParse(e["width"], NumberStyles.Float, CultureInfo.InvariantCulture, out double w) && double.IsFinite(w) && w >= 0 && w <= 1000)
             a.BorderWidth = w;
-        if ((string?)e.Attribute("style") == "dash") a.BorderDash = Numbers((string?)e.Attribute("dashes")) is { Length: > 0 and <= 16 } dashes ? dashes : new[] { 3.0 };
-        if (Numbers((string?)e.Attribute("coords")) is { Length: >= 8 } coords)
-            for (int k = 0; k + 7 < coords.Length && a.QuadPoints.Count < MaxInkPoints; k += 8) a.QuadPoints.Add(coords[k..(k + 8)]);
-        if (subtype == "Text") a.Icon = Limit((string?)e.Attribute("icon"), 64) is { Length: > 0 } icon && icon.All(char.IsAsciiLetterOrDigit) ? icon : "Note";
-        if (subtype == "Line" && Numbers((string?)e.Attribute("start")) is { Length: 2 } s && Numbers((string?)e.Attribute("end")) is { Length: 2 } t)
+        if (e["style"] == "dash") a.BorderDash = Dashes(e["dashes"]);
+        if (Numbers(e["coords"]) is { Length: >= 8 } coords)
+            for (int k = 0; k + 7 < coords.Length && a.QuadPoints.Count < PdfAnnotationLimits.MaxQuads; k += 8) a.QuadPoints.Add(coords[k..(k + 8)]);
+        if (subtype == "Text") a.Icon = Limit(e["icon"], 64) is { Length: > 0 } icon && icon.All(char.IsAsciiLetterOrDigit) ? icon : "Note";
+        if (subtype == "Line" && Numbers(e["start"]) is { Length: 2 } s && Numbers(e["end"]) is { Length: 2 } t)
             a.Line = new[] { s[0], s[1], t[0], t[1] };
         if (subtype == "FreeText")
         {
-            a.DefaultAppearance = Limit(e.Elements().FirstOrDefault(c => c.Name.LocalName == "defaultappearance")?.Value ?? (string?)e.Attribute("defaultappearance"), 1000);
-            a.Justification = (string?)e.Attribute("justification") switch { "centered" => 1, "right" => 2, _ => 0 };
+            a.DefaultAppearance = e.DefaultAppearance ?? Limit(e["defaultappearance"], 1000);
+            a.Justification = e["justification"] switch { "centered" => 1, "right" => 2, _ => 0 };
         }
         if (subtype == "Ink")
         {
-            foreach (var gesture in e.Elements().Where(c => c.Name.LocalName == "inklist").SelectMany(c => c.Elements()).Where(c => c.Name.LocalName == "gesture"))
+            int total = 0;
+            foreach (var gesture in e.Gestures)
             {
-                if (a.InkList.Count >= MaxInkStrokes) break;
+                if (a.InkList.Count >= MaxInkStrokes || total >= PdfAnnotationLimits.MaxInkPoints) break;
                 var points = new List<PdfPoint>();
-                foreach (var pair in gesture.Value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                foreach (var pair in gesture.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
-                    if (points.Count >= MaxInkPoints) break;
+                    if (points.Count >= MaxInkPoints || total + points.Count >= PdfAnnotationLimits.MaxInkPoints) break;
                     if (Numbers(pair) is { Length: 2 } p) points.Add(new PdfPoint(p[0], p[1]));
                 }
+                total += points.Count;
                 if (points.Count > 0) a.InkList.Add(points);
             }
             if (a.InkList.Count == 0) return null;
@@ -191,15 +357,19 @@ public static class PdfAnnotationXfdf
             var q = a.Rect;
             a.QuadPoints.Add(new[] { q.Left, q.Bottom, q.Right, q.Bottom, q.Left, q.Top, q.Right, q.Top });
         }
-        if (e.Elements().FirstOrDefault(c => c.Name.LocalName == "popup") is { } popup && Numbers((string?)popup.Attribute("rect")) is { Length: 4 } pr)
+        if (e.Popup is { } popup && Numbers(popup.GetValueOrDefault("rect")) is { Length: 4 } pr)
         {
             a.PopupRect = new PdfRect(Math.Min(pr[0], pr[2]), Math.Min(pr[1], pr[3]), Math.Abs(pr[2] - pr[0]), Math.Abs(pr[3] - pr[1]));
-            a.PopupOpen = (string?)popup.Attribute("open") == "yes";
+            a.PopupOpen = popup.GetValueOrDefault("open") == "yes";
         }
         return a;
     }
 
-    private static string? Limit(string? s, int max = 1024) => s == null ? null : s.Length <= max ? s : s[..max];
+    /// <summary>A dash pattern: 1 to <see cref="MaxDashes"/> numbers, none negative, not all zero; else the default [3].</summary>
+    internal static double[] Dashes(string? text) =>
+        Numbers(text) is { Length: > 0 and <= MaxDashes } dashes && dashes.All(d => d >= 0) && dashes.Sum() > 0 ? dashes : new[] { 3.0 };
+
+    private static string? Limit(string? s, int max) => s == null ? null : s.Length <= max ? s : s[..max];
 
     /// <summary>Comma- or space-separated numbers, all finite and within ±10⁷; null when any is not.</summary>
     private static double[]? Numbers(string? text)
