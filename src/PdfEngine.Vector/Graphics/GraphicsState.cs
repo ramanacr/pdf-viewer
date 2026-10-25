@@ -30,6 +30,21 @@ public sealed class GraphicsState
     public PdfObject? FillPattern { get; set; }
     public PdfObject? StrokePattern { get; set; }
 
+    /// <summary>
+    /// The components of the current stroke colour in <see cref="StrokeColorSpace"/> (null when not known),
+    /// kept for separations: a plate is computed from the colour, not from its RGB rendition.
+    /// </summary>
+    public double[]? StrokeComponents { get; set; }
+    /// <summary>The components of the current fill colour in <see cref="FillColorSpace"/>; see <see cref="StrokeComponents"/>.</summary>
+    public double[]? FillComponents { get; set; }
+
+    /// <summary>ExtGState /OP: overprinting for stroking (ISO 32000-2 8.6.7).</summary>
+    public bool OverprintStroke { get; set; }
+    /// <summary>ExtGState /op (defaults to /OP): overprinting for everything else.</summary>
+    public bool OverprintFill { get; set; }
+    /// <summary>ExtGState /OPM: 1 is the nonzero overprint mode.</summary>
+    public int OverprintMode { get; set; }
+
     public double StrokeAlpha { get; set; } = 1.0;
     public double FillAlpha { get; set; } = 1.0;
     public string BlendMode { get; set; } = "Normal";
@@ -112,6 +127,11 @@ public sealed class GraphicsState
             FillColorSpace = FillColorSpace,
             FillPattern = FillPattern,
             StrokePattern = StrokePattern,
+            StrokeComponents = StrokeComponents,
+            FillComponents = FillComponents,
+            OverprintStroke = OverprintStroke,
+            OverprintFill = OverprintFill,
+            OverprintMode = OverprintMode,
             StrokeAlpha = StrokeAlpha,
             FillAlpha = FillAlpha,
             BlendMode = BlendMode,

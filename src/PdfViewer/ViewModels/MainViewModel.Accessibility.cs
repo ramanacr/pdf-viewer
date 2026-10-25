@@ -26,7 +26,13 @@ public partial class MainViewModel
     }
 
     /// <summary>Goes to <paramref name="page"/> and highlights <paramref name="normalizedBounds"/> (fractions of the page from its top-left) when given.</summary>
-    public void ShowAccessibilityIssue(int page, PdfRect? normalizedBounds)
+    public void ShowAccessibilityIssue(int page, PdfRect? normalizedBounds) => ShowPageHighlight(page, normalizedBounds, "Accessibility issue");
+
+    /// <summary>
+    /// Goes to <paramref name="page"/> and highlights <paramref name="normalizedBounds"/> with the search highlights, for a
+    /// checker's result (accessibility, preflight); one at a time.
+    /// </summary>
+    public void ShowPageHighlight(int page, PdfRect? normalizedBounds, string label)
     {
         ClearAccessibilityHighlight();
         if (page < 1 || page > Pages.Count) return;
@@ -35,7 +41,7 @@ public partial class MainViewModel
         _accessibilityHighlight = new SearchMatch
         {
             PageNumber = page, X = b.X, Y = b.Y, Width = b.Width, Height = b.Height,
-            ContextSnippet = "Accessibility issue", IsCurrentMatch = true,
+            ContextSnippet = label, IsCurrentMatch = true,
         };
         Pages[page - 1].MatchesOnPage.Add(_accessibilityHighlight);
         ScrollToMatchAction?.Invoke(page, b.X, b.Y);
