@@ -106,7 +106,14 @@ public sealed class ViewerBitmap
 /// </summary>
 public sealed class ViewerDocument : IAsyncDisposable
 {
-    private readonly PdfVectorDocument _document;
+    // The parse of the bytes as opened, and of the current revision (the same until the first edit).
+    private readonly PdfVectorDocument _original;
+    private PdfVectorDocument _document;
+    private readonly byte[] _originalBytes;
+    private byte[] _bytes;
+    private readonly string? _password;
+    // A damaged file is written whole once before its first edit, since it cannot take an incremental update.
+    private (PdfVectorDocument Document, byte[] Bytes)? _editBase;
     private readonly ViewerOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private SkiaVectorRenderer _renderer;
@@ -120,9 +127,12 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// </summary>
     private const int MaxFontRounds = 5;
 
-    private ViewerDocument(PdfVectorDocument document, ViewerOptions options, IReadOnlyList<ViewerPage> pages, long fileSize)
+    private ViewerDocument(PdfVectorDocument document, byte[] bytes, string? password, ViewerOptions options, IReadOnlyList<ViewerPage> pages, long fileSize)
     {
-        _document = document;
+        _original = _document = document;
+        _originalBytes = _bytes = bytes;
+        _password = password;
+        Geometry = document.PageTree.Pages.Select(p => new Annotations.ViewerPageGeometry(p.MediaBox, p.CropBox, p.RotationDegrees)).ToList();
         _fileSize = fileSize;
         _options = options;
         Pages = pages;
@@ -133,6 +143,18 @@ public sealed class ViewerDocument : IAsyncDisposable
     public int PageCount => Pages.Count;
 
     public IReadOnlyList<ViewerPage> Pages { get; }
+
+    /// <summary>Each page's boxes and rotation: how its user space maps to the page as shown.</summary>
+    public IReadOnlyList<Annotations.ViewerPageGeometry> Geometry { get; }
+
+    /// <summary>The bytes the document was opened from.</summary>
+    public byte[] OriginalBytes => _originalBytes;
+
+    /// <summary>The current revision: the bytes as opened plus the reader's annotations and form data (<see cref="ApplyEditsAsync"/>).</summary>
+    public byte[] Bytes => _bytes;
+
+    /// <summary>True when <see cref="Bytes"/> differ from the bytes as opened.</summary>
+    public bool IsEdited => !ReferenceEquals(_bytes, _originalBytes);
 
     /// <summary>The document's own title (/Title in its information dictionary), if it has one.</summary>
     public string? Title => string.IsNullOrWhiteSpace(_document.Metadata.Title) ? null : _document.Metadata.Title;
@@ -151,6 +173,14 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// </summary>
     public bool CanCopy => _document.Security is not { } s
                            || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanCopy;
+
+    /// <summary>The document lets the reader add and change annotations (ISO 32000-2 Table 22, bit 6), as <see cref="CanCopy"/>.</summary>
+    public bool CanAnnotate => _document.Security is not { } s
+                               || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanAnnotate;
+
+    /// <summary>The document lets the reader fill its form fields (bits 6 or 9), as <see cref="CanCopy"/>.</summary>
+    public bool CanFillForms => _document.Security is not { } s
+                                || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanFillForms;
 
     /// <summary>The document lets the reader print it (ISO 32000-2 Table 22, bit 3), as <see cref="CanCopy"/>.</summary>
     public bool CanPrint => _document.Security is not { } s
@@ -257,7 +287,7 @@ public sealed class ViewerDocument : IAsyncDisposable
             }
             if (pages.Length == 0)
                 throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF has no pages.");
-            return new ViewerDocument(document, options, pages, bytes.LongLength);
+            return new ViewerDocument(document, bytes, password, options, pages, bytes.LongLength);
         }
         catch
         {
@@ -270,7 +300,14 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// Renders a page at <paramref name="scale"/> pixels per point (1 is 72 dpi). <paramref name="night"/>
     /// inverts the finished page, as the desktop viewer's night mode does.
     /// </summary>
-    public async Task<ViewerBitmap> RenderPageAsync(int page, double scale, bool night = false, CancellationToken cancellationToken = default)
+    public Task<ViewerBitmap> RenderPageAsync(int page, double scale, bool night = false, CancellationToken cancellationToken = default) =>
+        RenderPageAsync(page, scale, night, asOpened: false, cancellationToken);
+
+    /// <summary>
+    /// The same; with <paramref name="asOpened"/>, the page as the file was opened, without the
+    /// reader's annotations and form data (to print without them).
+    /// </summary>
+    public async Task<ViewerBitmap> RenderPageAsync(int page, double scale, bool night, bool asOpened, CancellationToken cancellationToken = default)
     {
         if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
         if (!(scale > 0) || double.IsInfinity(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
@@ -279,7 +316,7 @@ public sealed class ViewerDocument : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             var clock = Stopwatch.StartNew();
-            var list = await _document.GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
+            var list = await (asOpened ? _original : _document).GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
             var build = clock.Elapsed;
 
             var request = new RenderRequest { PageNumber = page, Dpi = scale * 72 };
@@ -540,6 +577,107 @@ public sealed class ViewerDocument : IAsyncDisposable
         };
     }
 
+    // ---------------------------------------------------------------- annotations and forms
+
+    /// <summary>The annotations of the file as opened that the viewer manages (see <see cref="Annotations.ViewerAnnotationPdf.FromPdf"/>).</summary>
+    public async Task<IReadOnlyList<Annotations.ViewerAnnotation>> ReadAnnotationsAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return Annotations.ViewerAnnotationPdf.ReadAll(_original);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>The widgets of the fillable form fields of the current revision, with their values.</summary>
+    public async Task<IReadOnlyList<Annotations.ViewerFormWidget>> GetFormWidgetsAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return Annotations.ViewerFormWidget.ReadAll(_document, Geometry);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Makes the current revision the file as opened plus <paramref name="annotations"/> (their
+    /// difference from <paramref name="fromFile"/>, the file's own) and <paramref name="formValues"/>,
+    /// written by the engine as incremental updates with real annotation dictionaries and appearance
+    /// streams, and reads it again: pages, text and search then show the edits. Every call starts
+    /// from the bytes as opened, so the file does not grow with the number of edits. Throws
+    /// <see cref="PdfEngine.Vector.Forms.PdfFieldValidationException"/> (or an argument, key or
+    /// invalid-operation exception) when a form value is refused; nothing changes then. Returns
+    /// the form fields written (the values given and the fields calculated from them).
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ApplyEditsAsync(IReadOnlyList<Annotations.ViewerAnnotation> fromFile, IReadOnlyList<Annotations.ViewerAnnotation> annotations,
+        IReadOnlyList<(string Name, IReadOnlyList<string> Values)> formValues, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fromFile);
+        ArgumentNullException.ThrowIfNull(annotations);
+        ArgumentNullException.ThrowIfNull(formValues);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var opened = new List<PdfVectorDocument>();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var (baseDoc, baseBytes) = await EditBaseAsync(cancellationToken).ConfigureAwait(false);
+            byte[] bytes = Annotations.ViewerAnnotationPdf.Write(baseDoc, baseBytes, fromFile, annotations) ?? baseBytes;
+            PdfVectorDocument? doc = ReferenceEquals(bytes, baseBytes) ? baseDoc : null;
+            IReadOnlyList<string> filled = [];
+            if (formValues.Count > 0)
+            {
+                if (doc == null) opened.Add(doc = await OpenRevisionAsync(bytes, cancellationToken).ConfigureAwait(false));
+                var (withValues, changed) = PdfEngine.Vector.Services.PdfNativeFormService.Fill(doc, bytes, formValues, validate: true);
+                filled = changed;
+                if (!ReferenceEquals(withValues, bytes))
+                {
+                    bytes = withValues;
+                    doc = null;
+                }
+            }
+            if (doc == null) opened.Add(doc = await OpenRevisionAsync(bytes, cancellationToken).ConfigureAwait(false));
+
+            var old = _document;
+            _document = doc;
+            _bytes = bytes;
+            opened.Remove(doc);
+            if (!ReferenceEquals(old, doc) && !ReferenceEquals(old, _original) && !ReferenceEquals(old, _editBase?.Document))
+            {
+                PdfTextExtractor.Invalidate(old);
+                old.Dispose();
+            }
+            return filled;
+        }
+        finally
+        {
+            foreach (var d in opened) d.Dispose();
+            _gate.Release();
+        }
+    }
+
+    private async Task<(PdfVectorDocument Document, byte[] Bytes)> EditBaseAsync(CancellationToken cancellationToken)
+    {
+        if (_editBase is { } known) return known;
+        if (!_original.WasRepaired) return (_original, _originalBytes);
+        byte[] whole = PdfEngine.Vector.Services.PdfFullWriter.Rewrite(_original);
+        var doc = await OpenRevisionAsync(whole, cancellationToken).ConfigureAwait(false);
+        _editBase = (doc, whole);
+        return (doc, whole);
+    }
+
+    private async Task<PdfVectorDocument> OpenRevisionAsync(byte[] bytes, CancellationToken cancellationToken) =>
+        await PdfVectorDocument.OpenAsync(bytes, "Document.pdf", password: _password, cancellationToken: cancellationToken).ConfigureAwait(false);
+
     public async ValueTask DisposeAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
@@ -548,8 +686,12 @@ public sealed class ViewerDocument : IAsyncDisposable
             if (_disposed) return;
             _disposed = true;
             _renderer.Dispose();
-            PdfTextExtractor.Invalidate(_document);
-            _document.Dispose();
+            foreach (var d in new[] { _document, _editBase?.Document, _original }.Distinct())
+            {
+                if (d == null) continue;
+                PdfTextExtractor.Invalidate(d);
+                d.Dispose();
+            }
         }
         finally
         {

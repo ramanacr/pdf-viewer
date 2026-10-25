@@ -37,6 +37,8 @@
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\VectorPdfBuilder.cs" Link="Fixtures\VectorPdfBuilder.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\PdfTestEncryption.cs" Link="Fixtures\PdfTestEncryption.cs" />
     <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\SyntheticCff.cs" Link="Fixtures\SyntheticCff.cs" />
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\FormPdfFixture.cs" Link="Fixtures\FormPdfFixture.cs" />
+    <Compile Include="..\PdfEngine.Vector.Tests\Fixtures\ScriptedFormFixture.cs" Link="Fixtures\ScriptedFormFixture.cs" />
   </ItemGroup>
 
 </Project>
