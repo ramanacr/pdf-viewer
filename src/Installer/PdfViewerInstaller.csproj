@@ -34,6 +34,7 @@
   <ItemGroup>
     <Compile Include="..\PdfViewer.Core\Components\OptionalComponents.cs" Link="Components\OptionalComponents.cs" />
     <Compile Include="..\PdfViewer.Core\Components\ComponentDownloader.cs" Link="Components\ComponentDownloader.cs" />
+    <Compile Include="..\PdfViewer.Core\Components\ResilientHttp.cs" Link="Components\ResilientHttp.cs" />
   </ItemGroup>
 
 </Project>

@@ -154,16 +154,21 @@ public partial class UpdateDialog : Window
             // Trigger silent upgrade and restart
             UpdateService.LaunchInstallerAndExit(downloadedInstaller, silent: true);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // The user pressed Cancel.
             _isDownloading = false;
             if (_updateInfo != null) DisplayUpdateInfo(_updateInfo);
         }
         catch (Exception ex)
         {
+            // A timeout is an OperationCanceledException too; it used to be taken for Cancel,
+            // so a stalled download went back to "Update Now" without a word.
             _isDownloading = false;
             ShowPanel(ErrorPanel);
-            ErrorMessageText.Text = $"Download failed: {ex.Message}";
+            ErrorMessageText.Text = ex is OperationCanceledException
+                ? "Download failed: the connection to GitHub timed out. Check the network and try again."
+                : $"Download failed: {ex.Message}";
             PrimaryActionButton.IsEnabled = true;
             PrimaryActionButton.Content = "Retry";
             CancelActionButton.Content = "Close";

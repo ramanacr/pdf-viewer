@@ -23,14 +23,28 @@ public static class UpdateService
 
     private static readonly HttpClient HttpClient;
 
+    // The installer is about 10 MB: the 15-second limit of the release check would fail it on a
+    // slow line, so the download has a client of its own with a limit of minutes.
+    private static readonly HttpClient DownloadClient;
+
+    /// <summary>The longest the installer download may take.</summary>
+    internal static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
+
     static UpdateService()
     {
-        HttpClient = new HttpClient
+        // Both connect through ResilientHttp: one unreachable GitHub address no longer stalls them.
+        HttpClient = new HttpClient(PdfViewer.Core.Components.ResilientHttp.CreateHandler())
         {
             Timeout = TimeSpan.FromSeconds(15)
         };
         HttpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PdfViewer-App", "1.0"));
         HttpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.v3+json"));
+
+        DownloadClient = new HttpClient(PdfViewer.Core.Components.ResilientHttp.CreateHandler())
+        {
+            Timeout = DownloadTimeout
+        };
+        DownloadClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PdfViewer-App", "1.0"));
     }
 
     /// <summary>
@@ -165,7 +179,7 @@ public static class UpdateService
         Directory.CreateDirectory(tempDir);
         string tempFile = Path.Combine(tempDir, "PdfViewerSetup.exe");
 
-        using var response = await HttpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await DownloadClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
 
         long totalBytes = response.Content.Headers.ContentLength ?? -1;
