@@ -2,9 +2,10 @@
 
 A portable renderer for the vector engine's display list (`IPdfDisplayList`), built on
 [SkiaSharp](https://github.com/mono/SkiaSharp) 3.116.1 (MIT). It targets plain `net9.0` and draws on
-Skia's CPU raster canvas, so it has no dependency on Windows, Direct2D or a GPU. It is step 1 of a
-web viewer (Blazor WebAssembly) and of the Android proof of concept (src/PdfViewer.Android). The WPF
-application does not use it yet.
+Skia's CPU raster canvas, so it has no dependency on Windows, Direct2D or a GPU. It draws the pages
+of the web demo (src/PdfViewer.Web) and of the Android proof of concept (src/PdfViewer.Android),
+and it is published on nuget.org as the package `PdfEngine.Vector.Skia` (see `PACKAGE_README.md`).
+The Windows app uses the Direct2D backend instead.
 
 The reference is the Direct2D backend (`src/PdfEngine.Vector.Direct2D`). The Skia backend replays
 the same display list with the same semantics, and its tests compare every fixture with a
@@ -138,9 +139,10 @@ optionally `SKIA_PARITY_PAGES` (at most 200) and `SKIA_PARITY_OUT` (summary file
    A web or Android host must supply its own fonts through `SkiaFontSource` (the web demo
    bundles Liberation, which stands in by `SystemFontCatalog.LiberationFamilyAliases`). Bare Type 1 and CFF
    programs that the engine does not wrap as sfnt are substituted, as in Direct2D.
-4. **Only tested on Windows.** The library is portable, but it has run only with
-   `SkiaSharp.NativeAssets.Win32`. WebAssembly and Android need their own SkiaSharp native assets,
-   which are not referenced yet.
+4. **Platforms tested.** The tests run on Windows with `SkiaSharp.NativeAssets.Win32`. The web demo
+   (`SkiaSharp.NativeAssets.WebAssembly`) runs in Chromium, and the Android app
+   (`SkiaSharp.NativeAssets.Android`) has run on an Android 13 emulator, all at 3.116.1. Linux and
+   macOS hosts are not tested.
 5. **Not in scope here:** printing, shared GPU textures and render preparation (Direct2D-only
    features), and tiling of very large outputs: a render allocates the whole region at once.
 6. **Cost.** Everything is CPU work. Groups, soft masks and knockout elements allocate offscreen

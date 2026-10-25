@@ -1,6 +1,7 @@
 # Implementation Status and Audit
 
-**Last updated:** 2026-10-25 (substitute fonts: WPF glyph fitting and Dingbats, hyphenated family names) · 2026-10-17 (M9: native rendering, no PDFium pixels in Auto or Vector mode) · 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns, vertical writing, glyph clips, two-circle radials, predefined CJK CMaps, JPEG 2000, mesh shadings, CCITT, JBIG2, knockout and non-isolated groups, encryption, certificate encryption, permissions) · branch `feat/vector-migration-gaps` · PR ramanacr/pdf-viewer#1
+**Last updated:** 2026-10-25 (substitute fonts: WPF glyph fitting and Dingbats, hyphenated family names) · 2026-10-17 (M9: native rendering, no PDFium pixels in Auto or Vector mode) · 2026-09-26 (Direct2D backend and page host, blend modes, soft masks, tiling patterns, vertical writing, glyph clips, two-circle radials, predefined CJK CMaps, JPEG 2000, mesh shadings, CCITT, JBIG2, knockout and non-isolated groups, encryption, certificate encryption, permissions)
+**Where:** `main` (the work started on branch `feat/vector-migration-gaps`, PR ramanacr/pdf-viewer#1, and continued in later pull requests).
 **Scope of this document:** what the first implementation pass (commits `b0ab63c` … `2e2fdd7`, 2026-09-21) delivered against this bundle, what it got wrong, what the second pass fixed, and what remains — with evidence, not claims.
 
 ---
