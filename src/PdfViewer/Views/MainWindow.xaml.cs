@@ -61,6 +61,17 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>The document's vertical scroll bar width, from its style (the system width before the template applies).</summary>
+    private double DocumentVerticalScrollBarWidth()
+    {
+        if (DocumentScrollViewer.Template?.FindName("PART_VerticalScrollBar", DocumentScrollViewer) is System.Windows.Controls.Primitives.ScrollBar bar)
+        {
+            double width = bar.ActualWidth > 0 ? bar.ActualWidth : bar.Width;
+            if (width > 0 && !double.IsNaN(width)) return width;
+        }
+        return SystemParameters.VerticalScrollBarWidth;
+    }
+
     /// <summary>Gives one document the callbacks it needs to reach this window.</summary>
     private void AttachToWindow(MainViewModel document)
     {
@@ -169,7 +180,13 @@ public partial class MainWindow : Window
         };
         document.ScrollToPageAction = ScrollToPage;
         document.ScrollToMatchAction = ScrollToMatch;
-        document.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+        document.GetViewportSizeFunc = () =>
+        {
+            // The whole width, with the vertical bar's width kept free: the fit then holds
+            // whether the bar shows or not, and never brings on a horizontal bar.
+            document.VerticalScrollBarWidth = DocumentVerticalScrollBarWidth();
+            return (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+        };
 
         document.PropertyChanged += (s, e) =>
         {
@@ -922,7 +939,33 @@ public partial class MainWindow : Window
             DocumentScrollViewer.Cursor = Cursors.SizeAll;
             DocumentScrollViewer.CaptureMouse();
             e.Handled = true;
+            return;
         }
+
+        // A click on the grey space around the pages ends the text selection, as a click on
+        // an empty part of a page does. A click on a scroll bar does not.
+        if (e.ChangedButton == MouseButton.Left && _vm.HasTextSelection && IsOffPage(e.OriginalSource as DependencyObject))
+        {
+            _vm.ClearSelection();
+        }
+    }
+
+    /// <summary>
+    /// True when the element is in the document viewport but on no page and on no scroll bar.
+    /// The page area holds the pages (continuous) or the page (single): whatever is inside one
+    /// of its children is on a page; the space around them hits nothing in it.
+    /// </summary>
+    private bool IsOffPage(DependencyObject? element)
+    {
+        if (element == null) return false;
+        for (var node = element; node != null && !ReferenceEquals(node, DocumentScrollViewer);)
+        {
+            if (node is System.Windows.Controls.Primitives.ScrollBar) return false;
+            var parent = node is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+            if (ReferenceEquals(parent, PageArea)) return false;
+            node = parent;
+        }
+        return true;
     }
 
     private void DocumentScrollViewer_PreviewMouseMove(object sender, MouseEventArgs e)
