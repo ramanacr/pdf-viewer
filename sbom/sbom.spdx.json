@@ -2,21 +2,21 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "PdfViewer-3.4.0",
-  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/3.4.0/0340c433-f1dd-45a6-a62e-1f95b178b3d2",
+  "name": "PdfViewer-4.1.0",
+  "documentNamespace": "https://github.com/ramanacr/pdf-viewer/spdx/4.1.0/3d72c127-f834-4f27-81eb-268a796c584a",
   "creationInfo": {
     "creators": [
       "Tool: PDF-Viewer-SBOM-Generator-3.0.0",
       "Organization: PDF Viewer Project"
     ],
-    "created": "2026-10-17T19:56:25Z"
+    "created": "2026-10-25T11:25:32Z"
   },
   "packages": [
     {
       "SPDXID": "SPDXRef-Package-PdfViewer",
       "name": "PdfViewer",
-      "versionInfo": "3.4.0",
-      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/releases/tag/v3.4.0",
+      "versionInfo": "4.1.0",
+      "downloadLocation": "https://github.com/ramanacr/pdf-viewer/releases/tag/v4.1.0",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -26,14 +26,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:github/ramanacr/pdf-viewer@3.4.0"
+          "referenceLocator": "pkg:github/ramanacr/pdf-viewer@4.1.0"
         }
       ]
     },
     {
       "SPDXID": "SPDXRef-Package-PdfEngine-Abstractions",
       "name": "PdfEngine.Abstractions",
-      "versionInfo": "3.4.0",
+      "versionInfo": "4.1.0",
       "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Abstractions",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -44,7 +44,7 @@
     {
       "SPDXID": "SPDXRef-Package-PdfEngine-Vector",
       "name": "PdfEngine.Vector",
-      "versionInfo": "3.4.0",
+      "versionInfo": "4.1.0",
       "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Vector",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -55,7 +55,7 @@
     {
       "SPDXID": "SPDXRef-Package-PdfEngine-Vector-Windows",
       "name": "PdfEngine.Vector.Windows",
-      "versionInfo": "3.4.0",
+      "versionInfo": "4.1.0",
       "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Vector.Windows",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -66,7 +66,7 @@
     {
       "SPDXID": "SPDXRef-Package-PdfEngine-Vector-Direct2D",
       "name": "PdfEngine.Vector.Direct2D",
-      "versionInfo": "3.4.0",
+      "versionInfo": "4.1.0",
       "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfEngine.Vector.Direct2D",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -77,7 +77,7 @@
     {
       "SPDXID": "SPDXRef-Package-PdfViewer-Core",
       "name": "PdfViewer.Core",
-      "versionInfo": "3.4.0",
+      "versionInfo": "4.1.0",
       "downloadLocation": "https://github.com/ramanacr/pdf-viewer/tree/master/src/PdfViewer.Core",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -167,8 +167,8 @@
     {
       "SPDXID": "SPDXRef-Package-NuGet-System.Security.Cryptography.Pkcs",
       "name": "System.Security.Cryptography.Pkcs",
-      "versionInfo": "9.0.0",
-      "downloadLocation": "https://www.nuget.org/packages/System.Security.Cryptography.Pkcs/9.0.0",
+      "versionInfo": "9.0.21",
+      "downloadLocation": "https://www.nuget.org/packages/System.Security.Cryptography.Pkcs/9.0.21",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -177,7 +177,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0"
+          "referenceLocator": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.21"
         }
       ]
     },
