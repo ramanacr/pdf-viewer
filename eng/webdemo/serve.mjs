@@ -29,7 +29,7 @@ const types = {
     '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
     '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml',
     '.png': 'image/png', '.ico': 'image/x-icon', '.dat': 'application/octet-stream', '.pdf': 'application/pdf',
-    '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json', '.ttf': 'font/ttf',
+    '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json', '.ttf': 'font/ttf', '.otf': 'font/otf',
 };
 const compressible = new Set(['.html', '.js', '.mjs', '.css', '.json', '.wasm', '.svg', '.dat', '.txt']);
 

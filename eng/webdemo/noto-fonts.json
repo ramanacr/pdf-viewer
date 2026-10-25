@@ -1,0 +1,202 @@
+{
+  "about": "Noto fonts for the web demo (src/PdfViewer.Web). Not committed: eng/webdemo/noto_fonts.py downloads each archive, checks both SHA-256 values, slices the CJK faces and writes fonts/noto/ next to the published app. CI (.github/workflows/web-demo.yml) and contributors run the same script. Licence: SIL Open Font License 1.1.",
+  "fontTools": {
+    "version": "4.66.1",
+    "url": "https://files.pythonhosted.org/packages/f6/10/d45b74135d5d642cb3a4fb0a957c1613ef93de4c8548671dfc3a5bf38299/fonttools-4.66.1-py3-none-any.whl",
+    "sha256": "7234ae9e28db64273fbbfa72caebd0a97e3bdba6b05064114741b9539ef339d0"
+  },
+  "cjkSliceSize": 2000,
+  "fonts": [
+    {
+      "id": "arabic",
+      "family": "Noto Sans Arabic",
+      "url": "https://github.com/notofonts/arabic/releases/download/NotoSansArabic-v2.013/NotoSansArabic-v2.013.zip",
+      "size": 18777381,
+      "sha256": "1301aceaea84c501cf2e6dcfb3182e2328c8eae5725817fcb239672bda7154f1",
+      "member": "NotoSansArabic/unhinted/ttf/NotoSansArabic-Regular.ttf",
+      "memberSha256": "bd86ca02f087d7f3c3788ba458fb6b73744c7639ed276b8d870dba6def6c40d0",
+      "license": "OFL.txt",
+      "licenseSha256": "a7a5a25eb188bf1cd96982030d53e23c33485c69b1044a562254226857ee13af"
+    },
+    {
+      "id": "hebrew",
+      "family": "Noto Sans Hebrew",
+      "url": "https://github.com/notofonts/hebrew/releases/download/NotoSansHebrew-v3.001/NotoSansHebrew-v3.001.zip",
+      "size": 3734185,
+      "sha256": "df0a71814b4e63644cf40fcc4529111b61266b7a2dafbe95068b29a7520cc3cb",
+      "member": "NotoSansHebrew/unhinted/ttf/NotoSansHebrew-Regular.ttf",
+      "memberSha256": "04272f5600d0ec816d31d0df73b23aa8d3501ea359ebe820da31c11ffcf00853",
+      "license": "OFL.txt",
+      "licenseSha256": "9b9fe028b5ba74d231659a1bbaf0ed09b11e759d1ca6a070999e16d151616b47"
+    },
+    {
+      "id": "devanagari",
+      "family": "Noto Sans Devanagari",
+      "url": "https://github.com/notofonts/devanagari/releases/download/NotoSansDevanagari-v2.007/NotoSansDevanagari-v2.007.zip",
+      "size": 18449254,
+      "sha256": "820c7da45b1e63562cb41c0a8cac5d9a4202312043a3a040ed1325857ef469b1",
+      "member": "NotoSansDevanagari/unhinted/ttf/NotoSansDevanagari-Regular.ttf",
+      "memberSha256": "9c7d935139ea6a1e6ad9dbac4f6d27ece1e04bca8123c8888d00a0f9df4724cd",
+      "license": "OFL.txt",
+      "licenseSha256": "a216f6f8d85c7228093e0ee5e258d9d377e6671f68acb4db1930b29583d0f331"
+    },
+    {
+      "id": "bengali",
+      "family": "Noto Sans Bengali",
+      "url": "https://github.com/notofonts/bengali/releases/download/NotoSansBengali-v3.011/NotoSansBengali-v3.011.zip",
+      "size": 14185062,
+      "sha256": "2aca24bf71665e66c32e14862ee58857dd8b8b07b6321ec7c96f3121ad6683b1",
+      "member": "NotoSansBengali/unhinted/ttf/NotoSansBengali-Regular.ttf",
+      "memberSha256": "5dceda02816fece18ea6796f474f5d3170f1d862f21b1e809cdc94b1caa4b6ec",
+      "license": "OFL.txt",
+      "licenseSha256": "754f0e221aa7d5a915489f3bf1f20fe53ddc35ab2834a4d91656d78f9622de70"
+    },
+    {
+      "id": "tamil",
+      "family": "Noto Sans Tamil",
+      "url": "https://github.com/notofonts/tamil/releases/download/NotoSansTamil-v2.004/NotoSansTamil-v2.004.zip",
+      "size": 15229102,
+      "sha256": "f8284e0f200a7f29a439b4ec88280d864b2b31f8479111c5b658ba6da38b3005",
+      "member": "NotoSansTamil/unhinted/ttf/NotoSansTamil-Regular.ttf",
+      "memberSha256": "6634d9cc97a726e670df41281dd32b167a6b9b71f2036e19671ff08fdde0c292",
+      "license": "../OFL.txt",
+      "licenseSha256": "f8ff8ce7d0a81bf8d5e121c635ef027250c531f2fd37d5988b8dd6e45f19d7f1"
+    },
+    {
+      "id": "telugu",
+      "family": "Noto Sans Telugu",
+      "url": "https://github.com/notofonts/telugu/releases/download/NotoSansTelugu-v2.005/NotoSansTelugu-v2.005.zip",
+      "size": 34749676,
+      "sha256": "3553e00ca341dc06f4a143c604dd93a1342553169b5a06dc8b0ff50ab6eba0a2",
+      "member": "NotoSansTelugu/unhinted/ttf/NotoSansTelugu-Regular.ttf",
+      "memberSha256": "dcb86a5da09365a2d73d725e429403dca988e6d50c1b1d564579a25dbc18bd29",
+      "license": "OFL.txt",
+      "licenseSha256": "481c72a8f1b4f645a7e6b10326be41b2da2c15cb470ff48a07fab773eed00102"
+    },
+    {
+      "id": "kannada",
+      "family": "Noto Sans Kannada",
+      "url": "https://github.com/notofonts/kannada/releases/download/NotoSansKannada-v2.006/NotoSansKannada-v2.006.zip",
+      "size": 27782627,
+      "sha256": "902b1b92018f7c96862d68d0a39ef03b978203cd4c3f55d6760f597657b51c44",
+      "member": "NotoSansKannada/unhinted/ttf/NotoSansKannada-Regular.ttf",
+      "memberSha256": "2870274619c2a4abe5d6b11fcb7c4a372eba765b6b7881d459b0eb0a609a68eb",
+      "license": "OFL.txt",
+      "licenseSha256": "e01ae2ea75d7bc6fccb13c48a2f442b32e4bc4be46810fb52a4a1a095320801a"
+    },
+    {
+      "id": "malayalam",
+      "family": "Noto Sans Malayalam",
+      "url": "https://github.com/notofonts/malayalam/releases/download/NotoSansMalayalam-v2.104/NotoSansMalayalam-v2.104.zip",
+      "size": 21451358,
+      "sha256": "2ebd31e79f2893025d659def7784e0ec3557e7ff9ac105adcc82d35782913bf2",
+      "member": "NotoSansMalayalam/unhinted/ttf/NotoSansMalayalam-Regular.ttf",
+      "memberSha256": "cc39bb1f7d63b582a2aec1abf2469a43b805a3523a27e0a0eee8cd32702541d5",
+      "license": "../OFL.txt",
+      "licenseSha256": "1df18163a0bf60f02131401ba1609df90051f40c4047684dda1c8a2e9586f7f2"
+    },
+    {
+      "id": "gujarati",
+      "family": "Noto Sans Gujarati",
+      "url": "https://github.com/notofonts/gujarati/releases/download/NotoSansGujarati-v2.106/NotoSansGujarati-v2.106.zip",
+      "size": 30324052,
+      "sha256": "a4ff1dd03a4998ba08ee7ee43be2aca7594a884982049e48c25ccc48991474ed",
+      "member": "NotoSansGujarati/unhinted/ttf/NotoSansGujarati-Regular.ttf",
+      "memberSha256": "18727143b8eadade0a59dca80959ef784bf8d55e07285d1b4096594dbf829f0a",
+      "license": "OFL.txt",
+      "licenseSha256": "c0b88977aa18b5e4fd05d646d560da89fde61b6581fa4507cb00dd90bd1bf7d4"
+    },
+    {
+      "id": "gurmukhi",
+      "family": "Noto Sans Gurmukhi",
+      "url": "https://github.com/notofonts/gurmukhi/releases/download/NotoSansGurmukhi-v2.004/NotoSansGurmukhi-v2.004.zip",
+      "size": 12566618,
+      "sha256": "a55ee5ee831ce3a4bb73bdc46bd0a02db6eb9445c370a0afbc529379ed8cea52",
+      "member": "NotoSansGurmukhi/unhinted/ttf/NotoSansGurmukhi-Regular.ttf",
+      "memberSha256": "2454c944fda799d2861f11c03e492c453e33083dd1e8d99bd6baac8de71ad0f0",
+      "license": "../OFL.txt",
+      "licenseSha256": "3f7451b7e2c8381be0c5712f7b0dd5c2d75fe787ae16a99f18b7fa45627a0fde"
+    },
+    {
+      "id": "oriya",
+      "family": "Noto Sans Oriya",
+      "url": "https://github.com/notofonts/oriya/releases/download/NotoSansOriya-v2.007/NotoSansOriya-v2.007.zip",
+      "size": 5454788,
+      "sha256": "025b637e2d391f422ae12f4eb365876ce3b195283025ababb74ecf6baae35442",
+      "member": "NotoSansOriya/unhinted/ttf/NotoSansOriya-Regular.ttf",
+      "memberSha256": "a16645d056017927406546aa78e4ce15e782fd8783467267b75450453d007415",
+      "license": "OFL.txt",
+      "licenseSha256": "c90ff15ade263a49148e35af34e9c177c6d56881e81260b29f10123e9e227eca"
+    },
+    {
+      "id": "math",
+      "family": "Noto Sans Math",
+      "url": "https://github.com/notofonts/math/releases/download/NotoSansMath-v3.000/NotoSansMath-v3.000.zip",
+      "size": 2498094,
+      "sha256": "ac351837b41f8a897f020b97fb0f075ad574c1e9669fb5839ada1f92fd748356",
+      "member": "NotoSansMath/unhinted/ttf/NotoSansMath-Regular.ttf",
+      "memberSha256": "b127e84699212b6b2ef50aff58e0ebebeec04ffe6db1b9eb9e209c8c3d97b4aa",
+      "license": "OFL.txt",
+      "licenseSha256": "c9c63b8ed6cf76b2ce0c58b241acfc1195c2c928334c989c7047cbdac58773d9"
+    },
+    {
+      "id": "symbols2",
+      "family": "Noto Sans Symbols 2",
+      "url": "https://github.com/notofonts/symbols/releases/download/NotoSansSymbols2-v2.008/NotoSansSymbols2-v2.008.zip",
+      "size": 2331441,
+      "sha256": "346c930bbe8eb946701a05c54e9c11a2094dee1d93c387bf1771c0a3e335688f",
+      "member": "NotoSansSymbols2/unhinted/ttf/NotoSansSymbols2-Regular.ttf",
+      "memberSha256": "c4a0a80f0041ce4be81e2478faad22776d23edb98ae3f0d19bd37044820ecf9d",
+      "license": "OFL.txt",
+      "licenseSha256": "b118dd41337806a5d4797052c77caf3bd096aed783e5eb21b4d11154351e1ac0"
+    },
+    {
+      "id": "sc",
+      "family": "Noto Sans SC",
+      "url": "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/18_NotoSansSC.zip",
+      "size": 50077940,
+      "sha256": "4d107c09ada479d3e48b6e78c83835773cbd9214bf6e12cdb7b60f8e068292ec",
+      "member": "NotoSansSC-Regular.otf",
+      "memberSha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+      "license": "LICENSE",
+      "licenseSha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "slice": "sc"
+    },
+    {
+      "id": "tc",
+      "family": "Noto Sans TC",
+      "url": "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/19_NotoSansTC.zip",
+      "size": 34139452,
+      "sha256": "fbbcb216be8056a436c7ec142847f302bb1932d07bdad8b322f4953a389d7cbc",
+      "member": "NotoSansTC-Regular.otf",
+      "memberSha256": "5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537",
+      "license": "LICENSE",
+      "licenseSha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "slice": "tc"
+    },
+    {
+      "id": "jp",
+      "family": "Noto Sans JP",
+      "url": "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/16_NotoSansJP.zip",
+      "size": 27139567,
+      "sha256": "2bbdd2c20f30670b39ca735c96d75f1fdabdb348103e43b820cf17701fd22b18",
+      "member": "NotoSansJP-Regular.otf",
+      "memberSha256": "dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073",
+      "license": "LICENSE",
+      "licenseSha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "slice": "jp"
+    },
+    {
+      "id": "kr",
+      "family": "Noto Sans KR",
+      "url": "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/17_NotoSansKR.zip",
+      "size": 26036461,
+      "sha256": "ac7eeb4e2b0d41de8ff31b2d6e1e2a41caf253fd5cefb380bfa1f40f1747b612",
+      "member": "NotoSansKR-Regular.otf",
+      "memberSha256": "69975a0ac8472717870aefeab0a4d52739308d90856b9955313b2ad5e0148d68",
+      "license": "LICENSE",
+      "licenseSha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "slice": "kr"
+    }
+  ]
+}
