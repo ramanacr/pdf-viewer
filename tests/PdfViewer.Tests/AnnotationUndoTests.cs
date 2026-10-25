@@ -377,7 +377,7 @@ public class AnnotationUndoTests : IDisposable
         Assert.True(watch.ElapsedMilliseconds < 5000, $"closing took {watch.ElapsedMilliseconds} ms");
         Assert.Equal(original, File.ReadAllBytes(path));
         Assert.Equal(stamp, File.GetLastWriteTimeUtc(path));
-        Assert.Empty(Directory.GetFiles(_dir).Where(f => f != path));   // no scratch file either
+        Assert.DoesNotContain(Directory.GetFiles(_dir), f => f != path);   // no scratch file either
     }
 
     [Theory]

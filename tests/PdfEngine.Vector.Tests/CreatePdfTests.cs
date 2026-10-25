@@ -314,7 +314,7 @@ public class CreatePdfTests
     }
 
     [Fact]
-    public void PlainText_IsLaidOutWithAnEmbeddedFont_AndExtractable()
+    public async Task PlainText_IsLaidOutWithAnEmbeddedFont_AndExtractable()
     {
         using var ms = new MemoryStream();
         var result = PdfTextDocument.Write("Hello world from a text file\nSecond line\tafter a tab\fPage two: café ünïcödé", ms,
@@ -331,8 +331,8 @@ public class CreatePdfTests
         Assert.Contains("/ToUnicode", raw);
 
         // The viewer's native text service reads it too.
-        using var doc = PdfVectorDocument.OpenAsync(pdf).AsTask().GetAwaiter().GetResult();
-        var segments = new PdfVectorTextService().ExtractTextSegmentsAsync(doc, 1).AsTask().GetAwaiter().GetResult();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var segments = await new PdfVectorTextService().ExtractTextSegmentsAsync(doc, 1);
         Assert.Contains("Hello", string.Join(" ", segments.Select(s => s.Text)));
     }
 
@@ -360,7 +360,7 @@ public class CreatePdfTests
     // ------------------------------------------------------------------ combine
 
     [Fact]
-    public void CombinedSources_GetAnOutlineItemEach_AndTheCreatorsInformation()
+    public async Task CombinedSources_GetAnOutlineItemEach_AndTheCreatorsInformation()
     {
         byte[] images = ImagesToPdf.ToBytes(new[]
         {
@@ -369,14 +369,14 @@ public class CreatePdfTests
         });
         using var text = new MemoryStream();
         PdfTextDocument.Write("Minutes of the meeting", text);
-        using var first = PdfVectorDocument.OpenAsync(images).AsTask().GetAwaiter().GetResult();
-        using var second = PdfVectorDocument.OpenAsync(text.ToArray()).AsTask().GetAwaiter().GetResult();
+        using var first = await PdfVectorDocument.OpenAsync(images);
+        using var second = await PdfVectorDocument.OpenAsync(text.ToArray());
         byte[] combined = PdfPageAssembler.Merge(new[] { first, second }, new PdfAssemblyOptions
         {
             SourceTitles = new[] { "Photos", "Minutes" },
             Info = new PdfCreateInfo { Title = "Binder", Producer = "Create PDF test" },
         });
-        using var doc = PdfVectorDocument.OpenAsync(combined).AsTask().GetAwaiter().GetResult();
+        using var doc = await PdfVectorDocument.OpenAsync(combined);
         Assert.Equal(3, doc.PageCount);
         var outline = PdfDocumentInfo.ReadOutline(doc);
         Assert.Equal(new[] { "Photos", "Minutes" }, outline.Select(o => o.Title));
@@ -388,7 +388,7 @@ public class CreatePdfTests
 
     /// <summary>The oracle reads what we write: PDFium opens it without repair, with the pages, text and bookmarks we put there.</summary>
     [Fact]
-    public void Pdfium_ReadsTheCreatedDocuments()
+    public async Task Pdfium_ReadsTheCreatedDocuments()
     {
         byte[] images = ImagesToPdf.ToBytes(new[]
         {
@@ -397,22 +397,22 @@ public class CreatePdfTests
         });
         using var text = new MemoryStream();
         PdfTextDocument.Write("Read by the oracle", text);
-        using var first = PdfVectorDocument.OpenAsync(images).AsTask().GetAwaiter().GetResult();
-        using var second = PdfVectorDocument.OpenAsync(text.ToArray()).AsTask().GetAwaiter().GetResult();
+        using var first = await PdfVectorDocument.OpenAsync(images);
+        using var second = await PdfVectorDocument.OpenAsync(text.ToArray());
         byte[] combined = PdfPageAssembler.Merge(new[] { first, second }, new PdfAssemblyOptions { SourceTitles = new[] { "Pictures", "Text" } });
 
         using var engine = new PdfEngine.Pdfium.PdfiumEngine();
-        using var doc = engine.OpenDocumentAsync(combined).AsTask().GetAwaiter().GetResult();
+        using var doc = await engine.OpenDocumentAsync(combined);
         Assert.Equal(3, doc.PageCount);
-        var page1 = doc.GetPageInfoAsync(1).AsTask().GetAwaiter().GetResult();
+        var page1 = await doc.GetPageInfoAsync(1);
         Assert.True(page1.HeightPoints > page1.WidthPoints, "orientation 8 shows the landscape JPEG as portrait");
-        var segments = engine.TextService.ExtractTextSegmentsAsync(doc, 3).AsTask().GetAwaiter().GetResult();
+        var segments = await engine.TextService.ExtractTextSegmentsAsync(doc, 3);
         Assert.Contains("oracle", string.Concat(segments.Select(s => s.Text)));
-        Assert.Equal(new[] { "Pictures", "Text" }, doc.GetBookmarksAsync().AsTask().GetAwaiter().GetResult().Select(b => b.Title));
+        Assert.Equal(new[] { "Pictures", "Text" }, (await doc.GetBookmarksAsync()).Select(b => b.Title));
     }
 
     [Fact]
-    public void TheWriter_StreamsToANonSeekableOutput_AndRefusesAnEmptyDocument()
+    public async Task TheWriter_StreamsToANonSeekableOutput_AndRefusesAnEmptyDocument()
     {
         var sink = new NonSeekable();
         using (var writer = new PdfDocumentWriter(sink))
@@ -420,7 +420,7 @@ public class CreatePdfTests
             writer.AddImagePage(new PdfCreateImage { Width = 2, Height = 2, Color = PdfImageColor.Gray, Kind = PdfImageData.Samples, Data = new byte[] { 0, 255, 255, 0 } }, new PdfImagePageOptions());
             writer.Finish();
         }
-        using var doc = PdfVectorDocument.OpenAsync(sink.Inner.ToArray()).AsTask().GetAwaiter().GetResult();
+        using var doc = await PdfVectorDocument.OpenAsync(sink.Inner.ToArray());
         Assert.Equal(1, doc.PageCount);
         Assert.Equal(new byte[] { 0, 255, 255, 0 }, Samples(doc, Image(doc, 1)));
         using var empty = new PdfDocumentWriter(new MemoryStream());

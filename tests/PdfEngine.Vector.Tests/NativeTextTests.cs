@@ -136,15 +136,15 @@ public class NativeTextTests
     }
 
     [Fact]
-    public void CropBoxOffset_WordSegmentsMatchThePdfiumService()
+    public async Task CropBoxOffset_WordSegmentsMatchThePdfiumService()
     {
         byte[] pdf = ArialPage("BT /F1 12 Tf 120 160 Td (Offset crop box words) Tj ET", extraPage: "/CropBox [100 100 300 300]");
         using var engine = new PdfiumEngine();
-        using var pdoc = engine.OpenDocumentAsync(pdf).AsTask().GetAwaiter().GetResult();
-        var expected = engine.TextService.ExtractTextSegmentsAsync(pdoc, 1).AsTask().GetAwaiter().GetResult();
-        using var vdoc = PdfVectorDocument.OpenAsync(pdf).AsTask().GetAwaiter().GetResult();
+        using var pdoc = await engine.OpenDocumentAsync(pdf);
+        var expected = await engine.TextService.ExtractTextSegmentsAsync(pdoc, 1);
+        using var vdoc = await PdfVectorDocument.OpenAsync(pdf);
         var service = new PdfVectorTextService();
-        var actual = service.ExtractTextSegmentsAsync(vdoc, 1).AsTask().GetAwaiter().GetResult();
+        var actual = await service.ExtractTextSegmentsAsync(vdoc, 1);
         Assert.Equal(expected.Select(s => s.Text), actual.Select(s => s.Text));
         for (int i = 0; i < expected.Count; i++)
         {
@@ -155,7 +155,7 @@ public class NativeTextTests
         }
         // The first word starts near the crop box's left edge, not at x = 120 / 200 of the media box.
         Assert.InRange(actual[0].X, 0.05, 0.15);
-        Assert.Equal(engine.TextService.ExtractPageTextAsync(pdoc, 1).AsTask().GetAwaiter().GetResult(), service.ExtractPageTextAsync(vdoc, 1).AsTask().GetAwaiter().GetResult());
+        Assert.Equal(await engine.TextService.ExtractPageTextAsync(pdoc, 1), await service.ExtractPageTextAsync(vdoc, 1));
     }
 
     [Fact]
@@ -225,7 +225,7 @@ public class NativeTextTests
     {
         var page = AssertSameAsPdfium(ArialPage("BT /F1 12 Tf 20 250 Td (Bold) Tj ET BT /F1 12 Tf 20.3 250 Td (Bold) Tj ET BT /F1 12 Tf 60 250 Td (text) Tj ET"),
             queries: new[] { "Bold" });
-        Assert.Equal(1, page.Find("Bold").Count);
+        Assert.Single(page.Find("Bold"));
     }
 
     [Fact]
@@ -260,14 +260,14 @@ public class NativeTextTests
     }
 
     [Fact]
-    public void Service_SearchMatchesPdfiumService()
+    public async Task Service_SearchMatchesPdfiumService()
     {
         byte[] pdf = ArialPage("BT /F1 12 Tf 20 250 Td (Searching for needles in a haystack of needles) Tj ET");
         using var engine = new PdfiumEngine();
-        using var pdoc = engine.OpenDocumentAsync(pdf).AsTask().GetAwaiter().GetResult();
-        var expected = engine.TextService.SearchTextAsync(pdoc, "needles").AsTask().GetAwaiter().GetResult();
-        using var vdoc = PdfVectorDocument.OpenAsync(pdf).AsTask().GetAwaiter().GetResult();
-        var actual = new PdfVectorTextService().SearchTextAsync(vdoc, "needles").AsTask().GetAwaiter().GetResult();
+        using var pdoc = await engine.OpenDocumentAsync(pdf);
+        var expected = await engine.TextService.SearchTextAsync(pdoc, "needles");
+        using var vdoc = await PdfVectorDocument.OpenAsync(pdf);
+        var actual = await new PdfVectorTextService().SearchTextAsync(vdoc, "needles");
         Assert.Equal(expected.Count, actual.Count);
         for (int i = 0; i < expected.Count; i++)
         {
@@ -298,9 +298,9 @@ public class NativeTextTests
     }
 
     [Fact]
-    public void Cache_KeepsPagesWithinItsCharacterBudget()
+    public async Task Cache_KeepsPagesWithinItsCharacterBudget()
     {
-        using var doc = PdfVectorDocument.OpenAsync(Pages(40, p => $"BT /F1 12 Tf 20 250 Td (Page {p}) Tj ET")).AsTask().GetAwaiter().GetResult();
+        using var doc = await PdfVectorDocument.OpenAsync(Pages(40, p => $"BT /F1 12 Tf 20 250 Td (Page {p}) Tj ET"));
         var first = PdfTextExtractor.LoadPage(doc, 1);
         for (int p = 2; p <= 40; p++) PdfTextExtractor.LoadPage(doc, p);
         // Forty small pages are well inside the budget: the first is still kept, not rebuilt.
@@ -312,12 +312,12 @@ public class NativeTextTests
     }
 
     [Fact]
-    public void Prefetch_BuildsThePageInTheBackground()
+    public async Task Prefetch_BuildsThePageInTheBackground()
     {
-        using var doc = PdfVectorDocument.OpenAsync(Pages(3, p => $"BT /F1 12 Tf 20 250 Td (Prefetched page {p}) Tj ET")).AsTask().GetAwaiter().GetResult();
+        using var doc = await PdfVectorDocument.OpenAsync(Pages(3, p => $"BT /F1 12 Tf 20 250 Td (Prefetched page {p}) Tj ET"));
         PdfTextExtractor.Prefetch(doc, 2);
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        while (!PdfTextExtractor.IsLoaded(doc, 2) && clock.Elapsed < TimeSpan.FromSeconds(10)) System.Threading.Thread.Sleep(5);
+        while (!PdfTextExtractor.IsLoaded(doc, 2) && clock.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(5);
         Assert.True(PdfTextExtractor.IsLoaded(doc, 2));
         Assert.False(PdfTextExtractor.IsLoaded(doc, 3));
         Assert.Equal("Prefetched page 2", PdfTextExtractor.LoadPage(doc, 2).GetAllText());

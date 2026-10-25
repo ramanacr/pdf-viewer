@@ -104,7 +104,7 @@ public class PortableCryptoTests
     [InlineData(TestEncryptionKind.Aes256_R5, "user")]
     [InlineData(TestEncryptionKind.Aes256_R6, "")]
     [InlineData(TestEncryptionKind.Aes256_R6, "user")]
-    public void EncryptedDocuments_OpenWithTheManagedFallback(TestEncryptionKind kind, string userPassword)
+    public async Task EncryptedDocuments_OpenWithTheManagedFallback(TestEncryptionKind kind, string userPassword)
     {
         var b = new VectorPdfBuilder();
         b.AddPage("BT /F1 12 Tf 20 150 Td (Decrypted in a browser) Tj ET",
@@ -115,7 +115,7 @@ public class PortableCryptoTests
         {
             foreach (var password in new[] { userPassword, "owner" })
             {
-                using var doc = PdfVectorDocument.OpenAsync(pdf, password: password).AsTask().GetAwaiter().GetResult();
+                using var doc = await PdfVectorDocument.OpenAsync(pdf, password: password);
                 Assert.True(doc.IsEncrypted);
                 Assert.Equal("Decrypted in a browser", PdfTextExtractor.LoadPage(doc, 1).GetAllText());
             }
