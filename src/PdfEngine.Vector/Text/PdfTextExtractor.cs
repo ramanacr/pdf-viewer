@@ -12,7 +12,7 @@ using PdfEngine.Vector.Streams;
 
 namespace PdfEngine.Vector.Text;
 
-//// <summary>
+/// <summary>
 /// Builds <see cref="PdfTextPage"/>s for the pages of a <see cref="PdfVectorDocument"/>: the
 /// native replacement of PDFium's FPDFText_LoadPage. Fonts are resolved once per document, and
 /// recent pages are kept within a character budget, since search and selection read the same

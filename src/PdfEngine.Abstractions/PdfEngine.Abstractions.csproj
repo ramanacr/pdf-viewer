@@ -6,7 +6,12 @@
     <Nullable>enable</Nullable>
     <RootNamespace>PdfEngine</RootNamespace>
     <AssemblyName>PdfEngine.Abstractions</AssemblyName>
-    <Description>UI-neutral core abstractions and domain models for PDF processing and rendering.</Description>
+    <Description>UI-neutral contracts and models of the PdfEngine PDF engine: documents, pages, rendering requests, text, annotations and forms.</Description>
+    <IsPackable>true</IsPackable>
+    <!-- XML documentation for the package only (dotnet pack sets _IsPacking): the app's payload carries no .xml files. -->
+    <GenerateDocumentationFile Condition="'$(_IsPacking)' == 'true'">true</GenerateDocumentationFile>
+    <PackageId>PdfEngine.Abstractions</PackageId>
+    <PackageTags>pdf;pdf-engine;abstractions</PackageTags>
   </PropertyGroup>
 
 </Project>

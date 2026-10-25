@@ -6,7 +6,12 @@
     <Nullable>enable</Nullable>
     <RootNamespace>PdfEngine.Vector</RootNamespace>
     <AssemblyName>PdfEngine.Vector</AssemblyName>
-    <Description>Native vector-first PDF core parsing, document model, and content stream interpreter.</Description>
+    <Description>Pure C# PDF engine: parser, document model, content stream interpreter, text extraction and search, editing, forms, signatures and saving. No native code.</Description>
+    <IsPackable>true</IsPackable>
+    <!-- XML documentation for the package only (dotnet pack sets _IsPacking): the app's payload carries no .xml files. -->
+    <GenerateDocumentationFile Condition="'$(_IsPacking)' == 'true'">true</GenerateDocumentationFile>
+    <PackageId>PdfEngine.Vector</PackageId>
+    <PackageTags>pdf;pdf-parser;pdf-text-extraction;pdf-engine;csharp</PackageTags>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
@@ -18,6 +23,8 @@
     <!-- Predefined CJK CMaps (Adobe cmap-resources, BSD-3-Clause); built by eng/vectorpdf/cmaps/build-cmaps.ps1. -->
     <EmbeddedResource Include="Fonts\CMaps\PredefinedCMaps.zip" LogicalName="PdfEngine.Vector.PredefinedCMaps.zip" />
     <None Include="Fonts\CMaps\LICENSE-cmap-resources.md" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The package carries the CMaps' BSD-3-Clause notice (and lists its dependencies' licences). -->
+    <None Include="THIRD_PARTY_NOTICES.md" Pack="true" PackagePath="THIRD_PARTY_NOTICES.md" />
   </ItemGroup>
 
   <ItemGroup>

@@ -96,7 +96,9 @@ public class PageOrganizerTests
 
         using IPdfEngine engine = TestEngines.Create(engineName);
         double progressVal = 0;
-        var progress = new Progress<double>(p => progressVal = p);
+        // Progress<T> reports on the thread pool, so its last report could land after the asserts;
+        // this one records each value at once.
+        var progress = new SyncProgress(p => progressVal = p);
 
         await engine.PageOrganizer.MergeDocumentsAsync(new[] { pdf1, pdf2 }, mergedOut, progress);
 
@@ -157,5 +159,10 @@ public class PageOrganizerTests
         var infoAfterRedo = await doc.GetPageInfoAsync(1);
         Assert.Equal(180, infoAfterRedo.RotationDegrees);
         Assert.Equal(4, session.Revision);
+    }
+
+    private sealed class SyncProgress(Action<double> report) : IProgress<double>
+    {
+        public void Report(double value) => report(value);
     }
 }

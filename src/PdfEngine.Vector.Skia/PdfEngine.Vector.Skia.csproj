@@ -7,7 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PdfEngine.Vector.Skia</RootNamespace>
     <AssemblyName>PdfEngine.Vector.Skia</AssemblyName>
-    <Description>Portable Skia (CPU raster) renderer for the vector engine's display list.</Description>
+    <Description>Portable Skia (CPU raster) renderer for the PdfEngine.Vector display list: renders PDF pages to BGRA pixels on any platform that SkiaSharp supports.</Description>
+    <IsPackable>true</IsPackable>
+    <!-- XML documentation for the package only (dotnet pack sets _IsPacking): the app's payload carries no .xml files. -->
+    <GenerateDocumentationFile Condition="'$(_IsPacking)' == 'true'">true</GenerateDocumentationFile>
+    <PackageId>PdfEngine.Vector.Skia</PackageId>
+    <PackageTags>pdf;pdf-renderer;skia;skiasharp;pdf-engine</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

@@ -150,7 +150,7 @@ internal sealed class OpenTypePositioning
     /// <summary>
     /// Positions a run in logical order by the features' lookups, in lookup order: single and pair
     /// adjustments, mark attachment and (chained) contextual positioning, skipping the glyphs each
-    /// lookup's flag skips. Unlike <see cref="Apply(IReadOnlyList{int}, string, double[], double[], double[])"/>,
+    /// lookup's flag skips. Unlike <see cref="Apply(IReadOnlyList{int}, string, double[], double[], double[], bool)"/>,
     /// marks keep their own advances (fonts for these scripts give them none), and a mark follows its
     /// glyph when a later lookup moves or widens that glyph.
     /// </summary>
