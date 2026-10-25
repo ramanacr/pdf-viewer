@@ -13,6 +13,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
 - [Privacy & Safety](#privacy--safety)
 - [Browser Demo (WebAssembly)](#browser-demo-webassembly)
 - [Android App (proof of concept)](#android-app-proof-of-concept)
+- [Use the engine as a library](#use-the-engine-as-a-library)
 - [Optional Components](#optional-components)
 - [Architectural Overview](#architectural-overview)
 - [Key Features & Capabilities](#key-features--capabilities)
@@ -106,6 +107,53 @@ The app asks for **no permission at all**: no internet access, no storage access
 telemetry. It has been run on an Android 13 emulator; it has not yet been run on a physical
 phone. Build it with `dotnet workload install android` and
 `dotnet build src/PdfViewer.Android -f net9.0-android -c Release`; CI (`android.yml`) uploads the APK.
+
+---
+
+## Use the engine as a library
+
+The engine is also a set of NuGet packages for `net9.0`. They are not on nuget.org yet; until
+the first release, CI (`packages.yml`) keeps them as a build artifact, and `dotnet pack` makes
+them locally.
+
+| Package | Contents | Dependencies |
+| --- | --- | --- |
+| `PdfEngine.Abstractions` | Contracts and models: documents, pages, render requests, text, annotations, forms | none |
+| `PdfEngine.Vector` | The pure C# engine: parsing, display lists, text and search, editing, forms, signatures, saving | CoreJ2K, System.Security.Cryptography.Pkcs |
+| `PdfEngine.Vector.Skia` | Portable CPU renderer of the display list | SkiaSharp 3.116.1 |
+
+```shell
+dotnet add package PdfEngine.Vector.Skia --prerelease
+```
+
+Open a PDF, print the text of page 1 and save page 1 as a PNG:
+
+```csharp
+using PdfEngine.Rendering;
+using PdfEngine.Vector.Document;
+using PdfEngine.Vector.Skia;
+using PdfEngine.Vector.Text;
+using SkiaSharp;
+
+using var doc = await PdfVectorDocument.OpenAsync("input.pdf");
+Console.WriteLine(await new PdfVectorTextService().ExtractPageTextAsync(doc, 1));
+
+using var renderer = new SkiaVectorRenderer();
+using RenderedPage page = await renderer.RenderDisplayListAsync(
+    await doc.GetPageDisplayListAsync(1), new RenderRequest { PageNumber = 1, Dpi = 144 });
+var info = new SKImageInfo(page.WidthPixels, page.HeightPixels, SKColorType.Bgra8888, SKAlphaType.Premul);
+using var image = SKImage.FromPixelCopy(info, page.Pixels.Span, page.Stride);
+using var png = File.Create("page1.png");
+image.Encode(SKEncodedImageFormat.Png, 100).SaveTo(png);
+```
+
+SkiaSharp brings its native library for Windows and macOS. On Linux, also add
+`SkiaSharp.NativeAssets.Linux`. The API can change before version 1.0.
+
+To build the packages yourself, run `dotnet pack src/PdfEngine.Vector.Skia/PdfEngine.Vector.Skia.csproj -o packages`
+(and the same for the other two projects). A local pack is version `0.0.0-dev`. Package releases
+have their own tags, `engine-v0.1.0` for version 0.1.0; the app's version comes only from its
+`v*` release tags.
 
 ---
 
