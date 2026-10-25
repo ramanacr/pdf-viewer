@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Forms: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+    <style>
+        #viewer { height: 640px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    </style>
+</head>
+<body>
+<header class="example"><h1>Forms</h1><nav><a href="index.html">All examples</a></nav></header>
+<main class="article">
+    <p>An order form written by this page (<code>sampleFormPdf()</code> in <code>sample-pdf.js</code>). Type a quantity:
+        the viewer calculates the total as Acrobat does, without running the document's JavaScript.
+        Save sends the filled PDF to this page through the <code>SAVE_API</code> callback.</p>
+    <div id="viewer"></div>
+    <p id="saved" class="status" aria-live="polite">Not saved yet.</p>
+</main>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="sample-pdf.js"></script>
+<script>
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    let savedUrl = null;
+    view.registerCallback(PdfViewer.View.Enum.CallbackType.SAVE_API, async (metaData, content) => {
+        if (savedUrl) URL.revokeObjectURL(savedUrl);
+        savedUrl = URL.createObjectURL(new Blob([content], { type: 'application/pdf' }));
+        const saved = document.getElementById('saved');
+        saved.replaceChildren(`Saved ${content.byteLength} bytes at ${new Date().toLocaleTimeString()}. `);
+        const a = document.createElement('a');
+        a.href = savedUrl;
+        a.download = metaData.fileName;
+        a.textContent = `Download ${metaData.fileName}`;
+        saved.append(a);
+        return { code: PdfViewer.View.Enum.ApiResponseCode.SUCCESS, data: { metaData } };
+    }, { autoSaveFrequency: 0, showSaveButton: true });
+
+    view.previewFile({
+        content: { promise: Promise.resolve(sampleFormPdf()) },
+        metaData: { fileName: 'Order form.pdf' },
+    }, {
+        embedMode: 'FULL_WINDOW',
+        enableFormFilling: true,
+        showAnnotationTools: false,
+        downloadWithAnnotations: true,
+    }).catch(error => {
+        const saved = document.getElementById('saved');
+        saved.textContent = `${error.code}: ${error.message}`;
+        saved.classList.add('error');
+    });
+</script>
+</body>
+</html>
