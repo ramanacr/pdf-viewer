@@ -43,7 +43,12 @@ the regions that this backend cannot draw.
 5. **Text.** An embedded TrueType or CFF program (as the display list carries it, an sfnt) is
    loaded with `SKTypeface.FromData`, from memory. A font that is not embedded gets the Direct2D
    backend's substitute chain: `SystemFontCatalog.Match`, then the class family, then Unicode
-   fallback families, with each glyph fitted to the document's `/Widths`. Glyphs are filled as
+   fallback families, with each glyph fitted to the document's `/Widths`. Such text reaches the
+   backend as characters, so Arabic and Indic words are shaped with the substitute's GSUB and
+   GPOS (`SkiaReplayer.Shaping.cs`, with the editing shaper `TextShaper`): joining forms,
+   ligatures, marks, pre-base vowel signs, reph and conjuncts, each word fitted to its widths.
+   Arabic is taken in the order it is seen and put back in reading order once before it is
+   shaped. Embedded programs are not shaped. Glyphs are filled as
    outlines (no hinting), as Direct2D's outline rendering mode draws them. Text clips and stroking
    render modes use the same outlines.
 6. **Fonts on other platforms.** Substitutes come from a `SkiaFontSource`. The default reads the
