@@ -27,6 +27,7 @@ public sealed partial class Viewer
     private int _reportedPage;
     private double _reportedZoom;
     private int _searchId;
+    private bool _openReadOnly;    // the file was given with hasReadOnlyAccess
 
     private bool Embedded => _frame != null;
 
@@ -45,6 +46,10 @@ public sealed partial class Viewer
             Mode = _frame.Mode,
             FocusOnRendering = _frame.Mode is EmbedMode.FullWindow or EmbedMode.LightBox,
             ViewMode = EmbedViewMode.FitWidth,
+            EnableAnnotationApis = false,
+            IncludePdfAnnotations = false,
+            DownloadWithAnnotations = false,
+            PrintWithAnnotations = false,
         };
         _sidebarOpen = false;
         _status = "";
@@ -98,6 +103,8 @@ public sealed partial class Viewer
         }
         _config = open.Config;
         _fileId = open.FileId;
+        _openReadOnly = open.ReadOnly;
+        _save = open.Save;
         ApplyConfig();
         await OpenAsync(bytes, open.FileName, null);
     }
@@ -128,6 +135,7 @@ public sealed partial class Viewer
             w.WriteNumber("numPages", _doc?.PageCount ?? 0);
         });
         if (_config.FocusOnRendering) CanvasInterop.FocusElement("pages", select: false);
+        RestartAutoSave();
     }
 
     private void FailOpen(string code, string message)
@@ -207,8 +215,15 @@ public sealed partial class Viewer
     private async Task<string> AnswerAsync(EmbedCall call, ViewerDocument doc)
     {
         int id = call.RequestId;
+        if (AnswerAnnotationCall(call) is { } annotationReply) return annotationReply;
         switch (call.Method)
         {
+            case EmbedMethod.SetSaveOptions:
+                SetSaveOptions(call.SaveOptions!);
+                return EmbedProtocol.Ok(id, null);
+            case EmbedMethod.SaveResult:
+                return SaveResult(call);
+
             case EmbedMethod.GetPdfMetadata:
                 return EmbedProtocol.Ok(id, EmbedProtocol.Metadata(await doc.GetMetadataAsync(), _fileName, _fileId));
 

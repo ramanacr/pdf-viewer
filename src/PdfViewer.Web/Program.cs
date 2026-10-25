@@ -10,6 +10,6 @@ builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
 // The page's own script: canvas drawing, file reading, keyboard and scroll observation. Nothing else is loaded.
-await JSHost.ImportAsync(PdfViewer.Web.Interop.CanvasInterop.ModuleName, "../js/viewer.js?v=3");
+await JSHost.ImportAsync(PdfViewer.Web.Interop.CanvasInterop.ModuleName, "../js/viewer.js?v=4");
 
 await builder.Build().RunAsync();

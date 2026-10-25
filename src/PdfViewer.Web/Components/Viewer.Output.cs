@@ -25,7 +25,8 @@ public sealed partial class Viewer
     private void Download()
     {
         if (_doc == null || _docBytes == null) return;
-        CanvasInterop.DownloadBytes(_docBytes, DownloadName);
+        // The reader's annotations and form data go with it when the config asks (always in the demo).
+        CanvasInterop.DownloadBytes(_config.DownloadWithAnnotations ? _doc.Bytes : _doc.OriginalBytes, DownloadName);
         _status = $"Saved {DownloadName}";
         Emit(EmbedEvents.DocumentDownload, w => w.WriteString("fileName", DownloadName));
     }
@@ -47,12 +48,13 @@ public sealed partial class Viewer
         _printing = true;
         try
         {
+            await WaitForEditsAsync();
             CanvasInterop.PrintBegin();
             foreach (var page in doc.Pages)
             {
                 _status = $"Preparing page {page.Number} of {doc.PageCount} for printing…";
                 StateHasChanged();
-                var bitmap = await doc.RenderPageAsync(page.Number, PrintDpi / 72);
+                var bitmap = await doc.RenderPageAsync(page.Number, PrintDpi / 72, night: false, asOpened: !_config.PrintWithAnnotations);
                 if (_doc != doc) return;
                 CanvasInterop.PrintAddPage(bitmap.Pixels, bitmap.Width, bitmap.Height, page.Width, page.Height);
                 await CanvasInterop.PrintPending();

@@ -315,6 +315,17 @@ function onKey(e) {
     }
     const mod = e.ctrlKey || e.metaKey;
     let action = null;
+    if (mod && !e.altKey && (e.key === 's' || e.key === 'S')) {
+        // Save, also from a form field: the browser's "save page" is never what the reader wants here.
+        e.preventDefault();
+        app.invokeMethodAsync('OnShortcut', 'save');
+        return;
+    }
+    if (mod && !e.altKey && !inField(e) && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        app.invokeMethodAsync('OnShortcut', (e.key === 'y' || e.key === 'Y' || e.shiftKey) ? 'redo' : 'undo');
+        return;
+    }
     if (mod && !e.altKey) {
         switch (e.key) {
             case 'f': case 'F': action = 'find'; break;
@@ -330,6 +341,7 @@ function onKey(e) {
         action = 'escape';
     } else if (!inField(e) && !e.altKey) {
         switch (e.key) {
+            case 'Delete': case 'Backspace': action = 'delete'; break;
             case 'ArrowRight': case 'n': case 'j': action = 'next-page'; break;
             case 'ArrowLeft': case 'p': case 'k': action = 'previous-page'; break;
             case 'Home': action = 'first-page'; break;
@@ -362,13 +374,101 @@ function pointOn(el, e) {
     return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
 }
 
+// ------------------------------------------------------------------ annotation tools
+
+let tool = 'select';       // the annotation tool (Viewer.Annotations.cs): select, highlight, note, ink, square, …
+let drawing = null;        // { page, el, points, preview } while a shape or a stroke is drawn
+let moving = null;         // { id, el, x, y, dx, dy } while an annotation is dragged
+const markupTools = new Set(['select', 'highlight', 'underline', 'strikeout']);
+const MaxInkPoints = 10000;
+
+/** The tool the pages follow: text tools select text, the others draw. */
+export function setTool(name) {
+    tool = String(name);
+    if (scroller) scroller.dataset.tool = tool;
+}
+
+function startDrawing(el, e) {
+    const [x, y] = pointOn(el, e);
+    drawing = { page: Number(el.dataset.page), el, points: [x, y], preview: null };
+    if (tool === 'note') return;
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'draw-preview');
+    svg.setAttribute('viewBox', '0 0 1 1');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    const shape = document.createElementNS(ns, tool === 'ink' ? 'polyline' : tool === 'circle' ? 'ellipse' : 'rect');
+    svg.appendChild(shape);
+    el.appendChild(svg);
+    drawing.preview = shape;
+    drawShape();
+}
+
+function drawShape() {
+    const d = drawing;
+    if (!d || !d.preview) return;
+    const p = d.points;
+    if (tool === 'ink') {
+        let s = '';
+        for (let i = 0; i + 1 < p.length; i += 2) s += `${p[i]},${p[i + 1]} `;
+        d.preview.setAttribute('points', s);
+        return;
+    }
+    const [x0, y0] = p, x1 = p[p.length - 2], y1 = p[p.length - 1];
+    if (tool === 'circle') {
+        d.preview.setAttribute('cx', (x0 + x1) / 2); d.preview.setAttribute('cy', (y0 + y1) / 2);
+        d.preview.setAttribute('rx', Math.abs(x1 - x0) / 2); d.preview.setAttribute('ry', Math.abs(y1 - y0) / 2);
+    } else {
+        d.preview.setAttribute('x', Math.min(x0, x1)); d.preview.setAttribute('y', Math.min(y0, y1));
+        d.preview.setAttribute('width', Math.abs(x1 - x0)); d.preview.setAttribute('height', Math.abs(y1 - y0));
+    }
+}
+
+function finishDrawing() {
+    const d = drawing;
+    drawing = null;
+    if (!d) return;
+    d.preview?.ownerSVGElement?.remove();
+    let points = d.points;
+    if (tool !== 'ink') points = points.length >= 4 ? [points[0], points[1], points[points.length - 2], points[points.length - 1]] : [points[0], points[1], points[0], points[1]];
+    app.invokeMethodAsync('OnToolStroke', tool, d.page, points);
+}
+
+function moveAnnotation(dx, dy) {
+    const m = moving;
+    if (!m) return;
+    m.dx = dx;
+    m.dy = dy;
+    m.el.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+
 /** A mouse or a pen selects text on a page (touch scrolls). The engine finds the characters. */
 function initSelection() {
+    scroller.dataset.tool = tool;
     scroller.addEventListener('pointerdown', e => {
         if (e.button !== 0 || e.pointerType === 'touch') return;
+        // Form fields and the note editor take their own input.
+        if (e.target.closest?.('.form-field, .annot-editor')) return;
+        const hit = e.target.closest?.('.annot-hit[data-annot]');
+        if (hit && tool === 'select') {
+            e.preventDefault();
+            scroller.focus({ preventScroll: true });
+            moving = { id: hit.dataset.annot, el: hit, x: e.clientX, y: e.clientY, dx: 0, dy: 0, page: hit.closest('.page') };
+            scroller.setPointerCapture(e.pointerId);
+            app.invokeMethodAsync('OnAnnotationPointer', moving.id);
+            return;
+        }
         const el = e.target.closest?.('.page');
         if (!el) {
             if (selectionText !== null) app.invokeMethodAsync('OnSelectClear');
+            return;
+        }
+        if (!markupTools.has(tool)) {
+            e.preventDefault();
+            scroller.focus({ preventScroll: true });
+            scroller.setPointerCapture(e.pointerId);
+            startDrawing(el, e);
             return;
         }
         e.preventDefault();               // no native selection or drag of the canvas
@@ -379,6 +479,20 @@ function initSelection() {
         app.invokeMethodAsync('OnSelectStart', dragging.page, x, y, e.detail || 1);
     });
     scroller.addEventListener('pointermove', e => {
+        if (moving) {
+            moveAnnotation(e.clientX - moving.x, e.clientY - moving.y);
+            return;
+        }
+        if (drawing) {
+            const [x, y] = pointOn(drawing.el, e);
+            if (tool === 'ink') {
+                if (drawing.points.length < 2 * MaxInkPoints) drawing.points.push(x, y);
+            } else {
+                drawing.points = [drawing.points[0], drawing.points[1], x, y];
+            }
+            drawShape();
+            return;
+        }
         if (!dragging) return;
         const queued = moveQueued !== null;
         moveQueued = pointOn(dragging.el, e);
@@ -390,7 +504,27 @@ function initSelection() {
             app.invokeMethodAsync('OnSelectMove', dragging.page, x, y);
         });
     });
-    const end = () => { dragging = null; moveQueued = null; };
+    const end = e => {
+        if (moving) {
+            const m = moving;
+            moving = null;
+            const r = m.page?.getBoundingClientRect();
+            m.el.style.transform = '';
+            if (r && r.width > 0 && (Math.abs(m.dx) > 3 || Math.abs(m.dy) > 3) && e.type === 'pointerup') {
+                app.invokeMethodAsync('OnAnnotationDrag', m.id, m.dx / r.width, m.dy / r.height);
+            }
+            return;
+        }
+        if (drawing) {
+            if (e.type === 'pointerup') finishDrawing();
+            else { drawing.preview?.ownerSVGElement?.remove(); drawing = null; }
+            return;
+        }
+        const wasSelecting = dragging !== null;
+        dragging = null;
+        moveQueued = null;
+        if (wasSelecting && e.type === 'pointerup' && tool !== 'select') app.invokeMethodAsync('OnSelectEnd');
+    };
     scroller.addEventListener('pointerup', end);
     scroller.addEventListener('pointercancel', end);
 }
@@ -558,7 +692,21 @@ export function initEmbed(dotnet, origin, readyJson) {
             dotnet.invokeMethodAsync('OnEmbedCall', JSON.stringify(m));
         }
     });
+    // The reader went back to the host page: with SAVE_API focus polling, unsaved edits are saved.
+    window.addEventListener('blur', () => dotnet.invokeMethodAsync('OnViewerBlur'));
     embedPost(readyJson);
+}
+
+/**
+ * Posts a message with the document's bytes beside it: a copy of the bytes in WebAssembly memory,
+ * transferred to the host page (its SAVE_API callback), to its origin only.
+ */
+export function embedPostBytes(json, view) {
+    if (!hostOrigin || window.parent === window) return;
+    const message = JSON.parse(json);
+    const bytes = view.slice();
+    message.data = bytes.buffer;
+    window.parent.postMessage(message, hostOrigin, [message.data]);
 }
 
 /** Posts a message that the .NET side built (EmbedProtocol) to the host page, and to no other origin. */

@@ -404,3 +404,57 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
 }
+
+/* Annotation tools (Viewer.Annotations.cs): a second toolbar, overlays on the pages. */
+.annot-toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+    padding: 4px 12px;
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.annot-toolbar .group { display: flex; align-items: center; gap: 2px; }
+.annot-toolbar .swatches { gap: 6px; }
+.swatch {
+    width: 20px; height: 20px; padding: 0; border-radius: 50%;
+    border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border); cursor: pointer;
+}
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+.swatch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.pages[data-tool="note"] .page, .pages[data-tool="freetext"] .page, .pages[data-tool="ink"] .page,
+.pages[data-tool="square"] .page, .pages[data-tool="circle"] .page { cursor: crosshair; }
+.annot-hit {
+    position: absolute; border-radius: 2px; cursor: move;
+    outline: 1px solid transparent; outline-offset: 1px;
+}
+.annot-hit:hover { outline-color: var(--accent); }
+.annot-hit.selected { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.annot-hit.passive { pointer-events: none; }
+.draw-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.draw-preview * { fill: none; stroke: var(--accent); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
+.draw-preview polyline { stroke-dasharray: none; stroke-linecap: round; stroke-linejoin: round; }
+
+.annot-editor {
+    position: absolute; z-index: 3; width: 240px; margin-top: 6px;
+    display: flex; flex-direction: column; gap: 6px; padding: 8px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    cursor: auto;
+}
+.annot-editor textarea { font: inherit; font-size: 13.5px; resize: vertical; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.annot-editor-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.comments .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
+
+/* Form fields: the page shows the field's appearance; the input shows its text only while it has the focus. */
+.form-field {
+    position: absolute; z-index: 2; margin: 0; padding: 0 2px;
+    font-family: Arial, "Liberation Sans", Helvetica, sans-serif; line-height: 1.15;
+    background: rgba(29, 99, 216, 0.10); color: transparent; caret-color: #000;
+    border: 1px solid rgba(29, 99, 216, 0.35); border-radius: 0; cursor: text;
+}
+.form-field:hover { background: rgba(29, 99, 216, 0.16); }
+.form-field:focus { background: #fff; color: #000; outline: 2px solid var(--focus); outline-offset: 0; }
+textarea.form-field { resize: none; overflow: hidden; }
+.form-field.toggle { cursor: pointer; background: rgba(29, 99, 216, 0.08); }
+.form-field.choice { cursor: pointer; appearance: none; color: transparent; }
+.form-field.choice:focus { color: #000; }
+.form-field.choice option { color: #000; background: #fff; }
