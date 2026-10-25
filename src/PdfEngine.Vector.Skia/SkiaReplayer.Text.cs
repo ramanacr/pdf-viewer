@@ -73,14 +73,24 @@ internal sealed partial class SkiaReplayer
         {
             var candidate = inst != null ? _res.GetInstalledFace(inst, b, it) : _res.GetSystemFace(fam, b, it);
             if (candidate == null)
+            {
+                // A face the host is still fetching: the text waits for it (the page is drawn again
+                // once it is there) rather than taking a later substitute, which would be fetched too.
+                if (best == null && (inst != null ? _res.Fonts.IsPending(inst) : _res.Fonts.IsPending(fam, b, it)))
+                {
+                    _lastTextProblem = "Substitute font not loaded yet";
+                    return null;
+                }
                 continue;
+            }
             var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _);
             if (mapped != null)
                 return mapped;
             // Best effort: the face that has the most of the run's glyphs draws it, leaving out the
-            // ones none of them has (PDFium draws what its substitute has too).
+            // ones none of them has (PDFium draws what its substitute has too). A face that has none
+            // of them draws nothing, so the run stays reported as not drawn.
             var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing);
-            if (partial != null && (best == null || missing < best.Value.Missing))
+            if (partial != null && partial.Indices.Length > 0 && (best == null || missing < best.Value.Missing))
                 best = (candidate, partial, missing);
         }
         if (best is { } found)

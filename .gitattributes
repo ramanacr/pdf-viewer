@@ -4,3 +4,5 @@
 *.otf binary
 *.png binary
 *.zip binary
+# The bundled fonts' licence: kept byte for byte as in the upstream archive (its SHA-256 is in THIRD_PARTY_NOTICES.md).
+src/PdfViewer.Web/wwwroot/fonts/OFL.txt -text

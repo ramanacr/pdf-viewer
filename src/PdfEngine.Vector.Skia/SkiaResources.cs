@@ -42,6 +42,17 @@ public class SkiaFontSource
         typeface?.Dispose();
         return Catalog.FindAliasedFamily(family, bold ? 700 : 400, italic) is { } standIn ? Load(standIn) : null;
     }
+
+    /// <summary>
+    /// True when <see cref="Load"/> answered null for <paramref name="face"/> only because its file is
+    /// not here yet: a host that fetches fonts on demand (a browser) loads it and draws the page again.
+    /// The text then waits for that face instead of falling through to the next substitute, so
+    /// that only the face it would be drawn with is fetched. False by default.
+    /// </summary>
+    public virtual bool IsPending(SystemFontFace face) => false;
+
+    /// <summary>As <see cref="IsPending(SystemFontFace)"/>, for the face <see cref="MatchFamily"/> would load for the family.</summary>
+    public virtual bool IsPending(string family, bool bold, bool italic) => false;
 }
 
 /// <summary>A typeface plus the style Skia must simulate because the face lacks it (as DirectWrite's font simulations do).</summary>

@@ -165,6 +165,19 @@ export function setTheme(theme) {
     document.documentElement.dataset.theme = theme;   // 'light', 'dark' or 'system'
 }
 
+/**
+ * One of the fonts bundled with the app (wwwroot/fonts, relative to the base href), fetched when a
+ * page first needs it; the browser's HTTP cache keeps it. Null when it cannot be had.
+ */
+export async function fetchFont(file) {
+    try {
+        const response = await fetch('fonts/' + encodeURIComponent(file));
+        return response.ok ? new Uint8Array(await response.arrayBuffer()) : null;
+    } catch {
+        return null;
+    }
+}
+
 export function hasLocalFonts() {
     return typeof window.queryLocalFonts === 'function';
 }
