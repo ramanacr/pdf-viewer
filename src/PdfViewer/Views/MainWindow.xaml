@@ -1642,7 +1642,7 @@
 
                                                             <!-- Measurement: its line or outline and its result (one read from the file is drawn by the page) -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Measurement}">
-                                                                <Grid Visibility="{Binding HasOwnAppearance, Converter={StaticResource InverseBoolToVis}}">
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
                                                                     <Path Data="{Binding MeasureGeometry}" Stretch="Fill"
                                                                           Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                           StrokeThickness="1.5" StrokeLineJoin="Round" />
@@ -1654,8 +1654,10 @@
                                                             </Grid>
 
                                                             <!-- Stamp: drawn by the engine as it will be in the document -->
-                                                            <Image Source="{Binding StampPreview}" Stretch="Fill"
-                                                                   Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}">
+                                                                <Image Source="{Binding StampPreview}" Stretch="Fill"
+                                                                       Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}" />
+                                                            </Grid>
                                                         </Grid>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
@@ -1695,6 +1697,7 @@
                                             <views:FormFieldsLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 7. form fields: real editors over the page -->
                                             <views:RedactionMarksLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 8. areas marked for redaction -->
                                             <views:ContentEditLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 9. paragraphs and images being edited -->
+                                            <views:AnnotationEditLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 10. the selected annotation's handles -->
                                             </Grid>
                                         </Grid>
                                     </Border>
@@ -1986,7 +1989,7 @@
 
                                                 <!-- Measurement: its line or outline and its result (one read from the file is drawn by the page) -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Measurement}">
-                                                    <Grid Visibility="{Binding HasOwnAppearance, Converter={StaticResource InverseBoolToVis}}">
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
                                                         <Path Data="{Binding MeasureGeometry}" Stretch="Fill"
                                                               Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                               StrokeThickness="1.5" StrokeLineJoin="Round" />
@@ -1998,8 +2001,10 @@
                                                 </Grid>
 
                                                 <!-- Stamp: drawn by the engine as it will be in the document -->
-                                                <Image Source="{Binding StampPreview}" Stretch="Fill"
-                                                       Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}">
+                                                    <Image Source="{Binding StampPreview}" Stretch="Fill"
+                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}" />
+                                                </Grid>
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -2039,6 +2044,7 @@
                                 <views:FormFieldsLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 <views:RedactionMarksLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 <views:ContentEditLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
+                                <views:AnnotationEditLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 </Grid>
                             </Grid>
                         </Border>

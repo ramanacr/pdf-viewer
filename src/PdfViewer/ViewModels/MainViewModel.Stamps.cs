@@ -246,6 +246,7 @@ public partial class MainViewModel
             ColorHex = "#FF000000",
         };
         model.SetGeometry(NativeDocumentServices.FromPage(rect, crop), Array.Empty<Rect>());
+        model.StampPreviewKey = (model.StampRotation, false); // drawn below
         AddAnnotation(model);
         ActiveStamp = null;
         StatusText = $"Placed the {choice.DisplayName} stamp on page {page}.";
@@ -257,19 +258,37 @@ public partial class MainViewModel
     /// The stamp as the engine draws it into the document, at about twice screen resolution, with
     /// its transparency: drawn once on white and once on black, the difference is its alpha.
     /// </summary>
-    internal static async Task<ImageSource?> RenderStampPreviewAsync(AnnotationModel model, PdfRect rect, CancellationToken ct = default)
+    internal static Task<ImageSource?> RenderStampPreviewAsync(AnnotationModel model, PdfRect rect, CancellationToken ct = default)
+    {
+        PdfEngine.Vector.Services.PdfAnnotation? annotation = null;
+        return RenderPreviewAsync(black =>
+        {
+            annotation ??= NativeDocumentServices.StampAnnotation(model, rect);
+            annotation.Color = null;
+            return PdfStamps.Preview(annotation, black);
+        }, ct);
+    }
+
+    /// <summary>
+    /// A stamp's look from the one-page PDF <paramref name="pdf"/> makes (on white, then on black),
+    /// at about twice screen resolution, with its transparency; null when it cannot be drawn.
+    /// </summary>
+    internal static async Task<ImageSource?> RenderPreviewAsync(Func<bool, byte[]?> pdf, CancellationToken ct = default)
     {
         try
         {
             return await Task.Run(async () =>
             {
-                var annotation = NativeDocumentServices.StampAnnotation(model, rect);
-                annotation.Color = null;
-                double longest = Math.Max(Math.Max(rect.Width, rect.Height), 1);
+                byte[]? white = pdf(false);
+                if (white == null) return null;
+                PdfEngine.Geometry.PdfSize size;
+                using (var probe = PdfVectorDocument.Open(new MemoryByteSource(white))) size = probe.PageTree.Pages[0].PageSize;
+                double longest = Math.Max(Math.Max(size.Width, size.Height), 1);
                 var request = new RenderRequest { PageNumber = 1, Dpi = Math.Clamp(72 * 600 / longest, 72, 288) };
                 async Task<(byte[] Pixels, int Width, int Height, int Stride)> Draw(bool black)
                 {
-                    using var doc = PdfVectorDocument.Open(new MemoryByteSource(PdfStamps.Preview(annotation, black)));
+                    byte[] bytes = black ? pdf(true) ?? white : white;
+                    using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
                     using var page = await VectorPdfRenderer.Shared.RenderPageAsync(doc, request, ct);
                     return (page.Pixels.ToArray(), page.WidthPixels, page.HeightPixels, page.Stride);
                 }

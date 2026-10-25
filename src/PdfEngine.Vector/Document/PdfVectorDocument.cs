@@ -215,6 +215,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         {
             HiddenOptionalContentGroups = ResolveHiddenOptionalContent(catalog, resolver),
             WidgetAppearance = GeneratedWidgetAppearance,
+            HiddenAnnotation = n => _hiddenAnnotations.Contains(n),
         };
         _displayListCache = new DisplayListCache(limits.MaxCachedDisplayListCommands);
 
@@ -394,7 +395,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         if (idx < 0 || idx >= _pageTree.Count)
             throw new ArgumentOutOfRangeException(nameof(pageNumber));
         var pageNode = _pageTree.Pages[idx];
-        if (!PrintsDifferently(pageNode))
+        if (!PrintsDifferently(pageNode) && _hiddenAnnotations.Count == 0)
             return await GetPageDisplayListAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         await _buildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -464,6 +465,37 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return false;
     }
 
+    private volatile IReadOnlySet<int> _hiddenAnnotations = new HashSet<int>();
+    private int _hiddenVersion;
+
+    /// <summary>The annotations (by object number) the screen display lists leave out.</summary>
+    public IReadOnlySet<int> HiddenAnnotations => _hiddenAnnotations;
+
+    /// <summary>
+    /// Leaves these annotations (by object number) out of the screen display lists, for a viewer
+    /// that draws them itself while they are being changed; printing still draws them. Returns
+    /// the pages whose display lists were dropped because of the change.
+    /// </summary>
+    public IReadOnlyList<int> SetHiddenAnnotations(IEnumerable<int> objectNumbers)
+    {
+        ArgumentNullException.ThrowIfNull(objectNumbers);
+        var next = new HashSet<int>(objectNumbers.Where(n => n > 0));
+        var before = _hiddenAnnotations;
+        if (next.SetEquals(before)) return Array.Empty<int>();
+        var changed = new HashSet<int>(next);
+        changed.SymmetricExceptWith(before);
+        _hiddenAnnotations = next;
+        Interlocked.Increment(ref _hiddenVersion);
+        _displayListCache.Clear();
+        var pages = new List<int>();
+        for (int i = 0; i < _pageTree.Count; i++)
+        {
+            if (_resolver.Resolve(_pageTree.Pages[i].Dictionary["Annots"]) is not PdfArray annots) continue;
+            if (annots.Any(a => a is PdfIndirectRef r && changed.Contains(r.ObjectNumber))) pages.Add(i + 1);
+        }
+        return pages;
+    }
+
     public async ValueTask<IPdfDisplayList> GetPageDisplayListAsync(int pageNumber, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -486,9 +518,11 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
                 return cached;
 
             var pageNode = _pageTree.Pages[idx];
+            int version = Volatile.Read(ref _hiddenVersion);
             var displayList = await Task.Run(() => _interpreter.BuildDisplayList(pageNode, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
-            _displayListCache.Add(pageNumber, displayList);
+            // A list built while the hidden annotations changed is used once, not kept.
+            if (version == Volatile.Read(ref _hiddenVersion)) _displayListCache.Add(pageNumber, displayList);
             return displayList;
         }
         finally

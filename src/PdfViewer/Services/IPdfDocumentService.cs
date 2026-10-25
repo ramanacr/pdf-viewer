@@ -208,6 +208,22 @@ public interface IPdfDocumentService : IDisposable
     List<AnnotationModel> LoadExistingAnnotations();
 
     /// <summary>
+    /// Leaves the loaded annotations that <paramref name="annotations"/> no longer has as they were
+    /// (changed or deleted) off the drawn pages, so the viewer's own drawing of them is the only
+    /// one; returns the pages to draw again. Engines that cannot do it return none.
+    /// </summary>
+    IReadOnlyList<int> HideChangedAnnotations(IEnumerable<AnnotationModel> annotations) => Array.Empty<int>();
+
+    /// <summary>
+    /// A one-page PDF with a loaded annotation drawn from its own appearance, turned by
+    /// <paramref name="turn"/> degrees counter-clockwise, on white or black; null when there is none.
+    /// </summary>
+    byte[]? KeptAppearancePreview(AnnotationModel annotation, double turn, bool black) => null;
+
+    /// <summary>The page still draws this annotation from the file (it is loaded and unchanged).</summary>
+    bool IsDrawnAsLoaded(AnnotationModel annotation) => annotation.HasOwnAppearance;
+
+    /// <summary>
     /// Saves the document with annotations applied.
     /// </summary>
     Task SaveAnnotatedDocumentAsync(
