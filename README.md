@@ -68,7 +68,7 @@ not hard-coded, so they cannot quietly stop being true.
 
 ## Browser Demo (WebAssembly)
 
-**Live demo: coming soon** (it goes live at `https://ramanacr.github.io/pdf-viewer/` once GitHub Pages is switched to GitHub Actions).
+**Live demo: https://ramanacr.github.io/pdf-viewer/demo/** (runs entirely in your browser; nothing is uploaded).
 
 The same engine, `PdfEngine.Vector`, also runs **inside a web browser**: [`src/PdfViewer.Web`](src/PdfViewer.Web/README.md)
 is a Blazor WebAssembly app that parses, renders (with the portable Skia backend) and searches
