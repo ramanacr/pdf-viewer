@@ -204,6 +204,7 @@ public static class InstallService
         {
             Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PdfViewer", throwOnMissingSubKey: false);
             Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\PdfViewer.Document", throwOnMissingSubKey: false);
+            Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Applications\PdfViewer.exe", throwOnMissingSubKey: false);
         }
         catch { }
 
@@ -328,6 +329,12 @@ public static class InstallService
                     appKey.SetValue("FriendlyAppName", "PDF Viewer Native");
                     using var supTypes = appKey.CreateSubKey("SupportedTypes");
                     supTypes?.SetValue(".pdf", string.Empty);
+
+                    // A .pdf chosen through "Open with" or the Default apps page belongs to this
+                    // key, not to the ProgId, so it needs the file icon too (as in the app's
+                    // ShellIntegrationService).
+                    using var appIcon = appKey.CreateSubKey("DefaultIcon");
+                    appIcon?.SetValue(string.Empty, iconRef);
 
                     using var appOpen = appKey.CreateSubKey(@"shell\open\command");
                     appOpen?.SetValue(string.Empty, $"\"{mainExePath}\" \"%1\"");
