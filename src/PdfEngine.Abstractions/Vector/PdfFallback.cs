@@ -53,7 +53,7 @@ public enum PdfEngineMode
     Pdfium = 1,
 
     /// <summary>
-    /// Strict vector mode: unsupported features yield explicit diagnostic errors/placeholders. Used for dev & CI.
+    /// Strict vector mode: unsupported features yield explicit diagnostic errors/placeholders. Used for dev &amp; CI.
     /// </summary>
     Vector = 2,
 
