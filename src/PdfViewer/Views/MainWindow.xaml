@@ -333,7 +333,7 @@
                 <MenuItem Header="Rotate _Clockwise" Command="{Binding RotateClockwiseCommand}" InputGestureText="Ctrl+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Rotate Counter-Clockwise" Command="{Binding RotateCounterClockwiseCommand}" InputGestureText="Ctrl+Shift+R" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Rotate}" Style="{StaticResource MirroredMenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <Separator />
-                <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Sidebar}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                <MenuItem Header="Toggle _Sidebar" Command="{Binding ToggleSidebarCommand}" InputGestureText="Ctrl+B" IsCheckable="True" IsChecked="{Binding IsSidebarOpen, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Sidebar}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="Toggle Light / _Dark Theme" Command="{Binding ToggleThemeCommand}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Theme}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
                 <MenuItem Header="_Night Mode (Invert Pages)" Command="{Binding ToggleNightModeCommand}"
                           IsCheckable="True" IsChecked="{Binding IsNightMode, Mode=OneWay}"
