@@ -34,6 +34,9 @@ public record EmbeddedFileInfo
 /// </summary>
 public interface IPdfAttachmentService
 {
+    /// <summary>Lists the files embedded in the document.</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<IReadOnlyList<EmbeddedFileInfo>> GetAttachmentsAsync(
         IPdfDocument document,
         CancellationToken cancellationToken = default);

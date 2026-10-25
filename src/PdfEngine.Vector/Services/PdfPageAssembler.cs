@@ -18,6 +18,7 @@ public sealed record PdfAssemblyPage(PdfVectorDocument? Source, int PageNumber, 
     public static PdfAssemblyPage Blank(double width, double height) => new(null, 0) { BlankSize = new PdfSize(width, height) };
 }
 
+/// <summary>Options for assembling a new document from pages of one or more sources (merge, extract, arrange).</summary>
 public sealed class PdfAssemblyOptions
 {
     /// <summary>Carry the sources' outlines, keeping the items that still lead somewhere.</summary>

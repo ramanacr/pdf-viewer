@@ -56,13 +56,24 @@ public class AnnotationModel
     public PdfRect Bounds => new(X, Y, Width, Height);
 }
 
+/// <summary>Reads the annotations of a page and writes a document with changed annotations.</summary>
 public interface IPdfAnnotationService
 {
+    /// <summary>Gets the annotations of a page.</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="pageNumber">The page number, starting at 1.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<IReadOnlyList<AnnotationModel>> LoadAnnotationsAsync(
         IPdfDocument document,
         int pageNumber,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Writes a copy of <paramref name="document"/> with <paramref name="annotations"/> added.</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="targetPath">The file to write.</param>
+    /// <param name="annotations">The annotations to add.</param>
+    /// <param name="mode">Keep the annotations editable, or draw them into the page content.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask SaveAnnotatedDocumentAsync(
         IPdfDocument document,
         string targetPath,

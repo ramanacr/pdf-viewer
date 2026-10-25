@@ -14,6 +14,7 @@ namespace PdfEngine.Vector.Redaction;
 /// <summary>An area to redact: a rectangle on a page, in default user space (PDF points, bottom-left origin).</summary>
 public sealed record PdfRedactionArea(int PageNumber, PdfRect Rect);
 
+/// <summary>Options for a redaction: the box colour, the overlay text, JPEG decoding and metadata removal.</summary>
 public sealed class PdfRedactionOptions
 {
     /// <summary>The colour the redacted areas are filled with (RGB 0–1); null leaves them blank.</summary>
