@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>In line: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+</head>
+<body>
+<header class="example"><h1>In line</h1><nav><a href="index.html">All examples</a></nav></header>
+<main class="article">
+    <p>In line, the viewer shows every page in the flow of this article. The frame grows to the height of the document, and this page scrolls, not the viewer. Pages are drawn as they come into view.</p>
+    <div id="viewer"></div>
+    <p id="status" class="status" role="status"></p>
+    <p>The article goes on after the last page.</p>
+</main>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="sample-pdf.js"></script>
+<script>
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    view.previewFile({
+        content: { promise: Promise.resolve(samplePdf()) },
+        metaData: { fileName: 'Quarterly report.pdf' },
+    }, {
+        embedMode: 'IN_LINE',
+        showDownloadPDF: false,
+        showPrintPDF: false,
+    }).catch(error => {
+        const status = document.getElementById('status');
+        status.className = 'status error';
+        status.textContent = error.code + ': ' + error.message;
+    });
+</script>
+</body>
+</html>

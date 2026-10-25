@@ -71,6 +71,11 @@ image.Encode(SKEncodedImageFormat.Png, 100).SaveTo(png);
 - **Fonts.** Text in fonts that a PDF does not embed is drawn with installed fonts. A host
   without installed fonts (for example a browser) passes its own `SkiaFontSource`.
 
+## In a web page
+
+To show PDF files in a web page without writing .NET code, use the [web embed SDK](sdk/index.md): one
+script, an API like the Adobe PDF Embed API, and the engine running in the reader's browser.
+
 ## Safety
 
 - The engine has no JavaScript interpreter. Document scripts and launch actions are reported,

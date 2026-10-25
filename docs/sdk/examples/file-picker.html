@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>File picker: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+    <style>#viewer { height: 560px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }</style>
+</head>
+<body>
+<header class="example"><h1>File picker</h1><nav><a href="index.html">All examples</a></nav></header>
+<main class="article">
+    <p>Pick a PDF on your device. The browser reads it, and the viewer opens it in this tab: the file is never uploaded.</p>
+    <p><label>PDF file <input type="file" id="file" accept="application/pdf,.pdf" /></label></p>
+    <p id="status" class="status" role="status"></p>
+    <div id="viewer"></div>
+</main>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script>
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    const status = document.getElementById('status');
+    document.getElementById('file').addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        status.className = 'status';
+        status.textContent = 'Opening ' + file.name + '…';
+        view.previewFile({
+            content: { promise: file.arrayBuffer() },
+            metaData: { fileName: file.name },
+        }, { embedMode: 'SIZED_CONTAINER' })
+            .then(viewer => viewer.getAPIs())
+            .then(apis => apis.getPDFMetadata())
+            .then(meta => {
+                status.textContent = meta.fileName + ': ' + meta.numPages + ' pages, PDF ' + meta.pdfVersion +
+                    (meta.isEncrypted ? ', encrypted' : '') + (meta.isTagged ? ', tagged' : '') + '.';
+            })
+            .catch(error => {
+                // PASSWORD_REQUIRED or WRONG_PASSWORD: the reader cancelled the password prompt.
+                status.className = 'status error';
+                status.textContent = error.code + ': ' + error.message;
+            });
+    });
+</script>
+</body>
+</html>

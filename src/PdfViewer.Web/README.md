@@ -17,7 +17,7 @@ server code.
 **Live demo:** https://ramanacr.github.io/pdf-viewer/demo/ (deployed from `main` by
 `.github/workflows/web-demo.yml`).
 
-Status: a demo, and the base of an embeddable viewer SDK (see [next steps](#next-steps)).
+Status: a demo, and the viewer of the [web embed SDK](#embed-sdk) (`wwwroot/pdfviewer-embed.js`).
 
 ## Features
 
@@ -31,6 +31,10 @@ Status: a demo, and the base of an embeddable viewer SDK (see [next steps](#next
 | Zoom | Fit width, fit page, 50 % to 400 % presets, `Ctrl` `+` / `-`. Pages show the stretched old bitmap until the new one is drawn. |
 | Search | The engine's text extraction and its PDFium-compatible search rules. Highlights per line, a results list with context, `Enter` / `F3` / `Shift+F3`, match case. |
 | Outline | The document's bookmarks, with the current page marked. |
+| Thumbnails | The "Pages" tab of the side panel. Only thumbnails near its view are drawn, after the pages in view. |
+| Text selection and copy | Drag with the mouse or a pen, double-click for a word, `Ctrl`+`A` for the page, `Ctrl`+`C` to copy (when the document allows it). One page at a time, with the engine's text layout (`ViewerTextLayout`, shared with the Android app). |
+| Download | The original bytes as a Blob download. |
+| Print | Pages rendered at 150 dpi and printed as images through a hidden iframe. Up to 500 pages. |
 | Encrypted PDFs | Password prompt. RC4 and AES (128 and 256) open, see [crypto](#cryptography). |
 | Night pages | The engine's night mode: the page inverted after drawing (`I`). |
 | Theme | System, light or dark (`D`), independent of night pages. |
@@ -172,8 +176,8 @@ path can make the native link exceed the 260-character path limit; a short path 
    are unmeasured.
 6. **Single thread.** A long page blocks the tab while it is interpreted. Pages are drawn one at
    a time, and the UI yields between them.
-7. **Not in the demo:** annotations, forms, printing, text selection and copy, thumbnails, tiled
-   rendering beyond 4096 × 4096 pixels.
+7. **Not in the demo:** annotations, forms, tiled rendering beyond 4096 × 4096 pixels. Print
+   sends 150 dpi page images, not the PDF, and every sheet has the first page's size.
 
 ### Fonts
 
@@ -324,19 +328,45 @@ longer, and the first page of a session pays the interpreter's warm-up.
   and Chinese text that is not drawn with Liberation alone and is drawn with the fallback;
   `RealNotoFonts_DrawArabicDevanagariAndChinese` runs with the real files when
   `NOTO_FONTS_DIR` names the script's output).
-- CI: `web-demo.yml` publishes the app on every pull request.
+- `tests/PdfEngine.Vector.Skia.Tests`: `EmbedSdkTests` (the embed protocol: origins, the frame
+  URL, foreign and malformed messages, the config and its errors, the API calls and their
+  arguments, the replies; document metadata; mouse selection between two carets).
+- CI: `web-demo.yml` publishes the app on every pull request and checks that the SDK scripts parse.
+
+## Embed SDK
+
+`wwwroot/pdfviewer-embed.js` (and `pdfviewer-embed.mjs`, the same API as an ES module) lets any web
+page show a PDF with this viewer, with an API modelled on the Adobe PDF Embed API. The documentation
+is [docs/sdk/index.md](../../docs/sdk/index.md) (published at
+[ramanacr.github.io/pdf-viewer/sdk/](https://ramanacr.github.io/pdf-viewer/sdk/)); the examples are in
+[docs/sdk/examples](../../docs/sdk/examples).
+
+1. The script makes an iframe of `index.html?embed=1&mode=<embedMode>&origin=<host origin>`.
+   `theme.js` and `Viewer.ReadFrameUrl` read the URL before the first render, so the demo's
+   chrome (brand, Open, Tour, privacy bar, status bar, help, drag and drop) never shows, and
+   nothing is read from or written to local storage.
+2. The host page fetches the file itself and posts `{ protocol: "pdfviewer-embed", version: 1,
+   type: "open", config, data }` with the bytes as a transferred ArrayBuffer. `viewer.js` accepts
+   messages only from the parent window and the origin in the URL, and posts only to it;
+   `EmbedProtocol` (in `PdfViewer.Web.Engine/Embed`, tested in `EmbedSdkTests`) validates every
+   message and builds every reply.
+3. `Viewer.Embed.cs` applies the config, answers the API calls (`getPDFMetadata`, `gotoLocation`,
+   zoom, `search`, and the others) and sends the events. Selection, thumbnails, download and print
+   are in `Viewer.Selection.cs`, `Viewer.Thumbnails.cs` and `Viewer.Output.cs`; the demo has them too.
+4. In line (`IN_LINE`), the frame is as tall as the document: `viewer.js` reports the content
+   height and the host sizes the frame; pages in view are found against the host page's viewport.
+
+To try it locally, put the published `wwwroot` under `demo/` and `docs/sdk/examples` under
+`sdk/examples/` of one folder, set the `<base href>` in `demo/index.html` to `/pdf-viewer/demo/`,
+and serve the folder with `node eng/webdemo/serve.mjs <folder> --base /pdf-viewer/`.
 
 ## Next steps
 
-Toward an embeddable SDK in the style of the Adobe PDF Embed API:
-
-1. **A JavaScript API over `PdfViewer.Web.Engine`**: `PdfViewerSdk.open(element, { url | bytes })`
-   returning a viewer object with `goToPage`, `search`, `setZoom`, events for page change and
-   search results. The engine layer is already free of UI; the work is a thin `[JSExport]`
-   surface and a packaged build of the Blazor runtime as a custom element.
+1. **Embed SDK phases 2 and 3**: annotations with an annotation manager and a save callback;
+   range loading of large files.
 2. **Rendering off the main thread**: run the engine in a Web Worker (or multi-threaded
    WebAssembly once it is stable) so a heavy page never blocks scrolling.
 3. **Fonts**: bold Noto weights, and Noto Serif for serif text.
 4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
    acceptable.
-5. **Tiles** for deep zoom, text selection and copy, thumbnails, annotations display.
+5. **Tiles** for deep zoom, selection across pages, annotations display.

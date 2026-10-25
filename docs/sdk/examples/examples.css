@@ -1,0 +1,14 @@
+/* Shared look of the SDK examples. Nothing here is needed by the SDK itself. */
+:root { color-scheme: light dark; --accent: #0b6e7a; --muted: #5b6676; --border: #d5dbe3; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header.example { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+header.example h1 { font-size: 18px; margin: 0; }
+header.example nav { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13.5px; }
+a { color: var(--accent); }
+main.article { max-width: 760px; margin: 0 auto; padding: 16px; }
+.status { font-size: 13.5px; color: var(--muted); margin: 8px 0; min-height: 1.5em; }
+.status.error { color: #b42318; }
+button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+code { font-size: 0.92em; }

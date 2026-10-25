@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Full window: PDF Viewer embed SDK</title>
+    <style>
+        html, body { margin: 0; height: 100%; }
+        #viewer { position: fixed; inset: 0; }
+        #status { position: fixed; left: 12px; bottom: 12px; margin: 0; font: 13px system-ui, sans-serif; color: #b42318; }
+    </style>
+</head>
+<body>
+<div id="viewer"></div>
+<p id="status" role="alert"></p>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="sample-pdf.js"></script>
+<script>
+    // ?url=https://example.com/file.pdf opens another PDF. The fetch runs in this page, so the
+    // server must allow this page to read the file (CORS).
+    const url = new URLSearchParams(location.search).get('url');
+    const name = url ? decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || 'document.pdf') : 'Quarterly report.pdf';
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    view.previewFile({
+        content: { location: { url: url || samplePdfUrl() } },
+        metaData: { fileName: name },
+    }, {
+        embedMode: 'FULL_WINDOW',
+        showThumbnails: true,
+        showBookmarks: true,
+    }).catch(error => {
+        document.getElementById('status').textContent = error.code + ': ' + error.message;
+    });
+</script>
+</body>
+</html>

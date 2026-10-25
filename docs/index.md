@@ -19,6 +19,9 @@ print output, and exports to Word, Excel and PowerPoint.
 **[Open the web demo](demo/).** The same engine runs in the page as WebAssembly. Nothing is
 uploaded, and the fonts come from this site only.
 
+To show PDF files in your own web page with this viewer, use the [web embed SDK](sdk/): a script
+with an API like the Adobe PDF Embed API, but with no client ID, no server and no telemetry.
+
 ## Download
 
 | Where | Status |
