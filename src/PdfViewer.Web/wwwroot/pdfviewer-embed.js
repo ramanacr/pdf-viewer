@@ -25,14 +25,20 @@
 
     const PROTOCOL = 'pdfviewer-embed';
     const PROTOCOL_VERSION = 1;
-    const SDK_VERSION = '0.1.0';
+    const SDK_VERSION = '0.2.0';
     const MAX_FILE_BYTES = 512 * 1024 * 1024;
     const BOOT_TIMEOUT_MS = 60000;
     const ISOLATION_DOCS = 'https://ramanacr.github.io/pdf-viewer/sdk/#same-origin-viewer';
 
     const EmbedMode = Object.freeze({ FULL_WINDOW: 'FULL_WINDOW', SIZED_CONTAINER: 'SIZED_CONTAINER', IN_LINE: 'IN_LINE', LIGHT_BOX: 'LIGHT_BOX' });
     const ViewMode = Object.freeze({ FIT_PAGE: 'FIT_PAGE', FIT_WIDTH: 'FIT_WIDTH', TWO_COLUMN: 'TWO_COLUMN', TWO_COLUMN_FIT_PAGE: 'TWO_COLUMN_FIT_PAGE' });
-    const CallbackType = Object.freeze({ EVENT_LISTENER: 'EVENT_LISTENER' });
+    const CallbackType = Object.freeze({ EVENT_LISTENER: 'EVENT_LISTENER', SAVE_API: 'SAVE_API' });
+    const ApiResponseCode = Object.freeze({ SUCCESS: 'SUCCESS', FAIL: 'FAIL' });
+    const AnnotationEvents = Object.freeze({
+        ANNOTATION_ADDED: 'ANNOTATION_ADDED', ANNOTATION_UPDATED: 'ANNOTATION_UPDATED', ANNOTATION_DELETED: 'ANNOTATION_DELETED',
+        ANNOTATION_SELECTED: 'ANNOTATION_SELECTED', ANNOTATION_UNSELECTED: 'ANNOTATION_UNSELECTED', ANNOTATION_CLICKED: 'ANNOTATION_CLICKED',
+    });
+    const MAX_AUTOSAVE_SECONDS = 86400;
     const Events = Object.freeze({
         DOCUMENT_OPEN: 'DOCUMENT_OPEN', PAGE_VIEW: 'PAGE_VIEW', TEXT_COPY: 'TEXT_COPY', TEXT_SEARCH: 'TEXT_SEARCH',
         ZOOM_CHANGE: 'ZOOM_CHANGE', DOCUMENT_DOWNLOAD: 'DOCUMENT_DOWNLOAD', DOCUMENT_PRINT: 'DOCUMENT_PRINT', PREVIEW_ERROR: 'PREVIEW_ERROR',
@@ -52,7 +58,9 @@
         NO_DOCUMENT: 'NO_DOCUMENT',
         NOT_ENABLED: 'NOT_ENABLED',
         SEARCH_ENDED: 'SEARCH_ENDED',
+        NOT_ALLOWED: 'NOT_ALLOWED',
         CLOSED: 'CLOSED',
+        VIEWER_ERROR: 'VIEWER_ERROR',
     });
 
     /** Every failure of this SDK: `code` is one of PdfViewer.View.Enum.ErrorCode. */
@@ -274,6 +282,100 @@
         }
     }
 
+    /** A copy that postMessage can clone: plain JSON data only (an array or an object). */
+    function jsonData(value, what) {
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch {
+            throw fail(ErrorCode.INVALID_ARGUMENT, `${what} must be plain data.`);
+        }
+    }
+
+    /**
+     * The annotation manager of one document (viewer.getAnnotationManager()), modelled on the Adobe
+     * PDF Embed API's. Annotations are JSON objects (see docs/sdk/index.md); the viewer checks
+     * every one. Events reach registerEventListener handlers only, in this page.
+     */
+    class AnnotationManager {
+        constructor(view, documentId) {
+            this._view = view;
+            this._document = documentId;
+            this._listeners = [];
+        }
+
+        _call(method, args) { return this._view._call(method, args, this._document); }
+
+        /** Adds annotations (an array, at most 1000); resolves with them as the viewer keeps them (ids made where missing). */
+        addAnnotations(list) {
+            if (!Array.isArray(list)) return Promise.reject(fail(ErrorCode.INVALID_ARGUMENT, 'addAnnotations needs an array of annotations.'));
+            return this._call('addAnnotations', [jsonData(list, 'The annotations')]);
+        }
+
+        /** Resolves with the annotations, all or those of { annotationIds, pageRange: { startPage, endPage } }. */
+        getAnnotations(filter) {
+            return this._call('getAnnotations', [filter === undefined ? null : jsonData(filter, 'The filter')]);
+        }
+
+        /** Selects an annotation and scrolls to it. */
+        selectAnnotation(id) { return this._call('selectAnnotation', [id]).then(list => (Array.isArray(list) ? list[0] : list)); }
+
+        unselectAnnotation() { return this._call('unselectAnnotation'); }
+
+        /** Deletes the annotations of the filter ({} deletes all); resolves with the deleted ones. */
+        deleteAnnotations(filter) {
+            if (!filter || typeof filter !== 'object') return Promise.reject(fail(ErrorCode.INVALID_ARGUMENT, 'deleteAnnotations needs a filter ({} deletes every annotation).'));
+            return this._call('deleteAnnotations', [jsonData(filter, 'The filter')]);
+        }
+
+        /** Replaces the annotation with the same id; resolves with it. */
+        updateAnnotation(annotation) {
+            if (!annotation || typeof annotation !== 'object') return Promise.reject(fail(ErrorCode.INVALID_ARGUMENT, 'updateAnnotation needs an annotation.'));
+            return this._call('updateAnnotation', [jsonData(annotation, 'The annotation')]).then(list => (Array.isArray(list) ? list[0] : list));
+        }
+
+        /** { showToolbar, showCommentsPanel, downloadWithAnnotations, printWithAnnotations, authorName }. */
+        setConfig(config) {
+            if (!config || typeof config !== 'object') return Promise.reject(fail(ErrorCode.INVALID_ARGUMENT, 'setConfig needs an object.'));
+            return this._call('setAnnotationConfig', [jsonData(config, 'The config')]);
+        }
+
+        /** Resolves with the annotations as an XFDF document (a string). */
+        exportXfdf() { return this._call('exportXfdf'); }
+
+        /** Adds the annotations of an XFDF document; resolves with them. */
+        importXfdf(xml) {
+            if (typeof xml !== 'string') return Promise.reject(fail(ErrorCode.INVALID_ARGUMENT, 'importXfdf needs the XFDF document as a string.'));
+            return this._call('importXfdf', [xml]);
+        }
+
+        /** registerEventListener(handler, { listenOn: [...] }): handler({ type, data }), data the annotation. */
+        registerEventListener(handler, options) {
+            if (typeof handler !== 'function') throw fail(ErrorCode.INVALID_ARGUMENT, 'The handler must be a function.');
+            const listenOn = options && Array.isArray(options.listenOn) && options.listenOn.length > 0 ? new Set(options.listenOn) : null;
+            this._listeners.push({ handler, listenOn });
+        }
+
+        _emit(event) {
+            for (const { handler, listenOn } of this._listeners) {
+                if (!listenOn || listenOn.has(event.type)) safeCall(handler, event);
+            }
+        }
+    }
+
+    /** The SAVE_API options as the viewer takes them. */
+    function saveOptions(options) {
+        const o = options || {};
+        if (typeof o !== 'object') throw fail(ErrorCode.INVALID_ARGUMENT, 'The SAVE_API options must be an object.');
+        const seconds = o.autoSaveFrequency === undefined || o.autoSaveFrequency === null ? 0 : o.autoSaveFrequency;
+        if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0 || seconds > MAX_AUTOSAVE_SECONDS) {
+            throw fail(ErrorCode.INVALID_ARGUMENT, `autoSaveFrequency must be a number of seconds from 0 to ${MAX_AUTOSAVE_SECONDS}.`);
+        }
+        for (const key of ['enableFocusPolling', 'showSaveButton']) {
+            if (o[key] !== undefined && typeof o[key] !== 'boolean') throw fail(ErrorCode.INVALID_ARGUMENT, `${key} must be true or false.`);
+        }
+        return { enabled: true, autoSaveFrequency: seconds, enableFocusPolling: o.enableFocusPolling === true, showSaveButton: o.showSaveButton !== false };
+    }
+
     let sameOriginWarned = false;
 
     /**
@@ -309,6 +411,9 @@
             this._viewerOrigin = this._base.origin;
             checkIsolation(this._viewerOrigin, isolation);
             this._listeners = [];
+            this._managers = [];
+            this._saveHandler = null;
+            this._saveOptions = null;
             this._pending = new Map();
             this._searches = new Map();
             this._nextId = 1;
@@ -327,12 +432,17 @@
          * The handler gets { type, data }. Events stay in this page: nothing is sent anywhere.
          */
         registerCallback(type, handler, options) {
-            if (type !== CallbackType.EVENT_LISTENER) {
-                throw fail(ErrorCode.INVALID_ARGUMENT, type === 'SAVE_API'
-                    ? 'SAVE_API is planned (phase 2, with the annotation manager).'
-                    : `Unknown callback type "${type}". Use PdfViewer.View.Enum.CallbackType.EVENT_LISTENER.`);
+            if (type !== CallbackType.EVENT_LISTENER && type !== CallbackType.SAVE_API) {
+                throw fail(ErrorCode.INVALID_ARGUMENT, `Unknown callback type "${type}". Use PdfViewer.View.Enum.CallbackType.EVENT_LISTENER or SAVE_API.`);
             }
             if (typeof handler !== 'function') throw fail(ErrorCode.INVALID_ARGUMENT, 'The handler must be a function.');
+            if (type === CallbackType.SAVE_API) {
+                // handler(metaData, content, options) resolves with { code: 'SUCCESS' | 'FAIL', data: { metaData } }.
+                this._saveOptions = saveOptions(options);
+                this._saveHandler = handler;
+                if (this._frame && this._document !== 0) this._call('setSaveOptions', [this._saveOptions]).catch(() => { });
+                return;
+            }
             const listenOn = options && Array.isArray(options.listenOn) && options.listenOn.length > 0 ? new Set(options.listenOn) : null;
             this._listeners.push({ handler, listenOn });
         }
@@ -371,11 +481,13 @@
                 readOnly: meta.hasReadOnlyAccess === true,
                 locale: this._locale,
                 config: settings,
+                save: this._saveOptions,
                 data: buffer,
             }, [buffer]);
             const result = await opened;
             this._document = requestId;
             this._searches.clear();
+            this._managers = this._managers.filter(m => m._document === requestId);
             if (result && result.focus && this._frame) this._frame.focus();
             return this._viewerObject(requestId);
         }
@@ -405,7 +517,15 @@
                     return search;
                 }),
             });
-            return Object.freeze({ getAPIs: () => Promise.resolve(apis) });
+            let manager = null;
+            const getAnnotationManager = () => call('getAnnotationManager').then(() => {
+                if (!manager) {
+                    manager = new AnnotationManager(this, documentId);
+                    this._managers.push(manager);
+                }
+                return manager;
+            });
+            return Object.freeze({ getAPIs: () => Promise.resolve(apis), getAnnotationManager });
         }
 
         _ensureFrame(mode, fileName) {
@@ -526,6 +646,22 @@
             }
         }
 
+        /** The reader saved: the SAVE_API handler gets the file; its answer goes back to the viewer. */
+        async _save(m) {
+            const documentId = this._document;
+            const metaData = { fileName: typeof m.fileName === 'string' ? m.fileName : 'document.pdf', id: typeof m.fileId === 'string' ? m.fileId : undefined };
+            let code = ApiResponseCode.FAIL, fileName = null;
+            try {
+                const result = this._saveHandler ? await this._saveHandler(metaData, m.data, { reason: typeof m.reason === 'string' ? m.reason : 'button' }) : null;
+                if (result && result.code === ApiResponseCode.SUCCESS) code = ApiResponseCode.SUCCESS;
+                const name = result && result.data && result.data.metaData && result.data.metaData.fileName;
+                if (typeof name === 'string' && name.length > 0 && name.length <= 1024) fileName = name;
+            } catch (e) {
+                console.error('PdfViewer: the SAVE_API callback threw', e);
+            }
+            if (this._document === documentId) this._call('saveResult', [m.saveId, code, fileName]).catch(() => { });
+        }
+
         /** Only the viewer's own frame, from the viewer's origin, with this protocol, is heard. */
         _onMessage(e) {
             const frame = this._frame;
@@ -548,7 +684,13 @@
                 case 'event':
                     if (m.event && typeof m.event.type === 'string' && Object.prototype.hasOwnProperty.call(Events, m.event.type)) {
                         this._emit({ type: m.event.type, data: m.event.data && typeof m.event.data === 'object' ? m.event.data : {} });
+                    } else if (m.event && typeof m.event.type === 'string' && Object.prototype.hasOwnProperty.call(AnnotationEvents, m.event.type)) {
+                        const event = { type: m.event.type, data: m.event.data && typeof m.event.data === 'object' ? m.event.data : {} };
+                        for (const manager of this._managers) if (manager._document === this._document) manager._emit(event);
                     }
+                    break;
+                case 'save':
+                    if (Number.isInteger(m.saveId) && m.saveId > 0 && m.data instanceof ArrayBuffer) this._save(m);
                     break;
                 case 'search': {
                     const search = this._searches.get(m.searchId);
@@ -573,7 +715,7 @@
         }
     }
 
-    View.Enum = Object.freeze({ CallbackType, Events, EmbedMode, ViewMode, ErrorCode });
+    View.Enum = Object.freeze({ CallbackType, Events, AnnotationEvents, ApiResponseCode, EmbedMode, ViewMode, ErrorCode });
 
     const PdfViewer = {
         View,
