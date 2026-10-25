@@ -1,10 +1,10 @@
 ﻿{
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:0340c433-f1dd-45a6-a62e-1f95b178b3d2",
+  "serialNumber": "urn:uuid:3d72c127-f834-4f27-81eb-268a796c584a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-17T19:56:25Z",
+    "timestamp": "2026-10-25T11:25:32Z",
     "tools": {
       "components": [
         {
@@ -22,7 +22,7 @@
     "component": {
       "type": "application",
       "name": "PdfViewer",
-      "version": "3.4.0",
+      "version": "4.1.0",
       "description": "Native Windows PDF Viewer with its own PDF engine (PdfEngine.Vector)",
       "licenses": [
         {
@@ -32,15 +32,15 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer@4.1.0"
     }
   },
   "components": [
     {
       "type": "library",
-      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@3.4.0",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@4.1.0",
       "name": "PdfEngine.Abstractions",
-      "version": "3.4.0",
+      "version": "4.1.0",
       "description": "UI-neutral domain contracts, geometry, exception hierarchy, and abstractions for PDF processing",
       "scope": "required",
       "licenses": [
@@ -51,13 +51,13 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@4.1.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@3.4.0",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@4.1.0",
       "name": "PdfEngine.Vector",
-      "version": "3.4.0",
+      "version": "4.1.0",
       "description": "The PDF engine: parsing, security, fonts, text, forms, annotations, signatures, redaction, saving and the vector display list",
       "scope": "required",
       "licenses": [
@@ -68,13 +68,13 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@4.1.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@3.4.0",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@4.1.0",
       "name": "PdfEngine.Vector.Windows",
-      "version": "3.4.0",
+      "version": "4.1.0",
       "description": "WPF rendering of the engine's display lists",
       "scope": "required",
       "licenses": [
@@ -85,13 +85,13 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@4.1.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@3.4.0",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@4.1.0",
       "name": "PdfEngine.Vector.Direct2D",
-      "version": "3.4.0",
+      "version": "4.1.0",
       "description": "Direct2D/DirectWrite rendering and printing of the engine's display lists",
       "scope": "required",
       "licenses": [
@@ -102,13 +102,13 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@4.1.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0",
+      "bom-ref": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@4.1.0",
       "name": "PdfViewer.Core",
-      "version": "3.4.0",
+      "version": "4.1.0",
       "description": "DocumentSession, Priority Render Scheduler, MultiTierCache, and Command History infrastructure",
       "scope": "required",
       "licenses": [
@@ -119,7 +119,7 @@
           }
         }
       ],
-      "purl": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0"
+      "purl": "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@4.1.0"
     },
     {
       "type": "data",
@@ -221,16 +221,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+      "bom-ref": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.21",
       "name": "System.Security.Cryptography.Pkcs",
-      "version": "9.0.0",
+      "version": "9.0.21",
       "scope": "required",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.21",
       "externalReferences": [
         {
           "type": "website",
@@ -350,19 +350,19 @@
   ],
   "dependencies": [
     {
-      "ref": "PdfViewer@3.4.0",
+      "ref": "PdfViewer@4.1.0",
       "dependsOn": [
-        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@3.4.0",
-        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@3.4.0",
-        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@3.4.0",
-        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@3.4.0",
-        "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@3.4.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Abstractions@4.1.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector@4.1.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Windows@4.1.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfEngine.Vector.Direct2D@4.1.0",
+        "pkg:github/ramanacr/pdf-viewer/PdfViewer.Core@4.1.0",
         "pkg:github/adobe-type-tools/cmap-resources@f5cf3bca7fdfeaceb77aa82847e974f2306c20b4",
         "pkg:nuget/CommunityToolkit.Mvvm@8.4.0",
         "pkg:nuget/CoreJ2K@2.4.1.108",
         "pkg:nuget/SharpGen.Runtime@2.4.2-beta",
         "pkg:nuget/SharpGen.Runtime.COM@2.4.2-beta",
-        "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.0",
+        "pkg:nuget/System.Security.Cryptography.Pkcs@9.0.21",
         "pkg:nuget/System.Speech@9.0.0",
         "pkg:nuget/System.Text.Json@9.0.1",
         "pkg:nuget/Vortice.Direct2D1@3.8.3",
