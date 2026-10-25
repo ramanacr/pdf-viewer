@@ -28,6 +28,7 @@
     const SDK_VERSION = '0.1.0';
     const MAX_FILE_BYTES = 512 * 1024 * 1024;
     const BOOT_TIMEOUT_MS = 60000;
+    const ISOLATION_DOCS = 'https://ramanacr.github.io/pdf-viewer/sdk/#same-origin-viewer';
 
     const EmbedMode = Object.freeze({ FULL_WINDOW: 'FULL_WINDOW', SIZED_CONTAINER: 'SIZED_CONTAINER', IN_LINE: 'IN_LINE', LIGHT_BOX: 'LIGHT_BOX' });
     const ViewMode = Object.freeze({ FIT_PAGE: 'FIT_PAGE', FIT_WIDTH: 'FIT_WIDTH', TWO_COLUMN: 'TWO_COLUMN', TWO_COLUMN_FIT_PAGE: 'TWO_COLUMN_FIT_PAGE' });
@@ -118,6 +119,7 @@
         if (value instanceof ArrayBuffer) return value.slice(0);
         if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
         if (typeof Blob !== 'undefined' && value instanceof Blob) {
+            // Check the size before reading, so that a huge Blob is never read into memory.
             if (value.size > MAX_FILE_BYTES) throw tooLarge();
             return value.arrayBuffer();
         }
@@ -163,9 +165,54 @@
         }
         if (response.status === 404 || response.status === 410) throw fail(ErrorCode.FILE_NOT_FOUND, `The file was not found (HTTP ${response.status}).`, { status: response.status });
         if (!response.ok) throw fail(ErrorCode.HTTP_ERROR, `The server answered HTTP ${response.status}.`, { status: response.status });
-        const length = Number(response.headers.get('Content-Length'));
-        if (length > MAX_FILE_BYTES) throw tooLarge();
-        return response.arrayBuffer();
+        // A readable Content-Length that is too large fails at once. A missing or bad one is
+        // unknown, not 0: readCapped counts the bytes as they arrive in all cases.
+        const header = response.headers.get('Content-Length');
+        const length = header !== null && /^\s*\d+\s*$/.test(header) ? Number(header) : NaN;
+        if (Number.isFinite(length) && length > MAX_FILE_BYTES) {
+            if (response.body) response.body.cancel().catch(() => { });
+            throw tooLarge();
+        }
+        return readCapped(response, MAX_FILE_BYTES);
+    }
+
+    /**
+     * Reads a response body, but stops (cancels the stream) and rejects with TOO_LARGE as soon as
+     * more than `limit` bytes have arrived. Content-Length can be missing or wrong (compressed or
+     * chunked responses), so only the bytes counted here are trusted.
+     */
+    async function readCapped(response, limit) {
+        if (!response.body || typeof response.body.getReader !== 'function') {
+            const buffer = await response.arrayBuffer();   // no stream in this browser
+            if (buffer.byteLength > limit) throw tooLarge();
+            return buffer;
+        }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+            let step;
+            try {
+                step = await reader.read();
+            } catch (e) {
+                throw fail(ErrorCode.NETWORK_ERROR, 'The file could not be read: the network failed.', String(e && e.message || e));
+            }
+            if (step.done) break;
+            const chunk = step.value;
+            total += chunk.byteLength;
+            if (total > limit) {
+                reader.cancel().catch(() => { });
+                throw tooLarge();
+            }
+            chunks.push(chunk);
+        }
+        const bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        return bytes.buffer;
     }
 
     function checkConfig(config) {
@@ -227,10 +274,29 @@
         }
     }
 
-    /** One viewer in one element of the page: new PdfViewer.View({ divId, locale, baseUrl }). */
+    let sameOriginWarned = false;
+
+    /**
+     * The sandbox of the frame keeps the viewer apart from the page only when their origins
+     * differ. On the same origin, 'warn' (the default) writes one console warning per page and
+     * 'require' refuses the View.
+     */
+    function checkIsolation(viewerOrigin, isolation) {
+        if (viewerOrigin !== global.location.origin) return;
+        if (isolation === 'require') {
+            throw fail(ErrorCode.INVALID_ARGUMENT,
+                `The viewer (${viewerOrigin}) has the origin of this page, so the iframe sandbox does not isolate it, and isolation is 'require'. Serve the viewer from another origin. See ${ISOLATION_DOCS}`);
+        }
+        if (sameOriginWarned) return;
+        sameOriginWarned = true;
+        console.warn(`PdfViewer: the viewer (${viewerOrigin}) has the same origin as this page. The iframe sandbox then does not isolate it: a fault in the viewer could reach this page. For production, serve the viewer from another origin (for example a subdomain). See ${ISOLATION_DOCS}`);
+    }
+
+    /** One viewer in one element of the page: new PdfViewer.View({ divId, locale, baseUrl, isolation }). */
     class View {
         constructor(options) {
-            const { divId, locale = 'en-US', baseUrl } = options || {};
+            const { divId, locale = 'en-US', baseUrl, isolation = 'warn' } = options || {};
+            if (isolation !== 'warn' && isolation !== 'require') throw fail(ErrorCode.INVALID_ARGUMENT, "isolation must be 'warn' or 'require'.");
             const document = global.document;
             const container = typeof divId === 'string' ? document.getElementById(divId) : null;
             if (!container) throw fail(ErrorCode.INVALID_ARGUMENT, `No element has the id "${divId}".`);
@@ -241,6 +307,7 @@
             this._locale = typeof locale === 'string' ? locale : 'en-US';
             this._base = viewerBase(baseUrl);
             this._viewerOrigin = this._base.origin;
+            checkIsolation(this._viewerOrigin, isolation);
             this._listeners = [];
             this._pending = new Map();
             this._searches = new Map();

@@ -204,6 +204,29 @@ public class EmbedSdkTests
     public void Search_RefusesAnOverlongTerm() =>
         Assert.Equal(11, Refused($"\"type\":\"call\",\"requestId\":11,\"method\":\"search\",\"args\":[\"{new string('x', EmbedProtocol.MaxTermLength + 1)}\"]").RequestId);
 
+    [Fact]
+    public void OverlongMessages_AreRefusedBeforeParsing_WithTheirRequestId()
+    {
+        string padding = new('x', EmbedProtocol.MaxMessageLength);
+        var call = Refused($"\"type\":\"call\",\"requestId\":12,\"document\":3,\"method\":\"search\",\"args\":[\"{padding}\"]");
+        Assert.Equal((EmbedErrors.InvalidArgument, 12), (call.Code, call.RequestId));
+        // Not even valid JSON: refused on its length alone, never parsed.
+        var open = Refused($"\"type\":\"open\",\"requestId\":13,\"fileName\":\"{padding}");
+        Assert.Equal((EmbedErrors.InvalidArgument, 13), (open.Code, open.RequestId));
+        // No requestId near the start: refused, with nothing to answer.
+        var late = Assert.Throws<EmbedProtocolException>(() => EmbedProtocol.Parse("{\"pad\":\"" + padding + "\"," + Envelope + ",\"type\":\"call\",\"requestId\":14}", EmbedMode.FullWindow));
+        Assert.Equal((EmbedErrors.InvalidArgument, 0), (late.Code, late.RequestId));
+    }
+
+    [Fact]
+    public void MessagesUpToTheLimit_AreParsed()
+    {
+        string prefix = "{" + Envelope + ",\"type\":\"call\",\"requestId\":15,\"document\":3,\"method\":\"getCurrentPage\",\"args\":[],\"pad\":\"";
+        string json = prefix + new string('x', EmbedProtocol.MaxMessageLength - prefix.Length - 2) + "\"}";
+        Assert.Equal(EmbedProtocol.MaxMessageLength, json.Length);
+        Assert.Equal(15, Assert.IsType<EmbedCall>(EmbedProtocol.Parse(json, EmbedMode.FullWindow)).RequestId);
+    }
+
     private static JsonElement Root(string json)
     {
         using var doc = JsonDocument.Parse(json);

@@ -139,6 +139,12 @@ public static class EmbedProtocol
     public const int MaxTermLength = 1000;
 
     /// <summary>
+    /// Longest message accepted, in characters of its JSON (2 MB). The file's bytes travel beside
+    /// the message, so a real message is a few kilobytes; a longer one is refused before it is parsed.
+    /// </summary>
+    public const int MaxMessageLength = 2 * 1024 * 1024;
+
+    /// <summary>
     /// The host page's origin from the frame's URL ("https://example.com:8443"), normalized as a
     /// browser serializes it, or null when it is not an http or https origin with nothing after
     /// the host and port. The viewer accepts messages only from that origin and posts only to it.
@@ -157,11 +163,17 @@ public static class EmbedProtocol
 
     /// <summary>
     /// Reads a message from the host page. Null when it is not this protocol's (another script's
-    /// message; ignore it). Throws <see cref="EmbedProtocolException"/> when it is ours but invalid.
+    /// message; ignore it). Throws <see cref="EmbedProtocolException"/> when it is ours but invalid,
+    /// and when it is longer than <see cref="MaxMessageLength"/> (before it is parsed).
     /// <paramref name="frameMode"/> is the mode of the frame's URL.
     /// </summary>
     public static EmbedMessage? Parse(string json, EmbedMode frameMode)
     {
+        if (json.Length > MaxMessageLength)
+        {
+            throw new EmbedProtocolException(EmbedErrors.InvalidArgument,
+                $"The message is longer than {MaxMessageLength / (1024 * 1024)} MB.", LeadingRequestId(json));
+        }
         JsonDocument document;
         try
         {
@@ -189,6 +201,28 @@ public static class EmbedProtocol
 
         static int Require(int requestId) =>
             requestId > 0 ? requestId : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "The message has no requestId.");
+    }
+
+    /// <summary>
+    /// The requestId of a message too long to parse, read from its first characters only (the SDK
+    /// writes it near the start), so that the refusal can answer the request. 0 when it is not there.
+    /// </summary>
+    private static int LeadingRequestId(string json)
+    {
+        byte[] head = Encoding.UTF8.GetBytes(json, 0, Math.Min(json.Length, 512));
+        var reader = new Utf8JsonReader(head, isFinalBlock: false, new JsonReaderState(new JsonReaderOptions { MaxDepth = 16 }));
+        try
+        {
+            while (reader.Read())
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1 || !reader.ValueTextEquals("requestId")) continue;
+                return reader.Read() && reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int id) && id > 0 ? id : 0;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return 0;
     }
 
     private static EmbedOpen ParseOpen(JsonElement root, int requestId, EmbedMode frameMode)
