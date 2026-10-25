@@ -203,14 +203,11 @@ public partial class AnnotationModel : ObservableObject
             };
             foreach (var p in _vertices.Skip(1)) figure.Segments.Add(new System.Windows.Media.LineSegment(Relative(p), true));
             var path = new System.Windows.Media.PathGeometry();
+            // An unstroked diagonal pins the geometry's bounds to the whole box, so Stretch=Fill maps 0–1 exactly.
+            path.Figures.Add(new System.Windows.Media.PathFigure(new Point(0, 0), new[] { new System.Windows.Media.LineSegment(new Point(1, 1), false) }, false));
             path.Figures.Add(figure);
-            var group = new System.Windows.Media.GeometryGroup();
-            // Corner marks pin the geometry's bounds to the whole box, so Stretch=Fill maps 0–1 exactly.
-            group.Children.Add(new System.Windows.Media.RectangleGeometry(new Rect(0, 0, 1e-6, 1e-6)));
-            group.Children.Add(new System.Windows.Media.RectangleGeometry(new Rect(1 - 1e-6, 1 - 1e-6, 1e-6, 1e-6)));
-            group.Children.Add(path);
-            group.Freeze();
-            return group;
+            path.Freeze();
+            return path;
         }
     }
 
