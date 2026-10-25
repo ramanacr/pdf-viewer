@@ -256,6 +256,9 @@ public sealed class SystemFontCatalog
             var exact = Faces.FirstOrDefault(f => string.Equals(f.PostScriptName, name, StringComparison.OrdinalIgnoreCase));
             if (exact != null && (exact.Weight >= 600 || weight < 600) && (exact.Italic || !italic)) return exact;
 
+            // "MS-Gothic", "MS-PMincho,Bold": the '-' joins the words of the family, not the family and its style.
+            if (JoinedFamily(name) is { } joined && FindFamily(joined, weight, italic) is { } byWords) return byWords;
+
             // Another design stands in with its regular or bold only: those are the metric-compatible
             // ones (Arial Bold ≡ Helvetica-Bold), and /Widths still place every glyph.
             foreach (var (candidate, alias) in FamilyCandidates(family, bare, narrow))
@@ -315,6 +318,33 @@ public sealed class SystemFontCatalog
         ("GillSans", "Gill Sans MT"), ("Garamond", "Garamond"), ("Frutiger", "Arial"), ("Univers", "Arial"),
         ("Myriad", "Segoe UI"), ("Minion", "Cambria"), ("LucidaGrande", "Lucida Sans Unicode"), ("Tahoma", "Tahoma"), ("Verdana", "Verdana"), ("Georgia", "Georgia"),
     };
+
+    /// <summary>
+    /// The family of a PostScript-style name whose '-' joins the words of the family ("MS-Gothic" is
+    /// MS Gothic): the words up to the first that is only style ("MS-PGothic-Bold" is MS PGothic).
+    /// Null when the part after the first '-' is only style ("Arial-BoldMT"), so the family is before it.
+    /// </summary>
+    private static string? JoinedFamily(string name)
+    {
+        int comma = name.IndexOf(',');
+        var words = (comma >= 0 ? name[..comma] : name).Split('-');
+        int n = 1;
+        while (n < words.Length && !IsStyleOnly(words[n])) n++;
+        return n > 1 && words[0].Length > 0 ? string.Join(" ", words[..n]) : null;
+    }
+
+    /// <summary>Whether a name part is style words only, with an MT/PS suffix ("BoldItalicMT", "Light", "Roman").</summary>
+    private static bool IsStyleOnly(string part)
+    {
+        part = StripSuffix(part);
+        while (part.Length > 0)
+        {
+            var word = StyleWords.FirstOrDefault(w => part.EndsWith(w, StringComparison.OrdinalIgnoreCase));
+            if (word == null) return false;
+            part = part[..^word.Length];
+        }
+        return true;
+    }
 
     private static string StripSuffix(string family)
     {
