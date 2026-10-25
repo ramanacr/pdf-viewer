@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Large files: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+    <style>
+        .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); gap: 16px; padding: 16px; }
+        @media (max-width: 800px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+        #viewer { height: 640px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
+        label { font-size: 13.5px; }
+        input[type=number] { width: 5.5em; font: inherit; }
+        table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+        th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+        td.n { text-align: right; font-variant-numeric: tabular-nums; }
+        h2 { font-size: 15px; margin: 12px 0 6px; }
+        p.small { font-size: 13.5px; color: var(--muted); }
+    </style>
+</head>
+<body>
+<header class="example"><h1>Large files</h1><nav><a href="index.html">All examples</a></nav></header>
+<div class="layout">
+    <div id="viewer"></div>
+    <section aria-label="Settings and results">
+        <p class="small">This page writes a large PDF itself (<code>large-pdf.js</code>: a page per image, about
+            150 KB each), then shows it in one of two ways over a simulated network, and measures the time to the
+            first page and the bytes fetched by then. Nothing is downloaded or uploaded.</p>
+        <div class="controls">
+            <label>Pages <input id="pages" type="number" min="10" max="2000" value="320" /></label>
+            <label>Mbit/s <input id="mbps" type="number" min="1" max="10000" value="50" /></label>
+            <label>Latency ms <input id="latency" type="number" min="0" max="2000" value="40" /></label>
+        </div>
+        <div class="controls">
+            <button type="button" class="primary" id="ranges">Open by ranges</button>
+            <button type="button" id="whole">Open whole</button>
+        </div>
+        <p id="status" class="status" role="status"></p>
+        <h2>Results</h2>
+        <table>
+            <thead><tr><th>Way</th><th>First page</th><th>Fetched by then</th><th>Requests</th></tr></thead>
+            <tbody id="results"></tbody>
+        </table>
+        <p class="small"><b>By ranges</b>: <code>content.linearizationInfo</code> (as in Adobe's PDF Embed API) hands
+            the viewer the bytes it asks for. <b>Whole</b>: <code>content.promise</code> resolves with the whole file
+            once it has "arrived". With <code>?url=/path/file.pdf</code> (a PDF of this site), the page uses
+            <code>content.location</code> instead, with real range requests (add <code>&amp;ranges=0</code> to turn them off).</p>
+    </section>
+</div>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="large-pdf.js"></script>
+<script>
+    const status = document.getElementById('status');
+    const results = document.getElementById('results');
+    const params = new URLSearchParams(location.search);
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    const MB = 1024 * 1024;
+    const mb = n => (n / MB).toFixed(1) + ' MB';
+
+    let run = null;   // { name, started, bytes, requests, size, done }
+    view.registerCallback(PdfViewer.View.Enum.CallbackType.EVENT_LISTENER, event => {
+        if (event.type !== 'APP_RENDERING_DONE' || !run || run.done) return;
+        run.done = true;
+        const ms = performance.now() - run.started;
+        if (run.url) {
+            // The SDK fetches in this page: its requests are this page's resource timings.
+            const entries = performance.getEntriesByName(run.url).filter(e => e.startTime >= run.started);
+            run.requests = entries.length;
+            run.bytes = entries.reduce((sum, e) => sum + (e.encodedBodySize || 0), 0);
+        }
+        if (event.data && event.data.fileSize) run.size = event.data.fileSize;
+        const row = results.insertRow(0);
+        row.insertCell().textContent = run.name;
+        row.insertCell().textContent = ms.toFixed(0) + ' ms';
+        row.insertCell().textContent = `${mb(run.bytes)} of ${mb(run.size)}`;
+        row.insertCell().textContent = String(run.requests);
+        for (const c of [1, 2, 3]) row.cells[c].className = 'n';
+        status.textContent = `${run.name}: first page after ${ms.toFixed(0)} ms.`;
+        // For automated measurements (tests): the same numbers on the window.
+        window.largeFileResult = { way: run.name, ms, bytes: run.bytes, size: run.size, requests: run.requests };
+    }, { listenOn: ['APP_RENDERING_DONE'] });
+
+    let cached = null;
+    function sample() {
+        const pages = Math.max(10, Math.min(2000, Number(document.getElementById('pages').value) || 320));
+        if (!cached || cached.pages !== pages) {
+            status.textContent = `Writing a ${pages}-page PDF…`;
+            cached = { pages, bytes: new Uint8Array(largePdf({ pages })) };
+        }
+        return cached.bytes;
+    }
+
+    /** A shared link: each transfer waits for the latency, then for the bytes before it to pass at the bandwidth. */
+    function network() {
+        const bytesPerMs = Math.max(1, Number(document.getElementById('mbps').value) || 50) * 1e6 / 8 / 1000;
+        const latency = Math.max(0, Number(document.getElementById('latency').value) || 0);
+        let busyUntil = 0;
+        return bytes => {
+            const start = Math.max(performance.now() + latency, busyUntil);
+            busyUntil = start + bytes / bytesPerMs;
+            return new Promise(resolve => setTimeout(resolve, busyUntil - performance.now()));
+        };
+    }
+
+    function start(name, size) {
+        run = { name, started: performance.now(), bytes: 0, requests: 0, size, done: false };
+        return run;
+    }
+
+    function show(content, fileName) {
+        status.textContent = 'Opening…';
+        return view.previewFile({ content, metaData: { fileName } }, { embedMode: 'SIZED_CONTAINER', defaultViewMode: 'FIT_WIDTH' })
+            .catch(error => {
+                status.className = 'status error';
+                status.textContent = error.code + ': ' + error.message;
+            });
+    }
+
+    function openByRanges() {
+        const bytes = sample();
+        const transfer = network();
+        const current = start(`Ranges, ${cached.pages} pages`, bytes.length);
+        show({
+            // The whole file, only if the viewer asks for it (a thenable: nothing "downloads" until it is awaited).
+            promise: { then: (resolve, reject) => transfer(bytes.length).then(() => bytes.slice().buffer).then(resolve, reject) },
+            linearizationInfo: {
+                getInfo: () => Promise.resolve({ fileSize: bytes.length }),
+                getFileBufferRanges: async ranges => {
+                    const bufferList = [];
+                    for (const { start, end } of ranges) {
+                        current.requests++;
+                        current.bytes += end - start + 1;
+                        await transfer(end - start + 1);
+                        bufferList.push(bytes.slice(start, end + 1).buffer);
+                    }
+                    return { bufferList };
+                },
+            },
+        }, 'Large generated document.pdf');
+    }
+
+    function openWhole() {
+        const bytes = sample();
+        const transfer = network();
+        const current = start(`Whole, ${cached.pages} pages`, bytes.length);
+        current.requests = 1;
+        current.bytes = bytes.length;
+        show({ promise: transfer(bytes.length).then(() => bytes.slice().buffer) }, 'Large generated document.pdf');
+    }
+
+    /** ?url=: a PDF of this site, with real range requests (or none with &ranges=0). Other sites are refused. */
+    function openUrl(given) {
+        let url;
+        try {
+            const parsed = new URL(given, location.href);
+            if (parsed.origin === location.origin) url = parsed.href;
+        } catch { }
+        if (!url) {
+            status.className = 'status error';
+            status.textContent = 'INVALID_ARGUMENT: ?url= must be a URL of this site (' + location.origin + ').';
+            return;
+        }
+        const ranges = params.get('ranges') !== '0';
+        start(ranges ? 'URL, range requests' : 'URL, whole file', 0).url = url;
+        performance.setResourceTimingBufferSize(10000);
+        show({ location: { url, rangeRequests: ranges } }, new URL(url).pathname.split('/').pop());
+    }
+
+    document.getElementById('ranges').addEventListener('click', openByRanges);
+    document.getElementById('whole').addEventListener('click', openWhole);
+    if (params.get('url')) openUrl(params.get('url'));
+    else if (params.get('way') === 'whole') openWhole();
+    else openByRanges();
+</script>
+</body>
+</html>

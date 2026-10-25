@@ -130,7 +130,9 @@ For `dotnet run`, write them to `src/PdfViewer.Web/wwwroot/fonts/noto` instead (
 
 `eng/webdemo/serve.mjs` is a dependency-free static server (Node 18+) that listens on
 127.0.0.1 only. `--base /pdf-viewer/` serves under a project path (rewrite `<base href>` in
-`index.html` to match), and `--gzip` compresses as GitHub Pages does, for realistic sizes.
+`index.html` to match), and `--gzip` compresses as GitHub Pages does, for realistic sizes. It
+answers range requests (206), and `--rate <KB/s>` and `--latency <ms>` simulate a slow network
+(`--log-ranges` prints the PDF ranges served).
 
 If you have more than one SDK installed, build with a .NET 9 SDK: SDK 10 would need the
 separate `wasm-tools-net9` workload for this net9.0 project. On Windows, a very deep checkout
@@ -332,7 +334,14 @@ longer, and the first page of a session pays the interpreter's warm-up.
   `NOTO_FONTS_DIR` names the script's output).
 - `tests/PdfEngine.Vector.Skia.Tests`: `EmbedSdkTests` (the embed protocol: origins, the frame
   URL, foreign and malformed messages, the config and its errors, the API calls and their
-  arguments, the replies; document metadata; mouse selection between two carets).
+  arguments, the replies; document metadata; mouse selection between two carets);
+  `EmbedRangeTests` (range loading: the fetchRange request and range reply checked both ways,
+  the reader with a fake host page, a document drawn before the rest arrives, the fallback for a
+  damaged file); `ViewerStripRenderTests` (pages drawn in strips).
+- `tests/PdfEngine.Vector.Tests`: `RangeLoadingTests` (the chunk cache, the planner, opening and
+  drawing by ranges, object streams, encryption, the fallback for a damaged cross-reference table).
+- `tests/sdk/embed-range.test.mjs` (`node --test`): the SDK script's range sources (URL and
+  `linearizationInfo`) and its checks of the viewer's range requests.
 - CI: `web-demo.yml` publishes the app on every pull request and checks that the SDK scripts parse.
 
 ## Embed SDK
@@ -357,6 +366,11 @@ is [docs/sdk/index.md](../../docs/sdk/index.md) (published at
    are in `Viewer.Selection.cs`, `Viewer.Thumbnails.cs` and `Viewer.Output.cs`; the demo has them too.
 4. In line (`IN_LINE`), the frame is as tall as the document: `viewer.js` reports the content
    height and the host sizes the frame; pages in view are found against the host page's viewport.
+5. Large files: the host page reads a `location` (or Adobe-style `linearizationInfo`) by ranges
+   and sends the file's end with the open message; the viewer opens it with
+   `ViewerDocument.OpenRangedAsync` over an `EmbedRangeReader`, whose reads are validated
+   `fetchRange` messages that the host page answers from the URL it was given. The rest of the
+   file follows in the background after the first page (see docs/sdk, "Large files").
 
 To try it locally, put the published `wwwroot` under `demo/` and `docs/sdk/examples` under
 `sdk/examples/` of one folder, set the `<base href>` in `demo/index.html` to `/pdf-viewer/demo/`,
@@ -364,10 +378,11 @@ and serve the folder with `node eng/webdemo/serve.mjs <folder> --base /pdf-viewe
 
 ## Next steps
 
-1. **Embed SDK phases 2 and 3**: annotations with an annotation manager and a save callback;
-   range loading of large files.
-2. **Rendering off the main thread**: run the engine in a Web Worker (or multi-threaded
-   WebAssembly once it is stable) so a heavy page never blocks scrolling.
+1. **Rendering off the main thread**: run the engine in a second, render-only .NET runtime in a
+   Web Worker (multi-threaded WebAssembly needs cross-origin isolation headers, which GitHub Pages
+   cannot send). Today pages are drawn in strips and nothing new starts while the view scrolls
+   (docs/sdk, "Responsiveness"), but one page's interpretation is still one task.
+2. **A lazy page tree** for files read by ranges (docs/sdk, "Large files").
 3. **Fonts**: bold Noto weights, and Noto Serif for serif text.
 4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
    acceptable.
