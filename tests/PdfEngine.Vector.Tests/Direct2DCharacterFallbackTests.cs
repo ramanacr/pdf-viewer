@@ -203,6 +203,66 @@ public class Direct2DCharacterFallbackTests
         Assert.Single(PdfTextFind.FindAll(page, "क्ष", matchCase: true, wholeWord: false, consecutive: false));
     }
 
+    [Fact]
+    public async Task ArabicWord_ThePrimaryHasInPart_IsDrawnWholeFromOneFace_Shaped()
+    {
+        // No installed face has only part of the Arabic letters, so the primary's lack is faked: Arial
+        // "lacks" the word's last glyph (as seen, left to right). Segoe UI, the face for Arabic, has them all.
+        string reading = "سمير";
+        using var doc = await PdfVectorDocument.OpenAsync(Page("Arial", "Identity", new[] { Arial.Value }, Seen(reading)));
+        var run = (await doc.GetPageDisplayListAsync(1)).Commands.OfType<DrawGlyphRun>().Single().Run;
+        Assert.Equal(4, run.Glyphs.Count);
+        using var res = new D2DResources(0);
+        var arial = res.GetSystemFace("Arial", false, false)!;
+        var segoe = res.GetCharacterFace(0x0633, "sc", false, false)!;
+        Assert.Same(res.GetSystemFace("Segoe UI", false, false), segoe);
+        var segoeFile = res.GetShapingFont(segoe)!;
+        bool Has(IDWriteFontFace face, int k) =>
+            !(ReferenceEquals(face, arial) && k == 3) && face.GetGlyphIndices(new[] { (uint)char.ConvertToUtf32(run.Glyphs[k].Unicode!, 0) })[0] != 0;
+        IDWriteFontFace?[] Split() => new IDWriteFontFace?[] { arial, arial, arial, segoe };
+
+        // Before: Segoe UI drew the one letter Arial lacks, alone and so in its isolated form.
+        var split = Replayer.ComposeParts(run, Split(), arial, false, 1, 1, res.GetShapingFont)!;
+        Assert.Equal(2, split.Length);
+        Assert.Equal(new[] { (ushort)segoeFile.GlyphFor(run.Glyphs[3].Unicode![0]) }, split[1].Indices);
+
+        // Now: the whole word goes to Segoe UI and is shaped there, in its joined forms.
+        var owners = Split();
+        Replayer.KeepWordsWhole(run, owners, arial, Has, k => res.GetCharacterFace(char.ConvertToUtf32(run.Glyphs[k].Unicode!, 0), "sc", false, false));
+        Assert.All(owners, o => Assert.Same(segoe, o));
+        var part = Assert.Single(Replayer.ComposeParts(run, owners, arial, false, 1, 1, res.GetShapingFont)!);
+        Assert.Same(segoe, part.Face);
+        var word = Assert.Single(SubstituteShaper.Words(run)!);
+        var shaped = SubstituteShaper.ShapeWord(segoeFile, run, word, 1)!.Select(g => g.Gid).ToArray();
+        _output.WriteLine($"shaped: {string.Join(" ", shaped)}");
+        Assert.Equal(shaped, part.Indices);
+        // Initial, two medial and a final form: none is a letter's isolated glyph.
+        var isolated = reading.Select(c => (ushort)segoeFile.GlyphFor(c)).ToArray();
+        Assert.Equal(4, part.Indices.Length);
+        Assert.DoesNotContain(part.Indices, isolated.Contains);
+    }
+
+    [Fact]
+    public void KeepWordsWhole_PrimaryFirst_ThenAFaceWithTheWholeWord_ElseTheSplitStays()
+    {
+        // Two Arabic words and a Latin letter between them, faces faked by name.
+        var glyphs = "بيت x دار".Select((c, i) => new PdfGlyph(0, 0.5, 0, i * 0.5, 0, c.ToString(), -1, 0.5)).ToList();
+        var run = new PdfGlyphRun("F0", 12, glyphs, PdfEngine.Geometry.PdfMatrix.Identity);
+        string?[] Owners() => new[] { "P", "P", "F", null, "P", null, "P", "G", "P" };
+        // The primary has the whole first word: it keeps it, and the fallback F loses its letter.
+        var owners = Owners();
+        Replayer.KeepWordsWhole(run, owners, "P", (f, k) => f == "P" || k == 2, _ => "F");
+        Assert.Equal(new[] { "P", "P", "P" }, owners[..3]);
+        // The primary lacks a letter of each word: the first face asked for that has the whole word takes it.
+        owners = Owners();
+        Replayer.KeepWordsWhole(run, owners, "P", (f, k) => f == "F" || (f == "P" && k is not 2 and not 7), _ => "F");
+        Assert.Equal(new[] { "F", "F", "F", null, "P", null, "F", "F", "F" }, owners);
+        // No face has a whole word: each glyph keeps its own face.
+        owners = Owners();
+        Replayer.KeepWordsWhole(run, owners, "P", (f, k) => f == "P" ? k is not 2 and not 7 : k is 2 or 7, k => k < 4 ? "F" : "G");
+        Assert.Equal(Owners(), owners);
+    }
+
     /// <summary>The dark pixels of the page's Direct2D render at 96 dpi.</summary>
     private static async Task<long> Ink(byte[] pdf)
     {

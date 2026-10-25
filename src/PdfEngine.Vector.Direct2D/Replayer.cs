@@ -1464,14 +1464,14 @@ internal sealed partial class Replayer : IDisposable
     /// <summary>
     /// The run drawn from several faces: each glyph from <paramref name="primary"/> (the substitute
     /// that has most of them) when it has it, else from the installed face for its character
-    /// (<see cref="D2DResources.GetCharacterFace"/>). Null when no other face adds a glyph, so the
-    /// primary face alone draws the run as before.
+    /// (<see cref="D2DResources.GetCharacterFace"/>). An Arabic or Indic word goes to one face whole
+    /// (<see cref="KeepWordsWhole"/>), so it is shaped as one word. Null when no other face adds a
+    /// glyph, so the primary face alone draws the run as before.
     /// </summary>
     private ResolvedPart[]? ComposeByCharacter(PdfGlyphRun run, IDWriteFontFace primary, bool symbolCodes, bool bold, bool italic,
         (string? Name, string? Ordering) hint, double th, double sign, Func<IDWriteFontFace, TrueTypeFontFile?>? shaping)
     {
         var owners = new IDWriteFontFace?[run.Glyphs.Count];
-        var order = new List<IDWriteFontFace> { primary };
         string? language = null;
         var primaryFound = PrimaryGlyphs(primary, run, symbolCodes);
         for (int i = 0; i < run.Glyphs.Count; i++)
@@ -1485,12 +1485,70 @@ internal sealed partial class Replayer : IDisposable
                 continue;
             }
             if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0)) continue;
-            language ??= Fonts.CharacterFaces.CjkLanguage(hint.Ordering, hint.Name, RunText(run));
-            var candidate = _res.GetCharacterFace(char.ConvertToUtf32(text, 0), language, bold, italic);
-            if (candidate == null) continue;
-            owners[i] = candidate;
-            if (!order.Contains(candidate)) order.Add(candidate);
+            owners[i] = FaceFor(i);
         }
+        // The words MapByUnicode shapes: each from one face, so no word is cut in two at a face change.
+        if (shaping != null && !symbolCodes && sign > 0)
+        {
+            var found = new Dictionary<IDWriteFontFace, bool[]>(ReferenceEqualityComparer.Instance) { [primary] = primaryFound };
+            KeepWordsWhole(run, owners, primary, (f, k) => (found.TryGetValue(f, out var has) ? has : found[f] = PrimaryGlyphs(f, run, false))[k], FaceFor);
+        }
+        return ComposeParts(run, owners, primary, symbolCodes, th, sign, shaping);
+
+        IDWriteFontFace? FaceFor(int k)
+        {
+            language ??= Fonts.CharacterFaces.CjkLanguage(hint.Ordering, hint.Name, RunText(run));
+            return _res.GetCharacterFace(char.ConvertToUtf32(run.Glyphs[k].Unicode!, 0), language, bold, italic);
+        }
+    }
+
+    /// <summary>
+    /// Gives each Arabic or Indic word of the run (<see cref="SubstituteShaper.Words"/>) to one face in
+    /// <paramref name="owners"/>, so that face shapes the whole word: <paramref name="primary"/> when it
+    /// has every glyph of the word, else the first face a character of the word asks for
+    /// (<paramref name="faceFor"/>) that has every glyph of it. A word that no such face has whole
+    /// keeps the face of each glyph (each piece is drawn unshaped where the word is cut).
+    /// </summary>
+    /// <param name="has">Whether a face has the glyph at a position of the run.</param>
+    internal static void KeepWordsWhole<TFace>(PdfGlyphRun run, TFace?[] owners, TFace primary, Func<TFace, int, bool> has, Func<int, TFace?> faceFor)
+        where TFace : class
+    {
+        if (SubstituteShaper.Words(run) is not { } words)
+            return;
+        foreach (var word in words)
+        {
+            TFace? owner = Whole(primary) ? primary : null;
+            for (int k = word.Start; owner == null && k < word.End; k++)
+                if (!IsJoiner(k) && faceFor(k) is { } candidate && !ReferenceEquals(candidate, primary) && Whole(candidate))
+                    owner = candidate;
+            if (owner == null)
+                continue;
+            for (int k = word.Start; k < word.End; k++)
+                owners[k] = owner;
+
+            bool Whole(TFace face)
+            {
+                for (int k = word.Start; k < word.End; k++)
+                    if (!IsJoiner(k) && !has(face, k)) return false;
+                return true;
+            }
+        }
+
+        // Zero-width joiners are shaped with the word and drawn as no glyph: no face needs one.
+        bool IsJoiner(int k) => run.Glyphs[k].Unicode!.All(c => c is '\u200C' or '\u200D');
+    }
+
+    /// <summary>
+    /// The parts of a run whose glyphs have the faces in <paramref name="owners"/> (by position; null
+    /// for a glyph not drawn): <paramref name="primary"/>'s first, then each other face in the order
+    /// it first appears. Null when no glyph has a face other than the primary.
+    /// </summary>
+    internal static ResolvedPart[]? ComposeParts(PdfGlyphRun run, IDWriteFontFace?[] owners, IDWriteFontFace primary, bool symbolCodes,
+        double th, double sign, Func<IDWriteFontFace, TrueTypeFontFile?>? shaping)
+    {
+        var order = new List<IDWriteFontFace> { primary };
+        foreach (var o in owners)
+            if (o != null && !order.Contains(o)) order.Add(o);
         if (order.Count == 1)
             return null;
         var parts = new List<ResolvedPart>();
