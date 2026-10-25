@@ -1628,14 +1628,11 @@ internal sealed partial class Replayer : IDisposable
             double em = Math.Abs(run.FontSize);
             for (int i = 0; i < ids.Length; i++)
             {
-                double own = metrics[i].AdvanceWidth / unitsPerEm;
-                if (widths[i] <= 0 || own <= 0 || Math.Abs(widths[i] - own) <= own * 0.01) continue;
-                double scale = Math.Min(widths[i] / own, 1.10);
+                if (SubstituteShaper.FitToWidth(metrics[i].AdvanceWidth / unitsPerEm, widths[i]) is not var (scale, shift)) continue;
                 scales ??= Enumerable.Repeat(1f, ids.Length).ToArray();
                 scales[i] = (float)scale;
                 // Centred in what is left of its width (glyph space: text space without Tz).
-                double gap = (widths[i] - own * scale) * em / 2;
-                if (gap > 0) offsets[i] = offsets[i] with { X = offsets[i].X + (float)(gap * sign) };
+                if (shift > 0) offsets[i] = offsets[i] with { X = offsets[i].X + (float)(shift * em * sign) };
             }
         }
         return new ResolvedPart(face, ids, offsets.ToArray(), scales);

@@ -249,6 +249,59 @@ public class WpfCharacterFallbackTests
         }
     }
 
+    /// <summary>
+    /// ZapfDingbats, not embedded: its built-in encoding gives the dingbats' Unicode (U+2700 block and
+    /// a few shapes), and the WPF backend draws them from Segoe UI Symbol, the glyphs the Direct2D
+    /// backend draws. Before, the WPF backend had no substitute and drew nothing.
+    /// </summary>
+    [Fact]
+    public async Task ZapfDingbats_DrawsTheGlyphsDirect2DDraws()
+    {
+        var b = new VectorPdfBuilder();
+        int zapf = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>");
+        // ✓ ✔ ✘ ★ ● ■ ◆ ❤ →
+        b.AddPage("BT /Z 48 Tf 10 100 Td (348Hlnu\\244\\325) Tj ET", $"<< /Font << /Z {zapf} 0 R >> >>", mediaBox: "[0 0 520 200]");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        var cmd = list.Commands.OfType<DrawGlyphRun>().Single();
+        Assert.Equal("✓✔✘★●■◆❤→",string.Concat(cmd.Run.Glyphs.Select(g => g.Unicode)));
+
+        using var fonts = new WpfFontCache();
+        var parts = Compiler(fonts).ResolveText(cmd.Run, out string? problem) ?? throw new InvalidOperationException("The run was not drawn: " + problem);
+        using var res = new D2DResources(0);
+        using var replayer = new Replayer(res, list, null, analyzeOnly: true, System.Threading.CancellationToken.None);
+        Assert.Equal(replayer.ResolvedFamilies(cmd)!, parts.Select(p => Family(p.Face)));
+        Assert.Equal("Segoe UI Symbol", Family(Assert.Single(parts).Face));
+        Assert.Equal(replayer.ResolvedGlyphs(cmd)!.Select(g => g.Gid), parts[0].Indices);
+        Assert.Equal(9, parts[0].Indices.Count);
+        Assert.DoesNotContain((ushort)0, parts[0].Indices);
+
+        var request = new RenderRequest { PageNumber = 1, Dpi = 72 };
+        using var d2d = new Direct2DVectorRenderer();
+        using var wpf = new WindowsVectorRenderer();
+        using var a = await d2d.RenderDisplayListAsync(list, request);
+        using var w = await wpf.RenderDisplayListAsync(list, request);
+        int inkA = Ink(a), inkW = Ink(w);
+        var (mean, bad) = DifferentialRenderingTests.Compare(w, a);
+        _output.WriteLine($"ink d2d={inkA} wpf={inkW}; wpf vs d2d: mean={mean:F2} bad={bad:P2}");
+        Assert.True(inkA > 2000, $"Direct2D ink {inkA}");
+        Assert.InRange(inkW, inkA * 0.9, inkA * 1.1);
+        Assert.True(mean <= 2, $"mean {mean:F2}");
+
+        static int Ink(RenderedPage page)
+        {
+            var px = page.Pixels.Span;
+            int n = 0;
+            for (int y = 0; y < page.HeightPixels; y++)
+                for (int x = 0; x < page.WidthPixels; x++)
+                {
+                    int i = y * page.Stride + x * 4;
+                    if (Math.Min(px[i], Math.Min(px[i + 1], px[i + 2])) < 128) n++;
+                }
+            return n;
+        }
+    }
+
     [Fact]
     public async Task MixedRun_KeepsTheCharacters_FallbackChangesDrawingOnly()
     {

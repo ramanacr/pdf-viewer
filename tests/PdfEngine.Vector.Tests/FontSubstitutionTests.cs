@@ -37,6 +37,11 @@ public class FontSubstitutionTests
     [InlineData("ArialNarrow,Bold", 32, "Arial Narrow", "Arial", true, false)]
     [InlineData("ArialNarrow", 32, "Arial Narrow", "Arial", false, false)]
     [InlineData("Arial-BoldMT", 32, "Arial", "Arial", true, false)]
+    [InlineData("MS-Gothic", 32, "MS Gothic", "MS Gothic", false, false)] // PostScript-style names: '-' joins the family's words
+    [InlineData("MS-Mincho", 34, "MS Mincho", "MS Mincho", false, false)]
+    [InlineData("MS-PGothic", 32, "MS PGothic", "MS PGothic", false, false)]
+    [InlineData("ABCDEF+MS-PMincho", 34, "MS PMincho", "MS PMincho", false, false)]
+    [InlineData("MS-Gothic,Bold", 32, "MS Gothic", "MS Gothic", false, false)] // no bold face: the regular
     [InlineData("TimesNewRomanPS-ItalicMT", 98, "Times New Roman", "Times New Roman", false, true)]
     [InlineData("Helvetica-Oblique", 96, "Arial", "Arial", false, true)]
     [InlineData("Helvetica-Narrow-Bold", 32, "Arial Narrow", "Arial", true, false)]
@@ -83,6 +88,23 @@ public class FontSubstitutionTests
             return;
         Assert.Equal(600, Fonts.Match("SegoeUI-Semibold", false, false, false, false)!.Weight);
         Assert.Equal(300, Fonts.Match("SegoeUI-Light", false, false, false, false)!.Weight);
+    }
+
+    [Fact]
+    public void Match_HyphenatedFamily_KeepsItsFamilyInEveryStyle()
+    {
+        // The PostScript name finds MS Gothic only in its own style: bold, or with a style after it,
+        // the family is found by its words, not by "MS".
+        if (Fonts.FindFamily("MS Gothic", false, false) is not { } gothic)
+            return;
+        Assert.Equal(gothic, Fonts.Match("MS-Gothic", bold: true, italic: false, serif: false, fixedPitch: false));
+        Assert.Equal(gothic, Fonts.Match("MS-Gothic-Bold", bold: false, italic: false, serif: false, fixedPitch: false));
+        Assert.Equal(gothic, Fonts.Match("MS-Gothic", bold: false, italic: true, serif: false, fixedPitch: false));
+        if (Fonts.FindFamily("MS PGothic", false, false) is { } pgothic)
+            Assert.Equal(pgothic, Fonts.Match("MS-PGothic,Bold", bold: false, italic: false, serif: false, fixedPitch: false));
+        // A style after the '-' still is the style.
+        var arialBold = Fonts.Match("Arial-BoldMT", bold: false, italic: false, serif: false, fixedPitch: false)!;
+        Assert.True(Is(arialBold, "Arial") && arialBold.Bold && !arialBold.Italic);
     }
 
     [Fact]

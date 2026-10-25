@@ -138,17 +138,26 @@ internal static class SubstituteShaper
         }
         if (placed.Count == 0) return null;
 
-        // Fitted as a single glyph is fitted to its width: narrowed when wider than the space, widened
-        // by up to a tenth and centred when narrower.
-        double space = right - left, scale = 1, shift = 0;
-        if (space > 0 && pen > 0 && Math.Abs(space - pen) > pen * 0.01)
-        {
-            scale = Math.Min(space / pen, 1.10);
-            shift = Math.Max(0, (space - pen * scale) / 2);
-        }
+        // Fitted as a single glyph is fitted to its width.
+        var (scale, shift) = FitToWidth(pen, right - left) ?? (1, 0);
         foreach (var (gid, x, dy) in placed)
             result.Add(((ushort)gid, new Vector2((float)(left + shift + x * scale), (float)(y + dy)), (float)scale));
         return result;
+    }
+
+    /// <summary>
+    /// The fit of a substitute's glyph (or shaped word) <paramref name="own"/> wide to the
+    /// <paramref name="space"/> the document's /Widths give it, as Acrobat fits its substitutes: one
+    /// wider than its space is narrowed so it does not run into the next, and one narrower is widened
+    /// by up to a tenth and centred in the rest, so the gaps fall evenly instead of all after it.
+    /// <c>Shift</c> moves it right, in the units of the widths. Null when the two differ by 1 % or less.
+    /// The Skia, Direct2D and WPF backends share this rule.
+    /// </summary>
+    public static (double Scale, double Shift)? FitToWidth(double own, double space)
+    {
+        if (space <= 0 || own <= 0 || Math.Abs(space - own) <= own * 0.01) return null;
+        double scale = Math.Min(space / own, 1.10);
+        return (scale, Math.Max(0, (space - own * scale) / 2));
     }
 
     /// <summary>
