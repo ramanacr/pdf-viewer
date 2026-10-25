@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 using SharpGen.Runtime;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
@@ -13,8 +14,14 @@ using Vortice.WIC;
 
 namespace PdfEngine.Vector.Direct2D;
 
-/// <summary>A glyph run as the backend draws it; <see cref="Value"/> is null when it cannot (<see cref="Problem"/> says why).</summary>
-internal sealed record ResolvedRun((IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? Value, bool ByGlyphId, string Problem);
+/// <summary>One face's glyphs of a resolved run: indices, offsets (glyph space, ascender up) and the horizontal scale of each (null when all are 1).</summary>
+internal sealed record ResolvedPart(IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales);
+
+/// <summary>
+/// A glyph run as the backend draws it: one part per face (a substitute's run takes characters it
+/// lacks from other faces); <see cref="Parts"/> is null when it cannot be drawn (<see cref="Problem"/> says why).
+/// </summary>
+internal sealed record ResolvedRun(IReadOnlyList<ResolvedPart>? Parts, bool ByGlyphId, string Problem);
 
 /// <summary>
 /// Device-independent and device-dependent Direct2D/DirectWrite resources (04 "Device loss",
@@ -230,7 +237,8 @@ internal sealed class D2DResources : IDisposable
 
     /// <summary>
     /// The substitute's font file as the editing shaper reads it (its cmap, GSUB and GPOS), read once
-    /// on first use; null when it is not a single local TrueType-outline file or cannot be read.
+    /// on first use: from disk for an installed face, else through its loader's stream (a face held
+    /// in memory). Null when the face is not one TrueType-outline file or the file cannot be read.
     /// </summary>
     public TrueTypeFontFile? GetShapingFont(IDWriteFontFace face)
     {
@@ -239,9 +247,9 @@ internal sealed class D2DResources : IDisposable
         TrueTypeFontFile? result = null;
         try
         {
-            if (LocalPath(face) is { } path)
+            if (FileBytes(face) is { } bytes)
             {
-                result = TrueTypeFontFile.TryLoad(File.ReadAllBytes(path), (int)face.Index);
+                result = TrueTypeFontFile.TryLoad(bytes, (int)face.Index);
                 // The file must be the one DirectWrite loaded: its glyph ids are drawn with this face.
                 if (result != null && result.GlyphCount != face.GlyphCount) result = null;
             }
@@ -254,31 +262,203 @@ internal sealed class D2DResources : IDisposable
         return result;
     }
 
-    /// <summary>The path of the face's file when DirectWrite loads it from disk (installed fonts); else null.</summary>
-    private static unsafe string? LocalPath(IDWriteFontFace face)
+    /// <summary>
+    /// The bytes of the face's file: read from disk when DirectWrite loads it from there (installed
+    /// fonts), else through its loader's stream (IDWriteFontFileStream: a font in memory). Null for a
+    /// face of more than one file, or one whose loader gives no stream.
+    /// </summary>
+    private static unsafe byte[]? FileBytes(IDWriteFontFace face)
     {
         var files = face.GetFiles();
         try
         {
             if (files.Length != 1)
                 return null;
-            using var loader = files[0].Loader as ComObject;
-            using var local = loader?.QueryInterfaceOrNull<IDWriteLocalFontFileLoader>();
-            if (local == null)
-                return null; // not a file on disk (a font in memory)
             var key = files[0].GetReferenceKey();
+            using var loader = files[0].Loader as ComObject;
             fixed (byte* k = key)
             {
-                uint length = local.GetFilePathLengthFromKey((IntPtr)k, (uint)key.Length);
-                var buffer = new char[length + 1];
-                fixed (char* b = buffer)
-                    local.GetFilePathFromKey((IntPtr)k, (uint)key.Length, (IntPtr)b, length + 1);
-                return new string(buffer, 0, (int)length);
+                using (var local = loader?.QueryInterfaceOrNull<IDWriteLocalFontFileLoader>())
+                {
+                    if (local != null)
+                    {
+                        uint length = local.GetFilePathLengthFromKey((IntPtr)k, (uint)key.Length);
+                        var buffer = new char[length + 1];
+                        fixed (char* b = buffer)
+                            local.GetFilePathFromKey((IntPtr)k, (uint)key.Length, (IntPtr)b, length + 1);
+                        return File.ReadAllBytes(new string(buffer, 0, (int)length));
+                    }
+                }
+                using var native = loader?.QueryInterfaceOrNull<IDWriteFontFileLoaderNative>();
+                if (native == null)
+                    return null;
+                using var stream = native.CreateStreamFromKey((IntPtr)k, (uint)key.Length) as ComObject;
+                using var reader = stream?.QueryInterfaceOrNull<IDWriteFontFileStreamNative>();
+                if (reader == null)
+                    return null;
+                ulong size = reader.GetFileSize();
+                if (size == 0 || size > int.MaxValue)
+                    return null;
+                reader.ReadFileFragment(out IntPtr start, 0, size, out IntPtr context);
+                try
+                {
+                    var bytes = new byte[(int)size];
+                    Marshal.Copy(start, bytes, 0, bytes.Length);
+                    return bytes;
+                }
+                finally { reader.ReleaseFileFragment(context); }
             }
         }
         finally
         {
             foreach (var f in files) f.Dispose();
+        }
+    }
+
+    /// <summary>A face loaded from bytes in memory, as an embedded program is (for tests); null when DirectWrite rejects it.</summary>
+    internal IDWriteFontFace? CreateInMemoryFace(byte[] data, FontFaceType type, uint index = 0)
+    {
+        var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
+        {
+            using var file = _fontLoader.CreateInMemoryFontFileReference(DWrite, handle.AddrOfPinnedObject(), (uint)data.Length, null);
+            var face = DWrite.CreateFontFace(type, new[] { file }, index, FontSimulations.None);
+            _systemFaces[$"memory:{_systemFaces.Count}"] = face; // disposed with the others
+            return face;
+        }
+        catch (SharpGenException) { return null; }
+        finally { handle.Free(); }
+    }
+
+    // ------------------------------------------------------------------ faces for single characters
+
+    private readonly Dictionary<(int CodePoint, string Language, bool Bold, bool Italic), IDWriteFontFace?> _characterFaces = new();
+    private IDWriteFontFallback? _systemFallback;
+    private bool _noSystemFallback;
+
+    /// <summary>
+    /// The installed face that draws a character the run's substitute lacks: the face for its script
+    /// (<see cref="CharacterFaces.WindowsFamilies"/>: Segoe UI for Arabic and Hebrew, Nirmala UI for
+    /// Indic, the face of <paramref name="cjkLanguage"/> for Han, Segoe UI Symbol for symbols), else
+    /// the face the system's font fallback maps it to; null when no installed face has it.
+    /// </summary>
+    public IDWriteFontFace? GetCharacterFace(int codePoint, string cjkLanguage, bool bold, bool italic)
+    {
+        var key = (codePoint, CharacterFaces.IsCjk(codePoint) ? cjkLanguage : "", bold, italic);
+        if (_characterFaces.TryGetValue(key, out var cached))
+            return cached;
+        IDWriteFontFace? result = null;
+        foreach (var family in CharacterFaces.WindowsFamilies(codePoint, cjkLanguage))
+        {
+            if (GetSystemFace(family, bold, italic) is { } face && Has(face, codePoint))
+            {
+                result = face;
+                break;
+            }
+        }
+        result ??= SystemFallbackFace(codePoint, cjkLanguage, bold, italic);
+        _characterFaces[key] = result;
+        return result;
+    }
+
+    private static bool Has(IDWriteFontFace face, int codePoint) => face.GetGlyphIndices(new[] { (uint)codePoint })[0] != 0;
+
+    /// <summary>The installed face DirectWrite's system font fallback (IDWriteFactory2.SystemFontFallback) maps the character to; null when none has it.</summary>
+    private IDWriteFontFace? SystemFallbackFace(int codePoint, string cjkLanguage, bool bold, bool italic)
+    {
+        if (_noSystemFallback)
+            return null;
+        try
+        {
+            _systemFallback ??= DWrite.SystemFontFallback;
+        }
+        catch (SharpGenException)
+        {
+            _systemFallback = null;
+        }
+        if (_systemFallback == null)
+        {
+            _noSystemFallback = true;
+            return null;
+        }
+        string text = char.ConvertFromUtf32(codePoint);
+        string locale = !CharacterFaces.IsCjk(codePoint) ? "en-us" : cjkLanguage switch { "jp" => "ja-jp", "tc" => "zh-tw", "kr" => "ko-kr", _ => "zh-cn" };
+        using var source = new CharacterSource(text, locale);
+        IDWriteFont? font = null;
+        try
+        {
+            _systemFallback.MapCharacters(source, 0, (uint)text.Length, null!, null!,
+                bold ? FontWeight.Bold : FontWeight.Normal, italic ? FontStyle.Italic : FontStyle.Normal, FontStretch.Normal,
+                0, out font, out _);
+            if (font == null)
+                return null;
+            // The face of that family as substitutes load it, so the run's parts and its shaping share one face.
+            using var family = font.FontFamily;
+            using var names = family.FamilyNames;
+            string name = names.GetString(0);
+            if (GetSystemFace(name, bold, italic) is { } face && Has(face, codePoint))
+                return face;
+            string key = $"fallback:{name}|{font.Weight}|{font.Style}|{font.Simulations}";
+            if (!_systemFaces.TryGetValue(key, out var own))
+                _systemFaces[key] = own = font.CreateFontFace();
+            return own != null && Has(own, codePoint) ? own : null;
+        }
+        catch (SharpGenException)
+        {
+            return null;
+        }
+        finally
+        {
+            font?.Dispose();
+        }
+    }
+
+    /// <summary>One character and its locale, as DirectWrite's font fallback reads text.</summary>
+    private sealed class CharacterSource : CallbackBase, IDWriteTextAnalysisSource
+    {
+        private readonly IntPtr _text, _locale;
+        private readonly uint _length;
+
+        public CharacterSource(string text, string locale)
+        {
+            _text = Marshal.StringToHGlobalUni(text);
+            _locale = Marshal.StringToHGlobalUni(locale);
+            _length = (uint)text.Length;
+        }
+
+        public uint GetTextAtPosition(uint textPosition, IntPtr textString)
+        {
+            bool inside = textPosition < _length;
+            Marshal.WriteIntPtr(textString, inside ? _text + (int)textPosition * 2 : IntPtr.Zero);
+            return inside ? _length - textPosition : 0;
+        }
+
+        public uint GetTextBeforePosition(uint textPosition, IntPtr textString)
+        {
+            bool inside = textPosition > 0 && textPosition <= _length;
+            Marshal.WriteIntPtr(textString, inside ? _text : IntPtr.Zero);
+            return inside ? textPosition : 0;
+        }
+
+        public ReadingDirection GetParagraphReadingDirection() => ReadingDirection.LeftToRight;
+
+        public uint GetLocaleName(uint textPosition, IntPtr localeName)
+        {
+            Marshal.WriteIntPtr(localeName, _locale);
+            return textPosition < _length ? _length - textPosition : 0;
+        }
+
+        public void GetNumberSubstitution(uint textPosition, out uint textLength, out IDWriteNumberSubstitution numberSubstitution)
+        {
+            textLength = textPosition < _length ? _length - textPosition : 0;
+            numberSubstitution = null!;
+        }
+
+        protected override void DisposeCore(bool disposing)
+        {
+            Marshal.FreeHGlobal(_text);
+            Marshal.FreeHGlobal(_locale);
+            base.DisposeCore(disposing);
         }
     }
 
@@ -383,6 +563,8 @@ internal sealed class D2DResources : IDisposable
         foreach (var f in _embeddedFaces.Values) f?.Dispose();
         foreach (var f in _systemFaces.Values) f?.Dispose();
         _shapingFonts.Clear();
+        _characterFaces.Clear();
+        _systemFallback?.Dispose();
         _systemCollection?.Dispose();
         DWrite.UnregisterFontFileLoader(_fontLoader);
         _fontLoader.Dispose();
