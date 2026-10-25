@@ -33,7 +33,7 @@ The repository currently contains:
 - pinned PDFium runtime under `src/PdfViewer/runtimes/win-x64/native/pdfium.dll`
 - PDFium engineering assets under `eng/pdfium`
 - existing tests including engine, comparison/OCR, cache, annotations, security/sanitization, save, layout, and text-selection workflows
-- existing `Coding Agent Docs`
+- existing `docs/archive/coding-agent-docs` (archived)
 
 The current viewer is .NET 9/WPF. Keep it during the engine migration. UI/native-shell replacement is a separate future program.
 
