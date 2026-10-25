@@ -139,6 +139,30 @@ public sealed class PdfNativeFormService : IPdfFormService
     public static IReadOnlyList<string> SetValues(PdfNativeDocument doc, IEnumerable<(string Name, IReadOnlyList<string> Values)> values, bool validate)
     {
         var form = PdfAcroForm.Read(doc.Vector) ?? throw new KeyNotFoundException("The document has no form fields.");
+        return Commit(doc, form, Changes(form, values), validate);
+    }
+
+    /// <summary>
+    /// <see cref="SetValues"/> for a host that keeps its own bytes (the web viewer): the values go
+    /// into <paramref name="original"/>, the bytes of <paramref name="document"/>, as one incremental
+    /// update, with the same rules and recalculation. Returns the new bytes (<paramref name="original"/>
+    /// itself when there is nothing to change) and the full names of the fields changed. The
+    /// document must take an incremental update: rewrite a repaired one first (<see cref="PdfFullWriter.Rewrite"/>).
+    /// </summary>
+    public static (byte[] Bytes, IReadOnlyList<string> Changed) Fill(PdfVectorDocument document, byte[] original,
+        IEnumerable<(string Name, IReadOnlyList<string> Values)> values, bool validate)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(original);
+        var form = PdfAcroForm.Read(document) ?? throw new KeyNotFoundException("The document has no form fields.");
+        var changes = Changes(form, values);
+        if (changes.Count == 0) return (original, Array.Empty<string>());
+        var prepared = Prepared(form, changes, validate);
+        return (PdfFormFiller.Apply(document, original, prepared), prepared.Select(c => c.FullName).Distinct().ToList());
+    }
+
+    private static List<PdfFieldChange> Changes(PdfAcroForm form, IEnumerable<(string Name, IReadOnlyList<string> Values)> values)
+    {
         var changes = new List<PdfFieldChange>();
         foreach (var (name, v) in values)
         {
@@ -146,8 +170,11 @@ public sealed class PdfNativeFormService : IPdfFormService
             if (field.IsReadOnly) throw new InvalidOperationException($"Form field '{field.FullName}' is read-only and cannot be modified.");
             changes.Add(ToChange(field, v));
         }
-        return Commit(doc, form, changes, validate);
+        return changes;
     }
+
+    private static List<PdfFieldChange> Prepared(PdfAcroForm form, List<PdfFieldChange> changes, bool validate) =>
+        validate ? PdfFormScripts.Prepare(form, changes) : WithCalculations(form, changes);
 
     /// <summary>A field by full name, else the one field whose last name part is <paramref name="name"/> (PDFium's partial names).</summary>
     public static PdfFormField? Find(PdfAcroForm form, string name)
@@ -196,7 +223,7 @@ public sealed class PdfNativeFormService : IPdfFormService
     private static IReadOnlyList<string> Commit(PdfNativeDocument doc, PdfAcroForm form, List<PdfFieldChange> changes, bool validate)
     {
         if (changes.Count == 0) return Array.Empty<string>();
-        var prepared = validate ? PdfFormScripts.Prepare(form, changes) : WithCalculations(form, changes);
+        var prepared = Prepared(form, changes, validate);
         var vector = doc.Vector;
         byte[] original = doc.Bytes;
         if (vector.WasRepaired || PdfIncrementalWriter.FindStartXref(original) < 0)
