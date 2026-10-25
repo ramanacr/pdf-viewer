@@ -69,6 +69,22 @@ public class ShapingTests
     }
 
     [Fact]
+    public void ArabicGlyphsSplitOff_StayWithTheirLetter_WhenReversed()
+    {
+        // Noto Sans Arabic draws the dots apart from the letter (a multiple substitution); runs
+        // only with NOTO_FONTS_DIR set to the folder eng/webdemo/noto_fonts.py wrote.
+        string path = Path.Combine(Environment.GetEnvironmentVariable("NOTO_FONTS_DIR") ?? "", "NotoSansArabic-Regular.ttf");
+        if (!File.Exists(path) || TrueTypeFontFile.TryLoad(File.ReadAllBytes(path)) is not { } noto) return;
+        var shaped = TextShaper.ShapeLine("بيت", _ => noto, f => f);
+        Assert.True(shaped.Count > 3);
+        // Drawn left to right, each split-off glyph comes after its letter, whose advance it is placed back from.
+        Assert.NotEqual("", shaped[0].Glyph.Text);
+        Assert.Equal(new[] { "ت", "ي", "ب" }, shaped.Select(g => g.Glyph.Text).Where(t => t.Length > 0));
+        for (int i = 0; i < shaped.Count; i++)
+            if (shaped[i].Glyph.Text.Length == 0) Assert.True(shaped[i].Glyph.Dx < 0);
+    }
+
+    [Fact]
     public void Ligatures_JoinTheirLetters_WhenTheFontHasThem()
     {
         foreach (string file in new[] { "calibri.ttf", "candara.ttf", "constan.ttf", "corbel.ttf", "segoeui.ttf" })

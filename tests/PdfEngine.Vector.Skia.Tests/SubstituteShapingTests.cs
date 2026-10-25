@@ -290,8 +290,13 @@ public class SubstituteShapingTests
         var arabic = Font(fonts.ArabicPath);
         var devanagari = Font(fonts.DevanagariPath);
         string[] lines = { Seen("بيت"), Seen("سلام"), "कि", "क्ष", "र्क" };
-        var ids = await Ids(PageWithContent("Helvetica", SegoeUi.Value,
+        var resolved = await Resolve(PageWithContent("Helvetica", SegoeUi.Value,
             string.Concat(lines.Select((l, i) => $"BT /F0 24 Tf 20 {360 - 40 * i} Td <{Hex(l)}> Tj ET\n")), lines), fonts);
+        var ids = resolved.Select(l => l.Select(g => (int)g.Gid).ToArray()).ToArray();
+        // The dots sit on their letters: none is left of the word's first letter or right of its last.
+        var letters = resolved[0].Where(g => arabic.Advance(g.Gid) > 0).ToList();
+        float start = letters.Min(g => g.Offset.X), end = letters.Max(g => g.Offset.X + (float)(arabic.Advance(g.Gid) / 1000 * 24 * g.Scale));
+        Assert.All(resolved[0].Where(g => arabic.Advance(g.Gid) == 0), g => Assert.InRange(g.Offset.X, start - 1, end));
         // Joined: no letter keeps the glyph its character maps to (the isolated form). Noto Sans
         // Arabic draws the dots as glyphs of their own, so a word has more glyphs than letters.
         Assert.True(ids[0].Length >= 3);

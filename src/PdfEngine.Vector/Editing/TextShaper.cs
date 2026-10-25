@@ -99,11 +99,13 @@ internal static class TextShaper
             }
         }
         // A base and the marks after it move as one when right-to-left text is reversed, so each
-        // mark still follows its base (zero-width marks are drawn over the glyph before them).
+        // mark still follows its base (zero-width marks are drawn over the glyph before them). A
+        // glyph a substitution split off (no text: the dots Noto Sans Arabic draws apart from the
+        // letter) goes with the glyph before it too.
         var clusters = new List<List<(Shaped Glyph, T Font)>>();
         foreach (var g in glyphs)
         {
-            bool mark = g.Glyph.Text.Length > 0 && CharUnicodeInfo.GetUnicodeCategory(g.Glyph.Text, 0) is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark;
+            bool mark = g.Glyph.Text.Length == 0 || CharUnicodeInfo.GetUnicodeCategory(g.Glyph.Text, 0) is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark;
             if (mark && clusters.Count > 0 && clusters[^1][0].Glyph.Level == g.Glyph.Level) clusters[^1].Add(g);
             else clusters.Add(new List<(Shaped Glyph, T Font)> { g });
         }
