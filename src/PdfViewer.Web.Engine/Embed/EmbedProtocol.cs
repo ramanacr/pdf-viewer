@@ -331,8 +331,8 @@ public static class EmbedProtocol
             EmbedMethod.SetZoomLevel => call with { Level = Number(Arg(0), "zoomLevel", 1e-6, 1e6, fallback: null) },
             EmbedMethod.Search => call with { Term = Term(Arg(0)) },
             EmbedMethod.SearchNext or EmbedMethod.SearchPrevious or EmbedMethod.SearchClear => call with { SearchId = Integer(Arg(0), "searchId", 1, int.MaxValue) },
-            EmbedMethod.AddAnnotations => call with { Annotations = EmbedAnnotationJson.ParseList(Arg(0), requestId, "", DateTimeOffset.UtcNow) },
-            EmbedMethod.UpdateAnnotation => call with { Annotations = [EmbedAnnotationJson.Parse(Arg(0), requestId, "", DateTimeOffset.UtcNow, requireId: true)] },
+            EmbedMethod.AddAnnotations => call with { Annotations = EmbedAnnotationJson.ParseList(Arg(0), requestId, "", default) },
+            EmbedMethod.UpdateAnnotation => call with { Annotations = [EmbedAnnotationJson.Parse(Arg(0), requestId, "", default, requireId: true)] },
             EmbedMethod.GetAnnotations => call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) },
             EmbedMethod.DeleteAnnotations => Arg(0).ValueKind == JsonValueKind.Object
                 ? call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) }

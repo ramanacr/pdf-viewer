@@ -61,8 +61,9 @@ public static class EmbedAnnotationJson
         string contents = String(e, "bodyValue", ViewerAnnotationStore.MaxContentsLength, what, requestId) ?? "";
         string name = author;
         if (Object(e, "creator", what, requestId) is { } creator && String(creator, "name", ViewerAnnotationStore.MaxAuthorLength, what + ".creator", requestId) is { } n) name = n;
+        // Missing dates stay unset (default): the viewer gives them when it adds or updates.
         var created = Date(e, "created", what, requestId) ?? now;
-        var modified = Date(e, "modified", what, requestId) ?? created;
+        var modified = Date(e, "modified", what, requestId) ?? (created == default ? default : created);
 
         var target = Object(e, "target", what, requestId) ?? throw Bad(requestId, $"{what}: target is required.");
         var selector = Object(target, "selector", what + ".target", requestId) ?? throw Bad(requestId, $"{what}: target.selector is required.");
