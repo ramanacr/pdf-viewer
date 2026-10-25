@@ -226,7 +226,7 @@ public class RedactionTests
         var right = Px(250, 150);
         Assert.True(right.R > 150 && right.G < 80, $"outside the mark the image is unchanged: {right}");
         // The original pixels are nowhere in the file.
-        Assert.Equal(1, Regex.Matches(Encoding.Latin1.GetString(red), "/Subtype\\s*/Image").Count);
+        Assert.Single(Regex.Matches(Encoding.Latin1.GetString(red), "/Subtype\\s*/Image"));
         Assert.DoesNotContain(Convert.ToHexString(Deflate(pixels)[..32]), Convert.ToHexString(red));
     }
 
@@ -272,7 +272,7 @@ public class RedactionTests
         byte[] red = await Redact(pdf, new[] { new PdfRedactionArea(1, rect) });
         string text = await PdfiumText(red);
         Assert.Contains("Account 12345", text);   // the copy at the bottom was not under the mark
-        Assert.Equal(1, Regex.Matches(text, "12345").Count);
+        Assert.Single(Regex.Matches(text, "12345"));
         Assert.Equal(2, Regex.Matches(text, "Account").Count);
     }
 
@@ -341,7 +341,7 @@ public class RedactionTests
             filled = PdfIncrementalWriter.Append(original, doc, new Dictionary<int, PdfObject>()); // a second revision
         var rect = Around(40, "Hello ", "SECRET", 200, 12);
         byte[] red = await Redact(filled, new[] { new PdfRedactionArea(1, rect) }, new PdfRedactionOptions { OverlayText = "Redacted" });
-        Assert.Equal(1, Regex.Matches(Encoding.Latin1.GetString(red), "%%EOF").Count);
+        Assert.Single(Regex.Matches(Encoding.Latin1.GetString(red), "%%EOF"));
         Assert.DoesNotContain("/Prev", Encoding.Latin1.GetString(red));
         Assert.Contains("(Redacted) Tj", AllDecodedStreams(red));
         using var page = await Render(red);

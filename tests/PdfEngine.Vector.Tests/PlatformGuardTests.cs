@@ -56,9 +56,9 @@ public class PlatformGuardTests
     }
 
     [Fact]
-    public void Prefetch_WithoutThreads_QueuesNothingAndTextIsBuiltOnDemand()
+    public async Task Prefetch_WithoutThreads_QueuesNothingAndTextIsBuiltOnDemand()
     {
-        using var doc = PdfVectorDocument.OpenAsync(Pages(3, p => $"BT /F1 12 Tf 20 250 Td (Browser page {p}) Tj ET")).AsTask().GetAwaiter().GetResult();
+        using var doc = await PdfVectorDocument.OpenAsync(Pages(3, p => $"BT /F1 12 Tf 20 250 Td (Browser page {p}) Tj ET"));
         using (PdfPlatform.Simulate(canStartThreads: false, hasInstalledFonts: false))
         {
             // On a single-threaded platform the worker would throw when started: nothing is queued.

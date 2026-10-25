@@ -212,7 +212,7 @@ public class CreatePdfViewerTests : IDisposable
             Assert.Equal("Combine Files", window.Title);
             System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() => { }));
             var list = (System.Windows.Controls.ListBox)window.FindName("FileList");
-            Assert.Equal(1, list.Items.Count);
+            Assert.Single(list.Items);
             window.Close();
             using var scanVm = vm.CreateScanViewModel();
             var scan = new PdfViewer.Views.Dialogs.ScanWindow(scanVm) { Left = -10000, ShowActivated = false, ShowInTaskbar = false };
