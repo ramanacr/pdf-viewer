@@ -55,6 +55,9 @@ public sealed class PdfContentInterpreter
     /// </summary>
     public Func<int, bool, PdfStream?>? WidgetAppearance { get; init; }
 
+    /// <summary>Annotations (by object number) left out on screen, for a viewer that draws them itself while they change; printing draws them.</summary>
+    public Func<int, bool>? HiddenAnnotation { get; init; }
+
     public PdfContentInterpreter(
         PdfObjectResolver resolver,
         PdfFontResolver? fontResolver = null,
@@ -2891,6 +2894,8 @@ public sealed class PdfContentInterpreter
             foreach (var annotRef in annots)
             {
                 if (_resolver.Resolve(annotRef) is not PdfDictionary annot)
+                    continue;
+                if (!_forPrinting && annotRef is PdfIndirectRef hiddenRef && _owner.HiddenAnnotation?.Invoke(hiddenRef.ObjectNumber) == true)
                     continue;
                 string? subtype = annot.GetName("Subtype");
                 if (subtype is "Popup" or "Link")

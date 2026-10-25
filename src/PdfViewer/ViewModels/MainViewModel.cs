@@ -1906,7 +1906,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private string _savedAnnotationsFingerprint = string.Empty;
 
     private string AnnotationsFingerprint() => string.Join("|", AllAnnotations.Select(a =>
-        $"{a.Id}:{a.Type}:{a.PageNumber}:{a.X:F5},{a.Y:F5},{a.Width:F5},{a.Height:F5}:{a.ColorHex}:{a.Opacity:F3}:{a.Contents}:{a.Author}:{a.StrokeThickness}:{a.InkStrokes.Count}:{a.Quads.Count}"));
+        $"{a.Id}:{a.Type}:{a.PageNumber}:{a.X:F5},{a.Y:F5},{a.Width:F5},{a.Height:F5}:{a.ColorHex}:{a.Opacity:F3}:{a.Contents}:{a.Author}:{a.StrokeThickness}:{a.InkStrokes.Count}:{a.Quads.Count}:{a.StampRotation:F3}:{string.Join(";", a.Vertices.Select(v => $"{v.X:F5},{v.Y:F5}"))}:{string.Join(";", a.InkStrokes.SelectMany(st => st).Select(v => $"{v.X:F5},{v.Y:F5}"))}"));
 
     /// <summary>Only the form changed since the last save: the in-memory revision is written as it is.</summary>
     private bool OnlyFormChanges => _formChangedSinceSave && AnnotationsFingerprint() == _savedAnnotationsFingerprint;
