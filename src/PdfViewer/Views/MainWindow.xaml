@@ -1338,7 +1338,12 @@
                               PreviewMouseUp="DocumentScrollViewer_PreviewMouseUp"
                               ScrollChanged="DocumentScrollViewer_ScrollChanged">
 
-                    <Grid MinWidth="{Binding ViewportWidth, ElementName=DocumentScrollViewer}" HorizontalAlignment="Left" Margin="24">
+                    <!-- At least as wide as the viewport, so a narrower page centres in it with
+                         equal margins. The 24 px margin sits inside it, on the centred grid:
+                         on this grid it made the content 48 px wider than the viewport, which
+                         always showed a horizontal scroll bar and moved the page 24 px right. -->
+                    <Grid x:Name="PageAreaGrid" MinWidth="{Binding ViewportWidth, ElementName=DocumentScrollViewer}" HorizontalAlignment="Left">
+                    <Grid x:Name="PageArea" HorizontalAlignment="Center" Margin="24">
 
                         <!-- Mode 1: Continuous Scrolling Mode -->
                         <!-- Bound to rows, not to the flat page list: the grouping on screen is
@@ -2049,6 +2054,7 @@
                                 </Grid>
                             </Grid>
                         </Border>
+                    </Grid>
                     </Grid>
                 </ScrollViewer>
             </Grid>

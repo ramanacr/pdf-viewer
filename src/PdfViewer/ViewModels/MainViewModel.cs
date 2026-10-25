@@ -986,32 +986,57 @@ public partial class MainViewModel : ObservableObject, IDisposable
         double docPageWidth = RotationAngle == 90 || RotationAngle == 270 ? targetPage.HeightPt : targetPage.WidthPt;
         double docPageHeight = RotationAngle == 90 || RotationAngle == 270 ? targetPage.WidthPt : targetPage.HeightPt;
 
-        // Two pages across have to share the viewport, and the gap between them is real
+        // Two pages across have to share the viewport, and the margins between them are real
         // width that the pages do not get. Fitting one page's width in facing mode would put
         // the second one off screen, which is the opposite of what "fit" means.
         int across = PagesPerRow;
-        double requiredWidth = (docPageWidth * across) + (PageGap * (across - 1));
+        double sideMargin = IsMultiPageLayout ? PageSideMargin : 0;
+        double scaleX = FitWidthZoom(viewportWidth, VerticalScrollBarWidth, docPageWidth, across, sideMargin);
 
         if (FitMode == PageFitMode.FitWidth)
         {
-            double availableWidth = viewportWidth - 40; // account for scrollbar & margins
-            if (availableWidth > 0 && requiredWidth > 0)
-            {
-                ZoomLevel = Math.Clamp(availableWidth / requiredWidth, MinZoom, MaxZoom);
-            }
+            if (scaleX > 0) ZoomLevel = Math.Clamp(scaleX, MinZoom, MaxZoom);
         }
         else if (FitMode == PageFitMode.FitPage)
         {
-            double availableWidth = viewportWidth - 40;
-            double availableHeight = viewportHeight - 40;
-            if (availableWidth > 0 && availableHeight > 0 && requiredWidth > 0 && docPageHeight > 0)
+            double availableHeight = viewportHeight - (2 * DocumentMargin) - (IsMultiPageLayout ? PageGap : 0) - LayoutSlack;
+            if (scaleX > 0 && availableHeight > 0 && docPageHeight > 0)
             {
-                double scaleX = availableWidth / requiredWidth;
                 double scaleY = availableHeight / docPageHeight;
                 ZoomLevel = Math.Clamp(Math.Min(scaleX, scaleY), MinZoom, MaxZoom);
             }
         }
     }
+
+    /// <summary>Margin of the page area on all four sides, in device-independent pixels.</summary>
+    public const double DocumentMargin = 24;
+
+    /// <summary>Space left and right of each page in the continuous and facing layouts.</summary>
+    public const double PageSideMargin = 10;
+
+    /// <summary>Room kept for rounding to device pixels, so a fitted page never overflows by a pixel.</summary>
+    public const double LayoutSlack = 1;
+
+    /// <summary>
+    /// Width of the document's vertical scroll bar. The fit keeps it free, so that a fitted
+    /// page still fits when the bar shows. The view sets it from the bar's style.
+    /// </summary>
+    public double VerticalScrollBarWidth { get; set; } = 10;
+
+    /// <summary>
+    /// The zoom at which <paramref name="across"/> pages of <paramref name="pageWidth"/> points,
+    /// with their side margins and the page area's margins, fill the viewport that remains
+    /// after the vertical scroll bar. Zero when nothing fits.
+    /// </summary>
+    public static double FitWidthZoom(double viewportWidth, double scrollBarWidth, double pageWidth, int across, double pageSideMargin)
+    {
+        double available = viewportWidth - scrollBarWidth - FitChromeWidth(across, pageSideMargin) - LayoutSlack;
+        return available > 0 && pageWidth > 0 && across > 0 ? available / (pageWidth * across) : 0;
+    }
+
+    /// <summary>Width the page area takes beside the pages themselves: its margins and each page's.</summary>
+    public static double FitChromeWidth(int across, double pageSideMargin) =>
+        (2 * DocumentMargin) + (across * 2 * pageSideMargin);
 
     [RelayCommand]
     public void RotateClockwise()

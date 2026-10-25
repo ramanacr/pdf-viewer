@@ -61,6 +61,17 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>The document's vertical scroll bar width, from its style (the system width before the template applies).</summary>
+    private double DocumentVerticalScrollBarWidth()
+    {
+        if (DocumentScrollViewer.Template?.FindName("PART_VerticalScrollBar", DocumentScrollViewer) is System.Windows.Controls.Primitives.ScrollBar bar)
+        {
+            double width = bar.ActualWidth > 0 ? bar.ActualWidth : bar.Width;
+            if (width > 0 && !double.IsNaN(width)) return width;
+        }
+        return SystemParameters.VerticalScrollBarWidth;
+    }
+
     /// <summary>Gives one document the callbacks it needs to reach this window.</summary>
     private void AttachToWindow(MainViewModel document)
     {
@@ -169,7 +180,13 @@ public partial class MainWindow : Window
         };
         document.ScrollToPageAction = ScrollToPage;
         document.ScrollToMatchAction = ScrollToMatch;
-        document.GetViewportSizeFunc = () => (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+        document.GetViewportSizeFunc = () =>
+        {
+            // The whole width, with the vertical bar's width kept free: the fit then holds
+            // whether the bar shows or not, and never brings on a horizontal bar.
+            document.VerticalScrollBarWidth = DocumentVerticalScrollBarWidth();
+            return (DocumentScrollViewer.ActualWidth, DocumentScrollViewer.ActualHeight);
+        };
 
         document.PropertyChanged += (s, e) =>
         {
