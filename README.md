@@ -81,8 +81,9 @@ A browser has no installed fonts, so the demo bundles the Liberation fonts (SIL 
 License): text in a non-embedded Helvetica, Arial, Times or Courier is drawn with the
 metric-compatible Liberation Sans, Serif or Mono, fetched only when a page needs that face.
 Its limits are stated plainly in its README: non-embedded Dingbats, Symbol characters that
-Liberation Sans lacks, and scripts it does not cover (CJK, for example) still need the device's fonts, which only Chrome and Edge can lend the page; CMYK JPEG images
-are not decoded yet; the engine runs in the .NET interpreter. Run it locally with
+Liberation Sans lacks, and scripts it does not cover (CJK, for example) still need the
+device's fonts, which only Chrome and Edge can lend the page; CMYK JPEG images are not
+decoded yet; the engine runs in the .NET interpreter. Run it locally with
 `dotnet workload install wasm-tools` and `dotnet run --project src/PdfViewer.Web`.
 
 ---
