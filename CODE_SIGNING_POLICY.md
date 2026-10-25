@@ -7,6 +7,16 @@
 Bundled third-party components (for example the Vortice.Windows assemblies) are included as their
 projects publish them and are not signed with this project's certificate.
 
+Other distributions:
+
+- **Microsoft Store package** (not live yet): built by `.github/workflows/msix.yml` or
+  `scripts/build_msix.ps1` from tagged source. The Microsoft Store signs it when it is submitted;
+  this project's certificate is not used.
+- **NuGet packages** (`PdfEngine.Abstractions`, `PdfEngine.Vector`, `PdfEngine.Vector.Skia`):
+  built and pushed to nuget.org only by `.github/workflows/packages.yml`, from an `engine-v*` tag
+  or a manual run of that workflow, through nuget.org Trusted Publishing (no stored API key).
+  They are not signed with this project's certificate.
+
 ## Certificate
 
 Releases are signed today with the project's own **self-signed** release certificate, so Windows

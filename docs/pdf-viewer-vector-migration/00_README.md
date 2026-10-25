@@ -1,5 +1,13 @@
 # PDF Viewer — Vector-First Engine Migration Bundle
 
+> **Status (2026-10-25): the migration is complete.** Since v4.0.0 the published app has no
+> PDFium (M10): the own engine opens, draws, searches, edits and saves every document, and PDFium
+> stays only in developer and test builds as the reference. These files are kept as the design
+> record (decisions, ADRs, gates). The "current repository facts" below describe the 2026-09-21
+> baseline, not today. For the current state, read
+> [18_IMPLEMENTATION_STATUS.md](18_IMPLEMENTATION_STATUS.md) and the
+> [README](https://github.com/ramanacr/pdf-viewer#readme).
+
 **Repository:** `ramanacr/pdf-viewer`  
 **Baseline reviewed:** `main`, commit/tree observed 2026-09-21  
 **Migration strategy:** Own PDF core + vector IR + native Windows renderer; retain PDFium as a temporary compatibility fallback and development oracle; remove it from production only after measurable compatibility gates are met.
