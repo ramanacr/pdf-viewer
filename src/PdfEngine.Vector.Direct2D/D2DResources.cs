@@ -240,9 +240,13 @@ internal sealed class D2DResources : IDisposable
         try
         {
             if (LocalPath(face) is { } path)
+            {
                 result = TrueTypeFontFile.TryLoad(File.ReadAllBytes(path), (int)face.Index);
+                // The file must be the one DirectWrite loaded: its glyph ids are drawn with this face.
+                if (result != null && result.GlyphCount != face.GlyphCount) result = null;
+            }
         }
-        catch (Exception e) when (e is SharpGenException or IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is SharpGenException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             result = null;
         }

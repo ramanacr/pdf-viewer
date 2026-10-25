@@ -178,7 +178,7 @@ internal sealed class WpfFontCache : IDisposable
                 if (result != null && result.GlyphCount != typeface.GlyphCount) result = null;
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or NotSupportedException)
         {
             result = null;
         }
@@ -194,14 +194,21 @@ internal sealed class WpfFontCache : IDisposable
         var english = System.Globalization.CultureInfo.GetCultureInfo("en-US");
         string? family = typeface.Win32FamilyNames.TryGetValue(english, out var f) ? f : null;
         string? style = typeface.Win32FaceNames.TryGetValue(english, out var s) ? s : null;
+        int? found = null;
         foreach (var face in PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Faces)
         {
             if (!string.Equals(face.Path, path, StringComparison.OrdinalIgnoreCase)) continue;
             if ((string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase) || string.Equals(face.LegacyFamily, family, StringComparison.OrdinalIgnoreCase))
                 && (style == null || string.Equals(face.Subfamily, style, StringComparison.OrdinalIgnoreCase)))
-                return face.Index;
+            {
+                if (style != null) return face.Index;
+                // Without a style name only one face of the family may match: two faces of a
+                // collection can have the same glyph count, so a guess would draw the wrong glyphs.
+                if (found != null) return null;
+                found = face.Index;
+            }
         }
-        return null;
+        return found;
     }
 
     public void Dispose()

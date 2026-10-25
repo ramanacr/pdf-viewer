@@ -41,6 +41,8 @@ internal static class SubstituteShaper
         var script = Script.Joiner;
         for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
         {
+            // A lone surrogate is not text to shape (ConvertToUtf32 would throw on it).
+            if (char.IsSurrogate(text[i]) && !char.IsSurrogatePair(text, i)) return Script.None;
             var s = ScriptOf(char.ConvertToUtf32(text, i));
             if (s == Script.None || (s != Script.Joiner && script != Script.Joiner && s != script)) return Script.None;
             if (s != Script.Joiner) script = s;
