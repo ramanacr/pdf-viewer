@@ -332,6 +332,9 @@ internal sealed class D2DResources : IDisposable
 
     // ------------------------------------------------------------------ faces for single characters
 
+    // No lock of its own, as for _systemFaces: Direct2DVectorRenderer holds its _gate around every
+    // replay and analysis, so GetCharacterFace and SystemFallbackFace (which also adds to
+    // _systemFaces) run on one thread at a time.
     private readonly Dictionary<(int CodePoint, string Language, bool Bold, bool Italic), IDWriteFontFace?> _characterFaces = new();
     private IDWriteFontFallback? _systemFallback;
     private bool _noSystemFallback;
