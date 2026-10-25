@@ -1,7 +1,8 @@
 # Contributing to PDF Viewer
 
 Thank you for your interest. This project is a Windows PDF viewer with its own PDF engine, written
-in C# and released under the [MIT licence](LICENSE). Contributions of all sizes are welcome: bug
+in C# and released under the [MIT licence](LICENSE). The same engine also runs in a browser
+(web demo), on Android (proof of concept), and as NuGet packages. Contributions of all sizes are welcome: bug
 reports, test files you are allowed to share, documentation fixes and code.
 
 ## Before you start
@@ -31,7 +32,10 @@ These rules protect the people who use the viewer. A pull request that breaks on
 
 ## Set up
 
-You need Windows 10 (1809 or later) or Windows 11, and the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
+You need Windows 10 version 2004 (build 19041) or later, or Windows 11, and the
+[.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). The packaging scripts
+(`scripts/build_publish.ps1`, `scripts/build_msix.ps1`) need PowerShell 7 (`pwsh`). The web demo
+and the Android app need extra workloads; see [Build from source](docs/building.md).
 
 ```powershell
 git clone https://github.com/ramanacr/pdf-viewer.git
@@ -44,14 +48,17 @@ dotnet run --project src/PdfViewer
 
 | Project | What it contains |
 |---|---|
-| `src/PdfEngine.Vector` | The PDF engine: parsing, fonts, text, forms, signatures, redaction, PDF/A. Plain `net9.0`, no native code. |
-| `src/PdfEngine.Abstractions` | Contracts shared by the engine and its renderers, including the display list. |
+| `src/PdfEngine.Vector` | The PDF engine: parsing, fonts, text, forms, signatures, redaction, PDF/A. Plain `net9.0`, no native code. NuGet package. |
+| `src/PdfEngine.Abstractions` | Contracts shared by the engine and its renderers, including the display list. NuGet package. |
+| `src/PdfEngine.Vector.Skia` | The portable renderer (SkiaSharp), used by the web demo and the Android app. NuGet package. |
 | `src/PdfEngine.Vector.Direct2D` | The Windows renderer (Direct2D). |
 | `src/PdfEngine.Vector.Windows` | The WPF fallback renderer. |
 | `src/PdfViewer`, `src/PdfViewer.Core` | The WPF application and its view models. |
+| `src/PdfViewer.Web.Engine` | The UI-free engine layer of the web demo and the Android app. |
+| `src/PdfViewer.Web`, `src/PdfViewer.Android` | The web demo (Blazor WebAssembly) and the Android proof of concept. |
 | `src/PdfEngine.Pdfium` | PDFium, used only in development and test builds as a reference. |
 | `tests/` | xUnit test projects. |
-| `eng/` | Build, release and corpus tools. |
+| `eng/`, `scripts/` | Build, release, packaging and corpus tools. |
 
 The engine turns each page into a device-independent display list; a renderer replays that list.
 New platforms add a renderer and reuse the engine unchanged.
@@ -63,6 +70,7 @@ request:
 
 ```powershell
 dotnet test tests/PdfEngine.Vector.Tests
+dotnet test tests/PdfEngine.Vector.Skia.Tests
 dotnet test tests/PdfViewer.Tests
 dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the configuration that is published
 ```
@@ -74,7 +82,9 @@ reference renderer in the existing differential tests, with a stated tolerance.
 
 - Keep one change per pull request, and describe what changed and why.
 - Match the style of the code around your change.
-- CI must pass. A maintainer reviews every pull request before it is merged.
+- CI must pass. The `main` branch is protected: every change comes through a pull request, and
+  the `build-and-test` check must pass before it can be merged. A maintainer reviews every pull
+  request before it is merged.
 - By opening a pull request, you agree that your contribution is released under the MIT licence.
 
 ## Reporting a security problem

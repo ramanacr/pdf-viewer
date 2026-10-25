@@ -1,3 +1,7 @@
+> **Archived.** This file is a generic prompt for AI coding agents about building a wizard
+> installer. It is not documentation of this project and is not maintained.
+> For how to build the installer, read [docs/building.md](docs/building.md).
+
 # Modern WinUI/Fluent Wizard Installer for Windows Applications
 ## Master Agent Directive & Implementation Prompt
 
