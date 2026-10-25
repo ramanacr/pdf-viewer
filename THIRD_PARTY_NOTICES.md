@@ -163,6 +163,33 @@ Copyright (c) 2012 Red Hat, Inc.
 
 The archive's licence adds the reserved font names: Arimo, Tinos and Cousine (Google Corporation) and Liberation (Red Hat, Inc.).
 
+## Noto Fonts (web demo only)
+License: SIL Open Font License 1.1. Published with the web demo in `fonts/noto`, but not stored in this repository. The web demo workflow (`.github/workflows/web-demo.yml`) runs `eng/webdemo/noto_fonts.py`. The script downloads each release archive below, checks its SHA-256 and the SHA-256 of the file taken from it against `eng/webdemo/noto-fonts.json`, and writes the files with the licence of each archive as `OFL-<id>.txt` next to them. The script and symbol faces are shipped unmodified. The CJK faces are cut into Unicode slices (subsets with the same names and copyright, without layout tables and hinting) with fontTools 4.66.1 (MIT, used only to build, not shipped). The Windows application and the Android app do not include them.
+
+| Family | Release | File used |
+|---|---|---|
+| Noto Sans Arabic 2.013 | https://github.com/notofonts/arabic/releases/tag/NotoSansArabic-v2.013 | `unhinted/ttf/NotoSansArabic-Regular.ttf` |
+| Noto Sans Hebrew 3.001 | https://github.com/notofonts/hebrew/releases/tag/NotoSansHebrew-v3.001 | `unhinted/ttf/NotoSansHebrew-Regular.ttf` |
+| Noto Sans Devanagari 2.007 | https://github.com/notofonts/devanagari/releases/tag/NotoSansDevanagari-v2.007 | `unhinted/ttf/NotoSansDevanagari-Regular.ttf` |
+| Noto Sans Bengali 3.011 | https://github.com/notofonts/bengali/releases/tag/NotoSansBengali-v3.011 | `unhinted/ttf/NotoSansBengali-Regular.ttf` |
+| Noto Sans Tamil 2.004 | https://github.com/notofonts/tamil/releases/tag/NotoSansTamil-v2.004 | `unhinted/ttf/NotoSansTamil-Regular.ttf` |
+| Noto Sans Telugu 2.005 | https://github.com/notofonts/telugu/releases/tag/NotoSansTelugu-v2.005 | `unhinted/ttf/NotoSansTelugu-Regular.ttf` |
+| Noto Sans Kannada 2.006 | https://github.com/notofonts/kannada/releases/tag/NotoSansKannada-v2.006 | `unhinted/ttf/NotoSansKannada-Regular.ttf` |
+| Noto Sans Malayalam 2.104 | https://github.com/notofonts/malayalam/releases/tag/NotoSansMalayalam-v2.104 | `unhinted/ttf/NotoSansMalayalam-Regular.ttf` |
+| Noto Sans Gujarati 2.106 | https://github.com/notofonts/gujarati/releases/tag/NotoSansGujarati-v2.106 | `unhinted/ttf/NotoSansGujarati-Regular.ttf` |
+| Noto Sans Gurmukhi 2.004 | https://github.com/notofonts/gurmukhi/releases/tag/NotoSansGurmukhi-v2.004 | `unhinted/ttf/NotoSansGurmukhi-Regular.ttf` |
+| Noto Sans Oriya 2.007 | https://github.com/notofonts/oriya/releases/tag/NotoSansOriya-v2.007 | `unhinted/ttf/NotoSansOriya-Regular.ttf` |
+| Noto Sans Math 3.000 | https://github.com/notofonts/math/releases/tag/NotoSansMath-v3.000 | `unhinted/ttf/NotoSansMath-Regular.ttf` |
+| Noto Sans Symbols 2 2.008 | https://github.com/notofonts/symbols/releases/tag/NotoSansSymbols2-v2.008 | `unhinted/ttf/NotoSansSymbols2-Regular.ttf` |
+| Noto Sans SC, TC, JP, KR 2.004 | https://github.com/notofonts/noto-cjk/releases/tag/Sans2.004 (`18_NotoSansSC.zip`, `19_NotoSansTC.zip`, `16_NotoSansJP.zip`, `17_NotoSansKR.zip`) | `NotoSansSC-Regular.otf` and the others, sliced |
+
+The SHA-256 of every archive and file is in `eng/webdemo/noto-fonts.json`. Copyright lines, as in the licence files and the name tables (ID 0):
+
+```text
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/<script repository>)
+© 2014-2021 Adobe (http://www.adobe.com/).   (Noto Sans SC, TC, JP and KR)
+```
+
 | File | SHA-256 |
 |---|---|
 | LiberationSans-Regular.ttf | `76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8` |

@@ -53,7 +53,32 @@ public class SkiaFontSource
 
     /// <summary>As <see cref="IsPending(SystemFontFace)"/>, for the face <see cref="MatchFamily"/> would load for the family.</summary>
     public virtual bool IsPending(string family, bool bold, bool italic) => false;
+
+    /// <summary>
+    /// True when the source names faces for single characters (<see cref="FindCharacterFace"/>), as a
+    /// host that bundles fonts by script does (the web demo's Noto fonts). Text then takes each
+    /// character that no substitute of the chain has from the face named for it. False by default,
+    /// so the chain alone decides, as on Windows and Android.
+    /// </summary>
+    public virtual bool HasCharacterFaces => false;
+
+    /// <summary>
+    /// The face that has <paramref name="codePoint"/>, for a character that the substitutes of the
+    /// chain lack; null when the source has none, or cannot tell yet (<see cref="IsCharacterIndexPending"/>).
+    /// <paramref name="hint"/> tells faces that share characters apart (Han in Chinese, Japanese and Korean faces).
+    /// </summary>
+    public virtual SystemFontFace? FindCharacterFace(int codePoint, SkiaTextHint hint) => null;
+
+    /// <summary>
+    /// True when <see cref="FindCharacterFace"/> cannot answer until the host fetched what tells it
+    /// which face has a character (an index of the bundled faces). The text then waits, as for a
+    /// pending face.
+    /// </summary>
+    public virtual bool IsCharacterIndexPending => false;
 }
+
+/// <summary>What the text that needs a character face is: its font's name, CID ordering (Japan1, GB1, CNS1, Korea1) and characters.</summary>
+public readonly record struct SkiaTextHint(string? FontName, string? CidOrdering, string Text);
 
 /// <summary>A typeface plus the style Skia must simulate because the face lacks it (as DirectWrite's font simulations do).</summary>
 internal sealed record SkiaFace(SKTypeface Typeface, bool Embolden, bool Oblique)

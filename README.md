@@ -80,10 +80,14 @@ document generated in the browser.
 A browser has no installed fonts, so the demo bundles the Liberation fonts (SIL Open Font
 License): text in a non-embedded Helvetica, Arial, Times or Courier is drawn with the
 metric-compatible Liberation Sans, Serif or Mono, fetched only when a page needs that face.
-Its limits are stated plainly in its README: non-embedded Dingbats, Symbol characters that
-Liberation Sans lacks, and scripts it does not cover (CJK, for example) still need the
-device's fonts, which only Chrome and Edge can lend the page; CMYK JPEG images are not
-decoded yet; the engine runs in the .NET interpreter. Run it locally with
+Characters Liberation lacks come from Google's Noto fonts (SIL Open Font License): Arabic,
+Hebrew, nine Indic scripts, math, symbols and dingbats, and Chinese, Japanese and Korean cut
+into Unicode slices. The Noto files are not in the repository: the web demo workflow downloads
+the official releases pinned by SHA-256 in `eng/webdemo/noto-fonts.json` and publishes them
+with the demo. Every font comes from the demo's own site, never from Google Fonts, and only the
+files a page needs are fetched. Its limits are stated plainly in its README: Arabic and Indic
+text is drawn without shaping; CMYK JPEG images are not decoded yet; the engine runs in the
+.NET interpreter. Run it locally with
 `dotnet workload install wasm-tools` and `dotnet run --project src/PdfViewer.Web`.
 
 ---
@@ -391,7 +395,7 @@ d:\Practice\pdf-viewer\
 │   ├── pdfium/                    # PDFium for developer and test builds (the oracle): pin, headers, licences
 │   ├── releasegate/               # Startup, payload-size and PDFium-free release gates
 │   ├── signing/                   # Code-signing scripts and notes
-│   ├── webdemo/                   # Static server for trying the published web demo locally
+│   ├── webdemo/                   # Static server for the published web demo; Noto font pins and build script
 │   └── vectorpdf/                 # Corpus tooling (vectorpdf), baselines and the git-ignored test corpus
 ├── publish/                       # Output folder for distribution (Setup & Portable EXE, SBOM)
 ├── samples/                       # Multi-page test documents

@@ -54,6 +54,30 @@ jobs:
     - name: Publish
       run: dotnet publish src/PdfViewer.Web/PdfViewer.Web.csproj --configuration Release --output publish/web
 
+    # Noto fonts for the scripts that the committed Liberation fonts lack (Arabic, Hebrew, Indic,
+    # symbols, math, CJK). They are not committed: eng/webdemo/noto_fonts.py downloads the release
+    # archives pinned in eng/webdemo/noto-fonts.json, checks the SHA-256 of each archive and of each
+    # file taken from it (a mismatch fails the build), cuts the CJK faces into Unicode slices with
+    # the pinned fontTools, and writes them with their licences to fonts/noto. The app fetches a file
+    # from this site only when a page needs a glyph from it. Cached archives are checked again.
+    - name: Cache the Noto archives
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/noto-fonts
+        key: noto-fonts-${{ hashFiles('eng/webdemo/noto-fonts.json') }}
+
+    - name: Add the Noto fonts
+      shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/noto-venv"
+        py="$RUNNER_TEMP/noto-venv/bin/python"
+        python3 -I eng/webdemo/noto_fonts.py requirements > "$RUNNER_TEMP/noto-requirements.txt"
+        "$py" -m pip install --quiet --disable-pip-version-check --require-hashes --no-deps -r "$RUNNER_TEMP/noto-requirements.txt"
+        "$py" -I eng/webdemo/noto_fonts.py build --cache ~/.cache/noto-fonts --out publish/web/wwwroot/fonts/noto --summary "$GITHUB_STEP_SUMMARY"
+        test -s publish/web/wwwroot/fonts/noto/index.json
+        test -s publish/web/wwwroot/fonts/noto/NotoSansArabic-Regular.ttf
+        test -s publish/web/wwwroot/fonts/noto/NotoSansSC-Regular-00.otf
+
     # A project site is served under /<repository>/: the app's base href must say so. The
     # precompressed copies are dropped: GitHub Pages compresses by itself and never serves them.
     - name: Prepare the site for GitHub Pages
@@ -75,7 +99,9 @@ jobs:
           echo "| Site (uncompressed) | $(du -sh --apparent-size "$site" | cut -f1) |"
           echo "| Runtime with Skia (dotnet.native.wasm) | $(du -h --apparent-size "$site"/_framework/dotnet.native.*.wasm | cut -f1) |"
           echo "| Engine (PdfEngine.Vector.wasm) | $(du -h --apparent-size "$site"/_framework/PdfEngine.Vector.*.wasm | cut -f1) |"
-          echo "| Site, gzip-compressed (about what Pages transfers) | $(tar -C "$site" -cf - . | gzip -6 | wc -c | numfmt --to=iec) |"
+          echo "| App without the fonts, gzip-compressed (about what a first visit transfers) | $(tar -C "$site" --exclude=./fonts -cf - . | gzip -6 | wc -c | numfmt --to=iec) |"
+          echo "| Liberation fonts (fetched only when a page needs a face) | $(du -sh --apparent-size --exclude=noto "$site/fonts" | cut -f1) |"
+          echo "| Noto fonts (fetched only when a page needs a glyph from a file) | $(du -sh --apparent-size "$site/fonts/noto" | cut -f1) |"
         } >> "$GITHUB_STEP_SUMMARY"
 
     # Pages serves only what this workflow deploys, so the documentation site in docs/ (home page,
