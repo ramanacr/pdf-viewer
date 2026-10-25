@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy these from Partner Center > your app > Product management > Product identity. Empty values stop scripts/build_msix.ps1 (docs/microsoft-store.md).",
+  "identityName": "",
+  "publisher": "",
+  "publisherDisplayName": "",
+  "displayName": ""
+}

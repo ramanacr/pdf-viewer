@@ -247,3 +247,6 @@ Version: 8.4.0 · Source: https://github.com/CommunityToolkit/dotnet · License:
 
 ## Microsoft .NET libraries (System.Security.Cryptography.Pkcs, System.Speech, System.Text.Json)
 Version: 9.0.x · Source: https://github.com/dotnet/runtime · License: MIT (Copyright (c) .NET Foundation and Contributors). The MIT license text is reproduced above. System.Speech ships as an optional download (Read Aloud), not in the installer.
+
+## Microsoft .NET runtime and Windows Desktop runtime (Microsoft Store package only)
+Version: 9.0.x · Source: https://github.com/dotnet/runtime and https://github.com/dotnet/wpf · License: MIT (Copyright (c) .NET Foundation and Contributors). The MIT license text is reproduced above. The Microsoft Store package (scripts/build_msix.ps1) is self-contained, so it carries the runtime and System.Speech; the installer and the portable executable do not.
