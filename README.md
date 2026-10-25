@@ -26,6 +26,7 @@ The solution is structured using the modern XML-based **`.slnx`** solution forma
   - [Manual Build](#manual-build)
   - [Run from Source](#run-from-source)
   - [Run Automated Tests](#run-automated-tests)
+  - [Microsoft Store build](#microsoft-store-build)
 - [User Guide & Workflows](#user-guide--workflows)
   - [Opening Documents & Drag-and-Drop](#opening-documents--drag-and-drop)
   - [Viewing Modes & Page Navigation](#viewing-modes--page-navigation)
@@ -522,6 +523,19 @@ dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the published conf
 ```
 
 ---
+
+### Microsoft Store build
+
+`scripts/build_msix.ps1` makes an MSIX package for the Microsoft Store from the same application:
+self-contained, with Read Aloud inside it. The Store signs the package on submission, and the
+Store updates it, so the Store version has no update check and declares its .pdf association in
+the package manifest instead of the registry. Before the Partner Center identity is in
+`eng/msix/identity.json`, run it with `-TestIdentity` for a local test package. The owner's steps
+and all differences are in [docs/microsoft-store.md](docs/microsoft-store.md).
+
+```powershell
+pwsh -File .\scriptsuild_msix.ps1 -TestIdentity
+```
 
 ## User Guide & Workflows
 
