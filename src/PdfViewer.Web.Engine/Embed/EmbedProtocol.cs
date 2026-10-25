@@ -21,6 +21,7 @@ public static class EmbedErrors
     public const string NotAllowed = "NOT_ALLOWED";
     public const string Closed = "CLOSED";
     public const string ViewerError = "VIEWER_ERROR";
+    public const string NetworkError = "NETWORK_ERROR";
 
     /// <summary>The code for a document that cannot be opened.</summary>
     public static string FromOpenFailure(ViewerOpenFailure failure) => failure switch
@@ -30,6 +31,7 @@ public static class EmbedErrors
         ViewerOpenFailure.CertificateRequired => CertificateRequired,
         ViewerOpenFailure.EncryptionNotSupportedHere => EncryptionNotSupported,
         ViewerOpenFailure.TooLarge => TooLarge,
+        ViewerOpenFailure.NetworkError => NetworkError,
         _ => NotAPdf,
     };
 }
@@ -44,6 +46,8 @@ public static class EmbedEvents
     public const string ZoomChange = "ZOOM_CHANGE";
     public const string DocumentDownload = "DOCUMENT_DOWNLOAD";
     public const string DocumentPrint = "DOCUMENT_PRINT";
+    /// <summary>The first page of a file is drawn (Adobe's APP_RENDERING_DONE); for a file read by ranges, also how much of it was read by then.</summary>
+    public const string AppRenderingDone = "APP_RENDERING_DONE";
 
     // For the annotation manager's listeners (annotationManager.registerEventListener).
     public const string AnnotationAdded = "ANNOTATION_ADDED";
@@ -104,12 +108,29 @@ public sealed record EmbedFrame(EmbedMode Mode, string? Origin)
 /// <summary>A message from the host page.</summary>
 public abstract record EmbedMessage(int RequestId);
 
-/// <summary>Show a file: its bytes come beside the message (a transferred ArrayBuffer).</summary>
+/// <summary>
+/// Show a file: its bytes come beside the message (a transferred ArrayBuffer). With
+/// <see cref="Range"/>, they are only the part of the file the host page already has, and the
+/// viewer asks for the rest by ranges (<see cref="EmbedProtocol.FetchRange"/>).
+/// </summary>
 public sealed record EmbedOpen(int RequestId, string FileName, string? FileId, bool ReadOnly, string Locale, EmbedConfig Config) : EmbedMessage(RequestId)
 {
     /// <summary>The host page's SAVE_API callback, when it registered one.</summary>
     public EmbedSaveOptions Save { get; init; } = EmbedSaveOptions.None;
+
+    /// <summary>The file is read by ranges: its length, and where the bytes that came with the message start.</summary>
+    public EmbedRangeOpen? Range { get; init; }
 }
+
+/// <summary>A file read by ranges: its <see cref="Length"/>, and the offset of the bytes that came with the open message.</summary>
+public sealed record EmbedRangeOpen(long Length, long InitialOffset);
+
+/// <summary>
+/// The host page's answer to a fetchRange request: the bytes come beside it (a transferred
+/// ArrayBuffer) when <see cref="Ok"/>, else <see cref="ErrorCode"/> says why. <see cref="File"/> is
+/// the open request of the file; <see cref="EmbedMessage.RequestId"/> the fetchRange request.
+/// </summary>
+public sealed record EmbedRangeReply(int RequestId, int File, bool Ok, string? ErrorCode, string? ErrorMessage) : EmbedMessage(RequestId);
 
 /// <summary>The API methods a host page can call (<c>viewer.getAPIs()</c> and the search object).</summary>
 public enum EmbedMethod
@@ -176,6 +197,18 @@ public static class EmbedProtocol
     /// <summary>Longest search term accepted.</summary>
     public const int MaxTermLength = 1000;
 
+    /// <summary>Largest file accepted (512 MB), the same as the SDK script's limit.</summary>
+    public const long MaxFileBytes = 512L * 1024 * 1024;
+
+    /// <summary>Most bytes in one fetchRange request (4 MB).</summary>
+    public const int MaxRangeBytes = 4 * 1024 * 1024;
+
+    /// <summary>Most fetchRange requests waiting for an answer at the same time; the host page refuses more.</summary>
+    public const int MaxRangeRequestsInFlight = 6;
+
+    /// <summary>What this viewer can do beyond protocol version 1's first messages, sent in its ready message.</summary>
+    public static readonly IReadOnlyList<string> Features = ["range"];
+
     /// <summary>
     /// Longest message accepted, in characters of its JSON (2 MB). The file's bytes travel beside
     /// the message, so a real message is a few kilobytes; a longer one is refused before it is parsed.
@@ -233,6 +266,7 @@ public static class EmbedProtocol
             {
                 "open" => ParseOpen(root, Require(requestId), frameMode),
                 "call" => ParseCall(root, Require(requestId)),
+                "range" => ParseRangeReply(root, Require(requestId)),
                 _ => null,
             };
         }
@@ -273,12 +307,49 @@ public static class EmbedProtocol
             string locale = OptionalString(root, "locale", 64) ?? "en-US";
             var config = EmbedConfig.FromJson(root.TryGetProperty("config", out var c) ? c : default, frameMode);
             var save = EmbedAnnotationJson.ParseSaveOptions(root.TryGetProperty("save", out var sv) ? sv : default, requestId);
-            return new EmbedOpen(requestId, fileName, fileId, readOnly, locale, config) { Save = save };
+            return new EmbedOpen(requestId, fileName, fileId, readOnly, locale, config) { Save = save, Range = ParseRangeOpen(root, requestId) };
         }
         catch (EmbedProtocolException ex) when (ex.RequestId == 0)
         {
             throw new EmbedProtocolException(ex.Code, ex.Message, requestId);
         }
+    }
+
+    /// <summary>open's "range": { length, initialOffset }, or null when the file's bytes came whole.</summary>
+    private static EmbedRangeOpen? ParseRangeOpen(JsonElement root, int requestId)
+    {
+        if (!root.TryGetProperty("range", out var range) || range.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return null;
+        if (range.ValueKind != JsonValueKind.Object)
+            throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "range must be an object { length, initialOffset }.", requestId);
+        long length = WholeNumber(range, "length", 1, MaxFileBytes, requestId, "range.length");
+        long initial = range.TryGetProperty("initialOffset", out _) ? WholeNumber(range, "initialOffset", 0, length, requestId, "range.initialOffset") : 0;
+        return new EmbedRangeOpen(length, initial);
+    }
+
+    private static long WholeNumber(JsonElement parent, string name, long min, long max, int requestId, string what)
+    {
+        if (parent.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out long x) && x >= min && x <= max)
+            return x;
+        throw new EmbedProtocolException(EmbedErrors.InvalidArgument,
+            $"{what} must be a whole number from {min.ToString(CultureInfo.InvariantCulture)} to {max.ToString(CultureInfo.InvariantCulture)}.", requestId);
+    }
+
+    /// <summary>The host page's answer to fetchRange: { requestId, file, ok, error? } (the bytes come beside it).</summary>
+    private static EmbedRangeReply ParseRangeReply(JsonElement root, int requestId)
+    {
+        int file = (int)WholeNumber(root, "file", 1, int.MaxValue, requestId, "range reply: file");
+        if (!root.TryGetProperty("ok", out var ok) || ok.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "range reply: ok must be true or false.", requestId);
+        if (ok.ValueKind == JsonValueKind.True) return new EmbedRangeReply(requestId, file, true, null, null);
+        string code = EmbedErrors.NetworkError, message = "The host page could not fetch the range.";
+        if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
+        {
+            if (error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String && c.GetString() is { Length: > 0 and <= 64 } cs && cs.All(ch => ch is >= 'A' and <= 'Z' or '_'))
+                code = cs;
+            if (error.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String && m.GetString() is { Length: > 0 } ms)
+                message = ms.Length > 500 ? ms[..500] : ms;
+        }
+        return new EmbedRangeReply(requestId, file, false, code, message);
     }
 
     private static readonly Dictionary<string, EmbedMethod> Methods = new(StringComparer.Ordinal)
@@ -406,8 +477,35 @@ public static class EmbedProtocol
 
     // ------------------------------------------------------------------ replies
 
-    /// <summary>The viewer has started and listens.</summary>
-    public static string Ready() => Write("ready", null);
+    /// <summary>The viewer has started and listens; <see cref="Features"/> tell the SDK script what it may send (range loading).</summary>
+    public static string Ready() => Write("ready", w =>
+    {
+        w.WriteStartArray("features");
+        foreach (var f in Features) w.WriteStringValue(f);
+        w.WriteEndArray();
+    });
+
+    /// <summary>
+    /// Asks the host page for bytes [<paramref name="start"/>, <paramref name="end"/>) of the file of
+    /// open request <paramref name="file"/>; the host fetches them from the URL (or the
+    /// linearizationInfo) it was given, never from another, and answers with a "range" message.
+    /// Throws <see cref="ArgumentOutOfRangeException"/> for a range that is empty, longer than
+    /// <see cref="MaxRangeBytes"/> or not inside a file of <paramref name="length"/> bytes.
+    /// </summary>
+    public static string FetchRange(int file, int requestId, long start, long end, long length)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(file, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(requestId, 1);
+        if (length < 1 || length > MaxFileBytes) throw new ArgumentOutOfRangeException(nameof(length));
+        if (start < 0 || end <= start || end > length || end - start > MaxRangeBytes) throw new ArgumentOutOfRangeException(nameof(end), $"The range [{start}, {end}) is not a valid range of the file.");
+        return Write("fetchRange", w =>
+        {
+            w.WriteNumber("file", file);
+            w.WriteNumber("requestId", requestId);
+            w.WriteNumber("start", start);
+            w.WriteNumber("end", end);
+        });
+    }
 
     /// <summary>A request succeeded; <paramref name="value"/> writes its result (one JSON value), or there is none (null).</summary>
     public static string Ok(int requestId, Action<Utf8JsonWriter>? value) => Write("response", w =>

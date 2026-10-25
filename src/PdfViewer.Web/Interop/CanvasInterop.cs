@@ -90,6 +90,10 @@ internal static partial class CanvasInterop
     [JSImport("embedPost", ModuleName)]
     public static partial void EmbedPost(string json);
 
+    /// <summary>A file read by ranges showed its first page: a performance mark (pdfviewer:first-page) for measurements; nothing leaves the page.</summary>
+    [JSImport("markFirstPage", ModuleName)]
+    public static partial void MarkFirstPage(double milliseconds, double bytesRead);
+
     /// <summary>Posts a message with bytes beside it (a copy, transferred to the host page as an ArrayBuffer).</summary>
     [JSImport("embedPostBytes", ModuleName)]
     public static partial void EmbedPostBytes(string json, [JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bytes);

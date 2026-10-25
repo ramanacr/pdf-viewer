@@ -690,6 +690,11 @@ export function initEmbed(dotnet, origin, readyJson) {
             dotnet.invokeMethodAsync('OnEmbedOpen', JSON.stringify(rest), bytes);
         } else if (m.type === 'call') {
             dotnet.invokeMethodAsync('OnEmbedCall', JSON.stringify(m));
+        } else if (m.type === 'range') {
+            // The answer to a fetchRange request: its bytes beside it, checked against the request in .NET.
+            const bytes = m.data instanceof ArrayBuffer ? new Uint8Array(m.data) : new Uint8Array(0);
+            const { data, ...rest } = m;
+            dotnet.invokeMethodAsync('OnEmbedRange', JSON.stringify(rest), bytes);
         }
     });
     // The reader went back to the host page: with SAVE_API focus polling, unsaved edits are saved.
@@ -707,6 +712,16 @@ export function embedPostBytes(json, view) {
     const bytes = view.slice();
     message.data = bytes.buffer;
     window.parent.postMessage(message, hostOrigin, [message.data]);
+}
+
+/**
+ * A file read by ranges showed its first page: a User Timing mark, so that a test (or the
+ * developer tools) can read the time and the bytes read. Nothing is sent anywhere.
+ */
+export function markFirstPage(ms, bytes) {
+    try {
+        performance.mark('pdfviewer:first-page', { detail: { ms, bytes } });
+    } catch { /* no User Timing level 3 */ }
 }
 
 /** Posts a message that the .NET side built (EmbedProtocol) to the host page, and to no other origin. */

@@ -96,7 +96,11 @@ public sealed partial class Viewer
         _openRequest = open.RequestId;
         _passwordWasWrong = false;
         _dialog = Dialog.None;
-        if (bytes.Length == 0)
+        // A ranged open still waiting (for a password) is replaced: its requests end.
+        _pendingRange?.Reader.Close();
+        _pendingRange = null;
+        _pendingBytes = null;
+        if (bytes.Length == 0 && open.Range == null)
         {
             FailOpen(EmbedErrors.NotAPdf, "The file is empty.");
             return;
@@ -106,8 +110,52 @@ public sealed partial class Viewer
         _openReadOnly = open.ReadOnly;
         _save = open.Save;
         ApplyConfig();
+        if (open.Range is { } range)
+        {
+            // The host page sent what it already has (the end of the file, or Adobe's initial
+            // buffer); the viewer asks it for the other ranges as pages need them.
+            var reader = new EmbedRangeReader(open.RequestId, range.Length, Post);
+            _openingReader = reader;
+            var options = new PdfEngine.Vector.Parsing.PdfRangedOptions
+            {
+                InitialData = bytes.Length > 0 ? [(range.InitialOffset, bytes)] : [],
+                MaxConcurrentRequests = EmbedProtocol.MaxRangeRequestsInFlight,
+                MaxRequestBytes = EmbedProtocol.MaxRangeBytes,
+            };
+            await OpenRangedAsync(new RangedFile(reader, options), open.FileName, null);
+            if (_openingReader == reader) _openingReader = null;
+            return;
+        }
         await OpenAsync(bytes, open.FileName, null);
     }
+
+    private EmbedRangeReader? _openingReader;  // the reader of a ranged open in progress
+
+    /// <summary>The host page's answer to a fetchRange request, with the bytes.</summary>
+    [JSInvokable]
+    public void OnEmbedRange(string json, byte[] bytes)
+    {
+        if (_frame == null) return;
+        EmbedRangeReply reply;
+        try
+        {
+            if (EmbedProtocol.Parse(json, _frame.Mode) is not EmbedRangeReply r) return;
+            reply = r;
+        }
+        catch (EmbedProtocolException)
+        {
+            return; // a malformed answer: its request times out and fails
+        }
+        // Only a request that is waiting, of the file being opened or shown, is answered.
+        if (_openingReader?.Receive(reply, bytes) == true) return;
+        if (_pendingRange?.Reader.Receive(reply, bytes) == true) return;
+        _docReader?.Receive(reply, bytes);
+    }
+
+    /// <summary>API calls that only move or ask about the view: they answer at once, also while a ranged file is still loading.</summary>
+    private static bool IsViewCall(EmbedMethod method) => method is EmbedMethod.GetCurrentPage or EmbedMethod.GotoLocation
+        or EmbedMethod.ZoomIn or EmbedMethod.ZoomOut or EmbedMethod.SetZoomLevel or EmbedMethod.GetZoomLimits
+        or EmbedMethod.GetSelectedContent or EmbedMethod.SetSaveOptions or EmbedMethod.SaveResult;
 
     /// <summary>The document is open: the host's previewFile promise resolves.</summary>
     private void EmbedOpened()
@@ -197,6 +245,16 @@ public sealed partial class Viewer
         }
         try
         {
+            if (!IsViewCall(call.Method) && !doc.IsComplete)
+            {
+                // The rest of a ranged file first: the annotations, search and metadata need all of it.
+                await WaitReadyAsync(doc);
+                if (_doc != doc || call.Document != _documentId)
+                {
+                    Post(EmbedProtocol.Error(call.RequestId, EmbedErrors.NoDocument, "No document is open, or another one replaced it."));
+                    return;
+                }
+            }
             string reply = await AnswerAsync(call, doc);
             if (reply.Length > 0) Post(reply);
         }

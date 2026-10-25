@@ -25,8 +25,14 @@
 
     const PROTOCOL = 'pdfviewer-embed';
     const PROTOCOL_VERSION = 1;
-    const SDK_VERSION = '0.2.0';
+    const SDK_VERSION = '0.3.0';
     const MAX_FILE_BYTES = 512 * 1024 * 1024;
+    // Range loading (docs/sdk, "Large files"): the viewer asks for at most this many bytes at a
+    // time, with at most this many requests waiting; files smaller than RANGE_MIN_BYTES are read whole.
+    const MAX_RANGE_BYTES = 4 * 1024 * 1024;
+    const MAX_RANGE_REQUESTS = 6;
+    const RANGE_MIN_BYTES = 1024 * 1024;
+    const RANGE_TAIL_BYTES = 1024 * 1024;
     const BOOT_TIMEOUT_MS = 60000;
     const ISOLATION_DOCS = 'https://ramanacr.github.io/pdf-viewer/sdk/#same-origin-viewer';
 
@@ -42,6 +48,7 @@
     const Events = Object.freeze({
         DOCUMENT_OPEN: 'DOCUMENT_OPEN', PAGE_VIEW: 'PAGE_VIEW', TEXT_COPY: 'TEXT_COPY', TEXT_SEARCH: 'TEXT_SEARCH',
         ZOOM_CHANGE: 'ZOOM_CHANGE', DOCUMENT_DOWNLOAD: 'DOCUMENT_DOWNLOAD', DOCUMENT_PRINT: 'DOCUMENT_PRINT', PREVIEW_ERROR: 'PREVIEW_ERROR',
+        APP_RENDERING_DONE: 'APP_RENDERING_DONE',
     });
     const ErrorCode = Object.freeze({
         INVALID_ARGUMENT: 'INVALID_ARGUMENT',
@@ -112,14 +119,45 @@
         }
     }
 
-    /** The file's bytes as an ArrayBuffer that this SDK owns (it is transferred to the viewer). */
-    async function readContent(content) {
+    /**
+     * What the viewer gets: { buffer } (the whole file, an ArrayBuffer this SDK owns, transferred
+     * to the viewer), or { range } (a RangeSource: the viewer asks for byte ranges as pages need
+     * them). A range source is made for a location whose server answers range requests (unless
+     * rangeRequests is false) and for Adobe-style linearizationInfo.
+     */
+    async function prepareContent(content) {
         if (!content || typeof content !== 'object') throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content must be an object with location, promise or arrayBuffer.');
         const given = ['location', 'promise', 'arrayBuffer'].filter(k => content[k] !== undefined && content[k] !== null);
         if (given.length !== 1) throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content must have exactly one of location, promise and arrayBuffer.');
-        if (given[0] === 'location') return fetchLocation(content.location);
+        if (given[0] === 'location') {
+            const location = content.location;
+            const init = requestInit(location);
+            if (location.rangeRequests !== undefined && typeof location.rangeRequests !== 'boolean') {
+                throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content.location.rangeRequests must be true or false.');
+            }
+            if (location.rangeRequests !== false) {
+                const ranged = await UrlRangeSource.open(init);
+                if (ranged.source) return { range: ranged.source };
+                if (ranged.buffer) return { buffer: ranged.buffer };
+            }
+            return { buffer: await fetchWhole(init) };
+        }
+        if (given[0] === 'promise' && content.linearizationInfo !== undefined && content.linearizationInfo !== null) {
+            try {
+                return { range: await LinearizedRangeSource.open(content.linearizationInfo, content.promise) };
+            } catch (e) {
+                // linearizationInfo failed: the whole file from the promise, as without it.
+                if (e instanceof PdfViewerError && e.code === ErrorCode.TOO_LARGE) throw e;
+                console.warn('PdfViewer: linearizationInfo failed, reading content.promise whole.', e);
+            }
+        }
         const value = given[0] === 'promise' ? await content.promise : content.arrayBuffer;
-        return ownBuffer(value);
+        return { buffer: await ownBuffer(value) };
+    }
+
+    /** The whole file of a range source, for a viewer that does not read ranges. */
+    async function readWhole(prepared) {
+        return prepared.buffer || prepared.range.readWhole();
     }
 
     /** A copy, so that transferring it to the viewer never empties the caller's own buffer. */
@@ -137,10 +175,11 @@
     const tooLarge = () => fail(ErrorCode.TOO_LARGE, `The file is larger than ${MAX_FILE_BYTES / (1024 * 1024)} MB, the most the viewer opens.`);
 
     /**
-     * Fetches the file in this page, so that this page's cookies, the headers given and the
-     * server's CORS rules apply, exactly as for any other fetch of this page.
+     * The URL and fetch options of a location: the file is fetched in this page, so that this
+     * page's cookies, the headers given and the server's CORS rules apply, exactly as for any
+     * other fetch of this page.
      */
-    async function fetchLocation(location) {
+    function requestInit(location) {
         if (!location || typeof location.url !== 'string' || location.url.length === 0) {
             throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content.location.url must be a non-empty string.');
         }
@@ -164,15 +203,32 @@
         } catch {
             throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content.location.url is not a valid URL.');
         }
+        return { href: url.href, headers, credentials: location.credentials === 'include' ? 'include' : 'same-origin' };
+    }
+
+    /** One fetch of the location (with a Range header when `range` is given); network failures and HTTP errors as PdfViewerErrors. */
+    async function fetchFrom(init, range) {
+        const headers = new Headers(init.headers);
+        if (range) headers.set('Range', range);
         let response;
         try {
-            response = await fetch(url.href, { headers, credentials: location.credentials === 'include' ? 'include' : 'same-origin' });
+            response = await fetch(init.href, { headers, credentials: init.credentials });
         } catch (e) {
             throw fail(ErrorCode.NETWORK_ERROR,
                 'The file could not be fetched: the network failed, or the server does not let this page read it (CORS).', String(e && e.message || e));
         }
         if (response.status === 404 || response.status === 410) throw fail(ErrorCode.FILE_NOT_FOUND, `The file was not found (HTTP ${response.status}).`, { status: response.status });
         if (!response.ok) throw fail(ErrorCode.HTTP_ERROR, `The server answered HTTP ${response.status}.`, { status: response.status });
+        return response;
+    }
+
+    /** The whole file of a location, read with the size cap. */
+    async function fetchWhole(init) {
+        return readResponse(await fetchFrom(init));
+    }
+
+    /** A full response's body, refused at once when its readable Content-Length is too large. */
+    function readResponse(response) {
         // A readable Content-Length that is too large fails at once. A missing or bad one is
         // unknown, not 0: readCapped counts the bytes as they arrive in all cases.
         const header = response.headers.get('Content-Length');
@@ -182,6 +238,148 @@
             throw tooLarge();
         }
         return readCapped(response, MAX_FILE_BYTES);
+    }
+
+    /** "bytes 0-0/12345" → { start, end (inclusive), total }, or null. */
+    function parseContentRange(value) {
+        const m = typeof value === 'string' ? /^\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/i.exec(value) : null;
+        if (!m) return null;
+        const r = { start: Number(m[1]), end: Number(m[2]), total: Number(m[3]) };
+        return Number.isSafeInteger(r.total) && r.start <= r.end && r.end < r.total ? r : null;
+    }
+
+    /** Checks a range the viewer asked for: whole numbers, inside the file, not empty, not too long. */
+    function checkRange(start, end, length) {
+        return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && end > start && end <= length && end - start <= MAX_RANGE_BYTES;
+    }
+
+    /**
+     * A file on a web server that answers HTTP range requests. Only the URL given to previewFile
+     * is ever fetched: the viewer's requests name bytes, never a URL. open() asks for one byte
+     * (bytes=0-0, a CORS-safelisted Range) to learn the length (Content-Range, which a
+     * cross-origin server must expose) and whether ranges work; then the end of the file, which
+     * holds the cross-reference data, goes to the viewer with the open message.
+     */
+    class UrlRangeSource {
+        static async open(init) {
+            const probe = await fetchFrom(init, 'bytes=0-0');
+            if (probe.status !== 206) {
+                // No range support: this answer is the whole file already.
+                return { buffer: await readResponse(probe) };
+            }
+            const range = parseContentRange(probe.headers.get('Content-Range'));
+            if (probe.body) probe.body.cancel().catch(() => { });
+            if (!range || range.start !== 0) {
+                // Content-Range unreadable (a cross-origin server that does not expose it): the file is read whole.
+                return { buffer: await fetchWhole(init) };
+            }
+            if (range.total > MAX_FILE_BYTES) throw tooLarge();
+            if (range.total <= RANGE_MIN_BYTES) return { buffer: await fetchWhole(init) };
+            const source = new UrlRangeSource(init, range.total);
+            const tail = Math.min(RANGE_TAIL_BYTES, range.total);
+            source.initialOffset = range.total - tail;
+            source.initial = await source.read(source.initialOffset, range.total);
+            return { source };
+        }
+
+        constructor(init, length) {
+            this._init = init;
+            this.length = length;
+            this.initial = null;
+            this.initialOffset = 0;
+            this.bytesFetched = 0;
+        }
+
+        /** Bytes [start, end) of the file. The answer must be exactly them (HTTP 206 with a matching Content-Range). */
+        async read(start, end) {
+            if (!checkRange(start, end, this.length)) {
+                throw fail(ErrorCode.INVALID_ARGUMENT, 'The range is not inside the file.');
+            }
+            const response = await fetchFrom(this._init, `bytes=${start}-${end - 1}`);
+            if (response.status !== 206) {
+                if (response.body) response.body.cancel().catch(() => { });
+                throw fail(ErrorCode.HTTP_ERROR, `The server did not answer a range request (HTTP ${response.status}).`, { status: response.status });
+            }
+            const range = parseContentRange(response.headers.get('Content-Range'));
+            if (range && (range.start !== start || range.end !== end - 1 || range.total !== this.length)) {
+                if (response.body) response.body.cancel().catch(() => { });
+                throw fail(ErrorCode.HTTP_ERROR, 'The server answered another range than the one asked for, or the file changed.');
+            }
+            const buffer = await readCapped(response, end - start);
+            if (buffer.byteLength !== end - start) throw fail(ErrorCode.HTTP_ERROR, 'The server sent fewer bytes than the range asked for.');
+            this.bytesFetched += buffer.byteLength;
+            return buffer;
+        }
+
+        /** The whole file, for a viewer that does not read ranges. */
+        readWhole() {
+            return fetchWhole(this._init);
+        }
+    }
+
+    /**
+     * Adobe-style linearizationInfo: { getInfo(), getInitialBuffer(), getFileBufferRanges(ranges) }.
+     * getInfo() resolves with { fileSize }; getInitialBuffer() (optional) with the start of the
+     * file (an ArrayBuffer or typed array) or { buffer, start }; getFileBufferRanges([{ start, end }])
+     * (end inclusive, as in an HTTP Range header) with { bufferList: [ArrayBuffer] } or an array of
+     * buffers. content.promise still gives the whole file when the viewer needs all of it at once.
+     */
+    class LinearizedRangeSource {
+        static async open(info, whole) {
+            if (!info || typeof info !== 'object' || typeof info.getInfo !== 'function' || typeof info.getFileBufferRanges !== 'function') {
+                throw fail(ErrorCode.INVALID_ARGUMENT, 'linearizationInfo needs getInfo() and getFileBufferRanges(ranges).');
+            }
+            const meta = await info.getInfo();
+            const length = meta && [meta.fileSize, meta.size, meta.length].find(v => v !== undefined);
+            if (!Number.isSafeInteger(length) || length < 1) throw fail(ErrorCode.INVALID_ARGUMENT, 'linearizationInfo.getInfo() must resolve with { fileSize } (a whole number of bytes).');
+            if (length > MAX_FILE_BYTES) throw tooLarge();
+            const source = new LinearizedRangeSource(info, length, whole);
+            if (typeof info.getInitialBuffer === 'function') {
+                const initial = await info.getInitialBuffer();
+                const start = initial && typeof initial === 'object' && !(initial instanceof ArrayBuffer) && !ArrayBuffer.isView(initial)
+                    ? (initial.start ?? initial.offset ?? 0) : 0;
+                const buffer = await bufferOf(initial && initial.buffer instanceof ArrayBuffer && !ArrayBuffer.isView(initial) ? initial.buffer : initial);
+                if (buffer && Number.isSafeInteger(start) && start >= 0 && start + buffer.byteLength <= length) {
+                    source.initial = buffer.byteLength > MAX_RANGE_BYTES * 4 ? buffer.slice(0, MAX_RANGE_BYTES * 4) : buffer;
+                    source.initialOffset = start;
+                }
+            }
+            return source;
+        }
+
+        constructor(info, length, whole) {
+            this._info = info;
+            this._whole = whole;
+            this.length = length;
+            this.initial = null;
+            this.initialOffset = 0;
+            this.bytesFetched = 0;
+        }
+
+        async read(start, end) {
+            if (!checkRange(start, end, this.length)) throw fail(ErrorCode.INVALID_ARGUMENT, 'The range is not inside the file.');
+            const result = await this._info.getFileBufferRanges([{ start, end: end - 1 }]);
+            const list = Array.isArray(result) ? result : result && (result.bufferList || result.buffers);
+            const buffer = await bufferOf(Array.isArray(list) ? list[0] : null);
+            if (!buffer || buffer.byteLength !== end - start) {
+                throw fail(ErrorCode.INVALID_ARGUMENT, `getFileBufferRanges must resolve with ${end - start} bytes for the range ${start}-${end - 1}.`);
+            }
+            this.bytesFetched += buffer.byteLength;
+            return buffer;
+        }
+
+        async readWhole() {
+            if (!this._whole) throw fail(ErrorCode.INVALID_ARGUMENT, 'content.promise is required with linearizationInfo.');
+            return ownBuffer(await this._whole);
+        }
+    }
+
+    /** An ArrayBuffer of its own (copied) from an ArrayBuffer, a typed array or a Blob; null for anything else. */
+    async function bufferOf(value) {
+        if (value instanceof ArrayBuffer) return value.slice(0);
+        if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        if (typeof Blob !== 'undefined' && value instanceof Blob) return value.arrayBuffer();
+        return null;
     }
 
     /**
@@ -425,6 +623,8 @@
             this._lightBox = null;
             this._exitLabel = 'Close';
             this._document = 0;
+            this._viewerFeatures = new Set();
+            this._range = null;
             this._onMessage = this._onMessage.bind(this);
             global.addEventListener('message', this._onMessage);
         }
@@ -470,13 +670,17 @@
 
             this._exitLabel = settings.exitPDFViewerType === 'RETURN' ? 'Return' : 'Close';
             const ready = this._ensureFrame(mode, fileName);
-            const bytes = readContent(file.content);
-            // Both run at once: the viewer boots while the file downloads.
-            const [buffer] = await Promise.all([bytes, ready]);
-            if (buffer.byteLength > MAX_FILE_BYTES) throw tooLarge();
+            const content = prepareContent(file.content);
+            // Both run at once: the viewer boots while the file (or its end) downloads.
+            const [prepared] = await Promise.all([content, ready]);
+            const ranged = prepared.range && this._viewerFeatures.has('range') ? prepared.range : null;
+            const buffer = ranged ? (ranged.initial || new ArrayBuffer(0)) : await readWhole(prepared);
+            if (!ranged && buffer.byteLength > MAX_FILE_BYTES) throw tooLarge();
 
             const requestId = this._nextId++;
             const opened = this._request(requestId);
+            // A new file: the ranges of the one before are no longer served.
+            this._range = ranged ? { file: requestId, source: ranged, inflight: new Set() } : null;
             this._post({
                 type: 'open', requestId, fileName,
                 fileId: typeof meta.id === 'string' ? meta.id : null,
@@ -484,8 +688,10 @@
                 locale: this._locale,
                 config: settings,
                 save: this._saveOptions,
+                range: ranged ? { length: ranged.length, initialOffset: ranged.initialOffset } : null,
                 data: buffer,
             }, [buffer]);
+            if (ranged) ranged.initial = null;
             const result = await opened;
             this._document = requestId;
             this._searches.clear();
@@ -616,6 +822,8 @@
             this._frame = null;
             this._frameMode = null;
             this._document = 0;
+            this._range = null;
+            this._viewerFeatures = new Set();
             if (this._rejectReady) this._rejectReady(fail(ErrorCode.CLOSED, 'The viewer was closed.'));
             for (const pending of this._pending.values()) pending.reject(fail(ErrorCode.CLOSED, 'The viewer was closed.'));
             this._pending.clear();
@@ -673,6 +881,39 @@
             if (this._frame === frame && this._document === documentId) this._call('saveResult', [m.saveId, code, fileName]).catch(() => { });
         }
 
+        /**
+         * The viewer asks for bytes of the file it shows (or opens). Checked here before any fetch:
+         * the file is the current one, the request id is a new whole number, the range is whole
+         * numbers inside the file and at most MAX_RANGE_BYTES long, and at most MAX_RANGE_REQUESTS
+         * wait at once. The bytes come from the source given to previewFile, never another.
+         */
+        async _serveRange(m, frame) {
+            const r = this._range;
+            const reply = (ok, extra, transfer) => {
+                if (this._frame !== frame || !frame.contentWindow) return;
+                frame.contentWindow.postMessage({ protocol: PROTOCOL, version: PROTOCOL_VERSION, type: 'range', file: m.file, requestId: m.requestId, ok, ...extra },
+                    this._viewerOrigin, transfer || []);
+            };
+            const refuse = (code, message) => reply(false, { error: { code, message } });
+            if (!Number.isSafeInteger(m.requestId) || m.requestId < 1 || !Number.isSafeInteger(m.file)) return;
+            if (!r || m.file !== r.file) return refuse(ErrorCode.NO_DOCUMENT, 'This file is no longer open.');
+            if (r.inflight.has(m.requestId)) return;
+            if (!checkRange(m.start, m.end, r.source.length)) return refuse(ErrorCode.INVALID_ARGUMENT, 'The range is not a valid range of the file.');
+            if (r.inflight.size >= MAX_RANGE_REQUESTS) return refuse(ErrorCode.INVALID_ARGUMENT, `At most ${MAX_RANGE_REQUESTS} range requests may wait at once.`);
+            r.inflight.add(m.requestId);
+            try {
+                const data = await r.source.read(m.start, m.end);
+                if (this._range !== r) return;
+                reply(true, { data }, [data]);
+            } catch (e) {
+                if (this._range !== r) return;
+                const error = e instanceof PdfViewerError ? e : fail(ErrorCode.NETWORK_ERROR, String(e && e.message || e));
+                refuse(error.code, error.message);
+            } finally {
+                r.inflight.delete(m.requestId);
+            }
+        }
+
         /** Only the viewer's own frame, from the viewer's origin, with this protocol, is heard. */
         _onMessage(e) {
             const frame = this._frame;
@@ -681,7 +922,11 @@
             if (!m || typeof m !== 'object' || m.protocol !== PROTOCOL || m.version !== PROTOCOL_VERSION || typeof m.type !== 'string') return;
             switch (m.type) {
                 case 'ready':
+                    this._viewerFeatures = new Set(Array.isArray(m.features) ? m.features.filter(f => typeof f === 'string') : []);
                     if (this._resolveReady) this._resolveReady();
+                    break;
+                case 'fetchRange':
+                    this._serveRange(m, frame);
                     break;
                 case 'response': {
                     const pending = this._pending.get(m.requestId);
@@ -734,6 +979,10 @@
         version: SDK_VERSION,
         protocolVersion: PROTOCOL_VERSION,
     };
+    // For tests of the range sources (tests/sdk); not part of the API.
+    Object.defineProperty(PdfViewer, '_internals', {
+        value: Object.freeze({ UrlRangeSource, LinearizedRangeSource, checkRange, parseContentRange, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS }),
+    });
     // For pdfviewer-embed.mjs: a module knows its own URL, a classic script reads currentScript.
     Object.defineProperty(PdfViewer, '_setScriptUrl', {
         value: url => { if (!scriptBase) scriptBase = new URL('.', url).href; },

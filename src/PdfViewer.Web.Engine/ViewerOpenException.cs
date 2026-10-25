@@ -18,6 +18,8 @@ public enum ViewerOpenFailure
     EncryptionNotSupportedHere,
     /// <summary>The file is larger than the host allows.</summary>
     TooLarge,
+    /// <summary>A file read by ranges (<see cref="ViewerDocument.OpenRangedAsync"/>) could not be read: the network or the server failed.</summary>
+    NetworkError,
 }
 
 /// <summary>A document that cannot be opened, with a reason and a message fit to show to the user.</summary>
@@ -46,3 +48,6 @@ public sealed class ViewerOpenException : Exception
         }
     }
 }
+
+/// <summary>A range reader of <see cref="ViewerDocument.OpenRangedAsync"/> could not read: the network, the server or the host page failed.</summary>
+public sealed class ViewerRangeReadException(string message, Exception? inner = null) : IOException(message, inner);

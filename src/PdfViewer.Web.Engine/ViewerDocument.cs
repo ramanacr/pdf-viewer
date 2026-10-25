@@ -5,6 +5,7 @@ using PdfEngine.Documents;
 using PdfEngine.Rendering;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
+using PdfEngine.Vector.Parsing;
 using PdfEngine.Vector.Skia;
 using PdfEngine.Vector.Text;
 
@@ -107,10 +108,16 @@ public sealed class ViewerBitmap
 public sealed class ViewerDocument : IAsyncDisposable
 {
     // The parse of the bytes as opened, and of the current revision (the same until the first edit).
-    private readonly PdfVectorDocument _original;
+    private PdfVectorDocument _original;
     private PdfVectorDocument _document;
-    private readonly byte[] _originalBytes;
+    private byte[] _originalBytes;
     private byte[] _bytes;
+    // Opened by ranges (OpenRangedAsync) and not complete yet: pages are drawn from it, everything
+    // else waits for the whole file (EnsureCompleteAsync). Null once the file is in memory.
+    private PdfRangedDocument? _ranged;
+    private Task? _completion;
+    private readonly CancellationTokenSource _closing = new();
+    private long _loadedBytes;
     private readonly string? _password;
     // A damaged file is written whole once before its first edit, since it cannot take an incremental update.
     private (PdfVectorDocument Document, byte[] Bytes)? _editBase;
@@ -142,9 +149,55 @@ public sealed class ViewerDocument : IAsyncDisposable
         _incremental = PdfEngine.Vector.Services.PdfUpdate.TakesIncrementalUpdate(document, bytes);
     }
 
+    /// <summary>A document opened by ranges, before the whole file is in memory: only its pages can be drawn.</summary>
+    private ViewerDocument(PdfRangedDocument ranged, string? password, ViewerOptions options, IReadOnlyList<ViewerPage> pages)
+    {
+        _ranged = ranged;
+        _original = _document = ranged.Document;
+        _originalBytes = _bytes = [];
+        _password = password;
+        Geometry = ranged.Document.PageTree.Pages.Select(p => new Annotations.ViewerPageGeometry(p.MediaBox, p.CropBox, p.RotationDegrees)).ToList();
+        _fileSize = ranged.Length;
+        _options = options;
+        Pages = pages;
+        _fonts = options.Fonts;
+        _renderer = new SkiaVectorRenderer(options.ImageCacheBytes, _fonts);
+        // Known once the file is complete (they read the form fields and the whole file).
+        _signed = new PdfEngine.Vector.Signatures.PdfSignedState(0, null);
+        _incremental = false;
+    }
+
     // Signatures of the file as opened, and whether it takes an incremental update (else an edit rewrites it whole).
-    private readonly PdfEngine.Vector.Signatures.PdfSignedState _signed;
-    private readonly bool _incremental;
+    private PdfEngine.Vector.Signatures.PdfSignedState _signed;
+    private bool _incremental;
+
+    /// <summary>
+    /// True when the whole file is in memory. A document from <see cref="OpenRangedAsync"/> is not
+    /// complete at first: its pages can be drawn and their text read for selection, and every
+    /// other call waits for the rest of the file (<see cref="EnsureCompleteAsync"/>).
+    /// <see cref="Bytes"/> and <see cref="OriginalBytes"/> throw until then, and
+    /// <see cref="CanAnnotate"/> and <see cref="CanFillForms"/> are false.
+    /// </summary>
+    public bool IsComplete => _ranged == null;
+
+    /// <summary>Raised when a ranged document becomes complete.</summary>
+    public event Action? Completed;
+
+    /// <summary>Bytes of the file read so far (the file size once complete).</summary>
+    public long LoadedBytes => _ranged is { } r ? Math.Max(Interlocked.Read(ref _loadedBytes), r.Statistics.BytesFetched) : _fileSize;
+
+    /// <summary>The file size in bytes.</summary>
+    public long FileSize => _fileSize;
+
+    /// <summary>For a document opened by ranges: what was fetched so far (kept after it is complete); null for one opened from memory.</summary>
+    public PdfRangeStatistics? RangeStatistics { get => _ranged?.Statistics ?? _lastRangeStatistics; }
+    private PdfRangeStatistics? _lastRangeStatistics;
+
+    /// <summary>Why a ranged open read the whole file at once (for example a damaged cross-reference table), or null.</summary>
+    public string? RangeFallbackReason { get; private set; }
+
+    /// <summary>The document now: the ranged one's current parse until it is complete.</summary>
+    private PdfVectorDocument Doc => _ranged?.Document ?? _document;
 
     public int PageCount => Pages.Count;
 
@@ -153,31 +206,31 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>Each page's boxes and rotation: how its user space maps to the page as shown.</summary>
     public IReadOnlyList<Annotations.ViewerPageGeometry> Geometry { get; }
 
-    /// <summary>The bytes the document was opened from.</summary>
-    public byte[] OriginalBytes => _originalBytes;
+    /// <summary>The bytes the document was opened from. Throws until the document <see cref="IsComplete"/>.</summary>
+    public byte[] OriginalBytes => IsComplete ? _originalBytes : throw new InvalidOperationException("The file is still loading.");
 
-    /// <summary>The current revision: the bytes as opened plus the reader's annotations and form data (<see cref="ApplyEditsAsync"/>).</summary>
-    public byte[] Bytes => _bytes;
+    /// <summary>The current revision: the bytes as opened plus the reader's annotations and form data (<see cref="ApplyEditsAsync"/>). Throws until the document <see cref="IsComplete"/>.</summary>
+    public byte[] Bytes => IsComplete ? _bytes : throw new InvalidOperationException("The file is still loading.");
 
     /// <summary>True when <see cref="Bytes"/> differ from the bytes as opened.</summary>
     public bool IsEdited => !ReferenceEquals(_bytes, _originalBytes);
 
     /// <summary>The document's own title (/Title in its information dictionary), if it has one.</summary>
-    public string? Title => string.IsNullOrWhiteSpace(_document.Metadata.Title) ? null : _document.Metadata.Title;
+    public string? Title => string.IsNullOrWhiteSpace(Doc.Metadata.Title) ? null : Doc.Metadata.Title;
 
     /// <summary>"1.7" and the like, from the file header.</summary>
-    public string? PdfVersion => _document.HeaderVersion;
+    public string? PdfVersion => Doc.HeaderVersion;
 
-    public bool IsEncrypted => _document.IsEncrypted;
+    public bool IsEncrypted => Doc.IsEncrypted;
 
     /// <summary>True when the cross-reference table was rebuilt because the file is damaged.</summary>
-    public bool WasRepaired => _document.WasRepaired;
+    public bool WasRepaired => Doc.WasRepaired;
 
     /// <summary>
     /// The document lets the reader copy its text (ISO 32000-2 Table 22, bit 5): always for an
     /// unencrypted file or one opened with the owner password.
     /// </summary>
-    public bool CanCopy => _document.Security is not { } s
+    public bool CanCopy => Doc.Security is not { } s
                            || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanCopy;
 
     /// <summary>
@@ -185,7 +238,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// Table 22, bit 6, as <see cref="CanCopy"/>) and its signatures (<see cref="EditRestriction"/>)
     /// allow it. A certification signature allows annotations only at level 3.
     /// </summary>
-    public bool CanAnnotate => SignaturesAllowEdits && _signed.CertificationLevel is null or 3
+    public bool CanAnnotate => IsComplete && SignaturesAllowEdits && _signed.CertificationLevel is null or 3
                                && (_document.Security is not { } s
                                    || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanAnnotate);
 
@@ -194,7 +247,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <see cref="CanCopy"/>) and its signatures allow it. A certification signature allows form
     /// filling at levels 2 and 3.
     /// </summary>
-    public bool CanFillForms => SignaturesAllowEdits && _signed.CertificationLevel is not 1
+    public bool CanFillForms => IsComplete && SignaturesAllowEdits && _signed.CertificationLevel is not 1
                                 && (_document.Security is not { } s
                                     || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanFillForms);
 
@@ -228,12 +281,13 @@ public sealed class ViewerDocument : IAsyncDisposable
             : null;
 
     /// <summary>The document lets the reader print it (ISO 32000-2 Table 22, bit 3), as <see cref="CanCopy"/>.</summary>
-    public bool CanPrint => _document.Security is not { } s
+    public bool CanPrint => Doc.Security is not { } s
                             || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanPrint;
 
     /// <summary>The document's information, security and whether it is tagged (has a structure tree).</summary>
     public async Task<ViewerMetadata> GetMetadataAsync(CancellationToken cancellationToken = default)
     {
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -288,39 +342,9 @@ public sealed class ViewerDocument : IAsyncDisposable
         {
             document = await PdfVectorDocument.OpenAsync(bytes, "Document.pdf", password: password, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        catch (PdfEncryptedDocumentException ex) when (ex.CertificateRequired)
+        catch (Exception ex) when (OpenFailure(ex, password) is { } failure)
         {
-            throw new ViewerOpenException(ViewerOpenFailure.CertificateRequired,
-                "This PDF is encrypted for specific recipients' certificates. This viewer cannot use certificates, so it cannot be opened here.", ex);
-        }
-        catch (PdfEncryptedDocumentException ex) when (ex.PasswordRequired)
-        {
-            throw string.IsNullOrEmpty(password)
-                ? new ViewerOpenException(ViewerOpenFailure.PasswordRequired, "This PDF is protected by a password.", ex)
-                : new ViewerOpenException(ViewerOpenFailure.WrongPassword, "That password does not open this PDF.", ex);
-        }
-        catch (Exception ex) when (Unwrap(ex).Any(e => e is PlatformNotSupportedException
-                                       || e is System.Security.Cryptography.CryptographicException && !PlatformCrypto.CanDecrypt))
-        {
-            // The only platform-dependent step of opening is decryption. The engine brings its own
-            // MD5 and AES where the runtime has none; what remains is certificate (public-key)
-            // encryption, which needs RSA and a certificate store.
-            throw new ViewerOpenException(ViewerOpenFailure.EncryptionNotSupportedHere,
-                "This PDF is encrypted with a method this platform's .NET runtime cannot decrypt. The desktop viewer opens it.", ex);
-        }
-        catch (PdfEncryptedDocumentException ex)
-        {
-            throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF uses an encryption method the engine does not support.", ex);
-        }
-        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException))
-        {
-            // Hostile or broken input: whatever the parser threw, the file is simply not readable.
-            throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This file is not a PDF the engine can read, or it is damaged.", ex);
-        }
-
-        static IEnumerable<Exception> Unwrap(Exception? e)
-        {
-            for (; e != null; e = e.InnerException) yield return e;
+            throw failure;
         }
 
         try
@@ -339,6 +363,166 @@ public sealed class ViewerDocument : IAsyncDisposable
         {
             document.Dispose();
             throw;
+        }
+    }
+
+    private static ViewerPage[] PagesOf(PdfVectorDocument document)
+    {
+        var pages = new ViewerPage[document.PageCount];
+        for (int i = 0; i < pages.Length; i++)
+        {
+            var info = document.GetPageInfoAsync(i + 1).AsTask().GetAwaiter().GetResult();
+            pages[i] = new ViewerPage(i + 1, info.WidthPoints, info.HeightPoints);
+        }
+        if (pages.Length == 0)
+            throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF has no pages.");
+        return pages;
+    }
+
+    /// <summary>
+    /// Opens a document from a range reader (a file on a web server, read by HTTP range requests
+    /// through the host page) without reading the whole file first: the end of the file, the page
+    /// tree, then each page's objects when it is drawn (<see cref="PdfRangedDocument"/>). The
+    /// document is not <see cref="IsComplete"/> at first; call <see cref="EnsureCompleteAsync"/>
+    /// (for example after the first page is drawn) to read the rest in the background. A file whose
+    /// cross-reference data is damaged is read whole at once and opened as by <see cref="OpenAsync"/>
+    /// (<see cref="RangeFallbackReason"/> says so). Throws <see cref="ViewerOpenException"/> as <see cref="OpenAsync"/>
+    /// does, and with <see cref="ViewerOpenFailure.NetworkError"/> when the reader fails.
+    /// </summary>
+    public static async Task<ViewerDocument> OpenRangedAsync(IPdfRangeReader reader, string? password = null, ViewerOptions? options = null,
+        PdfRangedOptions? rangeOptions = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        options ??= new ViewerOptions();
+        if (reader.Length > options.MaxFileBytes)
+            throw new ViewerOpenException(ViewerOpenFailure.TooLarge,
+                $"This file is larger than {options.MaxFileBytes / (1024 * 1024)} MB, the most this viewer opens.");
+        if (reader.Length <= 0)
+            throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "The file is empty.");
+
+        PdfRangedDocument ranged;
+        try
+        {
+            ranged = await PdfRangedDocument.OpenAsync(reader, rangeOptions, password, null, "Document.pdf", cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (OpenFailure(ex, password) is { } failure)
+        {
+            throw failure;
+        }
+        if (ranged.IsComplete)
+        {
+            // Read whole (a damaged file): from here on it is an ordinary document in memory.
+            var bytes = ranged.Bytes!;
+            string? reason = ranged.FallbackReason;
+            var stats = ranged.Statistics;
+            ranged.Dispose();
+            var whole = await OpenAsync(bytes, password, options, cancellationToken).ConfigureAwait(false);
+            whole.RangeFallbackReason = reason;
+            whole._lastRangeStatistics = stats;
+            return whole;
+        }
+        try
+        {
+            return new ViewerDocument(ranged, password, options, PagesOf(ranged.Document));
+        }
+        catch
+        {
+            ranged.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// For a document from <see cref="OpenRangedAsync"/>: reads the rest of the file (one request at
+    /// a time, so that pages drawn meanwhile go first), then opens it from memory; from then on the
+    /// document <see cref="IsComplete"/> and behaves as one from <see cref="OpenAsync"/>. Every call
+    /// waits for the same read; <paramref name="cancellationToken"/> stops this wait, not the read.
+    /// Returns at once for a complete document.
+    /// </summary>
+    public Task EnsureCompleteAsync(CancellationToken cancellationToken = default)
+    {
+        if (_ranged == null) return Task.CompletedTask;
+        Task completion;
+        lock (_closing)
+        {
+            if (_completion is { IsFaulted: true } or { IsCanceled: true }) _completion = null;
+            completion = _completion ??= CompleteAsync();
+        }
+        return completion.WaitAsync(cancellationToken);
+    }
+
+    private async Task CompleteAsync()
+    {
+        var ranged = _ranged!;
+        var token = _closing.Token;
+        byte[] bytes = await ranged.ReadAllAsync(new SyncProgress(n => Interlocked.Exchange(ref _loadedBytes, n)), token).ConfigureAwait(false);
+        var document = await PdfVectorDocument.OpenAsync(bytes, "Document.pdf", password: _password, cancellationToken: token).ConfigureAwait(false);
+        await _gate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            if (_disposed)
+            {
+                document.Dispose();
+                return;
+            }
+            _lastRangeStatistics = ranged.Statistics;
+            _original = _document = document;
+            _originalBytes = _bytes = bytes;
+            _signed = PdfEngine.Vector.Signatures.PdfSignatureValidator.ReadSignedState(document);
+            _incremental = PdfEngine.Vector.Services.PdfUpdate.TakesIncrementalUpdate(document, bytes);
+            _ranged = null;
+            PdfTextExtractor.Invalidate(ranged.Document);
+            ranged.Dispose();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        Completed?.Invoke();
+    }
+
+    /// <summary>Reports on the thread that reads (Progress&lt;T&gt; would post to a context).</summary>
+    private sealed class SyncProgress(Action<long> report) : IProgress<long>
+    {
+        public void Report(long value) => report(value);
+    }
+
+    /// <summary>The <see cref="ViewerOpenException"/> for a failure to open, or null to let the exception through (cancellation, out of memory).</summary>
+    private static ViewerOpenException? OpenFailure(Exception ex, string? password)
+    {
+        switch (ex)
+        {
+            case ViewerOpenException open:
+                return open;
+            case PdfEncryptedDocumentException e when e.CertificateRequired:
+                return new ViewerOpenException(ViewerOpenFailure.CertificateRequired,
+                    "This PDF is encrypted for specific recipients' certificates. This viewer cannot use certificates, so it cannot be opened here.", ex);
+            case PdfEncryptedDocumentException e when e.PasswordRequired:
+                return string.IsNullOrEmpty(password)
+                    ? new ViewerOpenException(ViewerOpenFailure.PasswordRequired, "This PDF is protected by a password.", ex)
+                    : new ViewerOpenException(ViewerOpenFailure.WrongPassword, "That password does not open this PDF.", ex);
+        }
+        if (Unwrap(ex).Any(e => e is PlatformNotSupportedException
+                                || e is System.Security.Cryptography.CryptographicException && !PlatformCrypto.CanDecrypt))
+        {
+            // The only platform-dependent step of opening is decryption. The engine brings its own
+            // MD5 and AES where the runtime has none; what remains is certificate (public-key)
+            // encryption, which needs RSA and a certificate store.
+            return new ViewerOpenException(ViewerOpenFailure.EncryptionNotSupportedHere,
+                "This PDF is encrypted with a method this platform's .NET runtime cannot decrypt. The desktop viewer opens it.", ex);
+        }
+        if (ex is PdfEncryptedDocumentException)
+            return new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF uses an encryption method the engine does not support.", ex);
+        if (Unwrap(ex).Any(e => e is ViewerRangeReadException))
+            return new ViewerOpenException(ViewerOpenFailure.NetworkError, "The file could not be read: the network failed or the server refused a range request.", ex);
+        if (ex is OperationCanceledException or OutOfMemoryException)
+            return null;
+        // Hostile or broken input: whatever the parser threw, the file is simply not readable.
+        return new ViewerOpenException(ViewerOpenFailure.NotReadable, "This file is not a PDF the engine can read, or it is damaged.", ex);
+
+        static IEnumerable<Exception> Unwrap(Exception? e)
+        {
+            for (; e != null; e = e.InnerException) yield return e;
         }
     }
 
@@ -361,8 +545,21 @@ public sealed class ViewerDocument : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_ranged is { } ranged)
+                return await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderCoreAsync(d, page, scale, night, ct)), cancellationToken).ConfigureAwait(false);
+            return await RenderCoreAsync(asOpened ? _original : _document, page, scale, night, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<ViewerBitmap> RenderCoreAsync(PdfVectorDocument document, int page, double scale, bool night, CancellationToken cancellationToken)
+    {
+        {
             var clock = Stopwatch.StartNew();
-            var list = await (asOpened ? _original : _document).GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
+            var list = await document.GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
             var build = clock.Elapsed;
 
             var request = new RenderRequest { PageNumber = page, Dpi = scale * 72 };
@@ -393,10 +590,6 @@ public sealed class ViewerDocument : IAsyncDisposable
                 : new ArraySegment<byte>(rendered.Pixels.ToArray());
             return new ViewerBitmap(page, rendered.WidthPixels, rendered.HeightPixels, scale, pixels, build, result.Elapsed, result.Fallbacks);
         }
-        finally
-        {
-            _gate.Release();
-        }
     }
 
     /// <summary>
@@ -414,8 +607,21 @@ public sealed class ViewerDocument : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_ranged is { } ranged)
+                return await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderRegionCoreAsync(d, page, scale, region, night, ct)), cancellationToken).ConfigureAwait(false);
+            return await RenderRegionCoreAsync(_document, page, scale, region, night, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<ViewerBitmap> RenderRegionCoreAsync(PdfVectorDocument document, int page, double scale, PageTile region, bool night, CancellationToken cancellationToken)
+    {
+        {
             var clock = Stopwatch.StartNew();
-            var list = await _document.GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
+            var list = await document.GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
             var build = clock.Elapsed;
             var request = new RenderRequest { PageNumber = page, Dpi = scale * 72 };
             var pixelRegion = new SkiaPixelRegion(region.X, region.Y, region.Width, region.Height);
@@ -425,10 +631,6 @@ public sealed class ViewerDocument : IAsyncDisposable
                 ? segment
                 : new ArraySegment<byte>(rendered.Pixels.ToArray());
             return new ViewerBitmap(page, rendered.WidthPixels, rendered.HeightPixels, scale, pixels, build, result.Elapsed, result.Fallbacks);
-        }
-        finally
-        {
-            _gate.Release();
         }
     }
 
@@ -440,6 +642,8 @@ public sealed class ViewerDocument : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_ranged is { } ranged)
+                return await ranged.RunAsync(page, (d, ct) => ValueTask.FromResult(ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(d, page, ct))), cancellationToken).ConfigureAwait(false);
             return ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(_document, page, cancellationToken));
         }
         finally
@@ -472,6 +676,7 @@ public sealed class ViewerDocument : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -516,6 +721,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     public async Task<string> GetPageTextAsync(int page, CancellationToken cancellationToken = default)
     {
         if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -531,6 +737,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>The document outline, empty when it has none.</summary>
     public async Task<IReadOnlyList<ViewerOutlineItem>> GetOutlineAsync(CancellationToken cancellationToken = default)
     {
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -628,6 +835,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>The annotations of the file as opened that the viewer manages (see <see cref="Annotations.ViewerAnnotationPdf.FromPdf"/>).</summary>
     public async Task<IReadOnlyList<Annotations.ViewerAnnotation>> ReadAnnotationsAsync(CancellationToken cancellationToken = default)
     {
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -643,6 +851,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>The widgets of the fillable form fields of the current revision, with their values.</summary>
     public async Task<IReadOnlyList<Annotations.ViewerFormWidget>> GetFormWidgetsAsync(CancellationToken cancellationToken = default)
     {
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -675,6 +884,7 @@ public sealed class ViewerDocument : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(fromFile);
         ArgumentNullException.ThrowIfNull(annotations);
         ArgumentNullException.ThrowIfNull(formValues);
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         var opened = new List<PdfVectorDocument>();
         try
@@ -734,12 +944,18 @@ public sealed class ViewerDocument : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _closing.Cancel();
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_disposed) return;
             _disposed = true;
             _renderer.Dispose();
+            if (_ranged is { } ranged)
+            {
+                PdfTextExtractor.Invalidate(ranged.Document);
+                ranged.Dispose();
+            }
             foreach (var d in new[] { _document, _editBase?.Document, _original }.Distinct())
             {
                 if (d == null) continue;
