@@ -52,7 +52,11 @@ public class ContentEditingViewerTests : IDisposable
         return vm;
     }
 
-    private static Task<string> Text(byte[] pdf) => NativeReadBack.TextAsync(pdf);
+    private static Task<string> Text(byte[]? pdf)
+    {
+        Assert.NotNull(pdf);
+        return NativeReadBack.TextAsync(pdf);
+    }
 
     [Fact]
     public async Task EditMode_OffersThePagesParagraphsAndImages_WhereTheyAre()

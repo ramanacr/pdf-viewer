@@ -172,9 +172,9 @@ internal sealed class IccProfileBuilder
         body.Write(dims);
         body.WriteByte(2); // 16-bit precision
         body.Write(new byte[3]);
+        Span<byte> b = stackalloc byte[2];
         foreach (double v in clut)
         {
-            Span<byte> b = stackalloc byte[2];
             BinaryPrimitives.WriteUInt16BigEndian(b, (ushort)Math.Round(Math.Clamp(v, 0, 1) * 65535));
             body.Write(b);
         }
