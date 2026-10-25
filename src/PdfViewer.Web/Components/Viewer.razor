@@ -1,19 +1,33 @@
 @using PdfViewer.Web.Engine
+@using PdfViewer.Web.Engine.Embed
 
-<div class="app @(_sidebarOpen && _doc != null ? "with-sidebar" : "")">
+<div class="app @(_sidebarOpen && _doc != null && _config.HasSidePanel ? "with-sidebar" : "") @(Embedded ? "embedded" : "")">
     <header class="toolbar" role="toolbar" aria-label="Viewer controls">
         <div class="group">
-            <button type="button" class="icon-button" title="Outline and results (O)" aria-label="Show or hide the side panel"
-                    aria-pressed="@(_sidebarOpen ? "true" : "false")" disabled="@(_doc == null)" @onclick="ToggleSidebar">
-                <Icon Name="sidebar" />
-            </button>
-            <span class="brand" title="PDF Viewer Native, web demo">PDF Viewer <span class="brand-tag">web demo</span></span>
+            @if (_config.HasSidePanel)
+            {
+                <button type="button" class="icon-button" title="Side panel (O)" aria-label="Show or hide the side panel"
+                        aria-pressed="@(_sidebarOpen ? "true" : "false")" disabled="@(_doc == null)" @onclick="ToggleSidebar">
+                    <Icon Name="sidebar" />
+                </button>
+            }
+            @if (!Embedded)
+            {
+                <span class="brand" title="PDF Viewer Native, web demo">PDF Viewer <span class="brand-tag">web demo</span></span>
+            }
+            else if (_doc != null && _config.Mode == EmbedMode.FullWindow)
+            {
+                <span class="brand file-title" title="@_fileName">@_fileName</span>
+            }
         </div>
 
-        <div class="group">
-            <button type="button" class="button" title="Open a PDF file (Ctrl+O)" @onclick="PickFile"><Icon Name="open" /><span class="label">Open</span></button>
-            <button type="button" class="button quiet" title="Open the built-in engine tour" @onclick="OpenSampleAsync"><Icon Name="sample" /><span class="label">Tour</span></button>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="group">
+                <button type="button" class="button" title="Open a PDF file (Ctrl+O)" @onclick="PickFile"><Icon Name="open" /><span class="label">Open</span></button>
+                <button type="button" class="button quiet" title="Open the built-in engine tour" @onclick="OpenSampleAsync"><Icon Name="sample" /><span class="label">Tour</span></button>
+            </div>
+        }
 
         @if (_doc != null)
         {
@@ -28,25 +42,31 @@
                 <button type="button" class="icon-button" title="Next page (Right arrow)" aria-label="Next page" disabled="@(_currentPage >= _doc.PageCount)" @onclick="() => GoToPage(_currentPage + 1)"><Icon Name="down" /></button>
             </div>
 
-            <div class="group" role="group" aria-label="Zoom">
-                <button type="button" class="icon-button" title="Zoom out (Ctrl+minus)" aria-label="Zoom out" @onclick="ZoomOut"><Icon Name="minus" /></button>
-                <label>
-                    <span class="visually-hidden">Zoom</span>
-                    <select class="zoom-select" @onchange="OnZoomSelect" aria-label="Zoom level">
-                        <option value="fit-width" selected="@(_zoomMode == ZoomMode.FitWidth)">Fit width</option>
-                        <option value="fit-page" selected="@(_zoomMode == ZoomMode.FitPage)">Fit page</option>
-                        @foreach (var preset in ZoomPresets)
-                        {
-                            <option value="@preset" selected="@(_zoomMode == ZoomMode.Custom && Math.Abs(_zoom - preset) < 0.001)">@Percent(preset)</option>
-                        }
-                        @if (_zoomMode != ZoomMode.Custom || !ZoomPresets.Any(p => Math.Abs(_zoom - p) < 0.001))
-                        {
-                            <option value="current" selected="@(_zoomMode == ZoomMode.Custom)" disabled>@Percent(_zoom)</option>
-                        }
-                    </select>
-                </label>
-                <button type="button" class="icon-button" title="Zoom in (Ctrl+plus)" aria-label="Zoom in" @onclick="ZoomIn"><Icon Name="plus" /></button>
-            </div>
+            @if (_config.ShowZoomControl)
+            {
+                <div class="group" role="group" aria-label="Zoom">
+                    <button type="button" class="icon-button" title="Zoom out (Ctrl+minus)" aria-label="Zoom out" @onclick="ZoomOut"><Icon Name="minus" /></button>
+                    <label>
+                        <span class="visually-hidden">Zoom</span>
+                        <select class="zoom-select" @onchange="OnZoomSelect" aria-label="Zoom level">
+                            <option value="fit-width" selected="@(_zoomMode == ZoomMode.FitWidth)">Fit width</option>
+                            @if (!IsInline)
+                            {
+                                <option value="fit-page" selected="@(_zoomMode == ZoomMode.FitPage)">Fit page</option>
+                            }
+                            @foreach (var preset in ZoomPresets)
+                            {
+                                <option value="@preset" selected="@(_zoomMode == ZoomMode.Custom && Math.Abs(_zoom - preset) < 0.001)">@Percent(preset)</option>
+                            }
+                            @if (_zoomMode != ZoomMode.Custom || !ZoomPresets.Any(p => Math.Abs(_zoom - p) < 0.001))
+                            {
+                                <option value="current" selected="@(_zoomMode == ZoomMode.Custom)" disabled>@Percent(_zoom)</option>
+                            }
+                        </select>
+                    </label>
+                    <button type="button" class="icon-button" title="Zoom in (Ctrl+plus)" aria-label="Zoom in" @onclick="ZoomIn"><Icon Name="plus" /></button>
+                </div>
+            }
 
             <form class="group search" role="search" @onsubmit="SearchOrNextAsync" @onsubmit:preventDefault>
                 <label class="search-box">
@@ -63,13 +83,32 @@
         }
 
         <div class="group end">
+            @if (_doc != null && _config.ShowDownload)
+            {
+                <button type="button" class="icon-button" title="Download the PDF" aria-label="Download the PDF" @onclick="Download"><Icon Name="download" /></button>
+            }
+            @if (_doc != null && _config.ShowPrint)
+            {
+                <button type="button" class="icon-button" title="@(_doc.CanPrint ? "Print" : "This document does not allow printing")" aria-label="Print"
+                        disabled="@(_printing || !_doc.CanPrint)" @onclick="PrintAsync"><Icon Name="print" /></button>
+            }
+            @if (Embedded && _config.Mode == EmbedMode.SizedContainer && _config.ShowFullScreen && _canFullscreen)
+            {
+                <button type="button" class="icon-button" title="Full screen" aria-label="Full screen" @onclick="ToggleFullscreen"><Icon Name="fullscreen" /></button>
+            }
             <button type="button" class="icon-button" title="Night pages: invert page colours (I)" aria-label="Night pages" aria-pressed="@(_night ? "true" : "false")" @onclick="ToggleNight"><Icon Name="invert" /></button>
-            <button type="button" class="icon-button" title="@($"Theme: {_theme} (D)")" aria-label="@($"Colour theme: {_theme}")" @onclick="CycleTheme"><Icon Name="@ThemeIcon" /></button>
-            <button type="button" class="icon-button" title="Keyboard shortcuts and about (?)" aria-label="Help and about" @onclick="() => _dialog = Dialog.Help"><Icon Name="help" /></button>
+            @if (!Embedded)
+            {
+                <button type="button" class="icon-button" title="@($"Theme: {_theme} (D)")" aria-label="@($"Colour theme: {_theme}")" @onclick="CycleTheme"><Icon Name="@ThemeIcon" /></button>
+                <button type="button" class="icon-button" title="Keyboard shortcuts and about (?)" aria-label="Help and about" @onclick="() => _dialog = Dialog.Help"><Icon Name="help" /></button>
+            }
         </div>
     </header>
 
-    <p class="privacy-bar"><Icon Name="shield" /> Everything runs in this browser tab. Files you open are never uploaded. No analytics, no cookies, no tracking.</p>
+    @if (!Embedded)
+    {
+        <p class="privacy-bar"><Icon Name="shield" /> Everything runs in this browser tab. Files you open are never uploaded. No analytics, no cookies, no tracking.</p>
+    }
 
     @if (_error != null)
     {
@@ -93,14 +132,40 @@
     }
 
     <div class="body">
-        @if (_doc != null && _sidebarOpen)
+        @if (_doc != null && _sidebarOpen && _config.HasSidePanel)
         {
             <aside class="sidebar" aria-label="Side panel">
                 <div class="tabs" role="tablist">
-                    <button type="button" role="tab" id="tab-outline" aria-selected="@(_panel == Panel.Outline ? "true" : "false")" aria-controls="panel-outline" @onclick="() => _panel = Panel.Outline">Outline</button>
+                    @if (_config.ShowBookmarks)
+                    {
+                        <button type="button" role="tab" id="tab-outline" aria-selected="@(_panel == Panel.Outline ? "true" : "false")" aria-controls="panel-outline" @onclick="() => _panel = Panel.Outline">Outline</button>
+                    }
+                    @if (_config.ShowThumbnails)
+                    {
+                        <button type="button" role="tab" id="tab-thumbnails" aria-selected="@(_panel == Panel.Thumbnails ? "true" : "false")" aria-controls="panel-thumbnails" @onclick="ShowThumbnails">Pages</button>
+                    }
                     <button type="button" role="tab" id="tab-results" aria-selected="@(_panel == Panel.Results ? "true" : "false")" aria-controls="panel-results" @onclick="() => _panel = Panel.Results">Results @(_hits.Count > 0 ? $"({_hits.Count})" : "")</button>
                 </div>
-                @if (_panel == Panel.Outline)
+                @if (_panel == Panel.Thumbnails && _config.ShowThumbnails)
+                {
+                    <div id="panel-thumbnails" role="tabpanel" aria-labelledby="tab-thumbnails" class="panel">
+                        <ol class="thumbs">
+                            @foreach (var pv in _doc.Pages)
+                            {
+                                var (tw, th) = ThumbSize(pv);
+                                int number = pv.Number;
+                                <li>
+                                    <button type="button" class="thumb@(number == _currentPage ? " current" : "")" id="thumb-@number" data-thumb="@number"
+                                            aria-label="@($"Page {number}")" aria-current="@(number == _currentPage ? "page" : null)" @onclick="() => GoToPage(number)">
+                                        <span class="thumb-page" style="width:@Px(tw);height:@Px(th)"><canvas></canvas></span>
+                                        <span class="thumb-number">@number</span>
+                                    </button>
+                                </li>
+                            }
+                        </ol>
+                    </div>
+                }
+                else if (_panel == Panel.Outline && _config.ShowBookmarks)
                 {
                     <div id="panel-outline" role="tabpanel" aria-labelledby="tab-outline" class="panel">
                         @if (_outline.Count == 0)
@@ -141,8 +206,17 @@
             </aside>
         }
 
-        <main id="pages" class="pages@(_night ? " night" : "")" tabindex="-1" aria-label="@(_doc == null ? "Start" : "Document pages")">
-            @if (_doc == null)
+        <main id="pages" class="@PagesClass" tabindex="-1" aria-label="@(_doc == null ? "Start" : "Document pages")">
+            @if (_doc == null && Embedded)
+            {
+                <section class="embed-wait">
+                    @if (_error == null)
+                    {
+                        <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span> @(_loading ? _loadingText : "Waiting for the document…")</p>
+                    }
+                </section>
+            }
+            else if (_doc == null)
             {
                 <section class="welcome" aria-labelledby="welcome-title">
                     <h1 id="welcome-title">Open a PDF. It stays on your device.</h1>
@@ -180,6 +254,14 @@
                     <div class="page" id="page-@pv.Number" data-page="@pv.Number" style="width:@Px(w);height:@Px(h)"
                          role="img" aria-label="@($"Page {pv.Number} of {_doc.PageCount}")">
                         <canvas></canvas>
+                        @if (_selection?.Page == pv.Number)
+                        {
+                            @foreach (var r in _selectionBands)
+                            {
+                                <span class="sel" aria-hidden="true"
+                                      style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(r.Width / pv.Width);height:@Pct(r.Height / pv.Height)"></span>
+                            }
+                        }
                         @if (_hitsByPage.TryGetValue(pv.Number, out var pageHits))
                         {
                             @foreach (var (hit, index) in pageHits)
@@ -197,14 +279,21 @@
         </main>
     </div>
 
-    <footer class="statusbar">
-        <span class="status-file" title="@_fileName">@(_doc == null ? "No document" : _fileName)</span>
-        <span aria-live="polite" class="status-main">@_status</span>
-        <span class="status-perf" title="Last page render: interpreting the page into a display list, then drawing it with Skia">@_perf</span>
-    </footer>
+    @if (!Embedded)
+    {
+        <footer class="statusbar">
+            <span class="status-file" title="@_fileName">@(_doc == null ? "No document" : _fileName)</span>
+            <span aria-live="polite" class="status-main">@_status</span>
+            <span class="status-perf" title="Last page render: interpreting the page into a display list, then drawing it with Skia">@_perf</span>
+        </footer>
 
-    <div class="drop-overlay" aria-hidden="true"><div><Icon Name="open" /> Drop the PDF to open it here</div></div>
-    <input id="file-input" type="file" accept="application/pdf,.pdf" hidden />
+        <div class="drop-overlay" aria-hidden="true"><div><Icon Name="open" /> Drop the PDF to open it here</div></div>
+        <input id="file-input" type="file" accept="application/pdf,.pdf" hidden />
+    }
+    else
+    {
+        <p class="visually-hidden" aria-live="polite">@_status</p>
+    }
 
     @if (_dialog == Dialog.Help)
     {
@@ -223,10 +312,12 @@
                     <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>First / last page</td></tr>
                     <tr><td><kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>Ctrl</kbd> <kbd>-</kbd></td><td>Zoom in / out</td></tr>
                     <tr><td><kbd>Ctrl</kbd> <kbd>0</kbd> / <kbd>Ctrl</kbd> <kbd>9</kbd></td><td>Fit width / fit page</td></tr>
+                    <tr><td>Drag, double click</td><td>Select text on a page, a word</td></tr>
+                    <tr><td><kbd>Ctrl</kbd> <kbd>A</kbd> / <kbd>Ctrl</kbd> <kbd>C</kbd></td><td>Select the text of the page / copy the selection</td></tr>
                     <tr><td><kbd>O</kbd></td><td>Show or hide the side panel</td></tr>
                     <tr><td><kbd>D</kbd></td><td>Colour theme: system, light, dark</td></tr>
                     <tr><td><kbd>I</kbd></td><td>Night pages (inverted page colours)</td></tr>
-                    <tr><td><kbd>Esc</kbd></td><td>Close this dialog or clear the search</td></tr>
+                    <tr><td><kbd>Esc</kbd></td><td>Close this dialog, clear the selection or the search</td></tr>
                 </tbody>
             </table>
             <h2>About this demo</h2>

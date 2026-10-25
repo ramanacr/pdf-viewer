@@ -9,6 +9,7 @@ using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Skia;
 using PdfViewer.Web.Engine;
 using PdfViewer.Web.Engine.Demo;
+using PdfViewer.Web.Engine.Embed;
 using PdfViewer.Web.Interop;
 
 namespace PdfViewer.Web.Components;
@@ -17,13 +18,15 @@ namespace PdfViewer.Web.Components;
 /// The viewer page: toolbar, side panel (outline, search results), the pages and the status bar.
 /// Pages are laid out at their full size and drawn only when near the view, most central first,
 /// one at a time; rendered bitmaps are kept in a bounded cache and canvases far from the view are
-/// emptied. All engine work goes through <see cref="ViewerDocument"/>.
+/// emptied. All engine work goes through <see cref="ViewerDocument"/>. The same component is the
+/// embedded viewer of the embed SDK (Viewer.Embed.cs); selection, thumbnails, download and print
+/// are in the other partial files.
 /// </summary>
 [SupportedOSPlatform("browser")]
 public sealed partial class Viewer : IAsyncDisposable
 {
     private enum ZoomMode { FitWidth, FitPage, Custom }
-    private enum Panel { Outline, Results }
+    private enum Panel { Outline, Thumbnails, Results }
     private enum Dialog { None, Help, Password }
 
     private static readonly double[] ZoomPresets = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -59,6 +62,7 @@ public sealed partial class Viewer : IAsyncDisposable
     private const string LocalFontDirectory = "/local-fonts";
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
+    [Inject] private NavigationManager Nav { get; set; } = default!;
 
     private DotNetObjectReference<Viewer>? _self;
     private IJSObjectReference? _module;
@@ -79,6 +83,8 @@ public sealed partial class Viewer : IAsyncDisposable
     private Panel _panel = Panel.Outline;
     private Dialog _dialog;
     private bool _layoutChanged, _refit;
+    private bool _twoColumns;
+    private bool _scrollToStart;
     private double? _rescale;
 
     // Messages.
@@ -144,37 +150,65 @@ public sealed partial class Viewer : IAsyncDisposable
     private static string Pct(double v) => (v * 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
     private static string Percent(double zoom) => Math.Round(zoom * 100).ToString(CultureInfo.InvariantCulture) + "%";
 
+    protected override void OnInitialized() => ReadFrameUrl();
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=2");
-            await _module.InvokeVoidAsync("init", _self, "pages");
-            _theme = CanvasInterop.ReadSetting("theme") is "light" or "dark" ? CanvasInterop.ReadSetting("theme")! : "system";
-            _sidebarOpen = CanvasInterop.ReadSetting("sidebar") != "closed";
-            CanvasInterop.SetTheme(_theme);
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=3");
+            await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
+            if (Embedded)
+            {
+                // Nothing is kept in the browser's storage: the viewer's origin is shared by every host page.
+                CanvasInterop.SetTheme(_config.Theme);
+                _canFullscreen = CanvasInterop.CanFullscreen();
+                if (Listening) await _module.InvokeVoidAsync("initEmbed", _self, _frame!.Origin, EmbedProtocol.Ready());
+            }
+            else
+            {
+                _theme = CanvasInterop.ReadSetting("theme") is "light" or "dark" ? CanvasInterop.ReadSetting("theme")! : "system";
+                _sidebarOpen = CanvasInterop.ReadSetting("sidebar") != "closed";
+                CanvasInterop.SetTheme(_theme);
+                _status = "Ready";
+            }
             _canUseLocalFonts = CanvasInterop.HasLocalFonts();
             _engineInfo = $"{RuntimeInformation.FrameworkDescription}, {RuntimeInformation.OSDescription}. " +
                           $"Engine: PdfEngine.Vector with the Skia backend (SkiaSharp {typeof(SkiaSharp.SKCanvas).Assembly.GetName().Version}).";
-            _status = "Ready";
             StateHasChanged();
             return;
         }
+        if (_observeThumbs)
+        {
+            _observeThumbs = false;
+            CanvasInterop.ObserveThumbnails();
+        }
+        ReportView();
         if (_layoutChanged)
         {
             _layoutChanged = false;
             CanvasInterop.ObservePages();
+            if (ShowingThumbnails) CanvasInterop.ObserveThumbnails();
         }
+        // A document just opened: its first fit must not move the view away from page 1.
+        if (_scrollToStart) _rescale = null;
         if (_rescale is double ratio)
         {
             _rescale = null;
             CanvasInterop.RescaleScroll(ratio);
         }
+        bool refitted = false;
         if (_refit)
         {
             _refit = false;
-            if (Refit()) StateHasChanged();
+            refitted = Refit();
+            if (refitted) StateHasChanged();
+        }
+        if (_scrollToStart && !refitted)
+        {
+            _scrollToStart = false;
+            CanvasInterop.ScrollToPage(1, 0, smooth: false);
         }
         if (_dialog != _focusedDialog)
         {
@@ -235,6 +269,7 @@ public sealed partial class Viewer : IAsyncDisposable
         }
         catch (ViewerOpenException ex) when (ex.Failure is ViewerOpenFailure.PasswordRequired or ViewerOpenFailure.WrongPassword)
         {
+            _passwordWasWrong = ex.Failure == ViewerOpenFailure.WrongPassword;
             _pendingBytes = bytes;
             _pendingName = name;
             _password = "";
@@ -247,6 +282,7 @@ public sealed partial class Viewer : IAsyncDisposable
         }
         catch (ViewerOpenException ex)
         {
+            FailOpen(EmbedErrors.FromOpenFailure(ex.Failure), ex.Message);
             _error = $"{name}: {ex.Message}" + (ex.Detail.Length > 0 && ex.Failure == ViewerOpenFailure.NotReadable ? $" (Engine detail: {ex.Detail}.)" : "");
             _loading = false;
             _status = _doc == null ? "Ready" : $"{_doc.PageCount} {(_doc.PageCount == 1 ? "page" : "pages")}";
@@ -257,6 +293,7 @@ public sealed partial class Viewer : IAsyncDisposable
 
         await CloseDocumentAsync();
         _doc = doc;
+        _docBytes = bytes;
         _fileName = name;
         _currentPage = 1;
         _outline = await doc.GetOutlineAsync();
@@ -267,13 +304,14 @@ public sealed partial class Viewer : IAsyncDisposable
         _loading = false;
         _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {opened.TotalMilliseconds:0} ms" +
                   (doc.WasRepaired ? " (damaged file, repaired)" : "");
+        if (Embedded) EmbedOpened();
         // Fit again once the side panel is laid out beside the pages.
         Refit();
         _refit = true;
         _layoutChanged = true;
+        _scrollToStart = !IsInline;
         StateHasChanged();
         await Task.Delay(1);
-        CanvasInterop.ScrollToPage(1, 0, smooth: false);
         if (!string.IsNullOrWhiteSpace(_query)) await RestartSearchAsync();
     }
 
@@ -291,6 +329,8 @@ public sealed partial class Viewer : IAsyncDisposable
 
     private void CancelPassword()
     {
+        FailOpen(_passwordWasWrong ? EmbedErrors.WrongPassword : EmbedErrors.PasswordRequired,
+            _passwordWasWrong ? "The password given does not open this PDF." : "This PDF is protected by a password.");
         _dialog = Dialog.None;
         _pendingBytes = null;
         _password = "";
@@ -308,6 +348,10 @@ public sealed partial class Viewer : IAsyncDisposable
         _visible.Clear();
         _cache.Clear();
         _renderTimes.Clear();
+        ForgetSelection();
+        _thumbsDrawn.Clear();
+        _thumbsVisible.Clear();
+        _docBytes = null;
         if (_doc != null) await _doc.DisposeAsync();
         _doc = null;
     }
@@ -359,7 +403,15 @@ public sealed partial class Viewer : IAsyncDisposable
                     .Where(p => !(_drawn.TryGetValue(p, out var d) && d == (scale, night)) && !_failed.Contains((p, scale, night)))
                     .OrderBy(p => Math.Abs(p - _currentPage)).ThenBy(p => p)
                     .FirstOrDefault();
-                if (page == 0) break;
+                if (page == 0)
+                {
+                    // The pages in view are drawn: then the thumbnails in the side panel's view.
+                    int thumb = NextThumbnail();
+                    if (thumb == 0) break;
+                    await DrawThumbnailAsync(doc, thumb);
+                    await Task.Delay(1);
+                    continue;
+                }
 
                 if (!_cache.TryGet(page, scale, night, out var bitmap))
                 {
@@ -462,10 +514,13 @@ public sealed partial class Viewer : IAsyncDisposable
         if (_doc == null || _zoomMode == ZoomMode.Custom) return false;
         var size = CanvasInterop.ViewportSize();
         double width = Math.Max(100, size[0]), height = Math.Max(100, size[1]);
+        // Two columns share the width, with the gap between pages (16 px in app.css) between them.
+        if (_twoColumns && _doc.PageCount > 1) width = Math.Max(50, (width - 16) / 2);
         double maxWidth = _doc.Pages.Max(p => p.Width);
         var current = _doc.Pages[Math.Clamp(_currentPage, 1, _doc.PageCount) - 1];
         double zoom = width / (maxWidth * CssPerPoint);
-        if (_zoomMode == ZoomMode.FitPage)
+        // In line, the host page scrolls and the frame is as tall as the document: no height to fit.
+        if (_zoomMode == ZoomMode.FitPage && !IsInline)
             zoom = Math.Min(width / (current.Width * CssPerPoint), height / (current.Height * CssPerPoint));
         return SetZoom(Math.Clamp(zoom, MinZoom, MaxZoom), _zoomMode);
     }
@@ -506,13 +561,15 @@ public sealed partial class Viewer : IAsyncDisposable
     private void ToggleSidebar()
     {
         _sidebarOpen = !_sidebarOpen;
-        CanvasInterop.WriteSetting("sidebar", _sidebarOpen ? "open" : "closed");
+        if (!Embedded) CanvasInterop.WriteSetting("sidebar", _sidebarOpen ? "open" : "closed");
+        if (_sidebarOpen && _panel == Panel.Thumbnails) ShowThumbnails();
         _refit = true;
     }
 
     private void ToggleNight()
     {
         _night = !_night;
+        _thumbsDrawn.Clear();
         Redraw();
     }
 
@@ -520,8 +577,12 @@ public sealed partial class Viewer : IAsyncDisposable
     {
         _theme = _theme switch { "system" => "light", "light" => "dark", _ => "system" };
         CanvasInterop.SetTheme(_theme);
-        CanvasInterop.WriteSetting("theme", _theme);
+        if (!Embedded) CanvasInterop.WriteSetting("theme", _theme);
     }
+
+    private bool _canFullscreen;
+
+    private static void ToggleFullscreen() => CanvasInterop.ToggleFullscreen();
 
     // ---------------------------------------------------------------- search
 
@@ -548,6 +609,8 @@ public sealed partial class Viewer : IAsyncDisposable
         _searchCts?.Cancel();
         ClearSearchResults();
         _searchedFor = _query.Trim();
+        _searchId++;
+        if (_searchedFor.Length > 0) Emit(EmbedEvents.TextSearch, w => w.WriteString("searchedText", _searchedFor));
         var doc = _doc;
         if (doc == null || _searchedFor.Length == 0)
         {
@@ -567,6 +630,7 @@ public sealed partial class Viewer : IAsyncDisposable
             var progress = new Immediate<int>(p =>
             {
                 _searchPagesDone = p;
+                PostSearchUpdate();
                 StateHasChanged();
             });
             await foreach (var hit in doc.SearchAsync(_searchedFor, _matchCase, wholeWord: false, progress, cts.Token))
@@ -591,7 +655,11 @@ public sealed partial class Viewer : IAsyncDisposable
         }
         finally
         {
-            if (_searchCts == cts) _searching = false;
+            if (_searchCts == cts)
+            {
+                _searching = false;
+                PostSearchUpdate();
+            }
             StateHasChanged();
         }
     }
@@ -610,6 +678,7 @@ public sealed partial class Viewer : IAsyncDisposable
         double offset = hit.Rects.Count > 0 ? hit.Rects[0].Y * _zoom * CssPerPoint : 0;
         _currentPage = hit.Page;
         CanvasInterop.ScrollToPage(hit.Page, offset, smooth: false);
+        if (!_searching) PostSearchUpdate();
         StateHasChanged();
     }
 
@@ -620,7 +689,8 @@ public sealed partial class Viewer : IAsyncDisposable
     {
         switch (action)
         {
-            case "open": PickFile(); break;
+            case "open": if (!Embedded) PickFile(); break;
+            case "select-all": await SelectAllOnPageAsync(); break;
             case "find":
                 if (_doc == null) break;
                 CanvasInterop.FocusElement("search-input", select: true);
@@ -630,11 +700,13 @@ public sealed partial class Viewer : IAsyncDisposable
             case "escape":
                 if (_dialog == Dialog.Password) CancelPassword();
                 else if (_dialog != Dialog.None) _dialog = Dialog.None;
+                else if (_selection is { IsEmpty: false }) ClearSelection();
                 else if (_searchedFor.Length > 0)
                 {
                     _query = "";
                     await RestartSearchAsync();
                 }
+                else if (_frame?.Mode == EmbedMode.LightBox) Post(EmbedProtocol.Close());
                 break;
             case "zoom-in": if (_doc != null) ZoomIn(); break;
             case "zoom-out": if (_doc != null) ZoomOut(); break;
@@ -646,8 +718,8 @@ public sealed partial class Viewer : IAsyncDisposable
             case "last-page": GoToPage(_doc?.PageCount ?? 1); break;
             case "toggle-theme": CycleTheme(); break;
             case "toggle-night": ToggleNight(); break;
-            case "toggle-sidebar": if (_doc != null) ToggleSidebar(); break;
-            case "help": _dialog = _dialog == Dialog.Help ? Dialog.None : Dialog.Help; break;
+            case "toggle-sidebar": if (_doc != null && _config.HasSidePanel) ToggleSidebar(); break;
+            case "help": if (!Embedded) _dialog = _dialog == Dialog.Help ? Dialog.None : Dialog.Help; break;
         }
         StateHasChanged();
     }

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Viewer embed SDK: examples</title>
+    <link rel="stylesheet" href="examples.css" />
+</head>
+<body>
+<header class="example"><h1>PDF Viewer embed SDK: examples</h1><nav><a href="../">SDK documentation</a></nav></header>
+<main class="article">
+    <p>Each page embeds the viewer with <code>pdfviewer-embed.js</code>. The PDF is written by the page itself
+        (<code>sample-pdf.js</code>), so nothing is downloaded but the viewer, and nothing is uploaded.
+        View the source of a page to copy its code.</p>
+    <ul>
+        <li><a href="full-window.html">Full window</a>: the viewer fills the page, with the side panel. Add <code>?url=…</code> to open another PDF of this site (other sites are refused).</li>
+        <li><a href="sized-container.html">Sized container</a>: a fixed box in an article, with a full-screen button.</li>
+        <li><a href="in-line.html">In line</a>: every page in the flow of the article; the article scrolls.</li>
+        <li><a href="lightbox.html">Light box</a>: the viewer opens over the page and closes back to it.</li>
+        <li><a href="events-and-apis.html">Events and APIs</a>: every event in a log, and buttons for each API.</li>
+        <li><a href="file-picker.html">File picker</a>: open a PDF from your device with <code>content.promise</code>.</li>
+    </ul>
+    <h2>Frameworks (copy into your app)</h2>
+    <p>These files are not run here. Copy one into your app and change the script URL to where you serve the viewer.</p>
+    <ul>
+        <li><a href="react/PdfViewerEmbed.jsx">React component</a> (<code>react/PdfViewerEmbed.jsx</code>)</li>
+        <li><a href="angular/pdf-viewer.component.ts">Angular component</a> (<code>angular/pdf-viewer.component.ts</code>)</li>
+    </ul>
+</main>
+</body>
+</html>

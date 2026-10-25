@@ -561,6 +561,25 @@ public sealed class ViewerTextSelection
         return true;
     }
 
+    /// <summary>
+    /// A mouse drag: the characters between the caret nearest <paramref name="anchor"/> (where the
+    /// button went down) and the caret nearest <paramref name="focus"/>, in either order. Empty
+    /// until the pointer passes a character's centre.
+    /// </summary>
+    public void SelectBetween(ViewerPoint anchor, ViewerPoint focus)
+    {
+        if (Layout.IsEmpty)
+        {
+            Start = End = 0;
+            return;
+        }
+        int a = Layout.HitTest(anchor), b = Layout.HitTest(focus);
+        (Start, End) = a <= b ? (a, b) : (b, a);
+    }
+
+    /// <summary>Selects nothing.</summary>
+    public void Clear() => Start = End = 0;
+
     /// <summary>Selects the whole page.</summary>
     public void SelectAll()
     {

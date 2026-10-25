@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Events and APIs: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+    <style>
+        .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 16px; padding: 16px; }
+        @media (max-width: 800px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+        #viewer { height: 620px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        #log { font: 12.5px/1.45 ui-monospace, Consolas, monospace; height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin: 0; white-space: pre-wrap; }
+        h2 { font-size: 15px; margin: 12px 0 6px; }
+    </style>
+</head>
+<body>
+<header class="example"><h1>Events and APIs</h1><nav><a href="index.html">All examples</a></nav></header>
+<div class="layout">
+    <div id="viewer"></div>
+    <section aria-label="APIs and events">
+        <h2>APIs</h2>
+        <div class="controls">
+            <button type="button" data-api="metadata">getPDFMetadata</button>
+            <button type="button" data-api="page">getCurrentPage</button>
+            <button type="button" data-api="goto">gotoLocation(3)</button>
+            <button type="button" data-api="selected">getSelectedContent</button>
+        </div>
+        <div class="controls">
+            <button type="button" data-api="zoomIn">zoomIn</button>
+            <button type="button" data-api="zoomOut">zoomOut</button>
+            <button type="button" data-api="zoom150">setZoomLevel(1.5)</button>
+            <button type="button" data-api="limits">getZoomLimits</button>
+        </div>
+        <div class="controls">
+            <button type="button" data-api="search">search("invoice")</button>
+            <button type="button" data-api="next">next</button>
+            <button type="button" data-api="previous">previous</button>
+            <button type="button" data-api="clear">clear</button>
+        </div>
+        <h2>Events (they stay in this page)</h2>
+        <pre id="log" aria-live="polite"></pre>
+    </section>
+</div>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="sample-pdf.js"></script>
+<script>
+    const log = document.getElementById('log');
+    const write = (label, value) => {
+        log.textContent += label + (value === undefined ? '' : ' ' + JSON.stringify(value)) + '\n';
+        log.scrollTop = log.scrollHeight;
+    };
+
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    // Every event type; pass { listenOn: ['PAGE_VIEW', ...] } to hear only some.
+    view.registerCallback(PdfViewer.View.Enum.CallbackType.EVENT_LISTENER, event => write(event.type, event.data), {});
+
+    let search = null;
+    const ready = view.previewFile({
+        content: { promise: Promise.resolve(samplePdf()) },
+        metaData: { fileName: 'Quarterly report.pdf', id: 'report-q3' },
+    }, {
+        embedMode: 'SIZED_CONTAINER',
+        enableSearchAPIs: true,
+    }).then(viewer => viewer.getAPIs());
+
+    const actions = {
+        metadata: apis => apis.getPDFMetadata(),
+        page: apis => apis.getCurrentPage(),
+        goto: apis => apis.gotoLocation(3, 0, 0),
+        selected: apis => apis.getSelectedContent(),
+        zoomIn: apis => apis.getZoomAPIs().zoomIn(),
+        zoomOut: apis => apis.getZoomAPIs().zoomOut(),
+        zoom150: apis => apis.getZoomAPIs().setZoomLevel(1.5),
+        limits: apis => apis.getZoomAPIs().getZoomLimits(),
+        search: apis => apis.search('invoice').then(s => {
+            search = s;
+            s.onResultsUpdate(result => write('search update', result));
+            return 'search started';
+        }),
+        next: () => search ? search.next() : 'no search yet',
+        previous: () => search ? search.previous() : 'no search yet',
+        clear: () => search ? search.clear().then(() => { search = null; return 'cleared'; }) : 'no search yet',
+    };
+    document.querySelectorAll('[data-api]').forEach(button => button.addEventListener('click', () => {
+        const name = button.dataset.api;
+        ready.then(apis => actions[name](apis))
+            .then(value => write('→ ' + button.textContent, value === undefined ? null : value))
+            .catch(error => write('✗ ' + button.textContent, { code: error.code, message: error.message }));
+    }));
+    ready.catch(error => write('previewFile failed', { code: error.code, message: error.message }));
+</script>
+</body>
+</html>

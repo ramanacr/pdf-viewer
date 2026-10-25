@@ -25,6 +25,15 @@ public sealed record ViewerSearchHit(int Page, int IndexOnPage, IReadOnlyList<Vi
 /// <summary>An outline (bookmark) entry; <see cref="Page"/> is null when it goes nowhere in this document.</summary>
 public sealed record ViewerOutlineItem(string Title, int? Page, IReadOnlyList<ViewerOutlineItem> Children);
 
+/// <summary>
+/// What a host may show about a document: the information dictionary, the file header's version,
+/// security and structure. Strings are empty when the document does not say.
+/// </summary>
+public sealed record ViewerMetadata(
+    int PageCount, string Title, string Author, string Subject, string Keywords, string Creator, string Producer,
+    DateTime? CreationDate, DateTime? ModificationDate, string PdfVersion, bool IsEncrypted, bool IsTagged,
+    bool CanCopy, bool CanPrint, bool WasRepaired, long FileSizeBytes);
+
 /// <summary>Limits and resources of a viewer session.</summary>
 public sealed class ViewerOptions
 {
@@ -103,6 +112,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     private SkiaVectorRenderer _renderer;
     private SkiaFontSource? _fonts;
     private bool _disposed;
+    private readonly long _fileSize;
 
     /// <summary>
     /// Most times a page is drawn again after fetching the fonts it asked for (each time fetches at
@@ -110,9 +120,10 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// </summary>
     private const int MaxFontRounds = 5;
 
-    private ViewerDocument(PdfVectorDocument document, ViewerOptions options, IReadOnlyList<ViewerPage> pages)
+    private ViewerDocument(PdfVectorDocument document, ViewerOptions options, IReadOnlyList<ViewerPage> pages, long fileSize)
     {
         _document = document;
+        _fileSize = fileSize;
         _options = options;
         Pages = pages;
         _fonts = options.Fonts;
@@ -140,6 +151,51 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// </summary>
     public bool CanCopy => _document.Security is not { } s
                            || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanCopy;
+
+    /// <summary>The document lets the reader print it (ISO 32000-2 Table 22, bit 3), as <see cref="CanCopy"/>.</summary>
+    public bool CanPrint => _document.Security is not { } s
+                            || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanPrint;
+
+    /// <summary>The document's information, security and whether it is tagged (has a structure tree).</summary>
+    public async Task<ViewerMetadata> GetMetadataAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var m = _document.Metadata;
+            bool tagged;
+            try
+            {
+                tagged = PdfEngine.Vector.Accessibility.PdfAutoTagger.IsTagged(_document);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                tagged = false; // a damaged catalog entry: not usable as a structure tree
+            }
+            // The engine's metadata has the common strings; keywords and dates come from /Info here.
+            string? Info(string key)
+            {
+                try
+                {
+                    return _document.Resolver.Resolve(_document.XrefTable.Trailer?["Info"]) is PdfEngine.Vector.Objects.PdfDictionary info
+                        ? PdfEngine.Vector.Services.PdfTextStrings.Decode(_document.Resolver.Resolve(info[key]))
+                        : null;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    return null; // a damaged entry reads as absent
+                }
+            }
+            return new ViewerMetadata(PageCount, m.Title ?? "", m.Author ?? "", m.Subject ?? "", Info("Keywords") ?? "", m.Creator ?? "", m.Producer ?? "",
+                PdfEngine.Vector.Services.PdfTextStrings.ParseDate(Info("CreationDate")), PdfEngine.Vector.Services.PdfTextStrings.ParseDate(Info("ModDate")),
+                _document.HeaderVersion ?? m.PdfVersion, _document.IsEncrypted, tagged, CanCopy, CanPrint, WasRepaired, _fileSize);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     /// <summary>Opens a document held in memory. Throws <see cref="ViewerOpenException"/> with the reason when it cannot.</summary>
     public static async Task<ViewerDocument> OpenAsync(byte[] bytes, string? password = null, ViewerOptions? options = null,
@@ -201,7 +257,7 @@ public sealed class ViewerDocument : IAsyncDisposable
             }
             if (pages.Length == 0)
                 throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF has no pages.");
-            return new ViewerDocument(document, options, pages);
+            return new ViewerDocument(document, options, pages, bytes.LongLength);
         }
         catch
         {

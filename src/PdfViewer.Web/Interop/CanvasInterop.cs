@@ -51,4 +51,42 @@ internal static partial class CanvasInterop
 
     [JSImport("hasLocalFonts", ModuleName)]
     public static partial bool HasLocalFonts();
+
+    [JSImport("drawThumbnail", ModuleName)]
+    public static partial void DrawThumbnail(int page, [JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bgra, int width, int height);
+
+    [JSImport("observeThumbnails", ModuleName)]
+    public static partial void ObserveThumbnails();
+
+    [JSImport("scrollToLocation", ModuleName)]
+    public static partial void ScrollToLocation(int page, double x, double y);
+
+    [JSImport("setSelectionText", ModuleName)]
+    public static partial void SetSelectionText(string? text);
+
+    [JSImport("downloadBytes", ModuleName)]
+    public static partial void DownloadBytes([JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bytes, string name);
+
+    [JSImport("printBegin", ModuleName)]
+    public static partial void PrintBegin();
+
+    [JSImport("printAddPage", ModuleName)]
+    public static partial void PrintAddPage([JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bgra, int width, int height, double widthPt, double heightPt);
+
+    [JSImport("printPending", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.Number>>]
+    public static partial Task<int> PrintPending();
+
+    [JSImport("printRun", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.Boolean>>]
+    public static partial Task<bool> PrintRun(string title);
+
+    [JSImport("canFullscreen", ModuleName)]
+    public static partial bool CanFullscreen();
+
+    [JSImport("toggleFullscreen", ModuleName)]
+    public static partial void ToggleFullscreen();
+
+    [JSImport("embedPost", ModuleName)]
+    public static partial void EmbedPost(string json);
 }

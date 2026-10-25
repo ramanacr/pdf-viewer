@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Light box: PDF Viewer embed SDK</title>
+    <link rel="stylesheet" href="examples.css" />
+</head>
+<body>
+<header class="example"><h1>Light box</h1><nav><a href="index.html">All examples</a></nav></header>
+<main class="article">
+    <p>The button opens the report over this page. "Return" (or Escape) closes it and puts the focus back on the button.</p>
+    <p><button type="button" class="primary" id="open">Open the quarterly report</button></p>
+    <p id="status" class="status" role="status"></p>
+    <!-- The light box covers the whole page; this element only anchors the View. -->
+    <div id="viewer"></div>
+</main>
+<script src="../../demo/pdfviewer-embed.js"></script>
+<script src="sample-pdf.js"></script>
+<script>
+    const view = new PdfViewer.View({ divId: 'viewer' });
+    document.getElementById('open').addEventListener('click', () => {
+        view.previewFile({
+            content: { promise: Promise.resolve(samplePdf()) },
+            metaData: { fileName: 'Quarterly report.pdf' },
+        }, {
+            embedMode: 'LIGHT_BOX',
+            exitPDFViewerType: 'RETURN',
+        }).catch(error => {
+            if (error.code === 'CLOSED') return;   // closed before the file was open
+            const status = document.getElementById('status');
+            status.className = 'status error';
+            status.textContent = error.code + ': ' + error.message;
+        });
+    });
+</script>
+</body>
+</html>
