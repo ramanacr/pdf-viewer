@@ -46,11 +46,12 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     private const uint DXGI_ERROR_DEVICE_RESET = 0x887A0007;
 
     /// <summary>
-    /// Ceiling on one render's pixel count: past it the stride x height product leaves int range
-    /// and the buffer is refused with a typed error instead of an OverflowException in the
-    /// allocation. Far above any real viewport or export; zoomed-in views render regions.
+    /// Ceiling on one render's pixel count: past it the stride x height product (4 bytes a pixel)
+    /// leaves int range and the buffer is refused with a typed error instead of an
+    /// OverflowException in the allocation. Far above any real viewport or export; zoomed-in
+    /// views render regions.
     /// </summary>
-    internal const long MaxRenderPixelCount = 1L << 30;
+    internal const long MaxRenderPixelCount = int.MaxValue / 4;
 
     private readonly D2DResources _res;
     private readonly SemaphoreSlim _gate = new(1, 1);
