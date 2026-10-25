@@ -189,6 +189,47 @@ public class AndroidViewerTests
         }
     }
 
+    [Fact]
+    public void VariableFont_BoldIsTheFontManagersInstance_NotAnEmboldenedRegular()
+    {
+        // Windows' Bahnschrift is one variable font, as Roboto is on Android 12 and later. The
+        // DirectWrite font manager names its weights as Android's reads them from fonts.xml.
+        string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "bahnschrift.ttf");
+        if (!File.Exists(path)) return;
+        var face = new SystemFontFace(path, 0, "Bahnschrift", "Regular", "Bahnschrift", 400, false);
+        using var bold = SkiaFontSource.FindInstance(SKFontManager.Default, face, 700, italic: false);
+        Assert.NotNull(bold);
+        Assert.InRange(bold!.FontWeight, 650, 750);
+        using var regular = SKTypeface.FromFile(path);
+        using var boldFont = new SKFont(bold, 100);
+        using var regularFont = new SKFont(regular, 100);
+        // The bold design has heavier stems than the regular one.
+        int boldInk = Ink(boldFont), regularInk = Ink(regularFont);
+        Assert.True(boldInk > regularInk * 1.15, $"ink {boldInk} vs {regularInk}"); // 10203 against 7916 when written
+        // Asked again: the same instance, from the remembered style.
+        using var again = SkiaFontSource.FindInstance(SKFontManager.Default, face, 700, italic: false);
+        Assert.Equal(bold.FontWeight, again!.FontWeight);
+
+        // A static font has no instances to find.
+        var georgia = new SystemFontFace(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "georgia.ttf"), 0, "Georgia", "Regular", "Georgia", 400, false);
+        Assert.Null(SkiaFontSource.FindInstance(SKFontManager.Default, georgia, 700, italic: false));
+    }
+
+    /// <summary>Dark pixels of "Weight" drawn with <paramref name="font"/>.</summary>
+    private static int Ink(SKFont font)
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(500, 150, SKColorType.Gray8, SKAlphaType.Opaque));
+        using (var canvas = new SKCanvas(bitmap))
+        using (var paint = new SKPaint { Color = SKColors.Black, IsAntialias = true })
+        {
+            canvas.Clear(SKColors.White);
+            canvas.DrawText("Weight", 10, 110, font, paint);
+        }
+        int ink = 0;
+        foreach (byte b in bitmap.Bytes) if (b < 128) ink++;
+        return ink;
+    }
+
     /// <summary>Skia may still map a font file until its typeface is collected; the temporary folder is then left to the OS.</summary>
     private static void DeleteQuietly(string dir)
     {

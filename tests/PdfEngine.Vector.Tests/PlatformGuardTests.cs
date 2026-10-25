@@ -145,6 +145,36 @@ public class PlatformGuardTests
     }
 
     [Fact]
+    public void AndroidCatalog_NamesFontsWithCffOutlines_AndTheDesktopCatalogDoesNot()
+    {
+        // A font file with CFF outlines, as far as the names go: Georgia's tables under an 'OTTO'
+        // header, its glyf table renamed CFF. Android ships such .otf files; only Skia loads them.
+        string dir = Directory.CreateTempSubdirectory("android-otf").FullName;
+        try
+        {
+            var data = File.ReadAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "georgia.ttf"));
+            "OTTO"u8.CopyTo(data);
+            int tables = data[4] << 8 | data[5];
+            for (int i = 0; i < tables; i++)
+                if (data.AsSpan(12 + i * 16, 4).SequenceEqual("glyf"u8)) "CFF "u8.CopyTo(data.AsSpan(12 + i * 16));
+            File.WriteAllBytes(Path.Combine(dir, "Synthetic-Regular.otf"), data);
+            File.Copy(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "consola.ttf"), Path.Combine(dir, "consola.ttf"));
+
+            var android = SystemFontCatalog.ForAndroid(dir);
+            Assert.Contains(android.Faces, f => f.Family == "Georgia" && f.Path.EndsWith(".otf", StringComparison.Ordinal));
+            Assert.Contains(android.Faces, f => f.Family == "Consolas");
+            // Windows renderers and editing read TrueType outlines only: the same folder without the .otf face.
+            var desktop = SystemFontCatalog.ForDirectory(dir);
+            Assert.DoesNotContain(desktop.Faces, f => f.Family == "Georgia");
+            Assert.Contains(desktop.Faces, f => f.Family == "Consolas");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void AndroidAliases_CoverEveryFamilySubstitutionAsksFor()
     {
         // The generic families of SystemFontCatalog.Match and Fallbacks, the Windows designs it maps
