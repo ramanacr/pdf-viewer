@@ -1211,7 +1211,7 @@ internal sealed partial class Replayer : IDisposable
             if (run.FontSize == 0 || run.Glyphs.Count == 0)
                 continue;
             var resolved = ResolveText(new DrawGlyphRun(run, default!, cmd.Bounds), out _);
-            if (resolved is not { } r)
+            if (resolved == null)
             {
                 if (cmd.Bounds is PdfRect b && Matrix3x2.Invert(ctm, out var pageToUser))
                     parts.Add(Polygon(pageToUser, b));
@@ -1219,18 +1219,21 @@ internal sealed partial class Replayer : IDisposable
             }
             double th = run.HorizontalScaling / 100.0;
             float sign = run.FontSize < 0 ? -1 : 1;
-            var (glyphMatrix, glyphOffsets) = GlyphFrame(run.Face, (float)Math.Abs(run.FontSize), r.Offsets);
-            var glyphToUser = glyphMatrix * new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise) * M(run.TextMatrix);
-            foreach (var (indices, offsets, scale) in ScaledPieces(r.Indices, glyphOffsets, r.Scales))
+            foreach (var r in resolved)
             {
-                using var outline = _res.Factory.CreatePathGeometry();
-                using (var sink = outline.Open())
+                var (glyphMatrix, glyphOffsets) = GlyphFrame(run.Face, (float)Math.Abs(run.FontSize), r.Offsets);
+                var glyphToUser = glyphMatrix * new Matrix3x2((float)(sign * th), 0, 0, -sign, 0, (float)run.TextRise) * M(run.TextMatrix);
+                foreach (var (indices, offsets, scale) in ScaledPieces(r.Indices, glyphOffsets, r.Scales))
                 {
-                    sink.SetFillMode(FillMode.Winding);
-                    r.Face.GetGlyphRunOutline((float)Math.Abs(run.FontSize), indices, new float[indices.Length], offsets, false, false, sink);
-                    sink.Close();
+                    using var outline = _res.Factory.CreatePathGeometry();
+                    using (var sink = outline.Open())
+                    {
+                        sink.SetFillMode(FillMode.Winding);
+                        r.Face.GetGlyphRunOutline((float)Math.Abs(run.FontSize), indices, new float[indices.Length], offsets, false, false, sink);
+                        sink.Close();
+                    }
+                    parts.Add(_res.Factory.CreateTransformedGeometry(outline, Matrix3x2.CreateScale(scale, 1) * glyphToUser));
                 }
-                parts.Add(_res.Factory.CreateTransformedGeometry(outline, Matrix3x2.CreateScale(scale, 1) * glyphToUser));
             }
         }
         ID2D1Geometry? result = parts.Count switch
@@ -1330,8 +1333,11 @@ internal sealed partial class Replayer : IDisposable
 
     private string _lastTextProblem = string.Empty;
 
-    /// <summary>Font face and glyph indices for a run; null when the backend cannot draw it faithfully.</summary>
-    private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
+    /// <summary>
+    /// Font faces and glyph indices for a run, one part per face (usually one); null when the backend
+    /// cannot draw it faithfully.
+    /// </summary>
+    private IReadOnlyList<ResolvedPart>? ResolveText(DrawGlyphRun cmd, out bool byGlyphId)
     {
         long start = RenderStages.Now;
         try
@@ -1340,24 +1346,34 @@ internal sealed partial class Replayer : IDisposable
             // replayer of the page (another scale, the next tile) share the first answer.
             if (!_res.ResolvedRuns.TryGetValue(cmd.Run, out var resolved))
             {
-                var value = ResolveTextCore(cmd, out bool glyphIds);
-                resolved = new ResolvedRun(value, glyphIds, value == null ? _lastTextProblem : string.Empty);
+                var parts = ResolveTextCore(cmd, out bool glyphIds);
+                resolved = new ResolvedRun(parts, glyphIds, parts == null ? _lastTextProblem : string.Empty);
                 _res.ResolvedRuns.AddOrUpdate(cmd.Run, resolved);
             }
             byGlyphId = resolved.ByGlyphId;
-            if (resolved.Value == null) _lastTextProblem = resolved.Problem;
-            return resolved.Value;
+            if (resolved.Parts == null) _lastTextProblem = resolved.Problem;
+            return resolved.Parts;
         }
         finally { _res.Stages.Fonts += RenderStages.Now - start; }
     }
 
-    /// <summary>The glyph indices, offsets and horizontal scales the run is drawn with (for tests).</summary>
+    /// <summary>The glyph indices, offsets and horizontal scales the run is drawn with, part after part (for tests).</summary>
     internal IReadOnlyList<(ushort Gid, Vector2 Offset, float Scale)>? ResolvedGlyphs(DrawGlyphRun cmd) =>
-        ResolveText(cmd, out _) is { } r
-            ? r.Indices.Select((gid, i) => (gid, r.Offsets[i], r.Scales?[i] ?? 1f)).ToList()
+        ResolveText(cmd, out _) is { } parts
+            ? parts.SelectMany(r => r.Indices.Select((gid, i) => (gid, r.Offsets[i], r.Scales?[i] ?? 1f))).ToList()
             : null;
 
-    private (IDWriteFontFace Face, ushort[] Indices, Vector2[] Offsets, float[]? Scales)? ResolveTextCore(DrawGlyphRun cmd, out bool byGlyphId)
+    /// <summary>The family name of each part's face, in order (for tests).</summary>
+    internal IReadOnlyList<string>? ResolvedFamilies(DrawGlyphRun cmd) =>
+        ResolveText(cmd, out _)?.Select(r =>
+        {
+            using var face3 = r.Face.QueryInterfaceOrNull<IDWriteFontFace3>();
+            using var names = face3?.FamilyNames;
+            if (names == null) return string.Empty;
+            return names.GetString(names.FindLocaleName("en-us", out uint index) ? index : 0);
+        }).ToList();
+
+    private IReadOnlyList<ResolvedPart>? ResolveTextCore(DrawGlyphRun cmd, out bool byGlyphId)
     {
         var run = cmd.Run;
         byGlyphId = false;
@@ -1385,7 +1401,7 @@ internal sealed partial class Replayer : IDisposable
                 ids.Add(g.GlyphId < glyphCount ? g.GlyphId : (ushort)0);
                 offs.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
             }
-            return (dw, ids.ToArray(), offs.ToArray(), null);
+            return new[] { new ResolvedPart(dw, ids.ToArray(), offs.ToArray(), null) };
         }
 
         // Not embedded: a system substitute. Every glyph of the run must be found in one face, so
@@ -1407,7 +1423,7 @@ internal sealed partial class Replayer : IDisposable
         // Indic words are shaped with the substitute's own tables, as the Skia backend shapes them
         // (an embedded program DirectWrite cannot load had its glyphs chosen by the producer, so it is drawn as it is).
         Func<IDWriteFontFace, TrueTypeFontFile?>? shaping = face == null || face.ProgramData.IsEmpty ? _res.GetShapingFont : null;
-        (IDWriteFontFace Face, (ushort[] Indices, Vector2[] Offsets, float[]? Scales) Mapped, int Missing)? best = null;
+        (ResolvedPart Mapped, int Missing, bool SymbolCodes)? best = null;
         foreach (var (inst, fam, b, it, symbolCodes) in chain)
         {
             var candidate = inst != null ? _res.GetInstalledFace(inst, b, it) : _res.GetSystemFace(fam, b, it);
@@ -1415,17 +1431,155 @@ internal sealed partial class Replayer : IDisposable
                 continue;
             var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _, shaping);
             if (mapped != null)
-                return (candidate, mapped.Value.Indices, mapped.Value.Offsets, mapped.Value.Scales);
+                return new[] { mapped };
             // Best effort: the face that has the most of the run's glyphs draws it, leaving out the
             // ones none of them has (PDFium draws what its substitute has too).
             var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing, shaping);
             if (partial != null && (best == null || missing < best.Value.Missing))
-                best = (candidate, partial.Value, missing);
+                best = (partial, missing, symbolCodes);
         }
-        if (best is { } found)
-            return (found.Face, found.Mapped.Indices, found.Mapped.Offsets, found.Mapped.Scales);
+        // No face of the chain has every character: the one with most of them draws its own, and each
+        // other character comes from an installed face that has it, by script (the Skia backend's
+        // per-character faces in the web demo), each face's words shaped with its own tables.
+        if (best is { } partialBest)
+        {
+            var hint = (Name: face?.PostScriptName ?? run.FontFamilyName ?? run.FontResourceName, Ordering: face?.CidOrdering);
+            if (ComposeByCharacter(run, partialBest.Mapped.Face, partialBest.SymbolCodes, bold, italic, hint, th, sign, shaping) is { } composed)
+                return composed;
+            return new[] { partialBest.Mapped };
+        }
         _lastTextProblem = family == null ? "No system substitute for font" : "Substitute font lacks a glyph used by this text";
         return null;
+    }
+
+    /// <summary>The run's text, for choosing a CJK face by the language of its characters.</summary>
+    private static string RunText(PdfGlyphRun run)
+    {
+        if (run.FullText != null) return run.FullText;
+        var sb = new System.Text.StringBuilder(run.Glyphs.Count);
+        foreach (var g in run.Glyphs) sb.Append(g.Unicode);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The run drawn from several faces: each glyph from <paramref name="primary"/> (the substitute
+    /// that has most of them) when it has it, else from the installed face for its character
+    /// (<see cref="D2DResources.GetCharacterFace"/>). An Arabic or Indic word goes to one face whole
+    /// (<see cref="KeepWordsWhole"/>), so it is shaped as one word. Null when no other face adds a
+    /// glyph, so the primary face alone draws the run as before.
+    /// </summary>
+    private ResolvedPart[]? ComposeByCharacter(PdfGlyphRun run, IDWriteFontFace primary, bool symbolCodes, bool bold, bool italic,
+        (string? Name, string? Ordering) hint, double th, double sign, Func<IDWriteFontFace, TrueTypeFontFile?>? shaping)
+    {
+        var owners = new IDWriteFontFace?[run.Glyphs.Count];
+        string? language = null;
+        var primaryFound = PrimaryGlyphs(primary, run, symbolCodes);
+        for (int i = 0; i < run.Glyphs.Count; i++)
+        {
+            var g = run.Glyphs[i];
+            string? text = g.Unicode;
+            if (string.IsNullOrEmpty(text) || text == " " || text == "\u00A0") continue;
+            if (primaryFound[i])
+            {
+                owners[i] = primary;
+                continue;
+            }
+            if (char.IsWhiteSpace(text, 0) || char.IsControl(text, 0)) continue;
+            owners[i] = FaceFor(i);
+        }
+        // The words MapByUnicode shapes: each from one face, so no word is cut in two at a face change.
+        if (shaping != null && !symbolCodes && sign > 0)
+        {
+            var found = new Dictionary<IDWriteFontFace, bool[]>(ReferenceEqualityComparer.Instance) { [primary] = primaryFound };
+            KeepWordsWhole(run, owners, primary, (f, k) => (found.TryGetValue(f, out var has) ? has : found[f] = PrimaryGlyphs(f, run, false))[k], FaceFor);
+        }
+        return ComposeParts(run, owners, primary, symbolCodes, th, sign, shaping);
+
+        IDWriteFontFace? FaceFor(int k)
+        {
+            language ??= Fonts.CharacterFaces.CjkLanguage(hint.Ordering, hint.Name, RunText(run));
+            return _res.GetCharacterFace(char.ConvertToUtf32(run.Glyphs[k].Unicode!, 0), language, bold, italic);
+        }
+    }
+
+    /// <summary>
+    /// Gives each Arabic or Indic word of the run (<see cref="SubstituteShaper.Words"/>) to one face in
+    /// <paramref name="owners"/>, so that face shapes the whole word: <paramref name="primary"/> when it
+    /// has every glyph of the word, else the first face a character of the word asks for
+    /// (<paramref name="faceFor"/>) that has every glyph of it. A word that no such face has whole
+    /// keeps the face of each glyph (each piece is drawn unshaped where the word is cut).
+    /// </summary>
+    /// <param name="has">Whether a face has the glyph at a position of the run.</param>
+    internal static void KeepWordsWhole<TFace>(PdfGlyphRun run, TFace?[] owners, TFace primary, Func<TFace, int, bool> has, Func<int, TFace?> faceFor)
+        where TFace : class
+    {
+        if (SubstituteShaper.Words(run) is not { } words)
+            return;
+        foreach (var word in words)
+        {
+            TFace? owner = Whole(primary) ? primary : null;
+            for (int k = word.Start; owner == null && k < word.End; k++)
+                if (!IsJoiner(k) && faceFor(k) is { } candidate && !ReferenceEquals(candidate, primary) && Whole(candidate))
+                    owner = candidate;
+            if (owner == null)
+                continue;
+            for (int k = word.Start; k < word.End; k++)
+                owners[k] = owner;
+
+            bool Whole(TFace face)
+            {
+                for (int k = word.Start; k < word.End; k++)
+                    if (!IsJoiner(k) && !has(face, k)) return false;
+                return true;
+            }
+        }
+
+        // Zero-width joiners are shaped with the word and drawn as no glyph: no face needs one.
+        bool IsJoiner(int k) => run.Glyphs[k].Unicode!.All(c => c is '\u200C' or '\u200D');
+    }
+
+    /// <summary>
+    /// The parts of a run whose glyphs have the faces in <paramref name="owners"/> (by position; null
+    /// for a glyph not drawn): <paramref name="primary"/>'s first, then each other face in the order
+    /// it first appears. Null when no glyph has a face other than the primary.
+    /// </summary>
+    internal static ResolvedPart[]? ComposeParts(PdfGlyphRun run, IDWriteFontFace?[] owners, IDWriteFontFace primary, bool symbolCodes,
+        double th, double sign, Func<IDWriteFontFace, TrueTypeFontFile?>? shaping)
+    {
+        var order = new List<IDWriteFontFace> { primary };
+        foreach (var o in owners)
+            if (o != null && !order.Contains(o)) order.Add(o);
+        if (order.Count == 1)
+            return null;
+        var parts = new List<ResolvedPart>();
+        foreach (var f in order)
+        {
+            var mine = Array.ConvertAll(owners, o => ReferenceEquals(o, f));
+            var part = MapByUnicode(f, run, ReferenceEquals(f, primary) && symbolCodes, th, sign, allowMissing: true, out _, shaping, mine);
+            if (part != null && part.Indices.Length > 0) parts.Add(part);
+        }
+        return parts.Count == 0 ? null : parts.ToArray();
+    }
+
+    /// <summary>Which glyphs of the run <paramref name="face"/> has, by the lookups <see cref="MapByUnicode"/> makes.</summary>
+    private static bool[] PrimaryGlyphs(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes)
+    {
+        var has = new bool[run.Glyphs.Count];
+        for (int k = 0; k < run.Glyphs.Count; k++)
+        {
+            var g = run.Glyphs[k];
+            string? text = g.Unicode;
+            if (string.IsNullOrEmpty(text) || text == " " || text == "\u00A0") continue;
+            int unicode = char.ConvertToUtf32(text, 0);
+            uint cp = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)unicode;
+            ushort index = face.GetGlyphIndices(new[] { cp })[0];
+            if (index == 0 && symbolCodes && Fonts.SymbolFontCodes.CodeFor(unicode) is int symbolCode)
+                index = face.GetGlyphIndices(new[] { (uint)(0xF000 + symbolCode) })[0];
+            if (index == 0 && !symbolCodes && Fonts.SymbolFontCodes.StandardFor(unicode) is int standard)
+                index = face.GetGlyphIndices(new[] { (uint)standard })[0];
+            has[k] = index != 0;
+        }
+        return has;
     }
 
     /// <summary>Faces tried after the metric-compatible substitute, for glyphs it lacks (symbols, dingbats, other scripts).</summary>
@@ -1444,8 +1598,9 @@ internal sealed partial class Replayer : IDisposable
     /// When set, the run's Arabic and Indic words are shaped with the font file it gives for the face
     /// (<see cref="SubstituteShaper.ShapeWord"/>); a word the file cannot shape is mapped glyph by glyph.
     /// </param>
-    private static (ushort[] Indices, Vector2[] Offsets, float[]? Scales)? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
-        bool allowMissing, out int missing, Func<IDWriteFontFace, TrueTypeFontFile?>? shapingFont = null)
+    /// <param name="only">When set, only the glyphs flagged here (by position in the run) are mapped.</param>
+    private static ResolvedPart? MapByUnicode(IDWriteFontFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
+        bool allowMissing, out int missing, Func<IDWriteFontFace, TrueTypeFontFile?>? shapingFont = null, bool[]? only = null)
     {
         missing = 0;
         var indices = new List<ushort>(run.Glyphs.Count);
@@ -1453,7 +1608,7 @@ internal sealed partial class Replayer : IDisposable
         var widths = new List<double>(run.Glyphs.Count);
         // The scale of a shaped glyph (already fitted with its word); 0 for a glyph fitted to its own width below.
         var fitted = new List<float>(run.Glyphs.Count);
-        var words = shapingFont != null && !symbolCodes && sign > 0 ? SubstituteShaper.Words(run) : null;
+        var words = shapingFont != null && !symbolCodes && sign > 0 ? SubstituteShaper.Words(run, only) : null;
         var shaping = words is { Count: > 0 } ? shapingFont!(face) : null;
         int nextWord = 0;
         // The code points of the drawable glyphs, looked up in one call instead of one per glyph.
@@ -1462,7 +1617,7 @@ internal sealed partial class Replayer : IDisposable
         {
             var g = run.Glyphs[k];
             string? text = g.Unicode;
-            if (string.IsNullOrEmpty(text) || text == " " || text == " ")
+            if ((only != null && !only[k]) || string.IsNullOrEmpty(text) || text == " " || text == " ")
                 continue;
             int unicode = char.ConvertToUtf32(text, 0);
             points[k] = symbolCodes && g.CharCode >= 0 ? (uint)(0xF000 + g.CharCode) : (uint)unicode;
@@ -1471,6 +1626,8 @@ internal sealed partial class Replayer : IDisposable
         for (int k = 0; k < run.Glyphs.Count; k++)
         {
             var g = run.Glyphs[k];
+            if (only != null && !only[k])
+                continue;
             if (shaping != null && nextWord < words!.Count && words[nextWord].Start == k)
             {
                 var word = words[nextWord++];
@@ -1538,7 +1695,7 @@ internal sealed partial class Replayer : IDisposable
                 if (gap > 0) offsets[i] = offsets[i] with { X = offsets[i].X + (float)(gap * sign) };
             }
         }
-        return (ids, offsets.ToArray(), scales);
+        return new ResolvedPart(face, ids, offsets.ToArray(), scales);
     }
 
     /// <summary>A resolved run in pieces of one horizontal glyph scale: each piece's glyphs and offsets, in its scaled glyph space.</summary>
@@ -1682,8 +1839,20 @@ internal sealed partial class Replayer : IDisposable
     private void DrawText(ID2D1DeviceContext ctx, DrawGlyphRun cmd, Matrix3x2 ctm, Matrix3x2 full)
     {
         var resolved = ResolveText(cmd, out _);
-        if (resolved is not { } r || r.Indices.Length == 0 || cmd.Run.FontSize == 0)
+        if (resolved == null || cmd.Run.FontSize == 0)
             return;
+        // Only a run drawn from one face gets its text description (printing keeps it as text). Each
+        // GlyphRun takes one GlyphRunDescription, and Describe gives one for a contiguous range of
+        // the run's glyphs; a part of a run drawn from several faces holds glyphs from positions
+        // spread over the run, and does not record which, so its text is not described.
+        int total = resolved.Count == 1 ? resolved[0].Indices.Length : -1;
+        foreach (var r in resolved)
+            if (r.Indices.Length > 0)
+                DrawTextPart(ctx, cmd, r, total, full);
+    }
+
+    private void DrawTextPart(ID2D1DeviceContext ctx, DrawGlyphRun cmd, ResolvedPart r, int total, Matrix3x2 full)
+    {
         var run = cmd.Run;
         double th = run.HorizontalScaling / 100.0;
         float sign = run.FontSize < 0 ? -1 : 1;
@@ -1711,7 +1880,7 @@ internal sealed partial class Replayer : IDisposable
             if (fill)
             {
                 var brush = Solid(ctx, Color(cmd.Paint.Color, cmd.Paint.Alpha));
-                using var description = _describeText ? Describe(run, r.Indices.Length, first, indices.Length) : null;
+                using var description = _describeText ? Describe(run, total, first, indices.Length) : null;
                 if (description != null)
                     ctx.DrawGlyphRun(Vector2.Zero, glyphRun, description.Value, brush, MeasuringMode.Natural);
                 else if (_describeText)

@@ -1,5 +1,6 @@
 using System.Text;
 using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 using PdfEngine.Vector.Tests.Fixtures;
 using Xunit;
 using Xunit.Abstractions;
@@ -53,4 +54,54 @@ public class SubstituteShapingParityTests
     public Task ShapedDevanagariLine() =>
         // A pre-base i sign, the ksha conjunct and a reph (Nirmala UI).
         _parity.AssertMatches("shaped-devanagari", Page("NirmalaUI", "Nirmala.ttc", "कि क्ष", "कर्म"), 0.75, 0.005);
+
+    /// <summary>
+    /// Installed Windows faces named per character by the Direct2D backend's rule (<see cref="CharacterFaces.WindowsFamilies"/>),
+    /// so the Skia backend's per-character path, which the web demo uses with its bundled faces, has the same faces as Direct2D.
+    /// </summary>
+    private sealed class WindowsCharacterFaces : SkiaFontSource
+    {
+        public override bool HasCharacterFaces => true;
+
+        public override SystemFontFace? FindCharacterFace(int codePoint, SkiaTextHint hint)
+        {
+            string language = CharacterFaces.CjkLanguage(hint.CidOrdering, hint.FontName, hint.Text);
+            foreach (var family in CharacterFaces.WindowsFamilies(codePoint, language))
+                if (Catalog.FindFamily(family, false, false) is { } face && Catalog.Load(face)?.GlyphFor(codePoint) is > 0)
+                    return face;
+            return null;
+        }
+    }
+
+    private static readonly Lazy<SkiaVectorRenderer> WithCharacterFaces = new(() => new SkiaVectorRenderer(fonts: new WindowsCharacterFaces()));
+
+    /// <summary>A page whose font /F0 is like <see cref="Page"/>'s, with each /W width from the first of the files that has the character.</summary>
+    private static byte[] MixedPage(string baseFont, string[] fontFiles, params string[] lines)
+    {
+        var metrics = fontFiles.Select(f => TrueTypeFontFile.TryLoad(File.ReadAllBytes(Path.Combine(WindowsFonts, f))) ?? throw new InvalidOperationException(f)).ToArray();
+        var b = new VectorPdfBuilder();
+        var cps = lines.SelectMany(l => l.EnumerateRunes().Select(r => r.Value)).Distinct().Order().ToArray();
+        var cmap = new StringBuilder("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n/CMapName /Test-UCS def /CMapType 2 def\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n");
+        cmap.Append($"{cps.Length} beginbfchar\n");
+        foreach (int cp in cps) cmap.Append($"<{cp:X4}> <{cp:X4}>\n");
+        cmap.Append("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end");
+        int toUnicode = b.AddStream("", cmap.ToString());
+        int Width(int cp) => metrics.FirstOrDefault(m => m.GlyphFor(cp) != 0) is { } m ? (int)Math.Round(m.Advance(m.GlyphFor(cp))) : 1000;
+        string widths = string.Join(" ", cps.Select(cp => $"{cp} [{Width(cp)}]"));
+        int descriptor = b.Add($"<< /Type /FontDescriptor /FontName /{baseFont} /Flags 32 /FontBBox [0 -300 1000 1000] /ItalicAngle 0 /Ascent 900 /Descent -300 /CapHeight 700 /StemV 80 >>");
+        int cid = b.Add($"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {descriptor} 0 R /DW 1000 /W [{widths}] /CIDToGIDMap /Identity >>");
+        int type0 = b.Add($"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [{cid} 0 R] /ToUnicode {toUnicode} 0 R >>");
+        string Hex(string text) => string.Concat(text.EnumerateRunes().Select(r => r.Value.ToString("X4")));
+        string content = string.Concat(lines.Select((l, i) => $"BT /F0 28 Tf 10 {150 - 45 * i} Td <{Hex(l)}> Tj ET\n"));
+        b.AddPage(content, $"<< /Font << /F0 {type0} 0 R >> >>", mediaBox: "[0 0 300 200]");
+        return b.Build();
+    }
+
+    [Fact]
+    public Task MixedRun_TakesCharactersTheSubstituteLacksFromTheSameFaces() =>
+        // Arial draws the Hebrew; the Devanagari it lacks comes from Nirmala UI, shaped (a pre-base
+        // i sign and the ksha conjunct), in both backends: Skia by its per-character faces, Direct2D by its own.
+        _parity.AssertMatches("mixed-hebrew-devanagari",
+            MixedPage("Arial", new[] { "arial.ttf", "Nirmala.ttc" }, Seen("שלום עולם") + " कि क्ष", "क्ष " + Seen("שלום עולם")),
+            0.75, 0.005, skiaRenderer: WithCharacterFaces.Value);
 }

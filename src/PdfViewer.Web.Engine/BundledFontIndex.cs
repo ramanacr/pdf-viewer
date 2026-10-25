@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 using PdfEngine.Vector.Skia;
 
 namespace PdfViewer.Web.Engine;
@@ -148,46 +149,7 @@ public sealed partial class BundledFontIndex
     /// <summary>
     /// The CJK language of a run: the font's character collection when it has one, else kana
     /// (Japanese) or hangul (Korean) in the text, else the font's name (MS Mincho, SimSun, MingLiU,
-    /// Batang …); Simplified Chinese when nothing tells.
+    /// Batang …); Simplified Chinese when nothing tells (<see cref="CharacterFaces.CjkLanguage"/>).
     /// </summary>
-    public static string CjkLanguage(SkiaTextHint hint)
-    {
-        switch (hint.CidOrdering)
-        {
-            case "Japan1": return "jp";
-            case "GB1": return "sc";
-            case "CNS1": return "tc";
-            case "Korea1": return "kr";
-        }
-        foreach (var rune in (hint.Text ?? "").EnumerateRunes())
-        {
-            int c = rune.Value;
-            if (c is >= 0x3040 and <= 0x30FF or >= 0x31F0 and <= 0x31FF or >= 0xFF66 and <= 0xFF9F) return "jp";
-            if (c is >= 0xAC00 and <= 0xD7A3 or >= 0x1100 and <= 0x11FF or >= 0x3130 and <= 0x318F) return "kr";
-        }
-        string name = new string((hint.FontName ?? "").Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
-        if (name.Length > 0)
-        {
-            if (ContainsAny(name, KoreanNames)) return "kr";
-            if (ContainsAny(name, TraditionalChineseNames)) return "tc";
-            if (ContainsAny(name, SimplifiedChineseNames)) return "sc";
-            if (ContainsAny(name, JapaneseNames)) return "jp";
-        }
-        return "sc";
-    }
-
-    private static bool ContainsAny(string name, string[] parts) => parts.Any(name.Contains);
-
-    // Squashed, lower-case parts of common font names. Korean first: "Malgun Gothic" is not Japanese.
-    private static readonly string[] KoreanNames =
-        { "batang", "gulim", "dotum", "gungsuh", "malgun", "applegothic", "applemyungjo", "hygothic", "hymyeongjo", "hysmyeongjo", "nanum", "myeongjo", "unbatang", "undotum" };
-
-    private static readonly string[] TraditionalChineseNames =
-        { "mingliu", "pmingliu", "mingli", "msung", "mhei", "dfkai", "kaiu", "jhenghei", "heititc", "songtitc", "big5", "adobemingstd", "adobefanheitistd" };
-
-    private static readonly string[] SimplifiedChineseNames =
-        { "simsun", "simhei", "simkai", "simfang", "nsimsun", "stsong", "stheiti", "stkaiti", "stfangsong", "stxihei", "kaiti", "fangsong", "yahei", "songti", "dengxian", "gb2312", "gbk", "adobesongstd", "adobeheitistd", "adobekaitistd", "adobefangsongstd" };
-
-    private static readonly string[] JapaneseNames =
-        { "mincho", "gothic", "meiryo", "hiragino", "kozuka", "ryumin", "yugoth", "yumin", "heiseimin", "heiseikaku", "ipaex", "ipamincho", "ipagothic", "osaka", "kozmin", "kozgo" };
+    public static string CjkLanguage(SkiaTextHint hint) => CharacterFaces.CjkLanguage(hint.CidOrdering, hint.FontName, hint.Text);
 }
