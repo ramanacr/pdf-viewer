@@ -5,8 +5,9 @@ reports of security problems seriously.
 
 ## Supported versions
 
-Security fixes are made to the latest release. Please check that a problem still occurs in the
-[latest release](https://github.com/ramanacr/pdf-viewer/releases/latest) before you report it.
+Security fixes are made to the latest release of the Windows app, the latest version of the
+engine packages on nuget.org, and the live web demo. Please check that a problem still occurs in
+the [latest release](https://github.com/ramanacr/pdf-viewer/releases/latest) before you report it.
 
 ## Reporting a vulnerability
 
@@ -17,7 +18,8 @@ data.
 
 Please include:
 
-- the version of the viewer and of Windows;
+- the version of the viewer and of Windows (or the browser, the Android version, or the package
+  version);
 - what happens (for example a crash, a hang, memory growth, or a file written where it should not
   be) and the steps to make it happen;
 - a minimal PDF that shows the problem, if you are allowed to share it.
@@ -26,6 +28,9 @@ We confirm a report within 7 days, and we tell you when a fix is released. If yo
 the release notes, say so in your report.
 
 ## What is in scope
+
+The Windows app, the web demo, the Android app and the engine packages (`PdfEngine.*`) are all in
+scope. For example:
 
 - Crashes, hangs or unbounded memory use caused by a document.
 - A document that makes the viewer run code, open a file or network connection, or write a file

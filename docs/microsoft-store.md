@@ -12,17 +12,23 @@ for individual developers.
 The installer (`PdfViewerSetup.exe`) and the portable `PdfViewer.exe` stay as they are. The Store
 package is a third way to get the same application.
 
+**Status:** the app is registered in Partner Center as "PDF Viewer Native" (Store ID
+9N6QDM774R62), and its identity is in `eng/msix/identity.json`. The Store listing is not live
+yet.
+
 ## What is in the repository
 
 | File | What it does |
 | --- | --- |
 | `scripts/build_msix.ps1` | Publishes the application, generates the logos, writes the manifest, makes `resources.pri` and packs the `.msix`. |
 | `eng/msix/AppxManifest.xml` | The manifest template. The script fills the identity and the version. |
-| `eng/msix/identity.json` | The package identity from Partner Center. Empty until you register. |
+| `eng/msix/identity.json` | The package identity from Partner Center (`RRCLabs.PDFViewerNative`, publisher RRC Labs). |
 | `.github/workflows/msix.yml` | Builds the `.msix` on each release tag and uploads it as a workflow artifact. It publishes nothing. |
 | `src/PdfViewer/Services/PackagedApp.cs` | Tells the application that it runs from a package. |
 
 ## Steps for the owner
+
+Steps 1 to 3 are done for this repository. They stay here for reference and for forks.
 
 1. Register as an individual developer at <https://storedeveloper.microsoft.com>. Sign in with
    your Microsoft account and complete the account in Partner Center.
