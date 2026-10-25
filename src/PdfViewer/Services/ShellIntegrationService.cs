@@ -11,6 +11,17 @@ namespace PdfViewer.Services;
 public static class ShellIntegrationService
 {
     private const string ProgId = "PdfViewer.Document";
+    private const string DefaultClassesRoot = @"Software\Classes";
+
+    // Under HKEY_CURRENT_USER. Tests point it at a key of their own: registering and then
+    // unregistering under the real one deleted the user's own .pdf association.
+    private static string _classesRoot = DefaultClassesRoot;
+
+    /// <summary>The HKCU key that holds the file classes. Test seam only.</summary>
+    internal static string ClassesRoot => _classesRoot;
+
+    /// <summary>Test seam: writes the association under another HKCU key.</summary>
+    internal static void SetClassesRootForTests(string root) => _classesRoot = root;
 
     public static void RegisterShellAssociation(string? exePath = null)
     {
@@ -24,7 +35,7 @@ public static class ShellIntegrationService
             string iconRef = File.Exists(fileIconPath) ? $"{fileIconPath},0" : $"{exePath},0";
 
             // 1. Register .pdf Extension
-            using (var extKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.pdf"))
+            using (var extKey = Registry.CurrentUser.CreateSubKey($@"{_classesRoot}\.pdf"))
             {
                 if (extKey != null)
                 {
@@ -40,7 +51,7 @@ public static class ShellIntegrationService
             }
 
             // 2. Register ProgId with Shell Thumbnail & Preview details
-            using (var progKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ProgId}"))
+            using (var progKey = Registry.CurrentUser.CreateSubKey($@"{_classesRoot}\{ProgId}"))
             {
                 if (progKey != null)
                 {
@@ -66,7 +77,7 @@ public static class ShellIntegrationService
             }
 
             // 3. Register Application registration in OpenWith
-            using (var appKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\PdfViewer.exe"))
+            using (var appKey = Registry.CurrentUser.CreateSubKey($@"{_classesRoot}\Applications\PdfViewer.exe"))
             {
                 if (appKey != null)
                 {
@@ -74,13 +85,19 @@ public static class ShellIntegrationService
                     using var supTypes = appKey.CreateSubKey("SupportedTypes");
                     supTypes?.SetValue(".pdf", string.Empty);
 
+                    // A .pdf chosen through "Open with" or the Default apps page belongs to this
+                    // key, not to the ProgId, so it needs the file icon too. Without it Explorer
+                    // showed the application icon on every PDF.
+                    using var appIcon = appKey.CreateSubKey("DefaultIcon");
+                    appIcon?.SetValue(string.Empty, iconRef);
+
                     using var appOpen = appKey.CreateSubKey(@"shell\open\command");
                     appOpen?.SetValue(string.Empty, $"\"{exePath}\" \"%1\"");
                 }
             }
 
             // Notify Windows Shell of association changes
-            SHChangeNotify(0x08000000 /* SHCNE_ASSOCCHANGED */, 0x0000 /* SHCNF_IDLIST */, IntPtr.Zero, IntPtr.Zero);
+            if (_classesRoot == DefaultClassesRoot) SHChangeNotify(0x08000000 /* SHCNE_ASSOCCHANGED */, 0x0000 /* SHCNF_IDLIST */, IntPtr.Zero, IntPtr.Zero);
         }
         catch { }
     }
@@ -94,22 +111,22 @@ public static class ShellIntegrationService
     {
         try
         {
-            Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{ProgId}", throwOnMissingSubKey: false);
-            Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Applications\PdfViewer.exe", throwOnMissingSubKey: false);
+            Registry.CurrentUser.DeleteSubKeyTree($@"{_classesRoot}\{ProgId}", throwOnMissingSubKey: false);
+            Registry.CurrentUser.DeleteSubKeyTree($@"{_classesRoot}\Applications\PdfViewer.exe", throwOnMissingSubKey: false);
 
             // Registration also writes these two .pdf entries; leaving them behind left a
             // dangling "Open with" entry pointing at a ProgId that no longer exists.
-            using (var progIds = Registry.CurrentUser.OpenSubKey(@"Software\Classes\.pdf\OpenWithProgids", writable: true))
+            using (var progIds = Registry.CurrentUser.OpenSubKey($@"{_classesRoot}\.pdf\OpenWithProgids", writable: true))
             {
                 progIds?.DeleteValue(ProgId, throwOnMissingValue: false);
             }
 
-            using (var openWith = Registry.CurrentUser.OpenSubKey(@"Software\Classes\.pdf\OpenWithList", writable: true))
+            using (var openWith = Registry.CurrentUser.OpenSubKey($@"{_classesRoot}\.pdf\OpenWithList", writable: true))
             {
                 openWith?.DeleteValue("PdfViewer.exe", throwOnMissingValue: false);
             }
 
-            SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);
+            if (_classesRoot == DefaultClassesRoot) SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);
             return true;
         }
         catch (Exception ex)

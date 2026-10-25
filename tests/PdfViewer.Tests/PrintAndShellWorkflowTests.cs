@@ -87,13 +87,28 @@ public class PrintAndShellWorkflowTests : IDisposable
     [Fact]
     public void TestShellIntegrationRegistrationLifecycle()
     {
+        // Written under the run's own HKCU key (TestProfileIsolation), never the real Software\Classes.
+        string classes = ShellIntegrationService.ClassesRoot;
+        Assert.NotEqual(@"Software\Classes", classes);
         string fakeExe = Path.Combine(_testDir, "PdfViewer.exe");
         File.WriteAllText(fakeExe, "fake binary");
+        string fileIcon = Path.Combine(_testDir, "assets", "pdf_file.ico");
+        Directory.CreateDirectory(Path.GetDirectoryName(fileIcon)!);
+        File.WriteAllBytes(fileIcon, new byte[] { 0, 0, 1, 0 });
 
         // Register shell association
         ShellIntegrationService.RegisterShellAssociation(fakeExe);
 
-        using (var progKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\PdfViewer.Document"))
+        // PDFs show the file icon whether Windows takes the association from the ProgId or, after
+        // "Open with", from the Applications entry.
+        foreach (string key in new[] { @"PdfViewer.Document\DefaultIcon", @"Applications\PdfViewer.exe\DefaultIcon" })
+        {
+            using var iconKey = Registry.CurrentUser.OpenSubKey($@"{classes}\{key}");
+            Assert.NotNull(iconKey);
+            Assert.Equal($"{fileIcon},0", iconKey.GetValue(""));
+        }
+
+        using (var progKey = Registry.CurrentUser.OpenSubKey($@"{classes}\PdfViewer.Document"))
         {
             Assert.NotNull(progKey);
             Assert.Equal("PDF Document", progKey.GetValue(""));
@@ -108,9 +123,13 @@ public class PrintAndShellWorkflowTests : IDisposable
         // Unregister shell association
         ShellIntegrationService.UnregisterShellAssociation();
 
-        using (var checkKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\PdfViewer.Document"))
+        using (var checkKey = Registry.CurrentUser.OpenSubKey($@"{classes}\PdfViewer.Document"))
         {
             Assert.Null(checkKey);
+        }
+        using (var appKey = Registry.CurrentUser.OpenSubKey($@"{classes}\Applications\PdfViewer.exe"))
+        {
+            Assert.Null(appKey);
         }
     }
 }
