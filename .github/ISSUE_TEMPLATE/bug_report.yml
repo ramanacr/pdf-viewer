@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Viewer version
-      description: Help → About, or the release you installed (for example v4.0.1).
+      description: Help → About, or the release you installed (for example v4.1.2). For the web demo, the Android app or a NuGet package, say which.
     validations:
       required: true
   - type: input
