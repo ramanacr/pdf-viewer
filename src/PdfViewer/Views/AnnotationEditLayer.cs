@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -106,7 +108,16 @@ public sealed class AnnotationEditLayer : Canvas
     /// <summary>The annotation whose handles are shown here: the selected one when it is on this page.</summary>
     private AnnotationModel? Target => _shown is { } a && Page is { } p && a.PageNumber == p.PageNumber ? a : null;
 
+    // Shapes have no automation peers of their own: the layer lists its handles to screen readers.
+    protected override AutomationPeer OnCreateAutomationPeer() => new LayerPeer(this);
+
     private void Rebuild()
+    {
+        try { RebuildHandles(); }
+        finally { (UIElementAutomationPeer.FromElement(this) as LayerPeer)?.ResetChildrenCache(); }
+    }
+
+    private void RebuildHandles()
     {
         Children.Clear();
         var a = Target;
@@ -276,5 +287,33 @@ public sealed class AnnotationEditLayer : Canvas
         if (_owner == null) return;
         if (_moved) _owner.EndAnnotationDrag();
         else _owner.CancelAnnotationDrag();
+    }
+
+    /// <summary>The layer as a pane of its named handles (thumbs), the selected annotation's outline first.</summary>
+    private sealed class LayerPeer : FrameworkElementAutomationPeer
+    {
+        private readonly Dictionary<FrameworkElement, AutomationPeer> _peers = new();
+
+        public LayerPeer(AnnotationEditLayer owner) : base(owner) { }
+
+        protected override string GetClassNameCore() => nameof(AnnotationEditLayer);
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Pane;
+        protected override string GetNameCore() => "Annotation edit handles";
+
+        protected override List<AutomationPeer> GetChildrenCore()
+        {
+            var children = ((AnnotationEditLayer)Owner).Children.OfType<FrameworkElement>()
+                .Where(c => !string.IsNullOrEmpty(AutomationProperties.GetName(c))).ToList();
+            foreach (var gone in _peers.Keys.Except(children).ToList()) _peers.Remove(gone);
+            return children.Select(c => _peers.TryGetValue(c, out var p) ? p : _peers[c] = new HandlePeer(c)).ToList();
+        }
+    }
+
+    private sealed class HandlePeer : FrameworkElementAutomationPeer
+    {
+        public HandlePeer(FrameworkElement handle) : base(handle) { }
+        protected override string GetClassNameCore() => "AnnotationHandle";
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Thumb;
+        protected override bool IsContentElementCore() => false;
     }
 }

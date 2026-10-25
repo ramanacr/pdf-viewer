@@ -585,6 +585,15 @@ public class AnnotationEditingViewerTests : IDisposable
                 Assert.Contains("Rotate handle", names);
                 var handle = layer.Children.OfType<System.Windows.Shapes.Rectangle>().First(r => AutomationProperties.GetName(r) == "Resize handle, top left");
                 Assert.Equal(PdfViewer.Views.AnnotationEditLayer.HandleSize, handle.Width);
+                Snapshot(layer, page, stamp, "annotation-edit-layer.png");
+
+                // Screen readers see the handles: thumbs with their names, in a pane.
+                var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(layer);
+                Assert.Equal(System.Windows.Automation.Peers.AutomationControlType.Pane, peer.GetAutomationControlType());
+                var thumbs = peer.GetChildren();
+                Assert.Equal(10, thumbs.Count); // the outline, eight resize handles and the rotate handle
+                Assert.All(thumbs, t => Assert.Equal(System.Windows.Automation.Peers.AutomationControlType.Thumb, t.GetAutomationControlType()));
+                Assert.Contains(thumbs, t => t.GetName() == "Rotate handle");
 
                 // Zoomed in, the box grows and the handles keep their size on screen.
                 double left = System.Windows.Controls.Canvas.GetLeft(handle);
@@ -608,6 +617,28 @@ public class AnnotationEditingViewerTests : IDisposable
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(60)));
         if (error != null) throw error;
+    }
+
+    /// <summary>With VIEWER_SNAPSHOT_DIR set, the layer over the stamp's preview as a PNG, to look at.</summary>
+    private static void Snapshot(PdfViewer.Views.AnnotationEditLayer layer, PageViewModel page, AnnotationModel stamp, string name)
+    {
+        if (Environment.GetEnvironmentVariable("VIEWER_SNAPSHOT_DIR") is not { Length: > 0 } dir) return;
+        int w = (int)Math.Ceiling(page.UnrotatedDisplayWidth), h = (int)Math.Ceiling(page.UnrotatedDisplayHeight);
+        var canvas = new System.Windows.Controls.Canvas { Width = w, Height = h, Background = System.Windows.Media.Brushes.White };
+        var picture = new System.Windows.Controls.Image { Source = stamp.StampPreview, Stretch = System.Windows.Media.Stretch.Fill, Width = stamp.Width * w, Height = stamp.Height * h };
+        System.Windows.Controls.Canvas.SetLeft(picture, stamp.X * w);
+        System.Windows.Controls.Canvas.SetTop(picture, stamp.Y * h);
+        canvas.Children.Add(picture);
+        canvas.Children.Add(layer);
+        canvas.Measure(new Size(w, h));
+        canvas.Arrange(new Rect(0, 0, w, h));
+        canvas.UpdateLayout();
+        var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        rtb.Render(canvas);
+        var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
+        using (var fs = File.Create(Path.Combine(dir, name))) png.Save(fs);
+        canvas.Children.Clear();
     }
 
     private static PdfRect Round(PdfRect r) => new(Math.Round(r.X, 3), Math.Round(r.Y, 3), Math.Round(r.Width, 3), Math.Round(r.Height, 3));
