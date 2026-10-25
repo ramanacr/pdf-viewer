@@ -68,6 +68,7 @@ public sealed class ViewerBitmap
         BuildTime = build;
         RasterTime = raster;
         UnsupportedRegions = unsupported.Count;
+        Fallbacks = unsupported;
         TextRegionsWithoutFont = unsupported.Count(t => t.Reason is PdfEngine.Vector.PdfFallbackReason.UnsupportedFontType or PdfEngine.Vector.PdfFallbackReason.TextClipping);
         ImagesNotDecoded = unsupported.Count(t => t.Reason is PdfEngine.Vector.PdfFallbackReason.ImageDecode or PdfEngine.Vector.PdfFallbackReason.UnsupportedImageFilter);
     }
@@ -90,6 +91,8 @@ public sealed class ViewerBitmap
 
     /// <summary>Regions of the page this renderer cannot draw faithfully (for example a font it cannot load).</summary>
     public int UnsupportedRegions { get; }
+
+    internal IReadOnlyList<PdfEngine.Vector.PdfFallbackToken> Fallbacks { get; }
 
     /// <summary>Of those, text whose font is neither embedded nor available as a substitute (no installed fonts in a browser).</summary>
     public int TextRegionsWithoutFont { get; }
@@ -631,6 +634,71 @@ public sealed class ViewerDocument : IAsyncDisposable
                 ? segment
                 : new ArraySegment<byte>(rendered.Pixels.ToArray());
             return new ViewerBitmap(page, rendered.WidthPixels, rendered.HeightPixels, scale, pixels, build, result.Elapsed, result.Fallbacks);
+        }
+    }
+
+    /// <summary>Pixels per strip of <see cref="RenderPageInStripsAsync"/> by default: 256 K pixels (1 MB of BGRA), a few milliseconds of drawing.</summary>
+    public const int DefaultStripPixels = 256 * 1024;
+
+    /// <summary>
+    /// The same bitmap as <see cref="RenderPageAsync(int, double, bool, CancellationToken)"/>, drawn as horizontal
+    /// strips of about <paramref name="stripPixels"/> pixels, one call each, so that a single-threaded
+    /// host can let the browser handle input between them. <paramref name="between"/> runs after the
+    /// display list is built and after each strip (await a timer in it to yield to the browser);
+    /// when it returns false (the page left the view), the rest is not drawn and the result is null.
+    /// The display list stays cached, so a page stopped this way costs only its drawing when it comes back.
+    /// </summary>
+    public async Task<ViewerBitmap?> RenderPageInStripsAsync(int page, double scale, bool night, Func<Task<bool>> between,
+        int stripPixels = DefaultStripPixels, CancellationToken cancellationToken = default)
+    {
+        if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        if (!(scale > 0) || double.IsInfinity(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
+        ArgumentNullException.ThrowIfNull(between);
+        stripPixels = Math.Max(16 * 1024, stripPixels);
+        var (width, height) = PageTiles.PixelSize(Pages[page - 1], scale);
+        if ((long)width * height > _options.MaxBitmapPixels)
+        {
+            scale *= Math.Sqrt((double)_options.MaxBitmapPixels / ((long)width * height)) * 0.999;
+            (width, height) = PageTiles.PixelSize(Pages[page - 1], scale);
+        }
+        if ((long)width * height <= stripPixels)
+            return await RenderPageAsync(page, scale, night, cancellationToken).ConfigureAwait(false);
+
+        int stripHeight = Math.Max(8, stripPixels / width);
+        for (int round = 0; ; round++)
+        {
+            var pixels = new byte[(long)width * height * 4];
+            var fallbacks = new List<PdfEngine.Vector.PdfFallbackToken>();
+            TimeSpan build = TimeSpan.Zero, raster = TimeSpan.Zero;
+            for (int y = 0, row = 0; y < height; y += stripHeight, row++)
+            {
+                var region = new PageTile(0, row, 0, y, width, Math.Min(stripHeight, height - y));
+                var strip = await RenderRegionAsync(page, scale, region, night, cancellationToken).ConfigureAwait(false);
+                if (strip.Width != width) throw new InvalidOperationException("A strip has another width than its page.");
+                strip.Pixels.AsSpan().CopyTo(pixels.AsSpan((int)((long)y * width * 4)));
+                build += strip.BuildTime;
+                raster += strip.RasterTime;
+                foreach (var t in strip.Fallbacks) if (!fallbacks.Contains(t)) fallbacks.Add(t);
+                if (!await between().ConfigureAwait(false)) return null;
+            }
+            // Fonts fetched on demand: the page asked for faces that are not here yet; fetch them and draw again (as RenderPageAsync does).
+            if (round < MaxFontRounds && _fonts is OnDemandFontSource lazy && lazy.HasPendingRequests)
+            {
+                await lazy.LoadRequestedAsync(cancellationToken).ConfigureAwait(false);
+                await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    ObjectDisposedException.ThrowIf(_disposed, this);
+                    _renderer.Dispose();
+                    _renderer = new SkiaVectorRenderer(_options.ImageCacheBytes, _fonts);
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+                continue;
+            }
+            return new ViewerBitmap(page, width, height, scale, new ArraySegment<byte>(pixels), build, raster, fallbacks);
         }
     }
 

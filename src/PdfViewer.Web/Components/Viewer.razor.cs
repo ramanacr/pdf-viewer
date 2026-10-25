@@ -111,6 +111,10 @@ public sealed partial class Viewer : IAsyncDisposable
     private readonly Dictionary<int, (double Scale, bool Night)> _drawn = new();
     private readonly HashSet<(int Page, double Scale, bool Night)> _failed = new();
     private bool _pumping;
+    private long _lastViewportTicks;
+
+    /// <summary>How long the view must rest before a page that is not cached starts to be drawn.</summary>
+    private const int ScrollIdleMs = 120;
     private readonly List<double> _renderTimes = new();
 
     // Device fonts (Local Font Access API, Chromium browsers).
@@ -498,6 +502,7 @@ public sealed partial class Viewer : IAsyncDisposable
     [JSInvokable]
     public void OnViewport(int[] visible, int current)
     {
+        _lastViewportTicks = Environment.TickCount64;
         _visible.Clear();
         foreach (int p in visible) _visible.Add(p);
         if (_doc != null && current != _currentPage && current >= 1 && current <= _doc.PageCount)
@@ -545,6 +550,12 @@ public sealed partial class Viewer : IAsyncDisposable
                     // The pages in view are drawn: then the thumbnails in the side panel's view.
                     int thumb = NextThumbnail();
                     if (thumb == 0) break;
+                    long rest = Environment.TickCount64 - _lastViewportTicks;
+                    if (rest < ScrollIdleMs)
+                    {
+                        await Task.Delay((int)(ScrollIdleMs - rest) + 1);
+                        continue;
+                    }
                     await DrawThumbnailAsync(doc, thumb);
                     await Task.Delay(1);
                     continue;
@@ -552,9 +563,25 @@ public sealed partial class Viewer : IAsyncDisposable
 
                 if (!_cache.TryGet(page, scale, night, out var bitmap))
                 {
+                    // While the reader scrolls, nothing new starts: a page's interpretation runs on
+                    // this (the only) thread, so it waits until the view rests for ScrollIdleMs.
+                    long since = Environment.TickCount64 - _lastViewportTicks;
+                    if (since < ScrollIdleMs && _drawn.Count > 0)
+                    {
+                        await Task.Delay((int)(ScrollIdleMs - since) + 1);
+                        continue;
+                    }
                     try
                     {
-                        bitmap = await doc.RenderPageAsync(page, scale, night);
+                        // Drawn in strips, yielding to the browser between them; a page that leaves
+                        // the view (or a zoom or night change) stops it, and the next page starts.
+                        var drawn = await doc.RenderPageInStripsAsync(page, scale, night, async () =>
+                        {
+                            await Task.Delay(1);
+                            return _doc == doc && _visible.Contains(page) && RenderScale == scale && _night == night;
+                        });
+                        if (drawn == null) continue;
+                        bitmap = drawn;
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
                     {
@@ -610,6 +637,7 @@ public sealed partial class Viewer : IAsyncDisposable
     private void Measure(ViewerBitmap bitmap)
     {
         double ms = (bitmap.BuildTime + bitmap.RasterTime).TotalMilliseconds;
+        CanvasInterop.MarkRender(bitmap.Page, bitmap.BuildTime.TotalMilliseconds, bitmap.RasterTime.TotalMilliseconds);
         _renderTimes.Add(ms);
         double median = _renderTimes.Order().ElementAt(_renderTimes.Count / 2);
         _perf = $"Page {bitmap.Page}: {ms:0} ms (interpret {bitmap.BuildTime.TotalMilliseconds:0}, draw {bitmap.RasterTime.TotalMilliseconds:0}), " +

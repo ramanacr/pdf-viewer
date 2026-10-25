@@ -91,6 +91,10 @@ internal static partial class CanvasInterop
     public static partial void EmbedPost(string json);
 
     /// <summary>A file read by ranges showed its first page: a performance mark (pdfviewer:first-page) for measurements; nothing leaves the page.</summary>
+    /// <summary>A page was drawn: a performance mark (pdfviewer:render) with its interpretation and drawing times, for measurements; nothing leaves the page.</summary>
+    [JSImport("markRender", ModuleName)]
+    public static partial void MarkRender(int page, double interpretMs, double drawMs);
+
     [JSImport("markFirstPage", ModuleName)]
     public static partial void MarkFirstPage(double milliseconds, double bytesRead);
 

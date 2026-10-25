@@ -718,6 +718,12 @@ export function embedPostBytes(json, view) {
  * A file read by ranges showed its first page: a User Timing mark, so that a test (or the
  * developer tools) can read the time and the bytes read. Nothing is sent anywhere.
  */
+export function markRender(page, interpretMs, drawMs) {
+    try {
+        performance.mark('pdfviewer:render', { detail: { page, interpretMs, drawMs } });
+    } catch { /* no User Timing level 3 */ }
+}
+
 export function markFirstPage(ms, bytes) {
     try {
         performance.mark('pdfviewer:first-page', { detail: { ms, bytes } });
