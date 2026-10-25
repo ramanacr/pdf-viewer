@@ -649,10 +649,16 @@ public partial class MainWindow : Window
     /// </summary>
     private bool TryEditSelectedAnnotationWithKeyboard(KeyEventArgs e)
     {
+        // A tool in use has the keys (Enter finishes a measurement, Esc stops it).
+        if (_vm.IsMeasuring || _vm.IsPlacingStamp || _vm.IsEditingContent || _vm.ActiveAnnotationTool != null
+            || _vm.IsPlacingSignature || _vm.IsMarkingRedaction)
+        {
+            _vm.SelectedAnnotation = null;
+            return false;
+        }
         var mods = Keyboard.Modifiers;
         if (e.Key == Key.Tab && (mods & ~ModifierKeys.Shift) == ModifierKeys.None
-            && (_vm.SelectedAnnotation != null || IsDocumentFocused())
-            && !_vm.IsMeasuring && !_vm.IsPlacingStamp && !_vm.IsEditingContent && _vm.ActiveAnnotationTool == null)
+            && (_vm.SelectedAnnotation != null || IsDocumentFocused()))
         {
             bool found = _vm.SelectNextAnnotation(backwards: mods == ModifierKeys.Shift);
             if (found && _vm.SelectedAnnotation is { } next)

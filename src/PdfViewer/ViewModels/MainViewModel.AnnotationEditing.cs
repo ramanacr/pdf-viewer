@@ -458,6 +458,7 @@ public partial class MainViewModel
         foreach (int n in pages.Where(n => n >= 1 && n <= Pages.Count))
         {
             Pages[n - 1].UnloadImage();
+            Pages[n - 1].ClearDetail();
             if (n - 1 < Thumbnails.Count) Thumbnails[n - 1].UnloadThumbnail();
         }
         _cache.Clear();
