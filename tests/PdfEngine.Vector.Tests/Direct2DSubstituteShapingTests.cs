@@ -49,7 +49,7 @@ public class Direct2DSubstituteShapingTests
 
     private static string Hex(string text) => string.Concat(text.EnumerateRunes().Select(r => r.Value.ToString("X4")));
 
-    private static byte[] PageWithContent(string baseFont, TrueTypeFontFile metrics, string content, IEnumerable<string> texts)
+    private static byte[] PageWithContent(string baseFont, TrueTypeFontFile metrics, string content, IEnumerable<string> texts, double widthScale = 1)
     {
         var b = new VectorPdfBuilder();
         var cps = texts.SelectMany(l => l.EnumerateRunes().Select(r => r.Value)).Distinct().Order().ToArray();
@@ -58,7 +58,7 @@ public class Direct2DSubstituteShapingTests
         foreach (int cp in cps) cmap.Append($"<{cp:X4}> <{cp:X4}>\n");
         cmap.Append("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end");
         int toUnicode = b.AddStream("", cmap.ToString());
-        string widths = string.Join(" ", cps.Select(cp => $"{cp} [{Width(metrics, cp)}]"));
+        string widths = string.Join(" ", cps.Select(cp => $"{cp} [{Math.Round(Width(metrics, cp) * widthScale)}]"));
         int descriptor = b.Add($"<< /Type /FontDescriptor /FontName /{baseFont} /Flags 32 /FontBBox [0 -300 1000 1000] /ItalicAngle 0 /Ascent 900 /Descent -300 /CapHeight 700 /StemV 80 >>");
         int cid = b.Add($"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {descriptor} 0 R /DW 1000 /W [{widths}] /CIDToGIDMap /Identity >>");
         int type0 = b.Add($"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [{cid} 0 R] /ToUnicode {toUnicode} 0 R >>");
@@ -288,9 +288,57 @@ public class Direct2DSubstituteShapingTests
         using var b = await wpf.RenderDisplayListAsync(list, request);
         var (mean, bad) = DifferentialRenderingTests.Compare(b, a);
         _output.WriteLine($"wpf vs d2d {script}: mean={mean:F2} bad={bad:P2}");
-        // Shaped: mean 2.4 (Arabic) and 3.2 (Devanagari), 1.1 % and 1.5 % of pixels off by more than 64, as
-        // this backend draws each glyph at its own width. Unshaped: mean 8.2 and 12.0, 3.5 % and 5.1 %.
-        Assert.True(mean <= 5.0, $"{script}: mean {mean:F2}");
-        Assert.True(bad <= 0.025, $"{script}: {bad:P2} off");
+        // Shaped and fitted: mean 0.10 (Arabic) and 0.27 (Devanagari), 0.00 % and 0.08 % of pixels off by
+        // more than 64. Shaped with each glyph at its own width: mean 2.4 and 3.2, 1.1 % and 1.5 %.
+        // Unshaped: mean 8.2 and 12.0, 3.5 % and 5.1 %.
+        Assert.True(mean <= 0.6, $"{script}: mean {mean:F2}");
+        Assert.True(bad <= 0.003, $"{script}: {bad:P2} off");
+    }
+
+    /// <summary>
+    /// A word whose /W widths give it much less space than its shaped glyphs take: both backends
+    /// narrow it to that space, so its ink is as wide in the WPF render as in the Direct2D one.
+    /// </summary>
+    [Theory]
+    [InlineData("arabic")]
+    [InlineData("devanagari")]
+    public async Task Wpf_FitsANarrowShapedWordLikeDirect2D(string script)
+    {
+        string word = script == "arabic" ? Seen("سلام") : "कर्म";
+        var font = script == "arabic" ? SegoeUi.Value : Nirmala.Value;
+        byte[] pdf = PageWithContent(script == "arabic" ? "SegoeUI" : "NirmalaUI", font,
+            $"BT /F0 72 Tf 20 200 Td <{Hex(word)}> Tj ET\n", new[] { word }, widthScale: 0.6);
+        var scale = (await Resolve(pdf))[0].Select(g => g.Scale).Distinct().Single();
+        Assert.InRange(scale, 0.3f, 0.9f);
+
+        using var d2d = new Direct2DVectorRenderer();
+        using var wpf = new WindowsVectorRenderer();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(1);
+        var request = new RenderRequest { PageNumber = 1, Dpi = 72 };
+        using var a = await d2d.RenderDisplayListAsync(list, request);
+        using var b = await wpf.RenderDisplayListAsync(list, request);
+        int wa = InkWidth(a), wb = InkWidth(b);
+        _output.WriteLine($"{script}: scale={scale:F3} ink width d2d={wa} wpf={wb}");
+        Assert.True(wa > 20, $"{script}: no ink");
+        Assert.InRange(wb, wa - 1, wa + 1);
+    }
+
+    /// <summary>The width in pixels of the dark pixels' bounding box.</summary>
+    private static int InkWidth(RenderedPage page)
+    {
+        var px = page.Pixels.Span;
+        int left = int.MaxValue, right = -1;
+        for (int y = 0; y < page.HeightPixels; y++)
+            for (int x = 0; x < page.WidthPixels; x++)
+            {
+                int i = y * page.Stride + x * 4;
+                if (Math.Min(px[i], Math.Min(px[i + 1], px[i + 2])) < 128)
+                {
+                    left = Math.Min(left, x);
+                    right = Math.Max(right, x);
+                }
+            }
+        return right < 0 ? 0 : right - left + 1;
     }
 }
