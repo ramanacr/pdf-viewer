@@ -89,6 +89,13 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
         CancellationToken cancellationToken = default) =>
         (await RenderAsync(displayList, request, fallbackProvider, region: null, invertColors: false, cancellationToken).ConfigureAwait(false)).Page;
 
+    /// <summary>
+    /// Analyses kept per display list: the answer depends only on the list and this renderer's
+    /// fonts, and a viewer that renders a page tile by tile would otherwise decode the page's
+    /// images again for every tile. Guarded by <see cref="_gate"/>.
+    /// </summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<IPdfDisplayList, IReadOnlyList<PdfFallbackToken>> _analyses = new();
+
     /// <summary>Regions this backend cannot draw faithfully (fonts it cannot load, glyphs a substitute lacks, undecodable images).</summary>
     public async Task<IReadOnlyList<PdfFallbackToken>> AnalyzeAsync(IPdfDisplayList displayList, CancellationToken cancellationToken = default)
     {
@@ -96,11 +103,14 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (_analyses.TryGetValue(displayList, out var known))
+                return known;
             var backend = new List<PdfFallbackToken>();
             using var probe = new SkiaReplayer(_res, displayList, backend, cancellationToken);
             probe.Analyze();
             var all = new List<PdfFallbackToken>(displayList.FallbackTokens);
             all.AddRange(backend);
+            _analyses.AddOrUpdate(displayList, all);
             return all;
         }
         finally
