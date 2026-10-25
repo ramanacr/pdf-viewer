@@ -1,0 +1,12 @@
+- name: Getting started
+  href: getting-started.md
+- name: Rendering
+  href: rendering.md
+- name: Text extraction and search
+  href: text.md
+- name: Security and limits
+  href: security.md
+- name: Platform notes
+  href: platforms.md
+- name: Versioning
+  href: versioning.md
