@@ -26,7 +26,11 @@ public static class PdfAnnotationAppearances
     /// Builds a normal appearance for an annotation that lacks one, or null when the type is not supported.
     /// newObject is called to add supporting objects (e.g. an embedded font) and returns their object numbers.
     /// </summary>
-    public static PdfStream? Generate(PdfDictionary annotation, PdfObjectResolver resolver, Func<PdfObject, int> newObject)
+    public static PdfStream? Generate(PdfDictionary annotation, PdfObjectResolver resolver, Func<PdfObject, int> newObject) =>
+        Generate(annotation, resolver, newObject, null);
+
+    /// <summary>The same, with how a stamp is designed: its label, second line, size and rotation.</summary>
+    internal static PdfStream? Generate(PdfDictionary annotation, PdfObjectResolver resolver, Func<PdfObject, int> newObject, PdfStampAppearance? stamp)
     {
         ArgumentNullException.ThrowIfNull(annotation);
         ArgumentNullException.ThrowIfNull(resolver);
@@ -34,7 +38,7 @@ public static class PdfAnnotationAppearances
 
         string? subtype = resolver.Resolve(annotation["Subtype"]) is PdfName n ? n.Value : null;
         if (subtype == null) return null;
-        var painter = new Painter(annotation, resolver, newObject);
+        var painter = new Painter(annotation, resolver, newObject, subtype == "Stamp" ? stamp : null);
         if (painter.Width < 0 || painter.Height < 0) return null;
 
         bool supported = subtype switch
@@ -93,17 +97,21 @@ public static class PdfAnnotationAppearances
         private readonly StringBuilder _c = new();
         private readonly Dictionary<string, PdfObject> _gstates = new();
         private FontSet? _fonts;
+        private readonly PdfStampAppearance? _stamp;
+        /// <summary>The appearance's /Matrix rotation in degrees (a rotated stamp), 0 for none.</summary>
+        private readonly double _rotation;
 
         /// <summary>The lower-left corner of /Rect in page space: the appearance's origin.</summary>
         private readonly double _x0, _y0;
         public double Width { get; }
         public double Height { get; }
 
-        public Painter(PdfDictionary annot, PdfObjectResolver resolver, Func<PdfObject, int> newObject)
+        public Painter(PdfDictionary annot, PdfObjectResolver resolver, Func<PdfObject, int> newObject, PdfStampAppearance? stamp = null)
         {
             _annot = annot;
             _r = resolver;
             _newObject = newObject;
+            _stamp = stamp;
             var rect = Numbers("Rect");
             if (rect is not { Length: 4 })
             {
@@ -114,6 +122,16 @@ public static class PdfAnnotationAppearances
             _y0 = Math.Min(rect[1], rect[3]);
             Width = Math.Abs(rect[2] - rect[0]);
             Height = Math.Abs(rect[3] - rect[1]);
+            if (stamp != null)
+            {
+                // A stamp is drawn at its own size, upright, and turned by /Matrix; 12.5.5 fits the turned box to /Rect.
+                _rotation = PdfStamps.NormalizeDegrees(stamp.Rotation);
+                if (stamp.Width > 0 && stamp.Height > 0)
+                {
+                    Width = stamp.Width;
+                    Height = stamp.Height;
+                }
+            }
         }
 
         private FontSet Fonts => _fonts ??= new FontSet();
@@ -408,6 +426,7 @@ public static class PdfAnnotationAppearances
                 ["Resources"] = new PdfDictionary(resources),
                 ["Filter"] = new PdfName("FlateDecode"),
             };
+            if (_rotation != 0) dict["Matrix"] = PdfStamps.RotationMatrix(_rotation);
             return PdfObjectWriter.NewStream(dict, Redaction.ContentRedactor.Deflate(Encoding.Latin1.GetBytes(_c.ToString())));
         }
 
@@ -747,6 +766,7 @@ public static class PdfAnnotationAppearances
                 Op("1 j");
                 Cloud(points, CloudRadius(intensity, border.Width), byArcLength: false);
                 Paint(fill, stroke);
+                DimensionLabel(points, closed);
                 return true;
             }
             Op("1 j");
@@ -764,7 +784,36 @@ public static class PdfAnnotationAppearances
                 LineEnding(startStyle, points[0], points[0] - points[1], border.Width, interior);
                 LineEnding(endStyle, points[^1], points[^1] - points[^2], border.Width, interior);
             }
+            DimensionLabel(points, closed);
             return true;
+        }
+
+        /// <summary>
+        /// A perimeter or area measurement (/IT PolyLineDimension or PolygonDimension) shows its
+        /// result (/Contents) on a white tab: at the last segment's middle, or the polygon's centroid.
+        /// </summary>
+        private void DimensionLabel(List<Pt> points, bool closed)
+        {
+            if (Name("IT") is not (PdfMeasurements.PerimeterIntent or PdfMeasurements.AreaIntent) || points.Count < 2) return;
+            string text = (Text("Contents") ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (text.Length == 0 || Fonts.Primary("Helvetica", false, false) is not { } font) return;
+            var glyphs = Fonts.Shape(text, font, false, false);
+            double size = PdfMeasurements.LabelSize;
+            double width = glyphs.Sum(g => g.Advance) / 1000 * size;
+            if (width <= 0) return;
+            var anchor = PdfMeasurements.LabelAnchor(closed ? PdfMeasurementKind.Area : PdfMeasurementKind.Perimeter,
+                points.Select(p => new PdfEngine.Geometry.PdfPoint(p.X, p.Y)).ToList());
+            double cap = font.Font.ToThousandths(font.Font.CapHeight) / 1000 * size;
+            double pad = 1.5;
+            Op("[] 0 d");
+            Op("1 g");
+            Re(anchor.X - width / 2 - pad, anchor.Y - cap / 2 - pad - size * 0.2, width + 2 * pad, cap + 2 * pad + size * 0.2);
+            Op("f");
+            Op(ColourOp(Colour("C") ?? new[] { 0.0 }, false) ?? "0 g");
+            Op("BT");
+            Op($"{F(anchor.X - width / 2)} {F(anchor.Y - cap / 2)} Td");
+            ShowGlyphs(glyphs, size);
+            Op("ET");
         }
 
         /// <summary>A PDF 2.0 /Path: arrays of two numbers (move, then line) or six (curve).</summary>
@@ -1209,40 +1258,74 @@ public static class PdfAnnotationAppearances
             Flush();
         }
 
+        /// <summary>
+        /// A stamp of our own design: a rounded band in the stamp's colour on a light wash of it,
+        /// an inner hairline, and the label in bold capitals fitted to the box. A dynamic stamp has
+        /// a second line (who stamped it and when) under a rule.
+        /// </summary>
         public bool Stamp()
         {
             string name = Name("Name") ?? "Draft";
-            string label = StampLabel(name, Text("Contents"));
+            string label = _stamp?.Label is { Length: > 0 } given ? given : StampLabel(name, Text("Contents"));
+            string? subtitle = _stamp?.Subtitle is { Length: > 0 } sub ? sub.Replace('\r', ' ').Replace('\n', ' ') : null;
             var colour = Colour("C") ?? StampColour(name);
             string? stroke = ColourOp(colour, true);
             string? textFill = ColourOp(colour, false);
             GraphicsState(Opacity);
-            if (stroke == null || Width <= 0 || Height <= 0) return true;
+            if (stroke == null || textFill == null || Width <= 0 || Height <= 0) return true;
 
             var (x, y, w, h) = InnerBox();
-            double bw = Math.Clamp(Math.Min(w, h) * 0.06, 1, 6);
-            double radius = Math.Min(w, h) * 0.2;
+            double unit = Math.Min(w, h);
+            double bw = Math.Clamp(unit * 0.07, 0.75, 4);
+            double radius = Math.Min(unit * 0.25, 10);
             Colours(ColourOp(Tint(colour), false), stroke);
             Op($"{F(bw)} w");
             RoundedRect(x + bw / 2, y + bw / 2, w - bw, h - bw, radius);
             Op("B");
 
-            var font = Fonts.Primary("Helvetica-Bold", true, false);
-            if (font == null) return true;
-            var glyphs = Fonts.Shape(label, font, true, false);
+            double inset = bw * 2.2;
+            if (w > 4 * inset && h > 4 * inset)
+            {
+                Op($"{F(Math.Max(0.4, bw * 0.35))} w");
+                RoundedRect(x + inset, y + inset, w - 2 * inset, h - 2 * inset, Math.Max(0, radius - inset * 0.6));
+                Op("S");
+            }
+
+            var bold = Fonts.Primary("Helvetica-Bold", true, false);
+            if (bold == null) return true;
+            double padX = inset + unit * 0.1;
+            double top = y + h - inset, bottom = y + inset, innerH = top - bottom;
+            double labelH = subtitle != null ? innerH * 0.6 : innerH;
+            double labelBottom = top - labelH;
+            CentredText(label, bold, true, x + padX, w - 2 * padX, labelBottom, labelH, 0.6, textFill);
+            if (subtitle != null)
+            {
+                Op($"{F(Math.Max(0.4, bw * 0.3))} w");
+                M(new Pt(x + padX, labelBottom)); L(new Pt(x + w - padX, labelBottom));
+                Op("S");
+                if (Fonts.Primary("Helvetica", false, false) is { } regular)
+                    CentredText(subtitle, regular, false, x + padX, w - 2 * padX, bottom, labelBottom - bottom, 0.5, textFill);
+            }
+            return true;
+        }
+
+        /// <summary>One line of text centred in a box: its cap height <paramref name="fill"/> of the box's height, or less to fit the width.</summary>
+        private void CentredText(string text, EmbeddedFontBuilder font, bool bold, double left, double width, double bottom, double height, double fill, string colourOp)
+        {
+            if (width <= 0 || height <= 0) return;
+            var glyphs = Fonts.Shape(text, font, bold, false);
             double units = glyphs.Sum(g => g.Advance) / 1000;
-            if (units <= 0) return true;
-            double pad = bw + Math.Min(w, h) * 0.12;
-            double size = Math.Min((h - 2 * bw) * 0.6, (w - 2 * pad) / units);
-            if (size <= 0.5) return true;
-            double cap = font.Font.ToThousandths(font.Font.CapHeight) / 1000 * size;
-            double tx = x + (w - units * size) / 2, ty = y + (h - cap) / 2;
-            Op(textFill!);
+            if (units <= 0) return;
+            double capRatio = font.Font.ToThousandths(font.Font.CapHeight) / 1000;
+            if (capRatio <= 0.2 || capRatio > 1.2) capRatio = 0.72;
+            double size = Math.Min(height * fill / capRatio, width / units);
+            if (size <= 0.5) return;
+            double tx = left + (width - units * size) / 2, ty = bottom + (height - capRatio * size) / 2;
+            Op(colourOp);
             Op("BT");
             Op($"{F(tx)} {F(ty)} Td");
             ShowGlyphs(glyphs, size);
             Op("ET");
-            return true;
         }
 
         /// <summary>"NotForPublicRelease" is "NOT FOR PUBLIC RELEASE"; Acrobat's SB/SH prefixes are dropped.</summary>
@@ -1263,7 +1346,7 @@ public static class PdfAnnotationAppearances
             return n switch
             {
                 "NotApproved" or "Expired" or "TopSecret" or "NotForPublicRelease" or "Confidential" or "Void" or "Rejected" => new[] { 0.78, 0.1, 0.1 },
-                "Approved" or "Final" or "Completed" or "Accepted" or "ForPublicRelease" or "Sold" => new[] { 0.13, 0.47, 0.13 },
+                "Approved" or "Final" or "Completed" or "Accepted" or "ForPublicRelease" or "Sold" or "Received" => new[] { 0.13, 0.47, 0.13 },
                 _ => new[] { 0.12, 0.2, 0.6 },
             };
         }
