@@ -80,6 +80,10 @@ internal sealed partial class SkiaReplayer
         foreach (var extra in UnicodeFallbackFamilies)
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
+        // Text whose font is not embedded reaches here as characters, not shaped glyphs: Arabic and
+        // Indic words are shaped with the substitute's own tables (an embedded program Skia cannot
+        // load had its glyphs chosen by the producer, so it is drawn as it is).
+        bool shape = face == null || face.ProgramData.IsEmpty;
         (SkiaFace Face, ResolvedRun Mapped, int Missing, bool SymbolCodes)? best = null;
         foreach (var (inst, fam, b, it, symbolCodes) in chain)
         {
@@ -95,13 +99,13 @@ internal sealed partial class SkiaReplayer
                 }
                 continue;
             }
-            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _);
+            var mapped = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: false, out _, shape: shape);
             if (mapped != null)
                 return mapped;
             // Best effort: the face that has the most of the run's glyphs draws it, leaving out the
             // ones none of them has (PDFium draws what its substitute has too). A face that has none
             // of them draws nothing, so the run stays reported as not drawn.
-            var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing);
+            var partial = MapByUnicode(candidate, run, symbolCodes, th, sign, allowMissing: true, out int missing, shape: shape);
             if (partial != null && partial.Indices.Length > 0 && (best == null || missing < best.Value.Missing))
                 best = (candidate, partial, missing, symbolCodes);
         }
@@ -109,7 +113,7 @@ internal sealed partial class SkiaReplayer
         if (best is not { Missing: 0 } && _res.Fonts.HasCharacterFaces)
         {
             var hint = new SkiaTextHint(face?.PostScriptName ?? run.FontFamilyName ?? run.FontResourceName, face?.CidOrdering, RunText(run));
-            var composed = ComposeByCharacter(run, best?.Face, best?.SymbolCodes ?? false, bold, italic, hint, th, sign, out bool waiting);
+            var composed = ComposeByCharacter(run, best?.Face, best?.SymbolCodes ?? false, bold, italic, hint, th, sign, shape, out bool waiting);
             if (waiting)
             {
                 _lastTextProblem = "Substitute font not loaded yet";
@@ -141,7 +145,7 @@ internal sealed partial class SkiaReplayer
     /// asked for in the same pass, so the host fetches them together and draws the page again once.
     /// </summary>
     private ResolvedRun? ComposeByCharacter(PdfGlyphRun run, SkiaFace? primary, bool symbolCodes, bool bold, bool italic,
-        SkiaTextHint hint, double th, double sign, out bool waiting)
+        SkiaTextHint hint, double th, double sign, bool shape, out bool waiting)
     {
         waiting = false;
         var owners = new SkiaFace?[run.Glyphs.Count];
@@ -192,7 +196,7 @@ internal sealed partial class SkiaReplayer
         foreach (var f in order)
         {
             var mine = Array.ConvertAll(owners, o => ReferenceEquals(o, f));
-            var part = MapByUnicode(f, run, ReferenceEquals(f, primary) && symbolCodes, th, sign, allowMissing: true, out _, mine);
+            var part = MapByUnicode(f, run, ReferenceEquals(f, primary) && symbolCodes, th, sign, allowMissing: true, out _, mine, shape);
             if (part != null && part.Indices.Length > 0) parts.Add(part);
         }
         if (parts.Count == 0)
@@ -231,19 +235,41 @@ internal sealed partial class SkiaReplayer
     /// </summary>
     /// <param name="allowMissing">Leave out glyphs the face lacks (counted in <paramref name="missing"/>) instead of failing.</param>
     /// <param name="only">When set, only the glyphs flagged here (by position in the run) are mapped.</param>
-    private static ResolvedRun? MapByUnicode(SkiaFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
-        bool allowMissing, out int missing, bool[]? only = null)
+    /// <param name="shape">Shape the run's Arabic and Indic words with the face's tables (<see cref="ShapeWord"/>).</param>
+    private ResolvedRun? MapByUnicode(SkiaFace face, PdfGlyphRun run, bool symbolCodes, double th, double sign,
+        bool allowMissing, out int missing, bool[]? only = null, bool shape = false)
     {
         missing = 0;
         var indices = new List<ushort>(run.Glyphs.Count);
         var offsets = new List<Vector2>(run.Glyphs.Count);
         var widths = new List<double>(run.Glyphs.Count);
+        // The scale of a shaped glyph (already fitted with its word); 0 for a glyph fitted to its own width below.
+        var fitted = new List<float>(run.Glyphs.Count);
+        var words = shape && !symbolCodes && sign > 0 ? ShapingWords(run, only) : null;
+        var shaping = words is { Count: > 0 } ? _res.GetShapingFont(face) : null;
+        int nextWord = 0;
         using var font = new SKFont(face.Typeface, 1f) { LinearMetrics = true, Hinting = SKFontHinting.None };
         for (int i = 0; i < run.Glyphs.Count; i++)
         {
             var g = run.Glyphs[i];
             if (only != null && !only[i])
                 continue;
+            if (shaping != null && nextWord < words!.Count && words[nextWord].Start == i)
+            {
+                var word = words[nextWord++];
+                if (ShapeWord(shaping, run, word, th) is { } shaped)
+                {
+                    foreach (var (gid, offset, scale) in shaped)
+                    {
+                        indices.Add(gid);
+                        offsets.Add(offset);
+                        widths.Add(0);
+                        fitted.Add(scale);
+                    }
+                    i = word.End - 1;
+                    continue;
+                }
+            }
             string? text = g.Unicode;
             if (IsBlank(text))
                 continue;
@@ -260,9 +286,16 @@ internal sealed partial class SkiaReplayer
             indices.Add(index);
             offsets.Add(new Vector2((float)(g.OffsetX / th * sign), (float)(g.OffsetY * sign)));
             widths.Add(g.Width);
+            fitted.Add(0);
         }
         var ids = indices.ToArray();
         float[]? scales = null;
+        for (int i = 0; i < ids.Length; i++)
+        {
+            if (fitted[i] is 0 or 1) continue;
+            scales ??= Enumerable.Repeat(1f, ids.Length).ToArray();
+            scales[i] = fitted[i];
+        }
         if (ids.Length > 0 && widths.Exists(w => w > 0))
         {
             // Advances of a 1-unit font are the design advances in em.
