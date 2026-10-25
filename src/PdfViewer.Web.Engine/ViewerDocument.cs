@@ -134,6 +134,13 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>True when the cross-reference table was rebuilt because the file is damaged.</summary>
     public bool WasRepaired => _document.WasRepaired;
 
+    /// <summary>
+    /// The document lets the reader copy its text (ISO 32000-2 Table 22, bit 5): always for an
+    /// unencrypted file or one opened with the owner password.
+    /// </summary>
+    public bool CanCopy => _document.Security is not { } s
+                           || PdfDocumentPermissions.FromFlags(s.Permissions, s.Revision, s.IsOwner).CanCopy;
+
     /// <summary>Opens a document held in memory. Throws <see cref="ViewerOpenException"/> with the reason when it cannot.</summary>
     public static async Task<ViewerDocument> OpenAsync(byte[] bytes, string? password = null, ViewerOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -246,6 +253,55 @@ public sealed class ViewerDocument : IAsyncDisposable
                 ? segment
                 : new ArraySegment<byte>(rendered.Pixels.ToArray());
             return new ViewerBitmap(page, rendered.WidthPixels, rendered.HeightPixels, scale, pixels, build, result.Elapsed, result.Fallbacks);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Renders the pixels <paramref name="region"/> of the page at <paramref name="scale"/> (a tile
+    /// of a page too large for one bitmap). The region is in pixels of the whole page at that scale
+    /// and is clipped to it; <see cref="ViewerOptions.MaxBitmapPixels"/> limits the region, not the page.
+    /// </summary>
+    public async Task<ViewerBitmap> RenderRegionAsync(int page, double scale, PageTile region, bool night = false, CancellationToken cancellationToken = default)
+    {
+        if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        if (!(scale > 0) || double.IsInfinity(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
+        if (region.Width <= 0 || region.Height <= 0 || (long)region.Width * region.Height > _options.MaxBitmapPixels)
+            throw new ArgumentOutOfRangeException(nameof(region));
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var clock = Stopwatch.StartNew();
+            var list = await _document.GetPageDisplayListAsync(page, cancellationToken).ConfigureAwait(false);
+            var build = clock.Elapsed;
+            var request = new RenderRequest { PageNumber = page, Dpi = scale * 72 };
+            var pixelRegion = new SkiaPixelRegion(region.X, region.Y, region.Width, region.Height);
+            var result = await _renderer.RenderAsync(list, request, null, pixelRegion, night, cancellationToken).ConfigureAwait(false);
+            using var rendered = result.Page;
+            var pixels = MemoryMarshal.TryGetArray(rendered.Pixels, out var segment) && segment.Count == rendered.WidthPixels * 4 * rendered.HeightPixels
+                ? segment
+                : new ArraySegment<byte>(rendered.Pixels.ToArray());
+            return new ViewerBitmap(page, rendered.WidthPixels, rendered.HeightPixels, scale, pixels, build, result.Elapsed, result.Fallbacks);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>The page's text for selection: characters, lines and words on the shown page (empty for a page without text).</summary>
+    public async Task<ViewerTextLayout> GetTextLayoutAsync(int page, CancellationToken cancellationToken = default)
+    {
+        if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(_document, page, cancellationToken));
         }
         finally
         {
