@@ -187,6 +187,10 @@ public sealed class PdfAnnotationEditor
         Put("RT", a.ReplyType != null ? new PdfName(a.ReplyType) : null);
         Put("State", Text(a.State));
         Put("StateModel", Text(a.StateModel));
+        // A measure the reader could not model (geospatial) is kept as it was.
+        if (a.Measure != null) e["Measure"] = a.Measure.ToDictionary();
+        if (a.Caption) e["Cap"] = PdfBoolean.True;
+        else if (a.Subtype == "Line") e.Remove("Cap");
 
         if (a.Subtype == "FileAttachment" && a.FileData != null)
             e["FS"] = _update.AddRef(PdfAttachments.NewFileSpec(_update, a.FileName ?? "attachment", a.FileData, null, null, null));
@@ -207,9 +211,16 @@ public sealed class PdfAnnotationEditor
             page.Added.Add(new PdfIndirectRef(popup));
         }
 
+        // A stamp keeps the appearance it has (a picture, a page, a dynamic stamp's name and date)
+        // unless it is given a new one: moving or resizing it only changes /Rect, which 12.5.5 fits it to.
+        if (a.Subtype == "Stamp" && a.Stamp == null && existing != null && _update.Resolve(existing["AP"]) is PdfDictionary)
+            return new PdfDictionary(e);
+
         // A new normal appearance in place of the old one; a type the generator does not draw keeps what it had.
         var draft = new PdfDictionary(e);
-        var form = PdfAnnotationAppearances.Generate(draft, _update.Resolver, o => _update.Add(o));
+        var form = a.Subtype == "Stamp" && a.Stamp != null
+            ? Annotations.PdfStampForms.Build(_update, a.Stamp, rect, a.Opacity) ?? PdfAnnotationAppearances.Generate(draft, _update.Resolver, o => _update.Add(o), a.Stamp)
+            : PdfAnnotationAppearances.Generate(draft, _update.Resolver, o => _update.Add(o));
         if (form != null)
         {
             e["AP"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = _update.AddRef(form) });

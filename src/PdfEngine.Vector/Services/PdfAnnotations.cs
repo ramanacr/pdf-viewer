@@ -92,6 +92,22 @@ public sealed class PdfAnnotation
     /// <summary>The annotation has a normal appearance stream.</summary>
     public bool HasAppearance { get; set; }
 
+    /// <summary>/Measure of a measurement annotation (12.9), rectilinear only; null when absent or geospatial.</summary>
+    public Annotations.PdfMeasure? Measure { get; set; }
+
+    /// <summary>/Cap: a line shows its /Contents as a caption.</summary>
+    public bool Caption { get; set; }
+
+    /// <summary>
+    /// For a stamp being created or redrawn: how its appearance is drawn (a designed stamp with an
+    /// optional second line, a picture or a page of a PDF, and its rotation). Null when read, and
+    /// when changing a stamp whose own appearance is kept.
+    /// </summary>
+    public Annotations.PdfStampAppearance? Stamp { get; set; }
+
+    /// <summary>The rotation of the normal appearance (/AP /N /Matrix), degrees counter-clockwise; 0 when it has none.</summary>
+    public double AppearanceRotation { get; set; }
+
     /// <summary>For a file attachment: the file's name, and its bytes when creating one.</summary>
     public string? FileName { get; set; }
     public byte[]? FileData { get; set; }
@@ -162,6 +178,8 @@ public static class PdfAnnotationReader
             State = Text("State"),
             StateModel = Text("StateModel"),
             PopupObjectNumber = d["Popup"] is PdfIndirectRef pop ? pop.ObjectNumber : 0,
+            Measure = Annotations.PdfMeasure.FromDictionary(d["Measure"], r),
+            Caption = r.Resolve(d["Cap"]) is PdfBoolean { Value: true },
         };
 
         if (r.Resolve(d["BS"]) is PdfDictionary bs)
@@ -205,6 +223,12 @@ public static class PdfAnnotationReader
         }
 
         a.HasAppearance = r.Resolve(d["AP"]) is PdfDictionary ap && r.Resolve(ap["N"]) is PdfStream or PdfDictionary;
+        if (r.Resolve(d["AP"]) is PdfDictionary apd && r.Resolve(apd["N"]) is PdfStream normal
+            && PdfDocumentInfo.Numbers(r.Resolve(normal.Dictionary["Matrix"]), r) is { Length: 6 } m && (m[0] != 0 || m[1] != 0))
+        {
+            double degrees = Math.Round(Math.Atan2(m[1], m[0]) * 180 / Math.PI, 4);
+            a.AppearanceRotation = degrees < 0 ? degrees + 360 : degrees;
+        }
         if (a.Subtype == "FileAttachment")
             a.FileName = (nav?.Value)?.FileName(d["FS"]) ?? PdfTextStrings.Decode(r.Resolve(d["FS"]));
         return a;

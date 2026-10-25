@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Annotations;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Services;
@@ -23,7 +24,16 @@ namespace PdfViewer.Services;
 internal sealed class NativeDocumentServices
 {
     /// <summary>The subtypes the viewer reads and writes; everything else on a page belongs to the document and is left alone.</summary>
-    internal static readonly string[] ManagedSubtypes = { "Highlight", "Underline", "StrikeOut", "Text", "FreeText", "Square", "Circle", "Ink" };
+    internal static readonly string[] ManagedSubtypes = { "Highlight", "Underline", "StrikeOut", "Text", "FreeText", "Square", "Circle", "Ink", "Stamp" };
+
+    /// <summary>
+    /// The viewer reads and writes this annotation: one of <see cref="ManagedSubtypes"/>, or a
+    /// line, polyline or polygon that is a measurement (has a rectilinear /Measure). Loading and
+    /// saving use the same test, so nothing the viewer does not show is ever deleted.
+    /// </summary>
+    internal static bool IsManaged(PdfAnnotation a) =>
+        Array.IndexOf(ManagedSubtypes, a.Subtype) >= 0
+        || a.Measure != null && PdfMeasurements.KindOf(a.Subtype) != null;
 
     /// <summary>Where each loaded annotation came from, and what it looked like then, keyed by the model's id.</summary>
     private readonly Dictionary<Guid, (int Page, int Index, int ObjectNumber, string Fingerprint)> _loaded = new();
@@ -114,6 +124,8 @@ internal sealed class NativeDocumentServices
         "Square" => AnnotationType.Rectangle,
         "Circle" => AnnotationType.Ellipse,
         "Ink" => AnnotationType.Ink,
+        "Stamp" => AnnotationType.Stamp,
+        "Line" or "PolyLine" or "Polygon" => AnnotationType.Measurement,
         _ => null,
     };
 
@@ -131,7 +143,7 @@ internal sealed class NativeDocumentServices
 
     internal static AnnotationModel? ToModel(PdfAnnotation a, PdfRect crop)
     {
-        if (TypeOf(a.Subtype) is not AnnotationType type || a.Rect.IsEmpty && a.Rect.Width <= 0 && a.Rect.Height <= 0 && a.Rect.X == 0 && a.Rect.Y == 0)
+        if (!IsManaged(a) || TypeOf(a.Subtype) is not AnnotationType type || a.Rect.IsEmpty && a.Rect.Width <= 0 && a.Rect.Height <= 0 && a.Rect.X == 0 && a.Rect.Y == 0)
             return null;
         double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
         double ox = crop.Left, oy = crop.Top;
@@ -176,7 +188,84 @@ internal sealed class NativeDocumentServices
             foreach (var stroke in a.InkList.Where(s => s.Count > 0))
                 model.InkStrokes.Add(stroke.Select(pt => new Point(Math.Max(0, (pt.X - ox) / w), Math.Max(0, 1.0 - (pt.Y - oy) / h))).ToList());
         }
+        if (type == AnnotationType.Measurement)
+        {
+            var points = a.Line is { Length: 4 } l ? new[] { new PdfPoint(l[0], l[1]), new PdfPoint(l[2], l[3]) } : a.Vertices.ToArray();
+            model.MeasureKind = PdfMeasurements.KindOf(a.Subtype) ?? PdfMeasurementKind.Distance;
+            model.Measure = a.Measure;
+            model.Vertices = points.Select(p => new Point((p.X - ox) / w, 1.0 - (p.Y - oy) / h)).ToList();
+            model.HasOwnAppearance = a.HasAppearance;
+            model.Opacity = a.Opacity;
+        }
+        if (type == AnnotationType.Stamp)
+        {
+            model.StampName = a.Icon ?? "Draft";
+            model.StampRotation = a.AppearanceRotation;
+            model.StampSize = new Size(rect.Width, rect.Height);
+            model.HasOwnAppearance = a.HasAppearance;
+            model.Opacity = a.Opacity;
+        }
         return model;
+    }
+
+    /// <summary>A point of the normalized page (top-left origin) in default user space.</summary>
+    internal static PdfPoint ToPage(Point p, PdfRect crop)
+    {
+        double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
+        return new PdfPoint(crop.Left + p.X * w, crop.Top + (1.0 - p.Y) * h);
+    }
+
+    /// <summary>A point of default user space on the normalized page.</summary>
+    internal static Point FromPage(PdfPoint p, PdfRect crop)
+    {
+        double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
+        return new Point((p.X - crop.Left) / w, 1.0 - (p.Y - crop.Top) / h);
+    }
+
+    /// <summary>The normalized box of a rectangle of default user space.</summary>
+    internal static Rect FromPage(PdfRect r, PdfRect crop)
+    {
+        double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
+        return new Rect((r.Left - crop.Left) / w, 1.0 - (r.Bottom - crop.Top) / h, r.Width / w, r.Height / h);
+    }
+
+    /// <summary>
+    /// The measurement annotation for a model: its points in page space, measured with its
+    /// /Measure, the result as its label. The box is the annotation's rectangle.
+    /// </summary>
+    internal static PdfAnnotation MeasurementAnnotation(AnnotationModel m, PdfRect crop)
+    {
+        var measure = m.Measure ?? PdfMeasure.FromScale(1, "in", 1, "in");
+        var points = m.Vertices.Select(p => ToPage(p, crop)).ToList();
+        if (m.MeasureKind == PdfMeasurementKind.Distance && points.Count > 2) points = new List<PdfPoint> { points[0], points[^1] };
+        return PdfMeasurements.Create(m.MeasureKind, m.PageNumber, points, measure, Rgb(m.ColorHex), m.StrokeThickness > 0 ? m.StrokeThickness : 1);
+    }
+
+    /// <summary>The stamp annotation for a model, with how its appearance is drawn (a new stamp, or one given a new look).</summary>
+    internal static PdfAnnotation StampAnnotation(AnnotationModel m, PdfRect rect)
+    {
+        var size = m.StampSize.Width > 0 && m.StampSize.Height > 0 ? m.StampSize : new Size(rect.Width, rect.Height);
+        PdfEngine.Vector.Editing.PdfImageContent? image = null;
+        if (m.StampImage is { Length: > 0 } picture) image = EditImageLoader.Load(picture);
+        return new PdfAnnotation
+        {
+            PageNumber = m.PageNumber,
+            Subtype = "Stamp",
+            Icon = string.IsNullOrEmpty(m.StampName) ? "Draft" : m.StampName,
+            Rect = rect,
+            Opacity = Math.Clamp(m.Opacity, 0, 1),
+            Contents = string.IsNullOrEmpty(m.Contents) ? null : m.Contents,
+            Stamp = new PdfStampAppearance
+            {
+                Subtitle = m.StampSubtitle,
+                Rotation = m.StampRotation,
+                Width = size.Width,
+                Height = size.Height,
+                Image = image,
+                SourcePdf = m.StampPdf,
+                SourcePage = 1,
+            },
+        };
     }
 
     /// <summary>The stroking colour ("r g b RG", "g G", "c m y k K") of a /DA string.</summary>
@@ -205,6 +294,11 @@ internal sealed class NativeDocumentServices
         foreach (var s in a.InkStrokes) { foreach (var p in s) sb.Append(CultureInfo.InvariantCulture, $"{p.X:F6},{p.Y:F6};"); sb.Append('/'); }
         sb.Append('|');
         foreach (var q in a.Quads) sb.Append(CultureInfo.InvariantCulture, $"{q.X:F6},{q.Y:F6},{q.Width:F6},{q.Height:F6};");
+        // A measurement's points and scale, and a stamp's look, count as its geometry (the last part).
+        foreach (var v in a.Vertices) sb.Append(CultureInfo.InvariantCulture, $"v{v.X:F6},{v.Y:F6};");
+        if (a.Measure is { } m) sb.Append("m").Append(m.Ratio.Replace('|', ' ')).Append(CultureInfo.InvariantCulture, $"{m.X[0].Factor:R}");
+        if (a.Type == AnnotationType.Stamp)
+            sb.Append(CultureInfo.InvariantCulture, $"s{a.StampName.Replace('|', ' ')},{a.StampRotation:F3},{a.StampSize.Width:F3},{a.StampSize.Height:F3}");
         return sb.ToString();
     }
 
@@ -240,7 +334,7 @@ internal sealed class NativeDocumentServices
             var crop = doc.PageTree.Pages[p - 1].CropBox;
             foreach (var existing in PdfAnnotationReader.Read(doc, p))
             {
-                if (Array.IndexOf(ManagedSubtypes, existing.Subtype) < 0) continue;
+                if (!IsManaged(existing)) continue;
                 if (byOrigin.TryGetValue((p, existing.Index), out var origin) && origin.ObjectNumber == existing.ObjectNumber
                     && byId.TryGetValue(origin.Id, out var model) && model.PageNumber == p && handled.Add(origin.Id))
                 {
@@ -278,6 +372,21 @@ internal sealed class NativeDocumentServices
 
     private static PdfAnnotation New(AnnotationModel m, PdfRect crop)
     {
+        if (m.Type == AnnotationType.Measurement)
+        {
+            var measurement = MeasurementAnnotation(m, crop);
+            Apply(measurement, m, crop, geometry: false);
+            measurement.Contents = string.IsNullOrEmpty(m.Contents) ? measurement.Contents : m.Contents;
+            return measurement;
+        }
+        if (m.Type == AnnotationType.Stamp)
+        {
+            var stamp = StampAnnotation(m, BoxOf(m, crop));
+            Apply(stamp, m, crop, geometry: true);
+            stamp.Color = null; // a designed stamp is drawn in its own colour
+            stamp.BorderWidth = null;
+            return stamp;
+        }
         var a = new PdfAnnotation { PageNumber = m.PageNumber, Subtype = SubtypeOf(m.Type) };
         Apply(a, m, crop, geometry: true);
         if (m.Type == AnnotationType.FreeText)
@@ -295,6 +404,28 @@ internal sealed class NativeDocumentServices
     {
         string? before = existing.Contents;
         var colourBefore = existing.Color;
+        if (m.Type == AnnotationType.Stamp)
+        {
+            // Its appearance is kept: a new rectangle moves and sizes it, as 12.5.5 fits it.
+            var width = existing.BorderWidth;
+            Apply(existing, m, crop, geometryChanged);
+            existing.Color = colourBefore;
+            existing.BorderWidth = width;
+            return existing;
+        }
+        if (m.Type == AnnotationType.Measurement)
+        {
+            Apply(existing, m, crop, geometry: false);
+            if (geometryChanged || m.Measure is { } measure && !measure.SameAs(existing.Measure))
+            {
+                var redrawn = MeasurementAnnotation(m, crop);
+                existing.Rect = redrawn.Rect;
+                existing.Line = redrawn.Line;
+                existing.Vertices = redrawn.Vertices;
+                existing.Measure = redrawn.Measure;
+            }
+            return existing;
+        }
         Apply(existing, m, crop, geometryChanged);
         if (!string.Equals(before ?? string.Empty, m.Contents ?? string.Empty, StringComparison.Ordinal))
             existing.RichContents = null; // rich text of the old contents would contradict the new
@@ -333,6 +464,13 @@ internal sealed class NativeDocumentServices
         if (m.Type == AnnotationType.Ink)
             foreach (var stroke in m.InkStrokes.Where(s => s != null && s.Count >= 2))
                 a.InkList.Add(stroke.Select(p => new PdfPoint(X(p.X), Y(p.Y))).ToList());
+    }
+
+    /// <summary>The model's box in default user space.</summary>
+    internal static PdfRect BoxOf(AnnotationModel m, PdfRect crop)
+    {
+        double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
+        return new PdfRect(crop.Left + m.X * w, crop.Top + (1.0 - m.Y - m.Height) * h, m.Width * w, m.Height * h);
     }
 
     /// <summary>#RRGGBB or #AARRGGBB; lime green when it is neither, as the PDFium path wrote it.</summary>

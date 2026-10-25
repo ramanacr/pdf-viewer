@@ -236,6 +236,15 @@ oracle the engine is tested against; the published application does not contain 
   - Match occurrence counter (e.g. *"Match 2 of 14 (Page 3)"*).
   - Next match (`F3`) and Previous match (`Shift+F3`) navigation.
   - Dedicated **Search Results Tab** in the sidebar listing all occurrences with text snippets and page numbers for double-click navigation.
+- **Measuring** (*Tools → Measure*): distance, perimeter and area.
+  - Click points on the page; the result shows live in an info panel: each segment's length, the total, the area, the angle of the last segment, and the pointer's x and y in the chosen units.
+  - Points snap to the ends, middles and lines of the page's drawing (hold `Shift` to place a point freely). A double-click or `Enter` finishes a perimeter or area, `Backspace` takes back a point, `Esc` stops.
+  - The scale comes from the page when it has measuring viewports (`/VP` with `/Measure`, ISO 32000-2 12.9); otherwise you set it (for example 1 in = 10 ft, in pt, in, mm, cm, m, ft, km or mi), and it is remembered for that document on your computer.
+  - A measurement is saved as the annotation Acrobat writes: a Line, PolyLine or Polygon with `/IT /LineDimension`, `/PolyLineDimension` or `/PolygonDimension`, a `/Measure` dictionary, the result as its comment, and a drawn appearance. Adding, deleting and changing one is undoable.
+- **Stamps** (*Comment → Stamp*):
+  - The standard business stamps (Approved, Completed, Confidential, Draft, Final, For Comment, Not Approved, Received, Reviewed, Revised, Void and more) and dynamic stamps that add your name and the date and time, all drawn as clean vector appearances of our own design. Your name is asked for once and kept in the viewer's settings, never sent anywhere.
+  - Custom stamps from a PNG or JPEG picture or a page of a PDF, kept in a local stamp library under `%LOCALAPPDATA%\PdfViewerNative`.
+  - Click to place a stamp at its usual size or drag its box; *Rotate New Stamps* turns it. It is a Stamp annotation with `/Name` and its own appearance, so Acrobat and other readers show it the same; it survives saving, flattening, PDF/A conversion and printing, and is undoable.
 - **Annotations & Markup**:
   - Highlights, Underlines, Strikethrough, Notes, FreeText, Rectangles, Ellipses, and Freehand Ink.
   - **Multi-Mode Saving**:
@@ -552,6 +561,10 @@ dotnet test tests/PdfViewer.Tests -p:PdfiumRenderer=false   # the published conf
 | `Ctrl + Tab` / `Ctrl + Shift + Tab` | Several documents | Next / previous document tab |
 | `Alt + Left` / `Alt + Right` | Document Loaded | Back / forward through jumps |
 | `F11` | Document Loaded | Full screen (`Esc` or `F11` to exit) |
+| `Enter` / double-click | Measuring | Finish a perimeter or area |
+| `Backspace` | Measuring | Take back the last point |
+| `Shift` (held) | Measuring | Place a point without snapping |
+| `Esc` | Measuring / placing a stamp | Drop the measurement being drawn (again: stop measuring) / cancel the stamp |
 | `PageDown` / `Right` | Viewport | Go to Next Page |
 | `PageUp` / `Left` | Viewport | Go to Previous Page |
 | `Home` | Viewport | Jump to First Page |

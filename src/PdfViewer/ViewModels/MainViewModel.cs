@@ -569,6 +569,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
             // A new document starts a new undo history, with what was just opened as its saved state.
             ResetUndoHistory();
 
+            // Measuring and stamping start afresh; the scale is the one set for this document, if any.
+            ActiveMeasureTool = null;
+            ActiveStamp = null;
+            MeasureScale = MeasureScaleStore.Load(filePath) ?? MeasureScale.Default;
+            RefreshCustomStamps();
+
             CurrentPageNumber = 1;
             UpdateSingleCurrentPage();
             RaiseLayoutChanged();
@@ -635,6 +641,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         SearchMatches.Clear();
         AllAnnotations.Clear();
         ActiveAnnotationTool = null;
+        ActiveMeasureTool = null;
+        ActiveStamp = null;
 
         IsDocumentLoaded = false;
         ResetUndoHistory();
