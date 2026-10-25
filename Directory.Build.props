@@ -3,6 +3,12 @@
     <Company>PDF Viewer Native</Company>
     <Product>PDF Viewer Native Desktop</Product>
     <Copyright>Copyright © 2026 Ramana Reddy Chamakura. MIT License.</Copyright>
+    <!--
+      No project makes a NuGet package unless its project file sets IsPackable to true. Only the
+      engine libraries do (PdfEngine.Abstractions, PdfEngine.Vector, PdfEngine.Vector.Skia); their
+      package metadata is in Directory.Build.targets.
+    -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <!--
@@ -56,6 +62,19 @@
       <FileVersion>$(GitReleaseVersion).0</FileVersion>
       <InformationalVersion Condition="'$(GitCommitHash)' != ''">$(GitReleaseVersion)+$(GitCommitHash)</InformationalVersion>
       <InformationalVersion Condition="'$(GitCommitHash)' == ''">$(GitReleaseVersion)</InformationalVersion>
+    </PropertyGroup>
+    <!--
+      An engine package release (-p:PdfEngineVersion=0.1.0, set by .github/workflows/packages.yml
+      from an engine-v* tag) gives the packed assemblies the package version. Without it, the
+      engine assemblies keep the app version, as the app ships them.
+    -->
+    <PropertyGroup Condition="'$(IsPackable)' == 'true' And '$(PdfEngineVersion)' != ''">
+      <PdfEngineAssemblyVersion>$([System.Text.RegularExpressions.Regex]::Replace($(PdfEngineVersion), '[-+].*$', ''))</PdfEngineAssemblyVersion>
+      <Version>$(PdfEngineVersion)</Version>
+      <AssemblyVersion>$(PdfEngineAssemblyVersion).0</AssemblyVersion>
+      <FileVersion>$(PdfEngineAssemblyVersion).0</FileVersion>
+      <InformationalVersion Condition="'$(GitCommitHash)' != ''">$(PdfEngineVersion)+$(GitCommitHash)</InformationalVersion>
+      <InformationalVersion Condition="'$(GitCommitHash)' == ''">$(PdfEngineVersion)</InformationalVersion>
     </PropertyGroup>
   </Target>
 </Project>

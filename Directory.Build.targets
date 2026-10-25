@@ -1,0 +1,44 @@
+<Project>
+  <!--
+    NuGet package metadata for the engine libraries. It applies only to projects that set
+    IsPackable to true (Directory.Build.props makes every other project not packable).
+
+    Version: the engine packages have their own version, independent of the app's v* tags.
+    A local "dotnet pack" gives 0.0.0-dev. .github/workflows/packages.yml passes
+    -p:PdfEngineVersion: 0.1.0 from the tag engine-v0.1.0, or 0.0.0-ci.<run> on other builds.
+  -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageVersion Condition="'$(PdfEngineVersion)' != ''">$(PdfEngineVersion)</PackageVersion>
+    <PackageVersion Condition="'$(PdfEngineVersion)' == ''">0.0.0-dev</PackageVersion>
+    <PackageId Condition="'$(PackageId)' == ''">$(AssemblyName)</PackageId>
+    <Authors>Ramana Reddy Chamakura</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ramanacr/pdf-viewer</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ramanacr/pdf-viewer</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+
+    <!--
+      A pack sets GenerateDocumentationFile in the packed projects, so the XML documentation goes in the package
+      for IntelliSense. Not every public member has a comment yet (CS1591), and some comments
+      describe only some parameters (CS1572, CS1573).
+    -->
+    <NoWarn>$(NoWarn);CS1591;CS1572;CS1573</NoWarn>
+
+    <!-- Symbols in a separate .snupkg; SourceLink (part of the .NET 8+ SDK) maps them to GitHub. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)assets\app_icon.png" Pack="true" PackagePath="icon.png" Visible="false" />
+    <!-- Each package has a short README of its own (the project's README.md is the developer documentation). -->
+    <None Include="$(MSBuildProjectDirectory)\PACKAGE_README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+</Project>
