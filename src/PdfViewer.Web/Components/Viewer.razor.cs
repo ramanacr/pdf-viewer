@@ -37,7 +37,7 @@ public sealed partial class Viewer : IAsyncDisposable
 
     /// <summary>
     /// Session limits; the font source is the device's fonts once the user lent them, else the
-    /// bundled Liberation fonts, fetched as pages need them (a browser has no installed fonts).
+    /// bundled Liberation and Noto fonts, fetched as pages need them (a browser has no installed fonts).
     /// </summary>
     private ViewerOptions Options => new()
     {
@@ -112,12 +112,13 @@ public sealed partial class Viewer : IAsyncDisposable
     private int _localFontCount;
     private SkiaFontSource? _lentFonts;
 
-    // Bundled fonts (wwwroot/fonts): fetched the first time a page needs a face, kept for the session.
+    // Bundled fonts (wwwroot/fonts, and fonts/noto added at publish): fetched the first time a page
+    // needs a face, kept for the session.
     private readonly OnDemandFontSource _bundledFonts;
 
     public Viewer()
     {
-        _bundledFonts = OnDemandFontSource.Liberation(FetchBundledFontAsync);
+        _bundledFonts = OnDemandFontSource.Bundled(FetchBundledFontAsync);
     }
 
     private async Task<byte[]?> FetchBundledFontAsync(string file, CancellationToken cancellationToken) =>
@@ -411,8 +412,8 @@ public sealed partial class Viewer : IAsyncDisposable
         if (bitmap.TextRegionsWithoutFont > 0 && !_localFontsLoaded)
         {
             _noticeIsFonts = true;
-            // Shown only for text that the bundled fonts (Liberation Sans, Serif and Mono) do not cover either: Symbol, Dingbats, other scripts.
-            _notice = "Some text on this page uses fonts that the PDF does not embed and that the viewer's own fonts do not cover (for example Symbol, Dingbats or other scripts), so that text is missing." +
+            // Shown only for text that the bundled fonts (Liberation, then Noto by script) do not cover either.
+            _notice = "Some text on this page uses fonts that the PDF does not embed and that the viewer's own fonts do not cover, so that text is missing." +
                       (_canUseLocalFonts ? " This browser can let the page read your device's fonts (they stay on your device)." : " Chrome and Edge can lend the page your device's fonts.");
             StateHasChanged();
         }

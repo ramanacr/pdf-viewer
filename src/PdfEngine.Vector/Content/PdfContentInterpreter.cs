@@ -132,7 +132,10 @@ public sealed class PdfContentInterpreter
                 NormalizeEm(f.Ascent, 0.8),
                 NormalizeEm(f.Descent, -0.2),
                 program?.GlyphMatrix,
-                (f.Flags & (1 << 3)) != 0);
+                (f.Flags & (1 << 3)) != 0)
+            {
+                CidOrdering = f.CidOrdering,
+            };
             return new PreparedFace(face, program);
         });
     }

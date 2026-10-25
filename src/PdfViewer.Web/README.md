@@ -8,7 +8,8 @@ server code.
 - **Nothing is uploaded.** A PDF you open is read into the tab's memory and forgotten when you
   close it. The site has no back end to send it to.
 - **No telemetry.** No analytics, no cookies, no third-party requests. The page sets a
-  Content-Security-Policy of `'self'` only. The theme and side-panel choices are kept in the
+  Content-Security-Policy of `'self'` only. The bundled fonts, Noto included, come from the
+  demo's own site, never from Google Fonts or another host. The theme and side-panel choices are kept in the
   browser's local storage; nothing else is stored.
 - **Document JavaScript never runs.** The engine has no script interpreter.
 - Diagnostics shown on screen are numbers and exception type names, never document text.
@@ -30,7 +31,7 @@ Status: a demo, and the base of an embeddable viewer SDK (see [next steps](#next
 | Encrypted PDFs | Password prompt. RC4 and AES (128 and 256) open, see [crypto](#cryptography). |
 | Night pages | The engine's night mode: the page inverted after drawing (`I`). |
 | Theme | System, light or dark (`D`), independent of night pages. |
-| Bundled fonts | Text in fonts a PDF does not embed is drawn with the Liberation fonts 2.1.5 (Sans, Serif, Mono; regular, bold, italic, bold italic; SIL Open Font License 1.1), shipped in `wwwroot/fonts` with their licence (`OFL.txt`). Each face is fetched the first time a page needs it and kept for the session. See [fonts](#fonts). |
+| Bundled fonts | Text in fonts a PDF does not embed is drawn with the Liberation fonts 2.1.5 (Sans, Serif, Mono; regular, bold, italic, bold italic; SIL Open Font License 1.1), shipped in `wwwroot/fonts` with their licence (`OFL.txt`). Characters Liberation lacks come from Noto fonts (Arabic, Hebrew, nine Indic scripts, Math, Symbols 2, and Chinese, Japanese and Korean in Unicode slices; SIL Open Font License 1.1), added to `fonts/noto` when the site is published. Each file is fetched from the demo's own site the first time a page needs it and kept for the session. See [fonts](#fonts). |
 | Device fonts | Chromium browsers can lend the page the fonts installed on the device (Local Font Access API, after the browser asks), for text the bundled fonts do not cover. |
 | Accessibility | Toolbar with labels and keyboard access, live status for search and page changes, focus outlines, reduced motion respected, each page labelled "Page n of m". |
 | Layout | Responsive: below 760 px the toolbar compacts and the side panel overlays the pages. |
@@ -105,6 +106,19 @@ node eng/webdemo/serve.mjs publish/web/wwwroot --port 8080 --gzip
 # open http://127.0.0.1:8080/
 ```
 
+The site works without the Noto fonts (text that only they cover is then reported as missing).
+To add them as CI does (Python 3.11 or later; about 340 MB of archives are downloaded once into
+the cache folder):
+
+```powershell
+py -3 -m venv .venv-noto
+py -3 -I eng/webdemo/noto_fonts.py requirements > noto-requirements.txt
+.venv-noto\Scripts\python -m pip install --require-hashes --no-deps -r noto-requirements.txt
+.venv-noto\Scripts\python -I eng/webdemo/noto_fonts.py build --cache ../noto-cache --out publish/web/wwwroot/fonts/noto
+```
+
+For `dotnet run`, write them to `src/PdfViewer.Web/wwwroot/fonts/noto` instead (ignored by git).
+
 `eng/webdemo/serve.mjs` is a dependency-free static server (Node 18+) that listens on
 127.0.0.1 only. `--base /pdf-viewer/` serves under a project path (rewrite `<base href>` in
 `index.html` to match), and `--gzip` compresses as GitHub Pages does, for realistic sizes.
@@ -115,15 +129,20 @@ path can make the native link exceed the 260-character path limit; a short path 
 
 ## Publishing
 
-`.github/workflows/web-demo.yml` publishes the app on every pull request and push to `main`. From `main` it deploys one Pages site: the documentation in `docs/` (home page, privacy policy) built with Jekyll at the site root, and this app under `/pdf-viewer/demo/`. The deploy runs when Pages uses GitHub Actions as its source and the repository variable `WEB_DEMO_PAGES` is `true`.
+`.github/workflows/web-demo.yml` publishes the app on every pull request and push to `main`, then adds the Noto fonts with `eng/webdemo/noto_fonts.py` (archives cached by the manifest's hash). From `main` it deploys one Pages site: the documentation in `docs/` (home page, privacy policy) built with Jekyll at the site root, and this app under `/pdf-viewer/demo/`. The deploy runs when Pages uses GitHub Actions as its source and the repository variable `WEB_DEMO_PAGES` is `true`.
 
 ## Limits
 
 1. **Fonts that a PDF does not embed** (see [fonts](#fonts)). The bundled Liberation fonts
    cover the common case: Helvetica, Arial, Times, Times New Roman, Courier, Courier New and
    unknown fonts by their class (sans-serif, serif, monospaced), in Latin, Greek, Cyrillic and Hebrew.
-   They do not cover Symbol and ZapfDingbats (Liberation has no equivalent), CJK, Indic and
-   other scripts. Text that is still not covered is not drawn, the page says so, and search
+   The Noto fonts add Arabic, Hebrew, Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam,
+   Gujarati, Gurmukhi, Oriya, math, symbols and dingbats, and CJK. Glyphs are taken by code
+   point, without shaping: Arabic letters keep the form the PDF's text gives them (isolated
+   unless the text uses presentation forms), and Indic conjuncts and vowel signs are not
+   rearranged, so such text is readable but not typeset as the author's font would. Only the
+   regular weights are bundled; bold and italic are simulated. Text that is still not covered
+   is not drawn, the page says so, and search
    still finds it, because text extraction does not need the font file. In Chrome and Edge the
    page can then ask to read the device's fonts (Local Font Access); the substitutes then come
    from there, through the same `SystemFontCatalog` matching as on Windows, instead of the
@@ -138,8 +157,9 @@ path can make the native link exceed the 260-character path limit; a short path 
 4. **Size.** The site is about 15 MB uncompressed, about 6.6 MB over the wire with gzip, cached
    by the browser after the first visit. Largest pieces: `dotnet.native.wasm` with Skia 5.8 MB,
    the engine `PdfEngine.Vector.wasm` 3.0 MB, `System.Private.CoreLib` 1.7 MB. The bundled fonts
-   add 4.4 MB to the published site (12 faces of 280 to 420 KB), but none of them is part of
-   the first load: a face is downloaded only when a page draws text in it.
+   add 4.4 MB (Liberation: 12 faces of 280 to 420 KB) and about 21 MB (Noto: 56 files and a
+   140 KB index) to the published site, but none of them is part of the first load: a file is
+   downloaded only when a page draws text from it.
 5. **Speed.** The engine runs in the .NET interpreter, so interpreting a page into a display
    list is slower than on the desktop; Skia's drawing is native code. See the measurements
    below. Trimming is on (the Blazor default for publish) and works. AOT is not enabled: an AOT
@@ -178,14 +198,57 @@ not embed:
    the face a run is drawn with is fetched, not the fallbacks after it. Fetched faces are kept
    for the session (and in the browser's HTTP cache). A PDF that embeds all its fonts fetches
    nothing.
-4. **Not covered.** Symbol and ZapfDingbats have no Liberation equivalent and are not mapped:
-   they keep the existing substitute chain, which asks for Symbol (or Segoe UI Symbol for the
-   Dingbats) and then for faces that have the characters, Arial among them. So Symbol's Greek
-   letters and common math signs draw with Liberation Sans; dingbats and other characters it
-   lacks are not drawn, and the page says so. The same holds for CJK, Arabic, Indic and other
-   scripts that Liberation does not cover.
+4. **Symbol and ZapfDingbats** have no Liberation equivalent and are not mapped: they keep the
+   existing substitute chain, which asks for Symbol (or Segoe UI Symbol for the Dingbats) and
+   then for faces that have the characters, Arial among them. So Symbol's Greek letters and
+   common math signs draw with Liberation Sans, and dingbats come from Noto Sans Symbols 2.
+5. **Noto, character by character.** When no face of the chain has every character of a run,
+   the face with the most of them draws what it has, and each other character comes from the
+   Noto file that has it (`BundledFontIndex`): Arabic, Hebrew and the Indic faces first, then
+   Math and Symbols 2, then CJK. Chinese, Japanese and Korean faces share most characters, so
+   the language picks the face: the font's CID ordering (Japan1, GB1, CNS1, Korea1), else kana
+   or hangul in the text, else the font's name (MS Mincho, SimSun, MingLiU, Batang and the
+   like), else Simplified Chinese.
+6. **Lazy loading.** The Noto index (`fonts/noto/index.json`, 140 KB, about 32 KB with gzip)
+   is fetched the first time a character needs it, then only the files that hold the page's
+   characters. Each CJK face is cut into slices: a core slice with the common characters of
+   the language's national character set (GB 2312 level 1, Big5 level 1, JIS X 0208 level 1,
+   KS X 1001 hangul), kana and CJK punctuation, then the face's other characters in code point
+   order, 2000 per slice. Typical text needs only the core slice (0.3 to 1.3 MB).
+7. **Privacy.** Every font is fetched from the demo's own site (`fonts/…`, same origin, allowed
+   by the page's `connect-src 'self'`). There are no requests to fonts.googleapis.com,
+   fonts.gstatic.com or any other host.
+8. **Where the Noto files come from.** They are not in the repository.
+   `eng/webdemo/noto-fonts.json` pins each official release archive (github.com/notofonts) by
+   URL and SHA-256, and the SHA-256 of the file taken from it, and pins fontTools for the
+   slicing. `eng/webdemo/noto_fonts.py` downloads, checks (it stops on a mismatch), slices and
+   writes `fonts/noto` with the licence of each archive (`OFL-<id>.txt`). The web demo workflow
+   runs it after `dotnet publish`; see [run locally](#run-locally) to run it yourself.
 
-Verified in the browser (Chromium, the published site under `/pdf-viewer/demo/`, served by
+| Noto file | Characters | Size |
+|---|---:|---:|
+| NotoSansArabic-Regular.ttf | 1250 | 138 KB |
+| NotoSansHebrew-Regular.ttf | 147 | 16 KB |
+| NotoSansDevanagari-Regular.ttf | 281 | 179 KB |
+| NotoSansBengali-Regular.ttf | 134 | 101 KB |
+| NotoSansTamil-Regular.ttf | 147 | 45 KB |
+| NotoSansTelugu-Regular.ttf | 165 | 161 KB |
+| NotoSansKannada-Regular.ttf | 166 | 132 KB |
+| NotoSansMalayalam-Regular.ttf | 187 | 75 KB |
+| NotoSansGujarati-Regular.ttf | 114 | 139 KB |
+| NotoSansGurmukhi-Regular.ttf | 154 | 35 KB |
+| NotoSansOriya-Regular.ttf | 151 | 128 KB |
+| NotoSansMath-Regular.ttf | 2919 | 642 KB |
+| NotoSansSymbols2-Regular.ttf | 2641 | 655 KB |
+| NotoSansSC-Regular-00.otf (core) / 01 to 14 | 4642 / 248 to 2000 each | 844 KB / 64 to 548 KB each |
+| NotoSansTC-Regular-00.otf (core) / 01 to 08 | 6177 / 568 to 2000 each | 1334 KB / 171 to 542 KB each |
+| NotoSansJP-Regular-00.otf (core) / 01 to 07 | 3690 / 1042 to 2000 each | 672 KB / 192 to 515 KB each |
+| NotoSansKR-Regular-00.otf (core) / 01 to 10 | 3512 / 1662 to 2000 each | 343 KB / 205 to 484 KB each |
+| index.json | | 140 KB |
+
+The workflow's step summary lists every file.
+
+Verified in the browser for the Liberation fonts (Chromium, the published site under `/pdf-viewer/demo/`, served by
 `eng/webdemo/serve.mjs --gzip`): the first load and the engine tour fetch no font; a generated
 page in non-embedded Helvetica, Helvetica-Bold, Times-Roman, Times-Italic, Courier,
 Courier-BoldOblique and ZapfDingbats fetched exactly those six Liberation faces (2.2 MB; about
@@ -241,7 +304,13 @@ longer, and the first page of a session pays the interpreter's warm-up.
   Liberation face, Symbol families stay unmapped, faces are fetched on demand with a fake fetch:
   nothing for embedded fonts, only the face a run is drawn with, once per session, a failed
   fetch reported and not retried; a page in non-embedded Helvetica, Times and Courier drawn with
-  the files from `wwwroot/fonts`, each line where the Windows fonts put it).
+  the files from `wwwroot/fonts`, each line where the Windows fonts put it); `NotoFontTests`
+  (the index format, the face for a code point by script and CJK language, the Noto files
+  fetched on demand with a fake fetch: none for Latin text, the index once, then only the
+  files with the page's characters, a failed index reported and not retried; Arabic, Hindi
+  and Chinese text that is not drawn with Liberation alone and is drawn with the fallback;
+  `RealNotoFonts_DrawArabicDevanagariAndChinese` runs with the real files when
+  `NOTO_FONTS_DIR` names the script's output).
 - CI: `web-demo.yml` publishes the app on every pull request.
 
 ## Next steps
@@ -254,8 +323,8 @@ Toward an embeddable SDK in the style of the Adobe PDF Embed API:
    surface and a packaged build of the Blazor runtime as a custom element.
 2. **Rendering off the main thread**: run the engine in a Web Worker (or multi-threaded
    WebAssembly once it is stable) so a heavy page never blocks scrolling.
-3. **Fonts** beyond Liberation: a symbol and dingbats face and Noto for other scripts, on
-   demand as the Liberation faces are.
+3. **Fonts**: text shaping (HarfBuzz) for Arabic and Indic text drawn with Noto, bold Noto
+   weights, and Noto Serif for serif text.
 4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
    acceptable.
 5. **Tiles** for deep zoom, text selection and copy, thumbnails, annotations display.
