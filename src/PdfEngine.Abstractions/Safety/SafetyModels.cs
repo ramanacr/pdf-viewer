@@ -84,6 +84,9 @@ public record DocumentSafetyReport
 /// </summary>
 public interface IPdfSafetyInspector
 {
+    /// <summary>Lists the active or risky content of the document. The inspection runs none of it.</summary>
+    /// <param name="document">An open document of this engine.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<DocumentSafetyReport> InspectAsync(
         IPdfDocument document,
         CancellationToken cancellationToken = default);

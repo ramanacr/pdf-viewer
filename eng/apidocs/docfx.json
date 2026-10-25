@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../../src",
+          "files": [
+            "PdfEngine.Abstractions/PdfEngine.Abstractions.csproj",
+            "PdfEngine.Vector/PdfEngine.Vector.csproj",
+            "PdfEngine.Vector.Skia/PdfEngine.Vector.Skia.csproj"
+          ]
+        }
+      ],
+      "dest": "reference",
+      "properties": {
+        "Configuration": "Release",
+        "GenerateDocumentationFile": "true"
+      },
+      "namespaceLayout": "flattened",
+      "memberLayout": "samePage",
+      "enumSortOrder": "declaringOrder"
+    }
+  ],
+  "build": {
+    "content": [
+      { "files": [ "reference/**/*.yml" ] },
+      { "files": [ "index.md", "toc.yml", "articles/**/*.md", "articles/**/toc.yml" ] }
+    ],
+    "resource": [
+      { "src": "../../assets", "files": [ "app_icon.png" ], "dest": "images" }
+    ],
+    "output": "_site",
+    "template": [ "default", "modern" ],
+    "globalMetadata": {
+      "_appName": "PdfEngine",
+      "_appTitle": "PdfEngine API",
+      "_appLogoPath": "images/app_icon.png",
+      "_appFaviconPath": "images/app_icon.png",
+      "_enableSearch": true,
+      "_disableContribution": false,
+      "_gitContribute": { "repo": "https://github.com/ramanacr/pdf-viewer", "branch": "main" },
+      "pdf": false
+    }
+  }
+}

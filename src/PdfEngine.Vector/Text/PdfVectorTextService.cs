@@ -57,6 +57,7 @@ public sealed class PdfVectorTextService : IPdfTextService
     /// <summary>A UTF-16 unit as the PDFium service turned it into text (a lone surrogate reads as U+FFFD).</summary>
     private static string Unit(char c) => char.IsSurrogate(c) ? "�" : c.ToString();
 
+    /// <inheritdoc/>
     public ValueTask<IReadOnlyList<TextSegment>> ExtractTextSegmentsAsync(IPdfDocument document, int pageNumber, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -112,6 +113,7 @@ public sealed class PdfVectorTextService : IPdfTextService
         return ValueTask.FromResult<IReadOnlyList<TextSegment>>(segments);
     }
 
+    /// <inheritdoc/>
     public ValueTask<string> ExtractPageTextAsync(IPdfDocument document, int pageNumber, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -121,6 +123,7 @@ public sealed class PdfVectorTextService : IPdfTextService
         return ValueTask.FromResult(page.GetAllText().TrimEnd('\0'));
     }
 
+    /// <inheritdoc/>
     public ValueTask<IReadOnlyList<SearchMatch>> SearchTextAsync(IPdfDocument document, string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         var results = new List<SearchMatch>();

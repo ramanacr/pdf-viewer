@@ -24,6 +24,7 @@ public interface IPdfJpegCodec
     byte[]? Encode(byte[] samples, int width, int height, int components, int quality);
 }
 
+/// <summary>Options for <see cref="PdfOptimizer.Optimize"/>. The defaults make a smaller file without changing image resolution.</summary>
 public sealed class PdfOptimizeOptions
 {
     /// <summary>Pack objects into compressed object streams with a cross-reference stream (PDF 1.5).</summary>
@@ -40,6 +41,7 @@ public sealed class PdfOptimizeOptions
     public double DownsampleThreshold { get; init; } = 1.5;
     /// <summary>For downsampled JPEG images; without it, JPEG images keep their resolution.</summary>
     public IPdfJpegCodec? JpegCodec { get; init; }
+    /// <summary>The JPEG quality (1 to 100) of downsampled JPEG images (default 80).</summary>
     public int JpegQuality { get; init; } = 80;
     /// <summary>
     /// For an encrypted document opened with its open password whose permissions forbid changing

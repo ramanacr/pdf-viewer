@@ -32,11 +32,19 @@ public record OcrPageResult
     public string Notes { get; init; } = string.Empty;
 }
 
+/// <summary>Recognizes the text of a page.</summary>
 public interface IOcrEngine
 {
+    /// <summary>A display name of the OCR engine.</summary>
     string EngineName { get; }
+    /// <summary>The language codes that <see cref="RecognizePageAsync"/> accepts.</summary>
     IReadOnlyList<string> SupportedLanguages { get; }
 
+    /// <summary>Recognizes the words of a page with their positions.</summary>
+    /// <param name="document">An open document.</param>
+    /// <param name="pageNumber">The page number, starting at 1.</param>
+    /// <param name="language">A language code from <see cref="SupportedLanguages"/>.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<OcrPageResult> RecognizePageAsync(
         IPdfDocument document,
         int pageNumber,

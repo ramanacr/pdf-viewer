@@ -19,6 +19,7 @@ using PdfEngine.Vector.Streams;
 
 namespace PdfEngine.Vector.PdfA;
 
+/// <summary>Options for <see cref="PdfAConverter.Convert"/>: the PDF/A flavour, fonts, colour profile and transparency flattening.</summary>
 public sealed class PdfAConversionOptions
 {
     /// <summary>

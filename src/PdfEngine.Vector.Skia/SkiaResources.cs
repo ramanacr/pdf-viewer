@@ -14,6 +14,8 @@ namespace PdfEngine.Vector.Skia;
 /// </summary>
 public class SkiaFontSource
 {
+    /// <summary>Creates a font source.</summary>
+    /// <param name="catalog">The fonts to choose substitutes from; null uses <see cref="SystemFontCatalog.Installed"/>.</param>
     public SkiaFontSource(SystemFontCatalog? catalog = null)
     {
         _catalog = catalog;
@@ -140,6 +142,9 @@ public class SkiaFontSource
 }
 
 /// <summary>What the text that needs a character face is: its font's name, CID ordering (Japan1, GB1, CNS1, Korea1) and characters.</summary>
+/// <param name="FontName">The PostScript or family name of the font the PDF asks for, when known.</param>
+/// <param name="CidOrdering">The CID ordering of the font (Japan1, GB1, CNS1, Korea1), when it has one.</param>
+/// <param name="Text">The characters of the text run.</param>
 public readonly record struct SkiaTextHint(string? FontName, string? CidOrdering, string Text);
 
 /// <summary>A typeface plus the style Skia must simulate because the face lacks it (as DirectWrite's font simulations do).</summary>

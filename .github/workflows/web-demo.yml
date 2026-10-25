@@ -2,7 +2,8 @@ name: Web Demo (Blazor WebAssembly)
 
 # Builds the browser demo (src/PdfViewer.Web) on every pull request and push to main, and from
 # main deploys the whole GitHub Pages site: the documentation in docs/ (home page, privacy policy)
-# at the root, built with Jekyll, and the demo under /demo/.
+# at the root, built with Jekyll, the demo under /demo/, and the API reference of the engine
+# packages (docfx, eng/apidocs) under /api/.
 #
 # The deploy job runs when Settings > Pages > Source is "GitHub Actions" and the repository
 # variable WEB_DEMO_PAGES is true; otherwise the workflow only builds and checks the site.
@@ -123,6 +124,28 @@ jobs:
         mkdir -p publish/pages/demo
         cp -r publish/web/wwwroot/. publish/pages/demo/
         touch publish/pages/.nojekyll
+
+    # The API reference of the engine packages (eng/apidocs), built with docfx, the version pinned in
+    # .config/dotnet-tools.json. It is built on pull requests too, so that a broken reference fails
+    # the check; docfx exits with an error code when it reports errors. It goes under /api/ after the
+    # Jekyll build, so Jekyll never processes it. Source maps of the template are dropped.
+    - name: Build the API reference
+      shell: bash
+      run: |
+        dotnet tool restore
+        dotnet docfx eng/apidocs/docfx.json
+        test -f eng/apidocs/_site/index.html
+        test -f eng/apidocs/_site/reference/PdfEngine.Vector.Document.PdfVectorDocument.html
+        find eng/apidocs/_site -name '*.map' -delete
+        echo "API reference: $(du -sh --apparent-size eng/apidocs/_site | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Put the API reference under /api/
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        mkdir -p publish/pages/api
+        cp -r eng/apidocs/_site/. publish/pages/api/
+        test -f publish/pages/api/index.html
 
     - name: Upload the Pages artifact
       if: github.event_name != 'pull_request'
