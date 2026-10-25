@@ -99,7 +99,7 @@ internal sealed class WpfDisplayListCompiler
                 if (cmd is BeginCompositingGroup cg)
                 {
                     skipDepth = 1;
-                    if (backendFallbacks != null && cg.Bounds is PdfRect gb && !gb.IsEmpty)
+                    if (cg.Bounds is PdfRect gb && !gb.IsEmpty)
                     {
                         backendFallbacks.Add(new PdfFallbackToken(list.PageNumber, new PdfRect(gb.X - 1, gb.Y - 1, gb.Width + 2, gb.Height + 2),
                             cg.Knockout ? PdfFallbackReason.TransparencyGroup : cg.Blend != PdfBlendMode.Normal ? PdfFallbackReason.BlendMode : PdfFallbackReason.SoftMask,

@@ -214,13 +214,13 @@ public class StampTests
         var (doc, bytes) = await Write(Blank(), Designed("Approved", new PdfRect(100, 200, 160, 56), "By A at 10:00, 1 Jan 2026"));
         using (doc)
         {
-            int formNumber = ((PdfIndirectRef)((PdfDictionary)doc.Resolver.Resolve(First(doc).Annot["AP"])!)["N"]).ObjectNumber;
+            int formNumber = Assert.IsType<PdfIndirectRef>(((PdfDictionary)doc.Resolver.Resolve(First(doc).Annot["AP"])!)["N"]).ObjectNumber;
             var a = PdfAnnotationReader.Read(doc, 1).Single();
             a.Rect = new PdfRect(20, 20, 160, 56);
             var moved = PdfAnnotationEditor.Apply(doc, bytes, e => e.Modify(a));
             using var again = await PdfVectorDocument.OpenAsync(moved);
             var (annot, _) = First(again);
-            Assert.Equal(formNumber, ((PdfIndirectRef)((PdfDictionary)again.Resolver.Resolve(annot["AP"])!)["N"]).ObjectNumber);
+            Assert.Equal(formNumber, Assert.IsType<PdfIndirectRef>(((PdfDictionary)again.Resolver.Resolve(annot["AP"])!)["N"]).ObjectNumber);
             Assert.Equal(new PdfRect(20, 20, 160, 56), PdfAnnotationReader.Read(again, 1).Single().Rect);
         }
     }

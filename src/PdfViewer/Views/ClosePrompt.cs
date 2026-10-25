@@ -55,6 +55,7 @@ internal sealed class ClosePrompt
         if (!close) return;
 
         _confirmed = true;
-        _window.Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(_window.Close));
+        // Queued, not awaited: there is nothing left to do here once the window closes.
+        _ = _window.Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(_window.Close));
     }
 }
