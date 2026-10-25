@@ -54,6 +54,12 @@ jobs:
     - name: Publish
       run: dotnet publish src/PdfViewer.Web/PdfViewer.Web.csproj --configuration Release --output publish/web
 
+    # The embed SDK (docs/sdk) is two plain scripts next to the viewer, with no build step.
+    - name: Check the embed SDK scripts
+      run: |
+        node --check publish/web/wwwroot/pdfviewer-embed.js
+        node --check publish/web/wwwroot/pdfviewer-embed.mjs
+
     # Noto fonts for the scripts that the committed Liberation fonts lack (Arabic, Hebrew, Indic,
     # symbols, math, CJK). They are not committed: eng/webdemo/noto_fonts.py downloads the release
     # archives pinned in eng/webdemo/noto-fonts.json, checks the SHA-256 of each archive and of each
@@ -123,6 +129,17 @@ jobs:
         mkdir -p publish/pages/demo
         cp -r publish/web/wwwroot/. publish/pages/demo/
         touch publish/pages/.nojekyll
+
+    # The SDK script is served from /demo/ next to the viewer, its default baseUrl; Jekyll copies
+    # the documentation and the examples (docs/sdk) to /sdk/.
+    - name: Check the embed SDK pages
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        test -f publish/pages/demo/pdfviewer-embed.js
+        test -f publish/pages/sdk/index.html
+        test -f publish/pages/sdk/examples/index.html
+        test -f publish/pages/sdk/examples/sample-pdf.js
 
     - name: Upload the Pages artifact
       if: github.event_name != 'pull_request'
