@@ -193,6 +193,33 @@ internal sealed class SkiaResources : IDisposable
         }
     }
 
+    private readonly Dictionary<SkiaFace, TrueTypeFontFile?> _shapingFonts = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The substitute's font file as the editing shaper reads it (its cmap, GSUB and GPOS), read once
+    /// on first use; null when it is not a TrueType-outline font or its data cannot be read.
+    /// </summary>
+    public TrueTypeFontFile? GetShapingFont(SkiaFace face)
+    {
+        lock (_gate)
+        {
+            if (_shapingFonts.TryGetValue(face, out var cached))
+                return cached;
+            TrueTypeFontFile? result = null;
+            using (var stream = face.Typeface.OpenStream(out int index))
+            {
+                if (stream != null && stream.Length > 0)
+                {
+                    var data = new byte[stream.Length];
+                    if (stream.Read(data, data.Length) == data.Length)
+                        result = TrueTypeFontFile.TryLoad(data, index);
+                }
+            }
+            _shapingFonts[face] = result;
+            return result;
+        }
+    }
+
     /// <summary>A cached image (moved to the front of the LRU list), or null.</summary>
     public SKImage? GetImage(string key)
     {
@@ -240,6 +267,7 @@ internal sealed class SkiaResources : IDisposable
             _embeddedFaces.Clear();
             foreach (var f in _systemFaces.Values) f?.Typeface.Dispose();
             _systemFaces.Clear();
+            _shapingFonts.Clear();
         }
     }
 }

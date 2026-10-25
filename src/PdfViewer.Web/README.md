@@ -137,10 +137,11 @@ path can make the native link exceed the 260-character path limit; a short path 
    cover the common case: Helvetica, Arial, Times, Times New Roman, Courier, Courier New and
    unknown fonts by their class (sans-serif, serif, monospaced), in Latin, Greek, Cyrillic and Hebrew.
    The Noto fonts add Arabic, Hebrew, Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam,
-   Gujarati, Gurmukhi, Oriya, math, symbols and dingbats, and CJK. Glyphs are taken by code
-   point, without shaping: Arabic letters keep the form the PDF's text gives them (isolated
-   unless the text uses presentation forms), and Indic conjuncts and vowel signs are not
-   rearranged, so such text is readable but not typeset as the author's font would. Only the
+   Gujarati, Gurmukhi, Oriya, math, symbols and dingbats, and CJK. Arabic and Indic words are
+   shaped with the face's own tables (see [fonts](#fonts)), but the result is the Noto design
+   fitted to the PDF's widths, not the author's font: a word can be narrower or wider than in
+   the original, and the shaper does not do everything HarfBuzz does (no Hebrew marks by GPOS,
+   no Arabic `mset` or `stch`, no Myanmar, Khmer or Sinhala). Only the
    regular weights are bundled; bold and italic are simulated. Text that is still not covered
    is not drawn, the page says so, and search
    still finds it, because text extraction does not need the font file. In Chrome and Edge the
@@ -209,6 +210,14 @@ not embed:
    the language picks the face: the font's CID ordering (Japan1, GB1, CNS1, Korea1), else kana
    or hangul in the text, else the font's name (MS Mincho, SimSun, MingLiU, Batang and the
    like), else Simplified Chinese.
+   Arabic and Indic words in a font that is not embedded are then shaped, with the engine's own
+   shaper (the one that shapes new text when editing; no HarfBuzz) and the GSUB and GPOS tables
+   of the face that draws them: Arabic joining forms, lam-alef and other ligatures, marks on
+   their anchors, Indic pre-base vowel signs, reph and conjuncts. A PDF lays its glyphs out left
+   to right, so Arabic is taken as seen and put back in reading order before it is shaped
+   (a word whose glyphs go right to left is in reading order already). Each shaped word is
+   fitted to the space the PDF's `/Widths` give it, as single glyphs are. Embedded fonts are
+   drawn by their own glyphs, unshaped, as before.
 6. **Lazy loading.** The Noto index (`fonts/noto/index.json`, 140 KB, about 32 KB with gzip)
    is fetched the first time a character needs it, then only the files that hold the page's
    characters. Each CJK face is cut into slices: a core slice with the common characters of
@@ -323,8 +332,7 @@ Toward an embeddable SDK in the style of the Adobe PDF Embed API:
    surface and a packaged build of the Blazor runtime as a custom element.
 2. **Rendering off the main thread**: run the engine in a Web Worker (or multi-threaded
    WebAssembly once it is stable) so a heavy page never blocks scrolling.
-3. **Fonts**: text shaping (HarfBuzz) for Arabic and Indic text drawn with Noto, bold Noto
-   weights, and Noto Serif for serif text.
+3. **Fonts**: bold Noto weights, and Noto Serif for serif text.
 4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
    acceptable.
 5. **Tiles** for deep zoom, text selection and copy, thumbnails, annotations display.
