@@ -39,7 +39,7 @@ public sealed class ComponentDownloader
 
     public ComponentDownloader(HttpClient? httpClient = null)
     {
-        _http = httpClient ?? new HttpClient { Timeout = DownloadTimeout };
+        _http = httpClient ?? new HttpClient(ResilientHttp.CreateHandler()) { Timeout = DownloadTimeout };
         if (!_http.DefaultRequestHeaders.UserAgent.Any())
         {
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("PdfViewerNative-ComponentInstaller");

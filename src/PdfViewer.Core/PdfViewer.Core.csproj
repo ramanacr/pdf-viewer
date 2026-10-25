@@ -17,4 +17,8 @@
     <ProjectReference Include="..\PdfEngine.Abstractions\PdfEngine.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfViewer.Tests" />
+  </ItemGroup>
+
 </Project>
