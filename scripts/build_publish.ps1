@@ -1,3 +1,7 @@
+# PowerShell 7 (pwsh), as the release workflow runs it. Under Windows PowerShell 5.1,
+# Compress-Archive fails on the freshly published symbol files with "being used by another process".
+#Requires -Version 7.0
+
 # =====================================================================
 # Build and Package Script for PDF Viewer Native
 # Produces:
