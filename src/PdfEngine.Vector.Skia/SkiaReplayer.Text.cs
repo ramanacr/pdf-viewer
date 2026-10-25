@@ -78,7 +78,11 @@ internal sealed partial class SkiaReplayer
         if (installed != null) chain.Add((installed, installed.Family, bold, italic, false));
         if (family != null) chain.Add((null, family, bold, italic, isSymbol));
         if (isSymbol) chain.Add((null, family!, bold, italic, false));
-        foreach (var extra in UnicodeFallbackFamilies)
+        // CJK text: the face of its language before the generic faces (Yu Gothic for a Japan1 font,
+        // its stand-in on Android). A host without these families (the web demo) skips them, and its
+        // per-character faces take Han in the run's language (BundledFontIndex.Find).
+        var cjk = Fonts.CharacterFaces.WindowsCjkFamilies(face?.CidOrdering, face?.PostScriptName ?? run.FontFamilyName ?? run.FontResourceName, RunText(run));
+        foreach (var extra in cjk.Concat(UnicodeFallbackFamilies))
             if (!chain.Exists(c => c.Installed == null && c.Family == extra && !c.SymbolCodes)) chain.Add((null, extra, bold, italic, false));
 
         // Text whose font is not embedded reaches here as characters, not shaped glyphs: Arabic and
