@@ -403,4 +403,190 @@ public class RangeLoadingTests
         }
         Assert.True(ranged.Cache.CachedBytes <= 400 * 1024, $"cache holds {ranged.Cache.CachedBytes}");
     }
+
+    // ------------------------------------------------------------------ limits and disposal
+
+    /// <summary>
+    /// A one-page PDF with <paramref name="padding"/> bytes of comment after the catalog (when
+    /// <paramref name="afterContent"/> is false) or after the page's content stream: by its
+    /// cross-reference table, that object then runs over the padding, as a crafted table makes an
+    /// object run to the end of a large file.
+    /// </summary>
+    private static byte[] PaddedPdf(int padding, bool afterContent)
+    {
+        var pdf = new MemoryStream();
+        void W(string s) => pdf.Write(Encoding.ASCII.GetBytes(s));
+        void Pad()
+        {
+            for (int done = 0; done < padding; done += 1024) W("%" + new string('x', 1022) + "\n");
+        }
+        const string text = "BT /F1 24 Tf 72 720 Td (Padded) Tj ET";
+        var offsets = new long[5];
+        W("%PDF-1.7\n");
+        offsets[0] = pdf.Position;
+        W("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        if (!afterContent) Pad();
+        offsets[1] = pdf.Position;
+        W("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+        offsets[2] = pdf.Position;
+        W("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n");
+        offsets[3] = pdf.Position;
+        W($"4 0 obj\n<< /Length {text.Length} >>\nstream\n{text}\nendstream\nendobj\n");
+        if (afterContent) Pad();
+        offsets[4] = pdf.Position;
+        W("5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+        long xref = pdf.Position;
+        W("xref\n0 6\n0000000000 65535 f \n");
+        foreach (long at in offsets) W($"{at:D10} 00000 n \n");
+        W($"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return pdf.ToArray();
+    }
+
+    [Fact]
+    public void Closure_ChecksTheByteCapBeforeAskingForARange()
+    {
+        var bytes = PaddedPdf(4 * 1024 * 1024, afterContent: false);
+        using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        var planner = new PdfRangePlanner(doc.XrefTable, bytes.Length);
+        Assert.True(planner.ExtentOf(1)!.Value.Length > 4 * 1024 * 1024);
+        var closure = new PdfObjectClosure(planner, PdfClosureKind.Structure) { MaxBytes = 1024 * 1024 };
+        closure.AddRoot(1);
+        Assert.Empty(closure.PendingRanges());
+        Assert.True(closure.LimitReached);
+        Assert.True(closure.IsDone);
+        Assert.Equal(0, closure.BytesAskedFor);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ranged_AnObjectLargerThanTheCap_IsNeverAskedFor_AndTheFileIsReadWhole(bool afterContent)
+    {
+        var bytes = PaddedPdf(6 * 1024 * 1024, afterContent);
+        var reads = new List<int>();
+        var reader = new MemoryRangeReader(bytes) { BeforeRead = (_, n) => { lock (reads) reads.Add(n); return ValueTask.CompletedTask; } };
+        const int step = 256 * 1024;
+        using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions
+        {
+            TailBytes = 16 * 1024,
+            MaxRoundBytes = 1024 * 1024,
+            MaxWalkBytes = 2 * 1024 * 1024,
+            CompletionRequestBytes = step,
+        });
+        string text = await ranged.RunAsync(1, (d, ct) => ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 1, ct).Text));
+        Assert.Contains("Padded", text);
+        Assert.True(ranged.IsComplete);
+        Assert.NotNull(ranged.FallbackReason);
+        Assert.Contains(afterContent ? "Page 1" : "structure", ranged.FallbackReason);
+        // Only the whole read (steps of 256 KB) fetched the padding: no range ever asked for the huge object.
+        Assert.True(reads.Max() <= step, $"largest read {reads.Max()}");
+    }
+
+    [Fact]
+    public async Task Ranged_ARoundLargerThanTheCap_FallsBack()
+    {
+        var bytes = LargePdf(20);
+        var reader = new MemoryRangeReader(bytes);
+        using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024, MaxRoundBytes = 200 * 1024, ReadAheadBytes = 512 * 1024 });
+        Assert.False(ranged.IsComplete);
+        // Page 2's operation reads page 5's image, read ahead by 512 KB: more than one round may fetch.
+        var data = await ranged.RunAsync(2, (d, ct) =>
+            ValueTask.FromResult(((PdfStream)d.Resolver.Resolve(ObjectNumberOfImage(d, 5))!).GetRawBytes().Length));
+        Assert.Equal(96 * 96 * 3, data);
+        Assert.True(ranged.IsComplete);
+        Assert.Contains("round", ranged.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Ranged_CacheCapHoldsWhileTheDocumentOpens()
+    {
+        var bytes = LargePdf(120);
+        // The host sent the first 2 MB; opening reads little of it, and the cache keeps 256 KB.
+        var options = new PdfRangedOptions
+        {
+            TailBytes = 64 * 1024, CacheBytes = 256 * 1024, MaxRoundBytes = 1024 * 1024,
+            InitialData = [(0, bytes.AsMemory(0, 2 * 1024 * 1024))],
+        };
+        using var ranged = await PdfRangedDocument.OpenAsync(new MemoryRangeReader(bytes), options);
+        Assert.Equal(120, ranged.Document.PageCount);
+        Assert.Null(ranged.FallbackReason);
+        Assert.True(ranged.Cache.EvictedBytes > 0, "nothing was dropped while opening");
+        Assert.True(ranged.Cache.CachedBytes <= options.CacheBytes + options.MaxRoundBytes, $"the cache holds {ranged.Cache.CachedBytes}");
+        string text = await ranged.RunAsync(77, (d, ct) => ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 77, ct).Text));
+        Assert.Contains("Page 77 of 120", text);
+    }
+
+    [Fact]
+    public async Task Ranged_DisposeDuringAFetch_MakesNoDocumentAndKeepsNothing()
+    {
+        var bytes = LargePdf(20);
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool opened = false;
+        var reader = new MemoryRangeReader(bytes)
+        {
+            BeforeRead = async (_, _) =>
+            {
+                if (!Volatile.Read(ref opened)) return;
+                started.TrySetResult();
+                await hold.Task;
+            },
+        };
+        var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024 });
+        Volatile.Write(ref opened, true);
+        var document = ranged.Document;
+        var run = ranged.RunAsync(9, (d, ct) => ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 9, ct).Text));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        long cached = ranged.Cache.CachedBytes;
+        ranged.Dispose();
+        hold.SetResult();
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => run);
+        Assert.True(error is ObjectDisposedException or OperationCanceledException, error.GetType().Name);
+        Assert.True(cached > 0);
+        Assert.Equal(0, ranged.Cache.CachedBytes);
+        Assert.Same(document, ranged.Document); // no document was made after Dispose
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => ranged.RunAsync(1, (d, ct) => ValueTask.FromResult(0)));
+    }
+
+    [Fact]
+    public async Task Ranged_ReadAllAfterAFailure_ResumesWhereItStopped()
+    {
+        var bytes = LargePdf(30);
+        bool fail = false;
+        var reader = new MemoryRangeReader(bytes)
+        {
+            BeforeRead = (offset, _) => Volatile.Read(ref fail) && offset >= bytes.Length / 2
+                ? ValueTask.FromException(new IOException("network down"))
+                : ValueTask.CompletedTask,
+        };
+        using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024, CompletionRequestBytes = 64 * 1024 });
+        Volatile.Write(ref fail, true);
+        await Assert.ThrowsAsync<IOException>(() => ranged.ReadAllAsync());
+        long first = reader.BytesRead;
+        Assert.True(first > bytes.Length / 3, $"read {first} before the failure");
+
+        Volatile.Write(ref fail, false);
+        var progress = new List<long>();
+        var all = await ranged.ReadAllAsync(new SyncProgress(progress.Add));
+        Assert.Equal(bytes, all);
+        Assert.True(progress[0] >= bytes.Length / 3, $"resumed at {progress[0]}");
+        // The second read fetched only what the first did not: the file is read about once in all.
+        Assert.True(reader.BytesRead < bytes.Length + 128 * 1024, $"read {reader.BytesRead} for {bytes.Length}");
+    }
+
+    private sealed class SyncProgress(Action<long> report) : IProgress<long>
+    {
+        public void Report(long value) => report(value);
+    }
+
+    [Fact]
+    public void ChunkedSource_AMissAllocatesNothing()
+    {
+        var cache = new PdfChunkCache(1L << 30);
+        var source = new PdfChunkedByteSource(cache);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Throws<PdfDataNotLoadedException>(() => source.ReadMemory(0, 512 * 1024 * 1024));
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 64 * 1024);
+        Assert.Equal(1, cache.MissCount);
+    }
 }

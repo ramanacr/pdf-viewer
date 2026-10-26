@@ -182,14 +182,27 @@ public sealed class PdfObjectClosure
     /// <summary>The most objects visited (default 20 000).</summary>
     public int MaxObjects { get; init; } = 20_000;
 
-    /// <summary>The most bytes asked for (default 256 MB); past it, the walk stops.</summary>
+    /// <summary>
+    /// The most bytes asked for in all (default 256 MB). A level that would pass it is not asked
+    /// for: the walk stops and <see cref="LimitReached"/> is set.
+    /// </summary>
     public long MaxBytes { get; init; } = 256L * 1024 * 1024;
 
     /// <summary>The objects visited so far.</summary>
     public int ObjectCount => _seen.Count;
 
+    /// <summary>The bytes asked for so far.</summary>
+    public long BytesAskedFor => _bytes;
+
+    /// <summary>
+    /// True when the walk stopped because its next level would pass <see cref="MaxBytes"/>: the
+    /// objects it needs are not all read, so the caller must not
+    /// trust the walk (<see cref="PdfRangedDocument"/> reads the whole file instead).
+    /// </summary>
+    public bool LimitReached { get; private set; }
+
     /// <summary>True when there is nothing more to read (or a limit was reached).</summary>
-    public bool IsDone => (_pending.Count == 0 && _directRoots.Count == 0) || _bytes > MaxBytes;
+    public bool IsDone => (_pending.Count == 0 && _directRoots.Count == 0) || LimitReached;
 
     /// <summary>Starts the walk at an indirect object (a page, or the trailer's /Root).</summary>
     public void AddRoot(int objectNumber) => Add(objectNumber, Rule.Walk);
@@ -203,9 +216,14 @@ public sealed class PdfObjectClosure
         _pending.Add((number, rule));
     }
 
-    /// <summary>The bytes of the objects to read next, merged.</summary>
+    /// <summary>
+    /// The bytes of the objects to read next, merged. Each range is checked against the caps before
+    /// it is added: when one would pass them, nothing is returned and <see cref="LimitReached"/> is
+    /// set, so that one crafted extent (an object that runs to the end of a large file) is never asked for.
+    /// </summary>
     public List<PdfByteRange> PendingRanges()
     {
+        if (LimitReached) return [];
         WalkDirectRoots();
         var ranges = new List<PdfByteRange>();
         foreach (var (number, _) in _pending)
@@ -213,7 +231,18 @@ public sealed class PdfObjectClosure
             if (_planner.ExtentOf(number) is { } extent) ranges.Add(extent);
         }
         var merged = PdfRangePlanner.Merge(ranges);
-        foreach (var r in merged) _bytes += r.Length;
+        long level = 0;
+        foreach (var r in merged)
+        {
+            if (_bytes + level + r.Length > MaxBytes)
+            {
+                LimitReached = true;
+                _pending.Clear();
+                return [];
+            }
+            level += r.Length;
+        }
+        _bytes += level;
         return merged;
     }
 

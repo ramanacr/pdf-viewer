@@ -40,6 +40,20 @@ public sealed class PdfRangedOptions
     /// <summary>The size of each read of <see cref="PdfRangedDocument.ReadAllAsync"/> (default 1 MB).</summary>
     public int CompletionRequestBytes { get; init; } = 1024 * 1024;
 
+    /// <summary>
+    /// The most bytes that the objects of one walk (the document's structure, or one page) may
+    /// need (default 256 MB). A walk that would ask for more stops, and the file is read whole
+    /// (<see cref="PdfRangedDocument.FallbackReason"/> says so).
+    /// </summary>
+    public long MaxWalkBytes { get; init; } = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// The most bytes fetched in one round after a miss, and for the document's structure when it
+    /// opens (default 32 MB). Past it, the file is read whole. The cache holds at most
+    /// <see cref="CacheBytes"/> plus this while a document opens.
+    /// </summary>
+    public long MaxRoundBytes { get; init; } = 32L * 1024 * 1024;
+
     /// <summary>Bytes the host already has (for example the start of the file, or its end), as (offset, bytes) pairs.</summary>
     public IReadOnlyList<(long Offset, ReadOnlyMemory<byte> Data)> InitialData { get; init; } = [];
 }
@@ -81,9 +95,15 @@ public sealed class PdfRangedDocument : IDisposable
     private PdfRangePlanner? _planner;
     private byte[]? _bytes;
     private Task<byte[]>? _readAll;
+    private byte[]? _partial;   // the whole read so far, kept when it fails
+    private long _partialEnd;   // the bytes of _partial that are read (from 0)
     private long _bytesFetched;
     private int _requestCount;
-    private bool _disposed;
+    private volatile bool _disposed;
+    // Dispose and the swaps of Document take it, so that no document is made after Dispose.
+    private readonly object _stateSync = new();
+    // Canceled by Dispose: reads in progress end.
+    private readonly CancellationTokenSource _lifetime = new();
 
     private PdfRangedDocument(IPdfRangeReader reader, PdfRangedOptions options, string? password, PdfSecurityLimits? limits, string name)
     {
@@ -148,11 +168,22 @@ public sealed class PdfRangedDocument : IDisposable
     {
         long length = Length;
         long tail = Math.Min(length, _options.TailBytes);
+        // Opening is one cache operation: what it reads is kept until it ends (it needs all of it
+        // at once), what the host sent and opening does not read can be dropped. So that the cache
+        // passes its cap by at most MaxRoundBytes, opening fetches at most that much after the tail.
+        _cache.BeginOperation();
         await FetchAsync([new PdfByteRange(0, Math.Min(length, 4096)), new PdfByteRange(length - tail, length)], cancellationToken).ConfigureAwait(false);
+        long budget = Interlocked.Read(ref _bytesFetched) + _options.MaxRoundBytes;
 
         for (int round = 0; ; round++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            if (Interlocked.Read(ref _bytesFetched) > budget)
+            {
+                await FallBackAsync($"Opening needed more than {Megabytes(_options.MaxRoundBytes)} of range requests; the file was read whole.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
             long misses = _cache.MissCount;
             PdfVectorDocument? opened = null;
             PdfXrefTable? xref = null;
@@ -166,14 +197,20 @@ public sealed class PdfRangedDocument : IDisposable
                     return;
                 }
                 _planner = new PdfRangePlanner(xref, length);
-                await PrefetchStructureAsync(xref, cancellationToken).ConfigureAwait(false);
+                if (await PrefetchStructureAsync(xref, cancellationToken).ConfigureAwait(false) is { } limit)
+                {
+                    await FallBackAsync(limit, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
 
                 misses = _cache.MissCount;
                 opened = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password);
                 if (_cache.MissCount == misses && !opened.WasRepaired)
                 {
-                    Document = opened;
-                    _planner = new PdfRangePlanner(opened.XrefTable, length);
+                    var document = opened;
+                    opened = null; // Replace owns it now, also when it throws
+                    Replace(document);
+                    _planner = new PdfRangePlanner(document.XrefTable, length);
                     return;
                 }
                 if (opened.WasRepaired)
@@ -199,9 +236,9 @@ public sealed class PdfRangedDocument : IDisposable
                 return;
             }
             Retries++;
-            if (!await FetchMissesAsync(cancellationToken).ConfigureAwait(false))
+            if (await FetchMissesAsync(Math.Max(0, budget - Interlocked.Read(ref _bytesFetched)), cancellationToken).ConfigureAwait(false) is { } reason)
             {
-                await FallBackAsync(DamagedXref, cancellationToken).ConfigureAwait(false);
+                await FallBackAsync(reason, cancellationToken).ConfigureAwait(false);
                 return;
             }
         }
@@ -212,25 +249,39 @@ public sealed class PdfRangedDocument : IDisposable
     private bool IsMiss(Exception ex, long missesBefore) =>
         ex is PdfDataNotLoadedException || ex.InnerException is PdfDataNotLoadedException || _cache.MissCount != missesBefore;
 
-    /// <summary>The trailer, the page tree, the pages' boxes and the ends of their content streams, a level at a time.</summary>
-    private async Task PrefetchStructureAsync(PdfXrefTable xref, CancellationToken cancellationToken)
+    /// <summary>
+    /// The trailer, the page tree, the pages' boxes and the ends of their content streams, a level
+    /// at a time. Opening needs all of them at once, so they count as one round
+    /// (<see cref="PdfRangedOptions.MaxRoundBytes"/>). Returns why the file must be read whole, or null.
+    /// </summary>
+    private async Task<string?> PrefetchStructureAsync(PdfXrefTable xref, CancellationToken cancellationToken)
     {
         var resolver = new PdfObjectResolver(new PdfChunkedByteSource(_cache), xref, _limits);
-        var closure = new PdfObjectClosure(_planner!, PdfClosureKind.Structure);
+        var closure = new PdfObjectClosure(_planner!, PdfClosureKind.Structure) { MaxBytes = Math.Min(_options.MaxWalkBytes, _options.MaxRoundBytes) };
         if (xref.Trailer != null) closure.AddDirectRoot(xref.Trailer);
         await WalkAsync(closure, resolver, cancellationToken).ConfigureAwait(false);
+        return closure.LimitReached
+            ? $"The document's structure needs more than {Megabytes(closure.MaxBytes)} of range requests; the file was read whole."
+            : null;
     }
+
+    private static string Megabytes(long bytes) => $"{bytes / (1024.0 * 1024):0.#} MB";
 
     private async Task WalkAsync(PdfObjectClosure closure, PdfObjectResolver resolver, CancellationToken cancellationToken)
     {
         for (int level = 0; !closure.IsDone && level < 64; level++)
         {
-            await FetchAsync(closure.PendingRanges(), cancellationToken).ConfigureAwait(false);
+            var ranges = closure.PendingRanges();
+            if (closure.LimitReached) break;
+            await FetchAsync(ranges, cancellationToken).ConfigureAwait(false);
+            ThrowIfDisposed();
             closure.Advance(n => resolver.Resolve(n));
         }
         // The walk's own misses are expected (it fetches what it finds); they are not the operation's.
         _cache.TakeMisses();
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     /// <summary>Fetches the bytes that page <paramref name="pageNumber"/> needs (nothing when the file is complete).</summary>
     public async Task PrefetchPageAsync(int pageNumber, CancellationToken cancellationToken = default)
@@ -248,16 +299,22 @@ public sealed class PdfRangedDocument : IDisposable
 
     private async Task PrefetchPageCoreAsync(int pageNumber, CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
         if (_completeDocument || _planner == null) return;
         var doc = Document;
         if (pageNumber < 1 || pageNumber > doc.PageCount) throw new ArgumentOutOfRangeException(nameof(pageNumber));
-        var closure = new PdfObjectClosure(_planner, PdfClosureKind.Page);
+        var closure = new PdfObjectClosure(_planner, PdfClosureKind.Page) { MaxBytes = _options.MaxWalkBytes };
         int number = doc.PageTree.PageObjectNumbers[pageNumber - 1];
         if (number > 0) closure.AddRoot(number);
         else closure.AddDirectRoot(doc.PageTree.Pages[pageNumber - 1].Dictionary);
+        // The page's own bytes are kept while it is parsed (see PdfRangedOptions.CacheBytes).
         _cache.BeginOperation();
         await WalkAsync(closure, doc.Resolver, cancellationToken).ConfigureAwait(false);
+        if (closure.LimitReached)
+        {
+            await FallBackAsync($"Page {pageNumber} needs more than {Megabytes(_options.MaxWalkBytes)} of range requests; the file was read whole.",
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -273,7 +330,7 @@ public sealed class PdfRangedDocument : IDisposable
         {
             for (int round = 0; ; round++)
             {
-                ObjectDisposedException.ThrowIf(_disposed, this);
+                ThrowIfDisposed();
                 if (_completeDocument) return await operation(Document, cancellationToken).ConfigureAwait(false);
                 await PrefetchPageCoreAsync(pageNumber, cancellationToken).ConfigureAwait(false);
                 long misses = _cache.MissCount;
@@ -292,9 +349,9 @@ public sealed class PdfRangedDocument : IDisposable
                     continue;
                 }
                 Retries++;
-                if (!await FetchMissesAsync(cancellationToken).ConfigureAwait(false))
+                if (await FetchMissesAsync(_options.MaxRoundBytes, cancellationToken).ConfigureAwait(false) is { } reason)
                 {
-                    await FallBackAsync(DamagedXref, cancellationToken).ConfigureAwait(false);
+                    await FallBackAsync(reason, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
                 Reparse();
@@ -309,23 +366,42 @@ public sealed class PdfRangedDocument : IDisposable
     /// <summary>Parses the document again over the cache: what an interrupted operation cached is dropped.</summary>
     private void Reparse()
     {
-        var old = Document;
-        Document = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password);
-        _planner = new PdfRangePlanner(Document.XrefTable, Length);
-        old.Dispose();
+        ThrowIfDisposed();
+        var parsed = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password);
+        Replace(parsed);
+        _planner = new PdfRangePlanner(parsed.XrefTable, Length);
+    }
+
+    /// <summary>Puts <paramref name="document"/> in place of <see cref="Document"/>; after Dispose, disposes it and throws.</summary>
+    private void Replace(PdfVectorDocument document)
+    {
+        PdfVectorDocument? old;
+        lock (_stateSync)
+        {
+            if (_disposed)
+            {
+                document.Dispose();
+                throw new ObjectDisposedException(nameof(PdfRangedDocument));
+            }
+            old = Document;
+            Document = document;
+        }
+        old?.Dispose();
     }
 
     /// <summary>
     /// Fetches each recorded miss with the object around it (or <see cref="PdfRangedOptions.ReadAheadBytes"/>).
-    /// False when a read asked for the whole file: only a rebuild of the cross-reference data does that.
+    /// Returns why the file must be read whole instead, or null: a read asked for the whole file
+    /// (only a rebuild of the cross-reference data does that), or the round needs more than
+    /// <paramref name="maxBytes"/> (<see cref="PdfRangedOptions.MaxRoundBytes"/>, or what is left of the budget of opening).
     /// </summary>
-    private async Task<bool> FetchMissesAsync(CancellationToken cancellationToken)
+    private async Task<string?> FetchMissesAsync(long maxBytes, CancellationToken cancellationToken)
     {
         var misses = _cache.TakeMisses();
         var ranges = new List<PdfByteRange>();
         foreach (var miss in misses)
         {
-            if (miss.Start == 0 && miss.End >= Length && Length > _options.ReadAheadBytes) return false;
+            if (miss.Start == 0 && miss.End >= Length && Length > _options.ReadAheadBytes) return DamagedXref;
             var extent = _planner?.ExtentAt(miss.Start) ?? miss;
             if (extent.Length > _options.MaxRequestBytes * 4L || extent.End < miss.End) extent = miss;
             long start = Math.Min(extent.Start, miss.Start);
@@ -337,8 +413,13 @@ public sealed class PdfRangedDocument : IDisposable
             // A miss swallowed before it was recorded is impossible; read ahead from the start as a last resort.
             ranges.Add(new PdfByteRange(0, Math.Min(Length, _options.ReadAheadBytes)));
         }
+        long missing = PdfRangePlanner.Merge(ranges).SelectMany(r => _cache.Missing(r)).Sum(r => r.Length);
+        if (missing > maxBytes)
+        {
+            return $"A read needed {Megabytes(missing)} more, more than the {Megabytes(maxBytes)} this round may fetch; the file was read whole.";
+        }
         await FetchAsync(ranges, cancellationToken).ConfigureAwait(false);
-        return true;
+        return null;
     }
 
     /// <summary>Fetches the parts of <paramref name="ranges"/> that are not in the cache.</summary>
@@ -357,7 +438,11 @@ public sealed class PdfRangedDocument : IDisposable
         {
             var buffer = new byte[range.Length];
             await ReadAsync(range.Start, buffer, cancellationToken).ConfigureAwait(false);
-            _cache.Store(range.Start, buffer);
+            lock (_stateSync)
+            {
+                ThrowIfDisposed(); // a disposed document keeps nothing
+                _cache.Store(range.Start, buffer);
+            }
         }
         finally
         {
@@ -368,7 +453,12 @@ public sealed class PdfRangedDocument : IDisposable
     private async ValueTask ReadAsync(long offset, Memory<byte> destination, CancellationToken cancellationToken)
     {
         if (offset < 0 || offset + destination.Length > Length) throw new ArgumentOutOfRangeException(nameof(offset));
-        await _reader.ReadAsync(offset, destination, cancellationToken).ConfigureAwait(false);
+        ThrowIfDisposed();
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token))
+        {
+            await _reader.ReadAsync(offset, destination, linked.Token).ConfigureAwait(false);
+        }
+        ThrowIfDisposed();
         Interlocked.Add(ref _bytesFetched, destination.Length);
         Interlocked.Increment(ref _requestCount);
     }
@@ -390,7 +480,8 @@ public sealed class PdfRangedDocument : IDisposable
     /// <summary>
     /// Reads the whole file (the blocks already fetched are copied, not fetched again), one
     /// <see cref="PdfRangedOptions.CompletionRequestBytes"/> read at a time so that page reads go
-    /// first. Calls after the first return the same task. <paramref name="progress"/> gets the bytes read so far.
+    /// first. Calls after the first return the same task. After a failure, the next call resumes
+    /// where the failed one stopped: what it read is kept. <paramref name="progress"/> gets the bytes read so far.
     /// </summary>
     public Task<byte[]> ReadAllAsync(IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -407,9 +498,11 @@ public sealed class PdfRangedDocument : IDisposable
         await Task.Yield();
         long length = Length;
         if (length > Array.MaxLength) throw new PdfResourceLimitException("FileLength", "The file is too large to hold in memory.");
-        var all = new byte[length];
+        // A read that failed before left its bytes here: this one goes on from where it stopped.
+        var all = _partial ??= new byte[length];
         long step = Math.Max(_cache.BlockSize, _options.CompletionRequestBytes / _cache.BlockSize * _cache.BlockSize);
-        for (long pos = 0; pos < length; pos += step)
+        if (_partialEnd > 0) progress?.Report(_partialEnd);
+        for (long pos = _partialEnd; pos < length; pos += step)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var range = new PdfByteRange(pos, Math.Min(length, pos + step));
@@ -434,9 +527,14 @@ public sealed class PdfRangedDocument : IDisposable
                     _requests.Release();
                 }
             }
+            _partialEnd = range.End;
             progress?.Report(range.End);
         }
-        lock (_readAllSync) _bytes = all;
+        lock (_readAllSync)
+        {
+            _bytes = all;
+            _partial = null;
+        }
         return all;
     }
 
@@ -458,6 +556,7 @@ public sealed class PdfRangedDocument : IDisposable
 
     private async Task FallBackAsync(string reason, CancellationToken cancellationToken)
     {
+        ThrowIfDisposed();
         FallbackReason ??= reason;
         var bytes = await ReadAllAsync(null, cancellationToken).ConfigureAwait(false);
         SwitchToMemory(bytes);
@@ -465,20 +564,30 @@ public sealed class PdfRangedDocument : IDisposable
 
     private void SwitchToMemory(byte[] bytes)
     {
+        ThrowIfDisposed();
         if (_completeDocument) return;
-        var old = Document;
-        Document = PdfVectorDocument.Open(new MemoryByteSource(bytes), _name, _limits, _password);
+        Replace(PdfVectorDocument.Open(new MemoryByteSource(bytes), _name, _limits, _password));
         _completeDocument = true;
         _planner = null;
         _cache.Clear();
-        old?.Dispose();
     }
 
+    /// <summary>
+    /// Disposes the document and drops the cache. Reads in progress are canceled; an operation
+    /// still running ends with <see cref="ObjectDisposedException"/> and makes no new document.
+    /// </summary>
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        Document?.Dispose();
-        _cache.Clear();
+        PdfVectorDocument? document;
+        lock (_stateSync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            document = Document;
+            _partial = null;
+            _cache.Clear();
+        }
+        _lifetime.Cancel();
+        document?.Dispose();
     }
 }

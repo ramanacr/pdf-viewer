@@ -72,8 +72,10 @@ public sealed class PdfChunkedByteSource : IPdfByteSource
         if (offset < 0 || offset > _length) throw new ArgumentOutOfRangeException(nameof(offset));
         int n = (int)Math.Min(Math.Max(0, length), _length - offset);
         if (n == 0) return ReadOnlyMemory<byte>.Empty;
+        // A miss is recorded before anything is allocated: a crafted /Length of gigabytes costs nothing.
+        if (!_cache.Contains(new PdfByteRange(_base + offset, _base + offset + n))) throw Miss(_base + offset, n);
         var buffer = new byte[n];
-        if (!_cache.TryCopy(_base + offset, buffer)) throw Miss(_base + offset, n);
+        if (!_cache.TryCopy(_base + offset, buffer)) throw Miss(_base + offset, n); // dropped meanwhile
         return buffer;
     }
 
