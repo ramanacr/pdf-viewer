@@ -75,6 +75,7 @@ image.Encode(SKEncodedImageFormat.Png, 100).SaveTo(png);
 
 To show PDF files in a web page without writing .NET code, use the [web embed SDK](sdk/index.md): one
 script, an API like the Adobe PDF Embed API, and the engine running in the reader's browser.
+It is also on npm as [`pdfviewer-embed`](https://www.npmjs.com/package/pdfviewer-embed).
 
 ## Safety
 

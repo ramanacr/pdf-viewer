@@ -195,6 +195,7 @@ tests/
 | `web-demo.yml` | Every pull request and push to `main` | Builds the web demo with the Noto fonts. From `main`, deploys the GitHub Pages site: `docs/` at the root and the demo under `/demo/`. |
 | `android.yml` | Changes to the Android app or the code it uses | Builds the APK, checks that it asks for no permission, and uploads it as an artifact. |
 | `packages.yml` | Every pull request and push to `main`; `engine-v*` tags | Packs the three engine packages. An `engine-v*` tag publishes them to nuget.org through Trusted Publishing (no stored API key). |
+| `npm.yml` | Pull requests that change the SDK, pushes to `main`; `sdk-v*` tags | Packs the embed SDK as the npm package `pdfviewer-embed`. An `sdk-v*` tag publishes it to npmjs.com through Trusted Publishing, with provenance. |
 | `release.yml` | `v*` tags | Builds, signs and publishes a GitHub release of the Windows app. |
 | `msix.yml` | `v*` tags | Builds the Microsoft Store package and uploads it as an artifact. It publishes nothing. |
 
@@ -208,3 +209,6 @@ The `main` branch is protected: every change comes through a pull request, and t
 - **The engine packages:** push a tag `engine-v<version>` (for example
   `engine-v0.1.0-preview.1`). These tags do not change the app version and do not start an app
   release.
+- **The embed SDK on npm:** set `SDK_VERSION` in `pdfviewer-embed.js` and `version` in
+  `packages/pdfviewer-embed/package.json` to the same value, then push a tag `sdk-v<version>`
+  (for example `sdk-v0.3.0`). The workflow refuses a tag that does not match both.

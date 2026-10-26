@@ -53,6 +53,20 @@ const view = new View({ divId: 'viewer' });
 
 Your page must be served over `http` or `https` (not opened as a `file:`).
 
+From npm, for a bundler:
+
+```bash
+npm install pdfviewer-embed
+```
+
+```js
+import { View } from 'pdfviewer-embed';
+const view = new View({ divId: 'viewer' });
+```
+
+The package holds the SDK script only. The viewer comes from this site by default; pass `baseUrl`
+to use your own copy (see [Production](#production)).
+
 Replace `sha384-REPLACE_ME` with the current value: copy it from
 <https://ramanacr.github.io/pdf-viewer/demo/pdfviewer-embed.integrity.json> (each deploy writes it).
 With `integrity`, the browser runs the script only when its bytes match the hash. The value changes

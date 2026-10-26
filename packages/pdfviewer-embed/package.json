@@ -1,0 +1,37 @@
+{
+  "name": "pdfviewer-embed",
+  "version": "0.3.0",
+  "description": "Embed PDF Viewer Native in a web page: an API modelled on Adobe PDF Embed API, with the viewer's own engine running in the browser as WebAssembly. No client ID, no server, no telemetry.",
+  "keywords": [
+    "pdf",
+    "pdf-viewer",
+    "pdf-embed",
+    "embed",
+    "annotations",
+    "webassembly",
+    "blazor"
+  ],
+  "homepage": "https://ramanacr.github.io/pdf-viewer/sdk/",
+  "bugs": "https://github.com/ramanacr/pdf-viewer/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ramanacr/pdf-viewer.git",
+    "directory": "packages/pdfviewer-embed"
+  },
+  "license": "MIT",
+  "author": "Ramana Reddy Chamakura",
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./script": "./pdfviewer-embed.js",
+    "./package.json": "./package.json"
+  },
+  "main": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "pdfviewer-embed.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": true
+}
