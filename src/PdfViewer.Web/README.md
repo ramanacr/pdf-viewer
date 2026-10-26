@@ -132,9 +132,11 @@ Windows:
 - a generated 46 MB file of 320 pages (`docs/sdk/examples/large-pdf.js`): opened, with page 1
   and page 200 drawn by the worker;
 - the fallback: with the worker stopped mid-session, the next zoom draws on the page's thread
-  (Chrome).
+  (Chrome);
+- an edit (Firefox, real pointer input): after a rectangle is drawn on page 1, the worker opens
+  the edited bytes and draws page 1 again with the rectangle, also after a zoom.
 
-Not checked yet: Safari, a phone, and an edit that changes the bytes while the flag is on.
+Not checked yet: Safari and a phone.
 
 ### Engine changes for the browser
 
