@@ -610,23 +610,34 @@ public sealed partial class Viewer : IAsyncDisposable
 
                 bool inWorker = await WorkerServesAsync(doc);
                 if (_doc != doc) break;
-                int textWithoutFont, imagesNotDecoded;
+                int textWithoutFont = 0, imagesNotDecoded = 0;
+                bool drawnByWorker = false;
                 if (inWorker)
                 {
                     // Drawn by the render worker: nothing waits for the view to rest, as this thread stays free.
+                    var sent = doc.Bytes;
                     var shown = await RenderInWorkerAsync(page, scale, night);
-                    if (_doc != doc) break;
-                    if (shown == null) continue;
-                    if (!_visible.Contains(page) || RenderScale != scale || _night != night)
+                    if (_doc != doc)
                     {
-                        CanvasInterop.WorkerDiscard(page);
-                        continue;
+                        if (shown != null) CanvasInterop.WorkerDiscard(page);
+                        break;
                     }
-                    CanvasInterop.WorkerDraw(page);
-                    Measure(page, shown.InterpretMs, shown.DrawMs, shown.Width, shown.Height);
-                    (textWithoutFont, imagesNotDecoded) = (shown.TextWithoutFont, shown.ImagesNotDecoded);
+                    if (shown != null)
+                    {
+                        // An edit replaces the bytes: a page rendered from the old ones is not shown.
+                        if (!_visible.Contains(page) || RenderScale != scale || _night != night || !ReferenceEquals(doc.Bytes, sent))
+                        {
+                            CanvasInterop.WorkerDiscard(page);
+                            continue;
+                        }
+                        CanvasInterop.WorkerDraw(page);
+                        Measure(page, shown.InterpretMs, shown.DrawMs, shown.Width, shown.Height);
+                        (textWithoutFont, imagesNotDecoded) = (shown.TextWithoutFont, shown.ImagesNotDecoded);
+                        drawnByWorker = true;
+                    }
+                    // Otherwise the worker could not draw the page, or stopped: it is drawn here.
                 }
-                else
+                if (!drawnByWorker)
                 {
                     if (!_cache.TryGet(page, scale, night, out var bitmap))
                     {
@@ -1041,6 +1052,8 @@ public sealed partial class Viewer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _searchCts?.Cancel();
+        try { StopRenderWorker(); }
+        catch (System.Runtime.InteropServices.JavaScript.JSException) { }
         if (_doc != null) await _doc.DisposeAsync();
         if (_module != null)
         {

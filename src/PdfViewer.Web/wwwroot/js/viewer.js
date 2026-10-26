@@ -748,12 +748,33 @@ let workerCalls = 0;
 const workerWaits = new Map();     // call id -> { resolve, reject }
 const workerBitmaps = new Map();   // page -> ImageBitmap rendered and not shown yet
 
+// A call that gets no answer in this time means the worker's runtime is stuck or gone.
+const WORKER_CALL_MS = { open: 30000, render: 20000, close: 5000 };
+
 function workerCall(msg, transfer) {
     return new Promise((resolve, reject) => {
+        if (!renderWorker) {
+            reject(new Error('The render worker is not running.'));
+            return;
+        }
         msg.id = ++workerCalls;
-        workerWaits.set(msg.id, { resolve, reject });
+        const timer = setTimeout(() => workerGone('The render worker did not answer.'), WORKER_CALL_MS[msg.op] ?? 20000);
+        workerWaits.set(msg.id, { resolve, reject, timer });
         renderWorker.postMessage(msg, transfer ?? []);
     });
+}
+
+/** Stops a worker that crashed or stopped answering: every call waiting on it fails, so the pages fall back to this thread. */
+function workerGone(message) {
+    renderWorker?.terminate();
+    renderWorker = null;
+    for (const wait of workerWaits.values()) {
+        clearTimeout(wait.timer);
+        wait.reject(new Error(message));
+    }
+    workerWaits.clear();
+    for (const bitmap of workerBitmaps.values()) bitmap.close();
+    workerBitmaps.clear();
 }
 
 /** Starts the render worker; true once its runtime is up, false when it fails or takes over 20 s. */
@@ -773,18 +794,25 @@ export function startRenderWorker() {
         };
         const timer = setTimeout(() => settle(false), 20000);
         try {
-            renderWorker = new Worker(new URL('render-worker.js', import.meta.url), { type: 'module', name: 'render' });
+            // The worker carries this module's version query (?v=), so both are replaced together.
+            const url = new URL('render-worker.js', import.meta.url);
+            url.search = new URL(import.meta.url).search;
+            renderWorker = new Worker(url, { type: 'module', name: 'render' });
         } catch {
             settle(false);
             return;
         }
-        renderWorker.onerror = () => settle(false);
+        renderWorker.onerror = () => {
+            if (settled) workerGone('The render worker failed.');
+            else settle(false);
+        };
         renderWorker.onmessage = e => {
             const d = e.data;
             if (d.op === 'ready') return settle(true);
-            if (d.op === 'failed') return settle(false);
+            if (d.op === 'failed') return settled ? workerGone('The render worker failed.') : settle(false);
             const wait = workerWaits.get(d.id);
             if (!wait) return;
+            clearTimeout(wait.timer);
             workerWaits.delete(d.id);
             if (d.ok) wait.resolve(d.result);
             else wait.reject(new Error(d.message));
@@ -836,4 +864,14 @@ export function workerClose() {
     for (const bitmap of workerBitmaps.values()) bitmap.close();
     workerBitmaps.clear();
     if (renderWorker) workerCall({ op: 'close' }).catch(() => { });
+}
+
+/** Whether the render worker is running. */
+export function workerRunning() {
+    return renderWorker !== null;
+}
+
+/** Stops the render worker and its copy of the document. */
+export function workerTerminate() {
+    workerGone('The render worker was stopped.');
 }

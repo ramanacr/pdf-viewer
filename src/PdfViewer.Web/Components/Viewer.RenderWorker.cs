@@ -88,7 +88,11 @@ public sealed partial class Viewer
         }
     }
 
-    /// <summary>Renders a page in the worker (the script keeps it until <see cref="CanvasInterop.WorkerDraw"/>); null when the worker failed.</summary>
+    /// <summary>
+    /// Renders a page in the worker (the script keeps it until <see cref="CanvasInterop.WorkerDraw"/>); null
+    /// when the worker could not draw this page, which is then drawn here. A worker that crashed or stopped
+    /// answering is turned off; one bad page is not.
+    /// </summary>
     private async Task<WorkerPage?> RenderInWorkerAsync(int page, double scale, bool night)
     {
         try
@@ -102,18 +106,28 @@ public sealed partial class Viewer
         }
         catch (JSException ex)
         {
-            WorkerFailed(ex);
+            if (!CanvasInterop.WorkerRunning()) WorkerFailed(ex);
             return null;
         }
     }
 
-    /// <summary>The worker failed: the rest of the session draws on this thread.</summary>
+    /// <summary>The worker failed: it is stopped, with its copy of the document, and the rest of the session draws on this thread.</summary>
     private void WorkerFailed(Exception ex)
     {
         _worker = WorkerState.Failed;
         _workerBytes = null;
+        CanvasInterop.WorkerTerminate();
         // Diagnostics name the failure type only, never document content.
         _perf = $"The render worker failed ({ex.GetType().Name}); pages are drawn on the page's thread.";
+    }
+
+    /// <summary>Stops the worker when the viewer goes away.</summary>
+    private void StopRenderWorker()
+    {
+        if (_worker == WorkerState.Off) return;
+        _worker = WorkerState.Failed;
+        _workerBytes = null;
+        CanvasInterop.WorkerTerminate();
     }
 
     private void CloseInWorker()

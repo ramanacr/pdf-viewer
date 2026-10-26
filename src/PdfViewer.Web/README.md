@@ -86,8 +86,8 @@ Keyboard shortcuts are listed in the app (`?`).
 
 `index.html?renderInWorker=1` draws the pages in view in a dedicated Web Worker, so that the
 page's thread stays free while a page is interpreted and drawn. Multithreaded WebAssembly needs
-`SharedArrayBuffer`, so cross-origin isolation (COOP/COEP headers), which GitHub Pages cannot
-send. The worker (`wwwroot/js/render-worker.js`) starts a second, render-only .NET runtime from
+`SharedArrayBuffer`, and so cross-origin isolation, which needs COOP/COEP headers that GitHub
+Pages cannot send. The worker (`wwwroot/js/render-worker.js`) starts a second, render-only .NET runtime from
 the same `_framework` files instead (`dotnet.withConfigSrc('blazor.boot.json').create()`, no
 `Main`), and calls `Interop/RenderWorkerExports.cs` through `[JSExport]`. The two runtimes share
 nothing: the PDF bytes go to the worker by `postMessage` (a transferred `ArrayBuffer`), and each

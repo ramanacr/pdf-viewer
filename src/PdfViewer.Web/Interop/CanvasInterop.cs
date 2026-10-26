@@ -132,4 +132,12 @@ internal static partial class CanvasInterop
 
     [JSImport("workerClose", ModuleName)]
     public static partial void WorkerClose();
+
+    /// <summary>Whether the worker is still running (false after it crashed, stopped answering or was stopped).</summary>
+    [JSImport("workerRunning", ModuleName)]
+    public static partial bool WorkerRunning();
+
+    /// <summary>Stops the worker; calls still waiting on it fail.</summary>
+    [JSImport("workerTerminate", ModuleName)]
+    public static partial void WorkerTerminate();
 }
