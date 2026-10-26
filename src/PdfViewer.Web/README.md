@@ -125,6 +125,17 @@ The worker's runtime starts in about 0.3 s on loopback, beside the page's own st
 the runtime's files a second time (from the browser's HTTP cache when the server allows caching)
 and holds a second copy of the runtime and of the document in memory.
 
+Checked with the flag on, in headless Chrome and in headless Firefox (WebDriver BiDi), both on
+Windows:
+- the engine tour: pages drawn by the worker;
+- night pages: drawn by the worker, inverted (79 % of page 1 dark against under 1 % by day);
+- a generated 46 MB file of 320 pages (`docs/sdk/examples/large-pdf.js`): opened, with page 1
+  and page 200 drawn by the worker;
+- the fallback: with the worker stopped mid-session, the next zoom draws on the page's thread
+  (Chrome).
+
+Not checked yet: Safari, a phone, and an edit that changes the bytes while the flag is on.
+
 ### Engine changes for the browser
 
 All guarded so that Windows behaves exactly as before:
