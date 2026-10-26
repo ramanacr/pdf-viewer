@@ -17,6 +17,7 @@ on:
     paths:
       - "packages/pdfviewer-embed/**"
       - "src/PdfViewer.Web/wwwroot/pdfviewer-embed.js"
+      - "tests/sdk/**"
       - ".github/workflows/npm.yml"
 
 permissions:
