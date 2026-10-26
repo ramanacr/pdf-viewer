@@ -1,0 +1,99 @@
+name: Embed SDK Package
+
+# Packs the web embed SDK (src/PdfViewer.Web/wwwroot/pdfviewer-embed.js) as the npm package
+# pdfviewer-embed (packages/pdfviewer-embed) and keeps the tarball as a build artifact. Nothing is
+# published on pull requests or pushes to main.
+#
+# Publishing to npmjs.com happens only for an SDK tag (sdk-v0.3.0 gives version 0.3.0), through
+# npm Trusted Publishing (OIDC, no stored token) with provenance, and only once the NPM_PUBLISH
+# repository variable is set to "true"; until then the publish job is skipped. The tag's version
+# must match both package.json and SDK_VERSION in the script.
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "sdk-v*" ]
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "packages/pdfviewer-embed/**"
+      - "src/PdfViewer.Web/wwwroot/pdfviewer-embed.js"
+      - ".github/workflows/npm.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: '22'
+
+    - name: Copy the SDK script and the licence into the package
+      run: |
+        cp src/PdfViewer.Web/wwwroot/pdfviewer-embed.js packages/pdfviewer-embed/
+        cp LICENSE packages/pdfviewer-embed/
+
+    - name: Check the versions
+      shell: bash
+      run: |
+        cd packages/pdfviewer-embed
+        pkg=$(node -p "require('./package.json').version")
+        sdk=$(sed -n "s/^ *const SDK_VERSION = '\(.*\)';.*/\1/p" pdfviewer-embed.js)
+        echo "package.json $pkg, SDK_VERSION $sdk"
+        test "$pkg" = "$sdk" || { echo "::error::package.json version $pkg does not match SDK_VERSION $sdk"; exit 1; }
+        if [[ "$GITHUB_REF" == refs/tags/sdk-v* ]]; then
+          tag="${GITHUB_REF#refs/tags/sdk-v}"
+          test "$tag" = "$pkg" || { echo "::error::tag sdk-v$tag does not match package.json version $pkg"; exit 1; }
+        fi
+
+    - name: Check the package
+      run: |
+        node --check packages/pdfviewer-embed/index.mjs
+        node --test tests/sdk/*.test.mjs
+
+    - name: Pack
+      run: |
+        cd packages/pdfviewer-embed
+        npm pack --pack-destination "$RUNNER_TEMP/npm"
+        tar -tzf "$RUNNER_TEMP"/npm/*.tgz
+
+    - name: Upload the package
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: pdfviewer-embed
+        path: ${{ runner.temp }}/npm/*.tgz
+        if-no-files-found: error
+
+  publish:
+    needs: pack
+    if: startsWith(github.ref, 'refs/tags/sdk-v') && vars.NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm Trusted Publishing and provenance
+    steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+
+    # Trusted Publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+    - name: Update npm
+      run: npm install -g npm@11.20.0
+
+    - name: Download the package
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: pdfviewer-embed
+        path: npm
+
+    - name: Publish to npmjs.com
+      run: npm publish npm/*.tgz --access public --provenance
