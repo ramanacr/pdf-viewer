@@ -11,11 +11,11 @@ the file goes from your page to the viewer in the same browser tab, and nowhere 
 
 The JavaScript API follows the
 [Adobe PDF Embed API](https://developer.adobe.com/document-services/docs/overview/pdf-embed-api/howtos/),
-so code written for it needs few changes. Status: **phase 2, preview** (viewing, annotations,
-forms and saving). The API can change before version 1.0.
+so code written for it needs few changes. Status: **phase 3, preview** (viewing, annotations,
+forms, saving, and large files by range requests). The API can change before version 1.0.
 
 **[Examples](examples/)**: full window, sized container, in line, light box, events and APIs,
-file picker, annotations and saving, forms, React and Angular.
+file picker, annotations and saving, forms, large files, React and Angular.
 
 ## Compared with the Adobe PDF Embed API
 
@@ -109,8 +109,8 @@ same View.
 
 ```js
 {
-  content: { location: { url, headers: [{ key, value }] } }   // or
-           { promise }                                       // resolves to an ArrayBuffer, typed array or Blob
+  content: { location: { url, headers: [{ key, value }], credentials, rangeRequests } }   // or
+           { promise, linearizationInfo }                    // promise resolves to an ArrayBuffer, typed array or Blob
            { arrayBuffer },                                  // an ArrayBuffer, typed array or Blob
   metaData: { fileName, id, hasReadOnlyAccess },
 }
@@ -119,7 +119,11 @@ same View.
 - **`location`.** Your page fetches the URL, with `fetch`, so your page's own rules apply: the
   headers you give, cookies for your own site, and the server's CORS rules for another site.
   Add `credentials: 'include'` to `location` to send cookies to another site. The viewer itself
-  never fetches the file: its Content-Security-Policy allows only its own files.
+  never fetches the file: its Content-Security-Policy allows only its own files. When the server
+  answers range requests, the file is read by ranges (see [large files](#large-files));
+  `rangeRequests: false` reads it whole.
+- **`linearizationInfo`** (with `promise`): read the file by ranges through your own functions,
+  as in Adobe's API. See [large files](#large-files).
 - **`promise` and `arrayBuffer`.** The SDK copies the bytes and transfers the copy to the
   viewer, so your buffer stays usable.
 - **`metaData.fileName`** is shown in the viewer and used for Download and Save. **`id`** comes
@@ -165,6 +169,139 @@ An unknown key is ignored. A known key with a wrong value rejects the Promise wi
 | `IN_LINE` | Shows every page in the flow of your page. The frame grows to the document's height and your page scrolls; pages are drawn as they come into view. |
 | `LIGHT_BOX` | Covers your page, with the file name and a Close (or Return) button above it. Escape closes it and gives the focus back. |
 
+## Large files
+
+A large file does not have to arrive whole before its first page shows. The viewer asks your
+page for the byte ranges it needs, as Adobe's and pdf.js's viewers do: the end of the file (the
+cross-reference table), the page tree, then the objects of each page when it is drawn. The rest
+of the file follows in the background, one request at a time, after the first page is on screen.
+
+### With a URL
+
+```js
+view.previewFile({ content: { location: { url: 'https://files.example.com/big.pdf' } }, metaData: { fileName: 'big.pdf' } });
+```
+
+1. The SDK asks for one byte (`Range: bytes=0-0`). An answer `206 Partial Content` with
+   `Content-Range: bytes 0-0/<length>` turns range loading on; any other answer is read as the
+   whole file, as before.
+2. It reads the last 1 MB and sends it to the viewer with the open message.
+3. The viewer asks for ranges with `fetchRange` messages (at most 4 MB each, at most 6 waiting);
+   the SDK fetches them from **the URL you gave and no other**, with your headers and
+   `credentials`, and checks that each answer is `206` with exactly the bytes asked for.
+
+Files of 1 MB or less are read whole. `rangeRequests: false` turns range loading off.
+
+**Server requirements.** One-range requests (`Range: bytes=a-b`) answered with `206` and
+`Content-Range`, as GitHub Pages, S3, Azure Blob Storage, nginx and Apache do for static files.
+The file must not change while it is read (the SDK compares the length in every `Content-Range`).
+For a file on another origin, CORS must allow your page and **expose `Content-Range`**:
+
+```
+Access-Control-Allow-Origin: https://www.example.com
+Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length
+```
+
+`Range: bytes=a-b` is a CORS-safelisted header, so no preflight request is needed. Without the
+exposed `Content-Range` header the SDK cannot read the length and reads the file whole.
+Serve PDFs without `Content-Encoding`: the SDK checks that each answer has exactly the bytes asked for.
+
+### With `linearizationInfo`
+
+As in Adobe's PDF Embed API, give functions that read the file, for example from your own
+storage or a service that needs signed requests:
+
+```js
+view.previewFile({
+  content: {
+    promise: fetchWholeFile(),          // used only when the viewer needs the whole file at once
+    linearizationInfo: {
+      getInfo: () => Promise.resolve({ fileSize }),
+      getInitialBuffer: () => readBytes(0, 65535),          // optional: the start of the file
+      getFileBufferRanges: ranges =>                         // [{ start, end }], end inclusive
+        Promise.all(ranges.map(r => readBytes(r.start, r.end))).then(bufferList => ({ bufferList })),
+    },
+  },
+  metaData: { fileName: 'big.pdf' },
+});
+```
+
+- `getInfo()` resolves with `{ fileSize }` (a whole number of bytes, at most 512 MB).
+- `getInitialBuffer()`, optional, resolves with the first bytes of the file (an `ArrayBuffer` or
+  typed array), or `{ buffer, start }` for bytes from another offset.
+- `getFileBufferRanges(ranges)` gets `[{ start, end }]` (`end` inclusive, as in an HTTP `Range`
+  header) and resolves with `{ bufferList: [ArrayBuffer, …] }` or an array of buffers, one per
+  range, each exactly `end - start + 1` bytes long.
+- `content.promise` is read only when `linearizationInfo` fails (then the file is read whole from
+  it, as without `linearizationInfo`). To avoid reading the file twice, give a promise that starts
+  its download only when it is awaited (a `then`-able object), as the large-file example does.
+
+Only the shape of these functions follows Adobe's documentation; the details above (end
+inclusive, `bufferList`) are this SDK's and were not tested against Adobe's viewer.
+
+### While the rest of the file loads
+
+- Pages draw and their text can be selected; scrolling to a page fetches its ranges first.
+- Calls that need the whole file wait for it: `getPDFMetadata()`, `search()`, the annotation
+  manager, Download, Save. The annotation tools, form fields and the outline appear when the
+  file is complete. A password-protected file asks for its password as usual.
+- `APP_RENDERING_DONE` (see [events](#events)) tells when the first page is on screen and how
+  many bytes the viewer had read by then.
+
+### Fallbacks
+
+- A server without range support, an unreadable `Content-Range`, or a file of 1 MB or less: the
+  file is read whole, as before.
+- A damaged file whose cross-reference table must be rebuilt by scanning the whole file: the
+  viewer reads it whole at once, then opens it as usual.
+- A page that still needs bytes after its objects were fetched (for example an object the
+  cross-reference table places wrongly): the viewer fetches them and draws the page again; after
+  12 rounds it reads the whole file.
+- A range request that fails (network, HTTP error, timeout after 60 s): at open, `previewFile`
+  rejects with `NETWORK_ERROR`; later, the page is left undrawn (the viewer's status names the
+  error) and a zoom change draws it again. If the background read of the rest fails, it tries
+  again after 2, 4, 8 and 16 s (when a page is drawn), from where it stopped; after five failures
+  the viewer shows a **Try again** button. The host page aborts its own fetches after 60 s without
+  an answer, and when the viewer is closed or another file is opened.
+- An object whose bytes, by the cross-reference table, would pass a cap (one page needs more than
+  256 MB, the document's structure or one round of missing bytes more than 32 MB): the cap is
+  checked before the bytes are asked for, and the viewer reads the whole file instead.
+- Two files opened one after the other: only the second shows, even when the first finishes last;
+  the first `previewFile` rejects with `CLOSED`.
+
+### How it works
+
+The engine (`PdfEngine.Vector`, shared with the Windows viewer) reads PDFs through a synchronous
+byte source. `PdfRangedDocument` puts a 4 KB block cache under it (`PdfChunkCache`, least
+recently used first, 64 MB by default, the current page's blocks always kept; while a document
+opens, the cache passes its cap by at most the 32 MB a round may fetch). Before a page is
+parsed, `PdfRangePlanner` walks its objects level by level from the page dictionary (resources,
+fonts, images, annotations; not `/Parent` or links to other pages) and fetches each level's byte
+ranges (an object runs from its cross-reference offset to the next object's). Then the page is
+parsed and drawn synchronously from the cache. A read of a block that is not there records the
+miss; the operation is repeated on a fresh parse after the missing bytes arrive. Documents
+opened from memory or from a file do not use any of this.
+
+### Measured
+
+A generated file of 320 pages, each with a 224 × 224 image stored uncompressed (46.2 MB, not
+linearized, objects written page by page), served by `eng/webdemo/serve.mjs` on the same machine,
+headless Chrome 155, time from the host page's start to the first page on screen (it includes the
+viewer's own start, about 1 s), three runs:
+
+| File | Network | Whole file | By ranges | Read before the first page |
+| --- | --- | --- | --- | --- |
+| Page objects spread through the file | loopback | 2.4 to 3.1 s | 3.0 to 3.3 s | 2.4 MB (5 %), 318 requests |
+| The same | 50 Mbit/s, 40 ms | 9.9 to 10.9 s | 5.8 to 7.4 s | 2.4 MB (5 %), 318 requests |
+| The same, with object streams (`PdfOptimizer`) | loopback | 1.5 to 2.3 s | 1.5 to 2.3 s | 1.2 MB (2.5 %), 5 requests |
+| The same, with object streams | 50 Mbit/s, 40 ms | 9.3 to 10.4 s | 2.9 to 3.1 s | 1.2 MB (2.5 %), 5 requests |
+
+A file whose page dictionaries are spread through it needs one request per page to open, because
+the viewer reads every page's size before it lays the pages out; a file with object streams (many
+files saved by current applications, and every file the engine's optimizer writes) opens in a
+few requests. On a fast local network, reading the whole file is as fast. The
+[large-file example](examples/large-file.html) repeats the measurement in your browser.
+
 ## Events
 
 The annotation manager has its own events: see [annotation events](#annotation-events).
@@ -185,6 +322,7 @@ view.registerCallback(PdfViewer.View.Enum.CallbackType.EVENT_LISTENER,
 | `DOCUMENT_DOWNLOAD` | `fileName` | The reader downloads the file. |
 | `DOCUMENT_PRINT` | `fileName` | The pages are ready and the print dialog opens. |
 | `PREVIEW_ERROR` | `code`, `message` | `previewFile` failed (the Promise rejects too). |
+| `APP_RENDERING_DONE` | `pageNumber`, `ms`, `bytesRead`, `fileSize`, `ranged` | The first page of a file is on screen. `ms` counts from the viewer's open; `bytesRead` is what it had read of the file by then. |
 
 Events go only to your callbacks, in your page. `enablePDFAnalytics` and similar options do not
 exist: there is nothing to send events to.
@@ -478,6 +616,13 @@ from a PDF application.
     attribute and length limits.
   - A message longer than 2 MB of JSON (the file's bytes do not count) is refused with
     `INVALID_ARGUMENT` before it is parsed.
+  - Range loading (see [large files](#large-files)): the viewer lists `range` in the `features`
+    of its `ready` message, and the SDK uses range loading only then. A `fetchRange` request
+    carries only numbers (`file`, `requestId`, `start`, `end`), never a URL. The SDK serves it
+    only for the file it opened last, only for a new request id, only for whole numbers inside
+    the file with `end - start` at most 4 MB, and only while fewer than 6 requests wait; it
+    fetches the bytes from the URL or `linearizationInfo` you gave. The viewer checks each
+    answer: the request must be waiting, of that file, with exactly the bytes asked for.
 - **No storage.** The embedded viewer keeps nothing in the browser's storage (the stand-alone
   demo keeps its theme and side-panel choice).
 - **No telemetry, no uploads.** The viewer requests only its own files (the app, and fonts when
@@ -548,15 +693,56 @@ Firefox and Safari are not tested yet.
 | --- | --- |
 | First load | The viewer is about 5.6 MB with Brotli, about 6.6 MB with gzip (GitHub Pages), then cached by the browser. |
 | File size | 512 MB. |
-| Pages | Drawn one at a time on the main thread; a heavy page can block the viewer for a moment. |
-| Loading | The whole file is read before the first page shows. |
+| Pages | Drawn one at a time on the main thread, in strips; a heavy page's interpretation still blocks the viewer for a moment (see [responsiveness](#responsiveness)). |
+| Loading | By ranges when the server allows it (see [large files](#large-files)); otherwise the whole file is read before the first page shows. While a ranged file loads, calls that need all of it wait. |
 | Selection | One page at a time; dragging does not scroll. |
 | Annotations | The eight types above; no replies, stamps, lines, polygons or callouts yet. Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
 | Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. No API to set form values from the host page yet. Simplified field notation nested deeper than 64 levels is not calculated. |
 | Language | The viewer is in English. |
 
+## Responsiveness
+
+Blazor WebAssembly runs .NET on the browser's main thread, so the work of a page (interpreting
+its content into a display list, then drawing it with Skia) blocks input while it runs. The
+viewer keeps scrolling responsive this way:
+
+1. Pages are drawn in horizontal strips of about 256 K pixels, with a yield to the browser
+   between strips (`ViewerDocument.RenderPageInStripsAsync`).
+2. A page that leaves the view, or a zoom or night-mode change, stops its remaining strips; the
+   display list stays cached, so the page costs only its drawing when it comes back.
+3. While the view scrolls, no new page or thumbnail starts; work starts when the view has rested
+   for 120 ms. Pages nearest the current one go first.
+
+Measured in headless Chrome (viewer frame, `PerformanceObserver` long tasks over 50 ms, while a
+script scrolls 350 px every 100 ms for 4 s), 40 generated pages with an image and thousands of
+filled rectangles each:
+
+| Pages | Before: long tasks while scrolling | After | Scroll-tick delay, 90th percentile: before → after |
+| --- | --- | --- | --- |
+| 3,000 rectangles (interpret 170 to 370 ms, draw 120 to 230 ms per page) | 13 to 14, 5.7 to 6.1 s in all, longest 0.57 s | 5 to 6, 1.0 to 1.1 s in all, longest 0.44 s | 0.39 to 0.43 s → 0.02 to 0.04 s |
+| 15,000 rectangles (interpret 750 to 940 ms, draw 390 to 460 ms) | 12 to 13, 17 to 22 s in all, longest 2.0 s | 6, 2.4 s in all, longest 1.0 s | 1.8 to 1.9 s → 0.03 to 0.04 s |
+
+What remains: the interpretation of one page is one task (here up to 1 s), when it runs.
+
+**Not possible on GitHub Pages (or any host that cannot send headers):**
+
+- **.NET multithreading** (`WasmEnableThreads`, still experimental in .NET 9) needs
+  `SharedArrayBuffer`, so the page must be cross-origin isolated with the response headers
+  `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.
+  GitHub Pages cannot send response headers, and an embedded viewer would also need the host page
+  to be isolated (or to frame it with `allow="cross-origin-isolated"`).
+- **A second .NET runtime in a Web Worker** needs no headers, but the app's own runtime does not
+  start in a worker as it is: in a test, `dotnet.create()` with the app's `blazor.boot.json`
+  loaded every assembly in a module worker and then never finished starting (.NET 9.0.21). It
+  needs a separate worker build (a plain `wasmbrowser` project with only the engine, about
+  10 MB more on the site), the document's bytes in the worker (a second copy, and range requests
+  through the main thread for files read by ranges), and fonts fetched from the worker. That is
+  the planned next step.
+
 ## Planned
 
-- **Phase 3:** linearized and range loading (show the first page before the whole file has
-  arrived), rendering in a Web Worker.
+- Rendering in a Web Worker (a separate .NET runtime that only renders; see
+  [responsiveness](#responsiveness)), so that no page work runs on the main thread.
+- A lazy page tree for files read by ranges, so that a file whose page dictionaries are spread
+  through it opens without reading every page's dictionary.
 - Later: more annotation types (replies, stamps, lines and polygons), comment threads.

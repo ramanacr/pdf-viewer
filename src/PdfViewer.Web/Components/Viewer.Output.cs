@@ -25,7 +25,23 @@ public sealed partial class Viewer
     private async Task Download()
     {
         var doc = _doc;
-        if (doc == null || _docBytes == null) return;
+        if (doc == null) return;
+        if (!doc.IsComplete)
+        {
+            // Read by ranges: the download is the whole file, so the rest is read first.
+            _status = "Reading the rest of the file…";
+            StateHasChanged();
+            try
+            {
+                await WaitReadyAsync(doc);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
+            {
+                _error = $"The file could not be read whole ({ex.GetType().Name}).";
+                return;
+            }
+            if (_doc != doc) return;
+        }
         // The reader's annotations and form data go with it when the config asks (always in the demo),
         // and only when the document has all of them.
         if (_config.DownloadWithAnnotations)

@@ -132,16 +132,24 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         return OpenCore(source, filePath, limits, password, certificates);
     }
 
+    /// <summary>
+    /// <see cref="Open"/> for a document read by ranges (<see cref="PdfRangedDocument"/>): pages'
+    /// content streams are resolved when first used, so opening reads only the page dictionaries.
+    /// </summary>
+    internal static PdfVectorDocument OpenDeferred(IPdfByteSource source, string filePath, PdfSecurityLimits? limits, string? password) =>
+        OpenCore(source, filePath, limits, password, null, deferContents: true);
+
     private static PdfVectorDocument OpenCore(
         IPdfByteSource source,
         string filePath,
         PdfSecurityLimits? limits,
         string? password,
-        IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates)
+        IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates,
+        bool deferContents = false)
     {
         try
         {
-            return OpenCoreUnchecked(source, filePath, limits, password, certificates);
+            return OpenCoreUnchecked(source, filePath, limits, password, certificates, deferContents);
         }
         catch (Exception ex) when (ex is InvalidDataException or FormatException or OverflowException
                                        or ArgumentOutOfRangeException or IndexOutOfRangeException)
@@ -156,7 +164,8 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         string filePath,
         PdfSecurityLimits? limits,
         string? password,
-        IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates)
+        IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates,
+        bool deferContents)
     {
         limits ??= PdfSecurityLimits.Default;
         var xref = new PdfXrefTable(limits);
@@ -198,7 +207,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
             throw new PdfSyntaxException("PDF document has no resolvable /Root catalog.");
         }
 
-        var pageTree = new PdfPageTree(resolver, limits);
+        var pageTree = new PdfPageTree(resolver, limits) { DeferContents = deferContents };
         pageTree.Load(catalog);
 
         // Resolve basic metadata

@@ -111,6 +111,10 @@ public sealed partial class Viewer : IAsyncDisposable
     private readonly Dictionary<int, (double Scale, bool Night)> _drawn = new();
     private readonly HashSet<(int Page, double Scale, bool Night)> _failed = new();
     private bool _pumping;
+    private long _lastViewportTicks;
+
+    /// <summary>How long the view must rest before a page that is not cached starts to be drawn.</summary>
+    private const int ScrollIdleMs = 120;
     private readonly List<double> _renderTimes = new();
 
     // Device fonts (Local Font Access API, Chromium browsers).
@@ -157,7 +161,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=4");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=5");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {
@@ -257,8 +261,25 @@ public sealed partial class Viewer : IAsyncDisposable
     [JSInvokable]
     public Task OnFileOpened(string name, byte[] bytes) => OpenAsync(bytes, name, null);
 
-    private async Task OpenAsync(byte[] bytes, string name, string? password)
+    private Task OpenAsync(byte[] bytes, string name, string? password) =>
+        OpenWithAsync(() => ViewerDocument.OpenAsync(bytes, password, Options), name, bytes, null);
+
+    /// <summary>Opens a file that the host page serves by ranges: the first pages show before the rest of the file arrives.</summary>
+    private Task OpenRangedAsync(RangedFile file, string name, string? password) =>
+        OpenWithAsync(() => ViewerDocument.OpenRangedAsync(file.Reader, password, Options, file.Options), name, null, file);
+
+    /// <summary>A file read by ranges through the host page, and what came with its open message.</summary>
+    private sealed record RangedFile(EmbedRangeReader Reader, PdfEngine.Vector.Parsing.PdfRangedOptions Options);
+
+    private RangedFile? _pendingRange;
+
+    // Opens that overlap: only the latest may show its document or report to the host.
+    private readonly ViewerOpenSequence _opens = new();
+
+    private async Task OpenWithAsync(Func<Task<ViewerDocument>> open, string name, byte[]? bytes, RangedFile? ranged)
     {
+        int ticket = _opens.Begin();
+        int request = _openRequest; // the host's request this open answers (0 in the demo)
         _loading = true;
         _loadingText = $"Opening {name}…";
         _status = _loadingText;
@@ -267,15 +288,17 @@ public sealed partial class Viewer : IAsyncDisposable
         await Task.Delay(1);
 
         var clock = Stopwatch.StartNew();
-        ViewerDocument doc;
+        ViewerDocument? opened;
         try
         {
-            doc = await ViewerDocument.OpenAsync(bytes, password, Options);
+            // A newer open (or a cancel) before this one ends: its document is disposed, its error dropped.
+            opened = await _opens.RunAsync(ticket, open);
         }
         catch (ViewerOpenException ex) when (ex.Failure is ViewerOpenFailure.PasswordRequired or ViewerOpenFailure.WrongPassword)
         {
             _passwordWasWrong = ex.Failure == ViewerOpenFailure.WrongPassword;
             _pendingBytes = bytes;
+            _pendingRange = ranged;
             _pendingName = name;
             _password = "";
             _passwordPrompt = ex.Failure == ViewerOpenFailure.WrongPassword ? $"That password does not open {name}. Try again." : $"{name} is protected by a password.";
@@ -287,36 +310,59 @@ public sealed partial class Viewer : IAsyncDisposable
         }
         catch (ViewerOpenException ex)
         {
-            FailOpen(EmbedErrors.FromOpenFailure(ex.Failure), ex.Message);
+            ranged?.Reader.Close();
+            FailOpen(request, EmbedErrors.FromOpenFailure(ex.Failure), ex.Message);
             _error = $"{name}: {ex.Message}" + (ex.Detail.Length > 0 && ex.Failure == ViewerOpenFailure.NotReadable ? $" (Engine detail: {ex.Detail}.)" : "");
             _loading = false;
             _status = _doc == null ? "Ready" : $"{_doc.PageCount} {(_doc.PageCount == 1 ? "page" : "pages")}";
             StateHasChanged();
             return;
         }
-        var opened = clock.Elapsed;
+        if (opened is not { } doc)
+        {
+            ranged?.Reader.Close();
+            return;
+        }
+        var openTime = clock.Elapsed;
 
         await CloseDocumentAsync();
+        if (!_opens.IsCurrent(ticket))
+        {
+            // Replaced while the shown document closed.
+            ranged?.Reader.Close();
+            await doc.DisposeAsync();
+            return;
+        }
         _doc = doc;
-        _docBytes = bytes;
-        await StartEditsAsync(doc, readOnly: Embedded && _openReadOnly);
+        _docReader = ranged?.Reader;
         _fileName = name;
         _currentPage = 1;
-        _outline = await doc.GetOutlineAsync();
         _panel = Panel.Outline;
         _noticeDismissed = false;
         _notice = null;
-        if (doc.EditRestriction is { } restriction && !(Embedded && _openReadOnly) && (_config.HasAnnotationTools || _config.EnableFormFilling))
+        _loadingRest = false;
+        _restBackoff.Reset();
+        _renderingDoneSent = false;
+        _firstPageMs = 0;
+        _openedAt = clock;
+        if (doc.IsComplete)
         {
-            // A signed or certified file that may not be changed (or only partly): the reader is told why.
-            _noticeIsFonts = false;
-            _notice = restriction;
+            await FinishOpenAsync(doc);
+        }
+        else
+        {
+            // Read by ranges: pages draw now; edits, the outline and search wait for the whole file.
+            StopEdits();
+            _outline = [];
+            _docReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            doc.Completed += () => _ = InvokeAsync(() => OnDocumentCompletedAsync(doc));
         }
         _query = _query.Trim();
         _loading = false;
-        _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {opened.TotalMilliseconds:0} ms" +
-                  (doc.WasRepaired ? " (damaged file, repaired)" : "");
-        if (Embedded) EmbedOpened();
+        _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {openTime.TotalMilliseconds:0} ms" +
+                  (doc.WasRepaired ? " (damaged file, repaired)" : "") +
+                  (doc.IsComplete ? "" : $", {Megabytes(doc.LoadedBytes)} of {Megabytes(doc.FileSize)} read");
+        if (Embedded) EmbedOpened(request);
         // Fit again once the side panel is laid out beside the pages.
         Refit();
         _refit = true;
@@ -330,21 +376,141 @@ public sealed partial class Viewer : IAsyncDisposable
     private async Task SubmitPasswordAsync()
     {
         _dialog = Dialog.None;
+        string password = _password;
         if (_pendingBytes is { } bytes)
         {
-            string password = _password;
             _password = "";
             _pendingBytes = null;
             await OpenAsync(bytes, _pendingName, password);
         }
+        else if (_pendingRange is { } ranged)
+        {
+            _password = "";
+            _pendingRange = null;
+            _openingReader = ranged.Reader;
+            await OpenRangedAsync(ranged, _pendingName, password);
+            if (_openingReader == ranged.Reader) _openingReader = null;
+        }
+    }
+
+    // ---------------------------------------------------------------- range loading
+
+    private EmbedRangeReader? _docReader;      // the shown document's, when it is read by ranges
+    private TaskCompletionSource? _docReady;   // set when a ranged document is complete and its edits are read
+    private bool _loadingRest, _renderingDoneSent;
+    private double _firstPageMs;
+    private Stopwatch? _openedAt;
+
+    private static string Megabytes(long bytes) => (bytes / (1024.0 * 1024)).ToString("0.0", CultureInfo.InvariantCulture) + " MB";
+
+    /// <summary>What needs the whole file: the annotations and form fields, the outline, a signed file's notice.</summary>
+    private async Task FinishOpenAsync(ViewerDocument doc)
+    {
+        _docBytes = doc.OriginalBytes;
+        await StartEditsAsync(doc, readOnly: Embedded && _openReadOnly);
+        _outline = await doc.GetOutlineAsync();
+        if (doc.EditRestriction is { } restriction && !(Embedded && _openReadOnly) && (_config.HasAnnotationTools || _config.EnableFormFilling))
+        {
+            // A signed or certified file that may not be changed (or only partly): the reader is told why.
+            _noticeIsFonts = false;
+            _notice = restriction;
+        }
+    }
+
+    /// <summary>A ranged document is complete: everything that waited for the whole file is read now.</summary>
+    private async Task OnDocumentCompletedAsync(ViewerDocument doc)
+    {
+        if (_doc != doc) return;
+        try
+        {
+            await FinishOpenAsync(doc);
+            if (Embedded && _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0)
+            {
+                _sidebarOpen = true;
+                _panel = Panel.Outline;
+                _refit = true;
+            }
+            _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, {Megabytes(doc.FileSize)} read" +
+                      (doc.RangeStatistics is { } r ? $" in {r.Requests} range requests" : "") +
+                      (_firstPageMs > 0 ? $", first page in {_firstPageMs:0} ms" : "");
+            if (Embedded && _documentId != 0) RestartAutoSave();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
+        {
+            _status = $"The document's annotations or outline could not be read ({ex.GetType().Name}).";
+        }
+        finally
+        {
+            _docReady?.TrySetResult();
+        }
+        StateHasChanged();
+        if (!string.IsNullOrWhiteSpace(_query)) await RestartSearchAsync();
+    }
+
+    // Tries again to read the rest after a failure, with a growing wait; stops after a few failures.
+    private readonly ViewerRetryBackoff _restBackoff = new();
+
+    /// <summary>
+    /// After the first page of a ranged document is drawn: the rest of the file is read in the
+    /// background. After a failure the next page drawn tries again only once the backoff allows,
+    /// and the read resumes where it stopped; after a few failures only the reader's "Try again" does.
+    /// </summary>
+    private async Task LoadRestAsync(ViewerDocument doc)
+    {
+        if (_loadingRest || doc.IsComplete || !_restBackoff.CanTry) return;
+        _loadingRest = true;
+        var completion = doc.EnsureCompleteAsync();
+        while (!completion.IsCompleted && _doc == doc)
+        {
+            _status = $"{doc.PageCount} pages, {Megabytes(doc.LoadedBytes)} of {Megabytes(doc.FileSize)} read" +
+                      (_firstPageMs > 0 ? $", first page in {_firstPageMs:0} ms" : "");
+            StateHasChanged();
+            await Task.WhenAny(completion, Task.Delay(500));
+        }
+        try
+        {
+            await completion;
+            if (_doc == doc) _restBackoff.Reset();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
+        {
+            if (_doc != doc) return;
+            _loadingRest = false;
+            var wait = _restBackoff.Failed();
+            string why = ex is ViewerOpenException open ? open.Message : $"The rest of the file could not be read ({ex.GetType().Name}).";
+            _status = _restBackoff.GaveUp
+                ? $"{why} Pages already read still show. Choose Try again to read the rest."
+                : $"{why} Pages already read still show; trying again in {wait.TotalSeconds:0} s.";
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>The reader's "Try again" after the background read gave up.</summary>
+    private Task RetryLoadRestAsync()
+    {
+        if (_doc is not { IsComplete: false } doc) return Task.CompletedTask;
+        _restBackoff.Reset();
+        return LoadRestAsync(doc);
+    }
+
+    /// <summary>Waits until the shown document is complete and its edits are read (at once for a document opened whole).</summary>
+    private async Task WaitReadyAsync(ViewerDocument doc)
+    {
+        if (doc.IsComplete && _docReady is not { Task.IsCompleted: false }) return;
+        _ = LoadRestAsync(doc);
+        await doc.EnsureCompleteAsync();
+        if (_docReady is { } ready) await ready.Task;
     }
 
     private void CancelPassword()
     {
-        FailOpen(_passwordWasWrong ? EmbedErrors.WrongPassword : EmbedErrors.PasswordRequired,
+        FailOpen(_openRequest, _passwordWasWrong ? EmbedErrors.WrongPassword : EmbedErrors.PasswordRequired,
             _passwordWasWrong ? "The password given does not open this PDF." : "This PDF is protected by a password.");
         _dialog = Dialog.None;
         _pendingBytes = null;
+        // A ranged file waiting for its password: its requests end.
+        _pendingRange?.Reader.Close();
+        _pendingRange = null;
         _password = "";
         _status = _doc == null ? "Ready" : _status;
     }
@@ -365,6 +531,10 @@ public sealed partial class Viewer : IAsyncDisposable
         _thumbsVisible.Clear();
         _docBytes = null;
         StopEdits();
+        _docReady?.TrySetCanceled();
+        _docReady = null;
+        _docReader?.Close();
+        _docReader = null;
         if (_doc != null) await _doc.DisposeAsync();
         _doc = null;
     }
@@ -374,6 +544,7 @@ public sealed partial class Viewer : IAsyncDisposable
     [JSInvokable]
     public void OnViewport(int[] visible, int current)
     {
+        _lastViewportTicks = Environment.TickCount64;
         _visible.Clear();
         foreach (int p in visible) _visible.Add(p);
         if (_doc != null && current != _currentPage && current >= 1 && current <= _doc.PageCount)
@@ -421,6 +592,12 @@ public sealed partial class Viewer : IAsyncDisposable
                     // The pages in view are drawn: then the thumbnails in the side panel's view.
                     int thumb = NextThumbnail();
                     if (thumb == 0) break;
+                    long rest = Environment.TickCount64 - _lastViewportTicks;
+                    if (rest < ScrollIdleMs)
+                    {
+                        await Task.Delay((int)(ScrollIdleMs - rest) + 1);
+                        continue;
+                    }
                     await DrawThumbnailAsync(doc, thumb);
                     await Task.Delay(1);
                     continue;
@@ -428,9 +605,25 @@ public sealed partial class Viewer : IAsyncDisposable
 
                 if (!_cache.TryGet(page, scale, night, out var bitmap))
                 {
+                    // While the reader scrolls, nothing new starts: a page's interpretation runs on
+                    // this (the only) thread, so it waits until the view rests for ScrollIdleMs.
+                    long since = Environment.TickCount64 - _lastViewportTicks;
+                    if (since < ScrollIdleMs && _drawn.Count > 0)
+                    {
+                        await Task.Delay((int)(ScrollIdleMs - since) + 1);
+                        continue;
+                    }
                     try
                     {
-                        bitmap = await doc.RenderPageAsync(page, scale, night);
+                        // Drawn in strips, yielding to the browser between them; a page that leaves
+                        // the view (or a zoom or night change) stops it, and the next page starts.
+                        var drawn = await doc.RenderPageInStripsAsync(page, scale, night, async () =>
+                        {
+                            await Task.Delay(1);
+                            return _doc == doc && _visible.Contains(page) && RenderScale == scale && _night == night;
+                        });
+                        if (drawn == null) continue;
+                        bitmap = drawn;
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
                     {
@@ -446,6 +639,28 @@ public sealed partial class Viewer : IAsyncDisposable
                 }
                 CanvasInterop.DrawPage(page, bitmap.Pixels, bitmap.Width, bitmap.Height);
                 _drawn[page] = (scale, night);
+                if (!_renderingDoneSent && _openedAt != null)
+                {
+                    _renderingDoneSent = true;
+                    Emit(EmbedEvents.AppRenderingDone, w =>
+                    {
+                        w.WriteNumber("pageNumber", page);
+                        w.WriteNumber("ms", Math.Round(_openedAt.Elapsed.TotalMilliseconds));
+                        w.WriteNumber("bytesRead", doc.LoadedBytes);
+                        w.WriteNumber("fileSize", doc.FileSize);
+                        w.WriteBoolean("ranged", !doc.IsComplete || doc.RangeStatistics != null);
+                    });
+                }
+                if (!doc.IsComplete)
+                {
+                    // A file read by ranges: the first page is on screen, the rest of the file follows.
+                    if (_firstPageMs == 0 && _openedAt != null)
+                    {
+                        _firstPageMs = _openedAt.Elapsed.TotalMilliseconds;
+                        if (Listening) CanvasInterop.MarkFirstPage(_firstPageMs, doc.LoadedBytes);
+                    }
+                    _ = LoadRestAsync(doc);
+                }
                 if (page == _currentPage) ShowPageNotices(bitmap);
                 // Let the browser paint before the next page.
                 await Task.Delay(1);
@@ -464,6 +679,7 @@ public sealed partial class Viewer : IAsyncDisposable
     private void Measure(ViewerBitmap bitmap)
     {
         double ms = (bitmap.BuildTime + bitmap.RasterTime).TotalMilliseconds;
+        CanvasInterop.MarkRender(bitmap.Page, bitmap.BuildTime.TotalMilliseconds, bitmap.RasterTime.TotalMilliseconds);
         _renderTimes.Add(ms);
         double median = _renderTimes.Order().ElementAt(_renderTimes.Count / 2);
         _perf = $"Page {bitmap.Page}: {ms:0} ms (interpret {bitmap.BuildTime.TotalMilliseconds:0}, draw {bitmap.RasterTime.TotalMilliseconds:0}), " +
