@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const sdkPath = fileURLToPath(new URL('../../src/PdfViewer.Web/wwwroot/pdfviewer-embed.js', import.meta.url));
 globalThis.document = { baseURI: 'https://host.test/page.html', currentScript: null };
 runInThisContext(readFileSync(sdkPath, 'utf8'), { filename: sdkPath });
-const { UrlRangeSource, LinearizedRangeSource, checkRange, parseContentRange, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS } = globalThis.PdfViewer._internals;
+const { UrlRangeSource, LinearizedRangeSource, RangeServer, checkRange, parseContentRange, bufferOf, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS, FETCH_TIMEOUT_MS } = globalThis.PdfViewer._internals;
 
 const MB = 1024 * 1024;
 const file = new Uint8Array(3 * MB).map((_, i) => (i * 31) & 255);
@@ -136,4 +136,104 @@ test('linearizationInfo that is incomplete or answers wrongly is refused', async
         getInfo: async () => ({ fileSize: 100 }), getInitialBuffer: async () => new ArrayBuffer(500), getFileBufferRanges: async () => [],
     });
     assert.equal(ignored.initial, null);
+});
+
+/** A fetch that never answers, but rejects as a browser does when its signal aborts. */
+function hangingServer() {
+    const calls = [];
+    globalThis.fetch = (href, init) => new Promise((_, reject) => {
+        calls.push({ range: init.headers.get('Range'), signal: init.signal });
+        init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    });
+    return calls;
+}
+
+async function rangeSource() {
+    server();
+    const { source } = await UrlRangeSource.open(init);
+    return source;
+}
+
+const ask = (requestId, start = 0, end = 10) => ({ requestId, file: 7, start, end });
+
+test('close() aborts the host fetches that never answer, and frees their slots', async () => {
+    const source = await rangeSource();
+    const calls = hangingServer();
+    const ranges = new RangeServer(7, source);
+    const waiting = [1, 2, 3].map(id => ranges.serve(ask(id)));
+    await new Promise(r => setImmediate(r));
+    assert.equal(ranges.inflight, 3);
+    assert.equal(calls.length, 3);
+    ranges.close();
+    for (const answer of await Promise.all(waiting)) {
+        assert.equal(answer.ok, false);
+        assert.equal(answer.error.code, 'CLOSED');
+    }
+    assert.equal(ranges.inflight, 0);
+    assert.ok(calls.every(c => c.signal.aborted), 'every fetch was aborted');
+    // A closed file refuses new requests at once.
+    assert.equal((await ranges.serve(ask(4))).error.code, 'NO_DOCUMENT');
+});
+
+test('a host fetch with no answer times out, and its slot is free again', async () => {
+    assert.equal(FETCH_TIMEOUT_MS, 60000);
+    const source = await rangeSource();
+    hangingServer();
+    const ranges = new RangeServer(7, source, 30);
+    const answer = await ranges.serve(ask(1));
+    assert.equal(answer.ok, false);
+    assert.equal(answer.error.code, 'NETWORK_ERROR');
+    assert.match(answer.error.message, /did not answer/);
+    assert.equal(ranges.inflight, 0);
+});
+
+test('the slots hold at most six waiting reads; a slot frees only when its read ends', async () => {
+    const source = await rangeSource();
+    hangingServer();
+    const ranges = new RangeServer(7, source);
+    const waiting = [];
+    for (let id = 1; id <= MAX_RANGE_REQUESTS; id++) waiting.push(ranges.serve(ask(id)));
+    await new Promise(r => setImmediate(r));
+    const refused = await ranges.serve(ask(99));
+    assert.equal(refused.error.code, 'INVALID_ARGUMENT');
+    assert.equal(ranges.inflight, MAX_RANGE_REQUESTS);
+    assert.equal(await ranges.serve(ask(1)), null, 'a request already waiting gets no second answer');
+    ranges.close();
+    await Promise.all(waiting);
+    assert.equal(ranges.inflight, 0);
+});
+
+test('a linearizationInfo source that never answers is let go on close', async () => {
+    const source = await LinearizedRangeSource.open({ getInfo: async () => ({ fileSize: 1000 }), getFileBufferRanges: () => new Promise(() => { }) });
+    const ranges = new RangeServer(7, source);
+    const waiting = ranges.serve(ask(1));
+    await new Promise(r => setImmediate(r));
+    assert.equal(ranges.inflight, 1);
+    ranges.close();
+    assert.equal((await waiting).error.code, 'CLOSED');
+    assert.equal(ranges.inflight, 0);
+});
+
+test('a served range answers with the bytes; a wrong file or range is refused before any fetch', async () => {
+    const source = await rangeSource();
+    const calls = server();
+    const ranges = new RangeServer(7, source);
+    const answer = await ranges.serve(ask(1, 100, 200));
+    assert.equal(answer.ok, true);
+    assert.deepEqual(new Uint8Array(answer.data), file.slice(100, 200));
+    assert.equal((await ranges.serve({ ...ask(2), file: 8 })).error.code, 'NO_DOCUMENT');
+    assert.equal((await ranges.serve(ask(3, 0, file.length + 1))).error.code, 'INVALID_ARGUMENT');
+    assert.equal(await ranges.serve({ requestId: 0, file: 7, start: 0, end: 1 }), null);
+    assert.equal(calls.length, 1);
+});
+
+test('bufferOf checks the size before it copies', async () => {
+    const big = new Uint8Array(1000).fill(7);
+    assert.equal((await bufferOf(big, 100)).byteLength, 100);
+    assert.equal((await bufferOf(big.buffer, 2000)).byteLength, 1000);
+    assert.equal((await bufferOf(new Blob([big]), 10)).byteLength, 10);
+    assert.equal(await bufferOf('nope', 10), null);
+    // A buffer of the wrong size from getFileBufferRanges is refused without a copy.
+    const wrong = await LinearizedRangeSource.open({ getInfo: async () => ({ fileSize: 100 }), getFileBufferRanges: async () => [new ArrayBuffer(50)] });
+    await assert.rejects(wrong.read(0, 10), /must resolve with 10 bytes/);
 });

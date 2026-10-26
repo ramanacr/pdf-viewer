@@ -259,14 +259,22 @@ inclusive, `bufferList`) are this SDK's and were not tested against Adobe's view
   12 rounds it reads the whole file.
 - A range request that fails (network, HTTP error, timeout after 60 s): at open, `previewFile`
   rejects with `NETWORK_ERROR`; later, the page is left undrawn (the viewer's status names the
-  error) and a zoom change draws it again. If the background read of the rest fails, the next
-  page drawn starts it again.
+  error) and a zoom change draws it again. If the background read of the rest fails, it tries
+  again after 2, 4, 8 and 16 s (when a page is drawn), from where it stopped; after five failures
+  the viewer shows a **Try again** button. The host page aborts its own fetches after 60 s without
+  an answer, and when the viewer is closed or another file is opened.
+- An object whose bytes, by the cross-reference table, would pass a cap (one page needs more than
+  256 MB, the document's structure or one round of missing bytes more than 32 MB): the cap is
+  checked before the bytes are asked for, and the viewer reads the whole file instead.
+- Two files opened one after the other: only the second shows, even when the first finishes last;
+  the first `previewFile` rejects with `CLOSED`.
 
 ### How it works
 
 The engine (`PdfEngine.Vector`, shared with the Windows viewer) reads PDFs through a synchronous
 byte source. `PdfRangedDocument` puts a 4 KB block cache under it (`PdfChunkCache`, least
-recently used first, 64 MB by default, the current page's blocks always kept). Before a page is
+recently used first, 64 MB by default, the current page's blocks always kept; while a document
+opens, the cache passes its cap by at most the 32 MB a round may fetch). Before a page is
 parsed, `PdfRangePlanner` walks its objects level by level from the page dictionary (resources,
 fonts, images, annotations; not `/Parent` or links to other pages) and fetches each level's byte
 ranges (an object runs from its cross-reference offset to the next object's). Then the page is

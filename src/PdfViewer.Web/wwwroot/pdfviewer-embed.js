@@ -34,6 +34,8 @@
     const RANGE_MIN_BYTES = 1024 * 1024;
     const RANGE_TAIL_BYTES = 1024 * 1024;
     const BOOT_TIMEOUT_MS = 60000;
+    // A host fetch that gets no answer in this time fails, as the viewer's own wait for a range does.
+    const FETCH_TIMEOUT_MS = 60000;
     const ISOLATION_DOCS = 'https://ramanacr.github.io/pdf-viewer/sdk/#same-origin-viewer';
 
     const EmbedMode = Object.freeze({ FULL_WINDOW: 'FULL_WINDOW', SIZED_CONTAINER: 'SIZED_CONTAINER', IN_LINE: 'IN_LINE', LIGHT_BOX: 'LIGHT_BOX' });
@@ -125,7 +127,7 @@
      * them). A range source is made for a location whose server answers range requests (unless
      * rangeRequests is false) and for Adobe-style linearizationInfo.
      */
-    async function prepareContent(content) {
+    async function prepareContent(content, signal) {
         if (!content || typeof content !== 'object') throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content must be an object with location, promise or arrayBuffer.');
         const given = ['location', 'promise', 'arrayBuffer'].filter(k => content[k] !== undefined && content[k] !== null);
         if (given.length !== 1) throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content must have exactly one of location, promise and arrayBuffer.');
@@ -136,11 +138,11 @@
                 throw fail(ErrorCode.INVALID_ARGUMENT, 'file.content.location.rangeRequests must be true or false.');
             }
             if (location.rangeRequests !== false) {
-                const ranged = await UrlRangeSource.open(init);
+                const ranged = await UrlRangeSource.open(init, signal);
                 if (ranged.source) return { range: ranged.source };
                 if (ranged.buffer) return { buffer: ranged.buffer };
             }
-            return { buffer: await fetchWhole(init) };
+            return { buffer: await fetchWhole(init, signal) };
         }
         if (given[0] === 'promise' && content.linearizationInfo !== undefined && content.linearizationInfo !== null) {
             try {
@@ -151,13 +153,52 @@
                 console.warn('PdfViewer: linearizationInfo failed, reading content.promise whole.', e);
             }
         }
-        const value = given[0] === 'promise' ? await content.promise : content.arrayBuffer;
+        const value = given[0] === 'promise' ? await untilAborted(Promise.resolve(content.promise), signal) : content.arrayBuffer;
         return { buffer: await ownBuffer(value) };
     }
 
+    /** The error of an aborted signal: its reason when it is ours (a timeout, a close), else CLOSED. */
+    function abortError(signal) {
+        return signal && signal.reason instanceof PdfViewerError ? signal.reason : fail(ErrorCode.CLOSED, 'The request was stopped: the viewer was closed or opened another file.');
+    }
+
+    /** `promise`, but rejected as soon as `signal` aborts (for sources that cannot be stopped themselves). */
+    function untilAborted(promise, signal) {
+        if (!signal) return promise;
+        if (signal.aborted) return Promise.reject(abortError(signal));
+        return new Promise((resolve, reject) => {
+            const onAbort = () => reject(abortError(signal));
+            signal.addEventListener('abort', onAbort, { once: true });
+            promise.then(
+                value => { signal.removeEventListener('abort', onAbort); resolve(value); },
+                error => { signal.removeEventListener('abort', onAbort); reject(error); });
+        });
+    }
+
+    /**
+     * An AbortController that aborts when `parent` aborts and, until clearTimer(), after `ms`
+     * (a NETWORK_ERROR that says it timed out). dispose() ends both links.
+     */
+    function timedController(ms, parent) {
+        const controller = new AbortController();
+        const onParent = () => controller.abort(parent.reason instanceof PdfViewerError ? parent.reason : abortError(parent));
+        if (parent) {
+            if (parent.aborted) onParent();
+            else parent.addEventListener('abort', onParent, { once: true });
+        }
+        let timer = ms > 0 ? setTimeout(() => controller.abort(fail(ErrorCode.NETWORK_ERROR, `The server did not answer in ${Math.round(ms / 1000)} s.`)), ms) : null;
+        const clearTimer = () => { if (timer !== null) clearTimeout(timer); timer = null; };
+        return {
+            signal: controller.signal,
+            abort: reason => controller.abort(reason),
+            clearTimer,
+            dispose: () => { clearTimer(); if (parent) parent.removeEventListener('abort', onParent); },
+        };
+    }
+
     /** The whole file of a range source, for a viewer that does not read ranges. */
-    async function readWhole(prepared) {
-        return prepared.buffer || prepared.range.readWhole();
+    async function readWhole(prepared, signal) {
+        return prepared.buffer || prepared.range.readWhole(signal);
     }
 
     /** A copy, so that transferring it to the viewer never empties the caller's own buffer. */
@@ -206,29 +247,38 @@
         return { href: url.href, headers, credentials: location.credentials === 'include' ? 'include' : 'same-origin' };
     }
 
-    /** One fetch of the location (with a Range header when `range` is given); network failures and HTTP errors as PdfViewerErrors. */
-    async function fetchFrom(init, range) {
+    /**
+     * One fetch of the location (with a Range header when `range` is given); network failures and
+     * HTTP errors as PdfViewerErrors. It stops when `signal` aborts, and fails when the server sends
+     * no answer (its headers) in FETCH_TIMEOUT_MS.
+     */
+    async function fetchFrom(init, range, signal) {
         const headers = new Headers(init.headers);
         if (range) headers.set('Range', range);
+        const timed = timedController(FETCH_TIMEOUT_MS, signal);
         let response;
         try {
-            response = await fetch(init.href, { headers, credentials: init.credentials });
+            // The body is read under `signal` alone: a long download of a whole file is not a timeout.
+            response = await untilAborted(fetch(init.href, { headers, credentials: init.credentials, signal: timed.signal }), timed.signal);
         } catch (e) {
+            timed.dispose();
+            if (timed.signal.aborted) throw abortError(timed.signal);
             throw fail(ErrorCode.NETWORK_ERROR,
                 'The file could not be fetched: the network failed, or the server does not let this page read it (CORS).', String(e && e.message || e));
         }
+        timed.clearTimer();
         if (response.status === 404 || response.status === 410) throw fail(ErrorCode.FILE_NOT_FOUND, `The file was not found (HTTP ${response.status}).`, { status: response.status });
         if (!response.ok) throw fail(ErrorCode.HTTP_ERROR, `The server answered HTTP ${response.status}.`, { status: response.status });
         return response;
     }
 
     /** The whole file of a location, read with the size cap. */
-    async function fetchWhole(init) {
-        return readResponse(await fetchFrom(init));
+    async function fetchWhole(init, signal) {
+        return readResponse(await fetchFrom(init, null, signal), signal);
     }
 
     /** A full response's body, refused at once when its readable Content-Length is too large. */
-    function readResponse(response) {
+    function readResponse(response, signal) {
         // A readable Content-Length that is too large fails at once. A missing or bad one is
         // unknown, not 0: readCapped counts the bytes as they arrive in all cases.
         const header = response.headers.get('Content-Length');
@@ -237,7 +287,7 @@
             if (response.body) response.body.cancel().catch(() => { });
             throw tooLarge();
         }
-        return readCapped(response, MAX_FILE_BYTES);
+        return readCapped(response, MAX_FILE_BYTES, signal);
     }
 
     /** "bytes 0-0/12345" → { start, end (inclusive), total }, or null. */
@@ -261,24 +311,24 @@
      * holds the cross-reference data, goes to the viewer with the open message.
      */
     class UrlRangeSource {
-        static async open(init) {
-            const probe = await fetchFrom(init, 'bytes=0-0');
+        static async open(init, signal) {
+            const probe = await fetchFrom(init, 'bytes=0-0', signal);
             if (probe.status !== 206) {
                 // No range support: this answer is the whole file already.
-                return { buffer: await readResponse(probe) };
+                return { buffer: await readResponse(probe, signal) };
             }
             const range = parseContentRange(probe.headers.get('Content-Range'));
             if (probe.body) probe.body.cancel().catch(() => { });
             if (!range || range.start !== 0) {
                 // Content-Range unreadable (a cross-origin server that does not expose it): the file is read whole.
-                return { buffer: await fetchWhole(init) };
+                return { buffer: await fetchWhole(init, signal) };
             }
             if (range.total > MAX_FILE_BYTES) throw tooLarge();
-            if (range.total <= RANGE_MIN_BYTES) return { buffer: await fetchWhole(init) };
+            if (range.total <= RANGE_MIN_BYTES) return { buffer: await fetchWhole(init, signal) };
             const source = new UrlRangeSource(init, range.total);
             const tail = Math.min(RANGE_TAIL_BYTES, range.total);
             source.initialOffset = range.total - tail;
-            source.initial = await source.read(source.initialOffset, range.total);
+            source.initial = await source.read(source.initialOffset, range.total, signal);
             return { source };
         }
 
@@ -290,30 +340,39 @@
             this.bytesFetched = 0;
         }
 
-        /** Bytes [start, end) of the file. The answer must be exactly them (HTTP 206 with a matching Content-Range). */
-        async read(start, end) {
+        /**
+         * Bytes [start, end) of the file. The answer must be exactly them (HTTP 206 with a matching
+         * Content-Range), within FETCH_TIMEOUT_MS for the whole range; `signal` stops the read.
+         */
+        async read(start, end, signal) {
             if (!checkRange(start, end, this.length)) {
                 throw fail(ErrorCode.INVALID_ARGUMENT, 'The range is not inside the file.');
             }
-            const response = await fetchFrom(this._init, `bytes=${start}-${end - 1}`);
-            if (response.status !== 206) {
-                if (response.body) response.body.cancel().catch(() => { });
-                throw fail(ErrorCode.HTTP_ERROR, `The server did not answer a range request (HTTP ${response.status}).`, { status: response.status });
+            // A range is at most 4 MB: its body has the same time limit as its headers.
+            const timed = timedController(FETCH_TIMEOUT_MS, signal);
+            try {
+                const response = await fetchFrom(this._init, `bytes=${start}-${end - 1}`, timed.signal);
+                if (response.status !== 206) {
+                    if (response.body) response.body.cancel().catch(() => { });
+                    throw fail(ErrorCode.HTTP_ERROR, `The server did not answer a range request (HTTP ${response.status}).`, { status: response.status });
+                }
+                const range = parseContentRange(response.headers.get('Content-Range'));
+                if (range && (range.start !== start || range.end !== end - 1 || range.total !== this.length)) {
+                    if (response.body) response.body.cancel().catch(() => { });
+                    throw fail(ErrorCode.HTTP_ERROR, 'The server answered another range than the one asked for, or the file changed.');
+                }
+                const buffer = await readCapped(response, end - start, timed.signal);
+                if (buffer.byteLength !== end - start) throw fail(ErrorCode.HTTP_ERROR, 'The server sent fewer bytes than the range asked for.');
+                this.bytesFetched += buffer.byteLength;
+                return buffer;
+            } finally {
+                timed.dispose();
             }
-            const range = parseContentRange(response.headers.get('Content-Range'));
-            if (range && (range.start !== start || range.end !== end - 1 || range.total !== this.length)) {
-                if (response.body) response.body.cancel().catch(() => { });
-                throw fail(ErrorCode.HTTP_ERROR, 'The server answered another range than the one asked for, or the file changed.');
-            }
-            const buffer = await readCapped(response, end - start);
-            if (buffer.byteLength !== end - start) throw fail(ErrorCode.HTTP_ERROR, 'The server sent fewer bytes than the range asked for.');
-            this.bytesFetched += buffer.byteLength;
-            return buffer;
         }
 
         /** The whole file, for a viewer that does not read ranges. */
-        readWhole() {
-            return fetchWhole(this._init);
+        readWhole(signal) {
+            return fetchWhole(this._init, signal);
         }
     }
 
@@ -338,9 +397,11 @@
                 const initial = await info.getInitialBuffer();
                 const start = initial && typeof initial === 'object' && !(initial instanceof ArrayBuffer) && !ArrayBuffer.isView(initial)
                     ? (initial.start ?? initial.offset ?? 0) : 0;
-                const buffer = await bufferOf(initial && initial.buffer instanceof ArrayBuffer && !ArrayBuffer.isView(initial) ? initial.buffer : initial);
-                if (buffer && Number.isSafeInteger(start) && start >= 0 && start + buffer.byteLength <= length) {
-                    source.initial = buffer.byteLength > MAX_RANGE_BYTES * 4 ? buffer.slice(0, MAX_RANGE_BYTES * 4) : buffer;
+                const value = initial && initial.buffer instanceof ArrayBuffer && !ArrayBuffer.isView(initial) ? initial.buffer : initial;
+                // Only what fits the file is kept, and at most 16 MB of it is copied.
+                const size = sizeOf(value);
+                if (size !== null && Number.isSafeInteger(start) && start >= 0 && start + size <= length) {
+                    source.initial = await bufferOf(value, MAX_RANGE_BYTES * 4);
                     source.initialOffset = start;
                 }
             }
@@ -356,30 +417,99 @@
             this.bytesFetched = 0;
         }
 
-        async read(start, end) {
+        /** Bytes [start, end): the host's getFileBufferRanges cannot be stopped, but `signal` ends the wait for it. */
+        async read(start, end, signal) {
             if (!checkRange(start, end, this.length)) throw fail(ErrorCode.INVALID_ARGUMENT, 'The range is not inside the file.');
-            const result = await this._info.getFileBufferRanges([{ start, end: end - 1 }]);
+            const result = await untilAborted(Promise.resolve(this._info.getFileBufferRanges([{ start, end: end - 1 }])), signal);
             const list = Array.isArray(result) ? result : result && (result.bufferList || result.buffers);
-            const buffer = await bufferOf(Array.isArray(list) ? list[0] : null);
-            if (!buffer || buffer.byteLength !== end - start) {
+            const value = Array.isArray(list) ? list[0] : null;
+            // The size is checked before anything is copied.
+            if (sizeOf(value) !== end - start) {
                 throw fail(ErrorCode.INVALID_ARGUMENT, `getFileBufferRanges must resolve with ${end - start} bytes for the range ${start}-${end - 1}.`);
             }
+            const buffer = await bufferOf(value, end - start);
             this.bytesFetched += buffer.byteLength;
             return buffer;
         }
 
-        async readWhole() {
+        async readWhole(signal) {
             if (!this._whole) throw fail(ErrorCode.INVALID_ARGUMENT, 'content.promise is required with linearizationInfo.');
-            return ownBuffer(await this._whole);
+            return ownBuffer(await untilAborted(Promise.resolve(this._whole), signal));
         }
     }
 
-    /** An ArrayBuffer of its own (copied) from an ArrayBuffer, a typed array or a Blob; null for anything else. */
-    async function bufferOf(value) {
-        if (value instanceof ArrayBuffer) return value.slice(0);
-        if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
-        if (typeof Blob !== 'undefined' && value instanceof Blob) return value.arrayBuffer();
+    /** The byte length of an ArrayBuffer, a typed array or a Blob; null for anything else. */
+    function sizeOf(value) {
+        if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return value.byteLength;
+        if (typeof Blob !== 'undefined' && value instanceof Blob) return value.size;
         return null;
+    }
+
+    /**
+     * An ArrayBuffer of its own (copied) of at most the first `limit` bytes of an ArrayBuffer, a
+     * typed array or a Blob; null for anything else. The size is known before the copy, so a huge
+     * value is never copied whole.
+     */
+    async function bufferOf(value, limit) {
+        const size = sizeOf(value);
+        if (size === null) return null;
+        const n = Math.min(size, limit);
+        if (value instanceof ArrayBuffer) return value.slice(0, n);
+        if (ArrayBuffer.isView(value)) return value.buffer.slice(value.byteOffset, value.byteOffset + n);
+        return (n < size ? value.slice(0, n) : value).arrayBuffer();
+    }
+
+    /**
+     * The host's side of the ranges of one file: it checks each fetchRange message of the viewer,
+     * reads the bytes from the source given to previewFile (never another), and keeps at most
+     * MAX_RANGE_REQUESTS waiting. Each read has its own AbortController and the FETCH_TIMEOUT_MS
+     * limit; close() aborts them all. A slot is free again only when its read ends or is aborted.
+     */
+    class RangeServer {
+        constructor(file, source, timeoutMs = FETCH_TIMEOUT_MS) {
+            this.file = file;
+            this.source = source;
+            this._timeoutMs = timeoutMs;
+            this._inflight = new Map();
+            this.closed = false;
+        }
+
+        /** The reads waiting now. */
+        get inflight() {
+            return this._inflight.size;
+        }
+
+        /**
+         * Serves one fetchRange message. Resolves with { ok: true, data }, { ok: false, error },
+         * or null when the message gets no answer (a bad id, or a request already waiting).
+         */
+        async serve(m) {
+            const refuse = (code, message) => ({ ok: false, error: { code, message } });
+            if (!m || !Number.isSafeInteger(m.requestId) || m.requestId < 1 || !Number.isSafeInteger(m.file)) return null;
+            if (this.closed || m.file !== this.file) return refuse(ErrorCode.NO_DOCUMENT, 'This file is no longer open.');
+            if (this._inflight.has(m.requestId)) return null;
+            if (!checkRange(m.start, m.end, this.source.length)) return refuse(ErrorCode.INVALID_ARGUMENT, 'The range is not a valid range of the file.');
+            if (this._inflight.size >= MAX_RANGE_REQUESTS) return refuse(ErrorCode.INVALID_ARGUMENT, `At most ${MAX_RANGE_REQUESTS} range requests may wait at once.`);
+            const timed = timedController(this._timeoutMs);
+            this._inflight.set(m.requestId, timed);
+            try {
+                const data = await untilAborted(Promise.resolve().then(() => this.source.read(m.start, m.end, timed.signal)), timed.signal);
+                return { ok: true, data };
+            } catch (e) {
+                const error = e instanceof PdfViewerError ? e : fail(ErrorCode.NETWORK_ERROR, String(e && e.message || e));
+                return refuse(error.code, error.message);
+            } finally {
+                timed.dispose();
+                this._inflight.delete(m.requestId);
+            }
+        }
+
+        /** The file is closed or replaced: every read waiting is aborted, and new ones are refused. */
+        close() {
+            this.closed = true;
+            const reason = fail(ErrorCode.CLOSED, 'The viewer was closed or opened another file.');
+            for (const timed of this._inflight.values()) timed.abort(reason);
+        }
     }
 
     /**
@@ -387,9 +517,9 @@
      * more than `limit` bytes have arrived. Content-Length can be missing or wrong (compressed or
      * chunked responses), so only the bytes counted here are trusted.
      */
-    async function readCapped(response, limit) {
+    async function readCapped(response, limit, signal) {
         if (!response.body || typeof response.body.getReader !== 'function') {
-            const buffer = await response.arrayBuffer();   // no stream in this browser
+            const buffer = await untilAborted(response.arrayBuffer(), signal);   // no stream in this browser
             if (buffer.byteLength > limit) throw tooLarge();
             return buffer;
         }
@@ -399,8 +529,12 @@
         for (;;) {
             let step;
             try {
-                step = await reader.read();
+                step = await untilAborted(reader.read(), signal);
             } catch (e) {
+                if (signal && signal.aborted) {
+                    reader.cancel().catch(() => { });
+                    throw abortError(signal);
+                }
                 throw fail(ErrorCode.NETWORK_ERROR, 'The file could not be read: the network failed.', String(e && e.message || e));
             }
             if (step.done) break;
@@ -624,7 +758,8 @@
             this._exitLabel = 'Close';
             this._document = 0;
             this._viewerFeatures = new Set();
-            this._range = null;
+            this._range = null;        // the RangeServer of the file shown (or opening)
+            this._preparing = null;    // the AbortController of a previewFile still fetching its file
             this._onMessage = this._onMessage.bind(this);
             global.addEventListener('message', this._onMessage);
         }
@@ -669,18 +804,32 @@
             const mode = checkConfig(settings);
 
             this._exitLabel = settings.exitPDFViewerType === 'RETURN' ? 'Return' : 'Close';
+            // A previewFile still fetching its file is replaced: its fetches stop (it rejects with CLOSED).
+            if (this._preparing) this._preparing.abort(fail(ErrorCode.CLOSED, 'Another file was opened before this one was ready.'));
+            const preparing = new AbortController();
+            this._preparing = preparing;
+            const signal = preparing.signal;
             const ready = this._ensureFrame(mode, fileName);
-            const content = prepareContent(file.content);
+            const content = prepareContent(file.content, signal);
             // Both run at once: the viewer boots while the file (or its end) downloads.
-            const [prepared] = await Promise.all([content, ready]);
+            let prepared, buffer;
+            try {
+                [prepared] = await Promise.all([content, ready]);
+                if (signal.aborted) throw abortError(signal);
+                const ranged = prepared.range && this._viewerFeatures.has('range') ? prepared.range : null;
+                buffer = ranged ? (ranged.initial || new ArrayBuffer(0)) : await readWhole(prepared, signal);
+                if (signal.aborted) throw abortError(signal);
+            } finally {
+                if (this._preparing === preparing) this._preparing = null;
+            }
             const ranged = prepared.range && this._viewerFeatures.has('range') ? prepared.range : null;
-            const buffer = ranged ? (ranged.initial || new ArrayBuffer(0)) : await readWhole(prepared);
             if (!ranged && buffer.byteLength > MAX_FILE_BYTES) throw tooLarge();
 
             const requestId = this._nextId++;
             const opened = this._request(requestId);
-            // A new file: the ranges of the one before are no longer served.
-            this._range = ranged ? { file: requestId, source: ranged, inflight: new Set() } : null;
+            // A new file: the ranges of the one before are no longer served, and its reads waiting stop.
+            if (this._range) this._range.close();
+            this._range = ranged ? new RangeServer(requestId, ranged) : null;
             this._post({
                 type: 'open', requestId, fileName,
                 fileId: typeof meta.id === 'string' ? meta.id : null,
@@ -815,6 +964,11 @@
         }
 
         _closeFrame() {
+            // Every host fetch of this viewer stops: the file being prepared, and the ranges waiting.
+            if (this._preparing) this._preparing.abort(fail(ErrorCode.CLOSED, 'The viewer was closed.'));
+            this._preparing = null;
+            if (this._range) this._range.close();
+            this._range = null;
             if (!this._frame) return;
             if (this._lightBox) this._lightBox.close();
             else this._frame.remove();
@@ -882,36 +1036,21 @@
         }
 
         /**
-         * The viewer asks for bytes of the file it shows (or opens). Checked here before any fetch:
-         * the file is the current one, the request id is a new whole number, the range is whole
-         * numbers inside the file and at most MAX_RANGE_BYTES long, and at most MAX_RANGE_REQUESTS
-         * wait at once. The bytes come from the source given to previewFile, never another.
+         * The viewer asks for bytes of the file it shows (or opens). Checked (by RangeServer) before
+         * any fetch: the file is the current one, the request id is a new whole number, the range is
+         * whole numbers inside the file and at most MAX_RANGE_BYTES long, and at most
+         * MAX_RANGE_REQUESTS wait at once. The bytes come from the source given to previewFile, never another.
          */
         async _serveRange(m, frame) {
             const r = this._range;
-            const reply = (ok, extra, transfer) => {
-                if (this._frame !== frame || !frame.contentWindow) return;
-                frame.contentWindow.postMessage({ protocol: PROTOCOL, version: PROTOCOL_VERSION, type: 'range', file: m.file, requestId: m.requestId, ok, ...extra },
-                    this._viewerOrigin, transfer || []);
-            };
-            const refuse = (code, message) => reply(false, { error: { code, message } });
-            if (!Number.isSafeInteger(m.requestId) || m.requestId < 1 || !Number.isSafeInteger(m.file)) return;
-            if (!r || m.file !== r.file) return refuse(ErrorCode.NO_DOCUMENT, 'This file is no longer open.');
-            if (r.inflight.has(m.requestId)) return;
-            if (!checkRange(m.start, m.end, r.source.length)) return refuse(ErrorCode.INVALID_ARGUMENT, 'The range is not a valid range of the file.');
-            if (r.inflight.size >= MAX_RANGE_REQUESTS) return refuse(ErrorCode.INVALID_ARGUMENT, `At most ${MAX_RANGE_REQUESTS} range requests may wait at once.`);
-            r.inflight.add(m.requestId);
-            try {
-                const data = await r.source.read(m.start, m.end);
-                if (this._range !== r) return;
-                reply(true, { data }, [data]);
-            } catch (e) {
-                if (this._range !== r) return;
-                const error = e instanceof PdfViewerError ? e : fail(ErrorCode.NETWORK_ERROR, String(e && e.message || e));
-                refuse(error.code, error.message);
-            } finally {
-                r.inflight.delete(m.requestId);
-            }
+            const answer = r ? await r.serve(m)
+                : Number.isSafeInteger(m.requestId) && m.requestId >= 1 && Number.isSafeInteger(m.file)
+                    ? { ok: false, error: { code: ErrorCode.NO_DOCUMENT, message: 'This file is no longer open.' } } : null;
+            // A file replaced or closed meanwhile gets no answer: the viewer ended its requests already.
+            if (!answer || this._range !== r || this._frame !== frame || !frame.contentWindow) return;
+            const extra = answer.ok ? { data: answer.data } : { error: answer.error };
+            frame.contentWindow.postMessage({ protocol: PROTOCOL, version: PROTOCOL_VERSION, type: 'range', file: m.file, requestId: m.requestId, ok: answer.ok, ...extra },
+                this._viewerOrigin, answer.ok ? [answer.data] : []);
         }
 
         /** Only the viewer's own frame, from the viewer's origin, with this protocol, is heard. */
@@ -981,7 +1120,7 @@
     };
     // For tests of the range sources (tests/sdk); not part of the API.
     Object.defineProperty(PdfViewer, '_internals', {
-        value: Object.freeze({ UrlRangeSource, LinearizedRangeSource, checkRange, parseContentRange, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS }),
+        value: Object.freeze({ UrlRangeSource, LinearizedRangeSource, RangeServer, checkRange, parseContentRange, bufferOf, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS, FETCH_TIMEOUT_MS }),
     });
     // For pdfviewer-embed.mjs: a module knows its own URL, a classic script reads currentScript.
     Object.defineProperty(PdfViewer, '_setScriptUrl', {
