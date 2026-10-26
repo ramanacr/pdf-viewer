@@ -94,15 +94,19 @@ public sealed partial class Viewer
         }
         if (_openRequest != 0) Post(EmbedProtocol.Error(_openRequest, EmbedErrors.Closed, "Another file was opened before this one was ready."));
         _openRequest = open.RequestId;
+        // An open still running is stale from now on: it may not show its document or answer the host.
+        _opens.Supersede();
         _passwordWasWrong = false;
         _dialog = Dialog.None;
-        // A ranged open still waiting (for a password) is replaced: its requests end.
+        // A ranged open still waiting (for a password, or for its bytes) is replaced: its requests end.
         _pendingRange?.Reader.Close();
         _pendingRange = null;
+        _openingReader?.Close();
+        _openingReader = null;
         _pendingBytes = null;
         if (bytes.Length == 0 && open.Range == null)
         {
-            FailOpen(EmbedErrors.NotAPdf, "The file is empty.");
+            FailOpen(open.RequestId, EmbedErrors.NotAPdf, "The file is empty.");
             return;
         }
         _config = open.Config;
@@ -157,11 +161,10 @@ public sealed partial class Viewer
         or EmbedMethod.ZoomIn or EmbedMethod.ZoomOut or EmbedMethod.SetZoomLevel or EmbedMethod.GetZoomLimits
         or EmbedMethod.GetSelectedContent or EmbedMethod.SetSaveOptions or EmbedMethod.SaveResult;
 
-    /// <summary>The document is open: the host's previewFile promise resolves.</summary>
-    private void EmbedOpened()
+    /// <summary>The document of open request <paramref name="request"/> is open: the host's previewFile promise resolves.</summary>
+    private void EmbedOpened(int request)
     {
-        if (_openRequest == 0) return;
-        int request = _openRequest;
+        if (request == 0 || request != _openRequest) return;
         _openRequest = 0;
         _documentId = request;
         _reportedPage = 0;
@@ -186,10 +189,11 @@ public sealed partial class Viewer
         RestartAutoSave();
     }
 
-    private void FailOpen(string code, string message)
+    /// <summary>Open request <paramref name="request"/> failed; nothing when a newer request replaced it (that one was told already).</summary>
+    private void FailOpen(int request, string code, string message)
     {
-        if (_openRequest == 0) return;
-        Post(EmbedProtocol.Error(_openRequest, code, message));
+        if (request == 0 || request != _openRequest) return;
+        Post(EmbedProtocol.Error(request, code, message));
         _openRequest = 0;
     }
 

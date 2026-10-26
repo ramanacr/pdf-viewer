@@ -170,6 +170,14 @@
             <button type="button" class="icon-button" aria-label="Dismiss" @onclick="DismissNotice"><Icon Name="close" /></button>
         </div>
     }
+    @if (_restBackoff.GaveUp && _doc is { IsComplete: false } && _error == null)
+    {
+        <div class="banner notice" role="status">
+            <Icon Name="info" />
+            <p>The rest of the file could not be read. Pages already read still show.</p>
+            <button type="button" class="button" @onclick="RetryLoadRestAsync">Try again</button>
+        </div>
+    }
 
     <div class="body">
         @if (_doc != null && _sidebarOpen && _config.HasSidePanel)

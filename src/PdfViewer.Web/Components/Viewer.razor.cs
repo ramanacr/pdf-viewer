@@ -273,8 +273,13 @@ public sealed partial class Viewer : IAsyncDisposable
 
     private RangedFile? _pendingRange;
 
+    // Opens that overlap: only the latest may show its document or report to the host.
+    private readonly ViewerOpenSequence _opens = new();
+
     private async Task OpenWithAsync(Func<Task<ViewerDocument>> open, string name, byte[]? bytes, RangedFile? ranged)
     {
+        int ticket = _opens.Begin();
+        int request = _openRequest; // the host's request this open answers (0 in the demo)
         _loading = true;
         _loadingText = $"Opening {name}…";
         _status = _loadingText;
@@ -283,10 +288,11 @@ public sealed partial class Viewer : IAsyncDisposable
         await Task.Delay(1);
 
         var clock = Stopwatch.StartNew();
-        ViewerDocument doc;
+        ViewerDocument? opened;
         try
         {
-            doc = await open();
+            // A newer open (or a cancel) before this one ends: its document is disposed, its error dropped.
+            opened = await _opens.RunAsync(ticket, open);
         }
         catch (ViewerOpenException ex) when (ex.Failure is ViewerOpenFailure.PasswordRequired or ViewerOpenFailure.WrongPassword)
         {
@@ -305,16 +311,28 @@ public sealed partial class Viewer : IAsyncDisposable
         catch (ViewerOpenException ex)
         {
             ranged?.Reader.Close();
-            FailOpen(EmbedErrors.FromOpenFailure(ex.Failure), ex.Message);
+            FailOpen(request, EmbedErrors.FromOpenFailure(ex.Failure), ex.Message);
             _error = $"{name}: {ex.Message}" + (ex.Detail.Length > 0 && ex.Failure == ViewerOpenFailure.NotReadable ? $" (Engine detail: {ex.Detail}.)" : "");
             _loading = false;
             _status = _doc == null ? "Ready" : $"{_doc.PageCount} {(_doc.PageCount == 1 ? "page" : "pages")}";
             StateHasChanged();
             return;
         }
-        var opened = clock.Elapsed;
+        if (opened is not { } doc)
+        {
+            ranged?.Reader.Close();
+            return;
+        }
+        var openTime = clock.Elapsed;
 
         await CloseDocumentAsync();
+        if (!_opens.IsCurrent(ticket))
+        {
+            // Replaced while the shown document closed.
+            ranged?.Reader.Close();
+            await doc.DisposeAsync();
+            return;
+        }
         _doc = doc;
         _docReader = ranged?.Reader;
         _fileName = name;
@@ -323,6 +341,7 @@ public sealed partial class Viewer : IAsyncDisposable
         _noticeDismissed = false;
         _notice = null;
         _loadingRest = false;
+        _restBackoff.Reset();
         _renderingDoneSent = false;
         _firstPageMs = 0;
         _openedAt = clock;
@@ -340,10 +359,10 @@ public sealed partial class Viewer : IAsyncDisposable
         }
         _query = _query.Trim();
         _loading = false;
-        _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {opened.TotalMilliseconds:0} ms" +
+        _status = $"{doc.PageCount} {(doc.PageCount == 1 ? "page" : "pages")}, opened in {openTime.TotalMilliseconds:0} ms" +
                   (doc.WasRepaired ? " (damaged file, repaired)" : "") +
                   (doc.IsComplete ? "" : $", {Megabytes(doc.LoadedBytes)} of {Megabytes(doc.FileSize)} read");
-        if (Embedded) EmbedOpened();
+        if (Embedded) EmbedOpened(request);
         // Fit again once the side panel is laid out beside the pages.
         Refit();
         _refit = true;
@@ -428,10 +447,17 @@ public sealed partial class Viewer : IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(_query)) await RestartSearchAsync();
     }
 
-    /// <summary>After the first page of a ranged document is drawn: the rest of the file is read in the background.</summary>
+    // Tries again to read the rest after a failure, with a growing wait; stops after a few failures.
+    private readonly ViewerRetryBackoff _restBackoff = new();
+
+    /// <summary>
+    /// After the first page of a ranged document is drawn: the rest of the file is read in the
+    /// background. After a failure the next page drawn tries again only once the backoff allows,
+    /// and the read resumes where it stopped; after a few failures only the reader's "Try again" does.
+    /// </summary>
     private async Task LoadRestAsync(ViewerDocument doc)
     {
-        if (_loadingRest || doc.IsComplete) return;
+        if (_loadingRest || doc.IsComplete || !_restBackoff.CanTry) return;
         _loadingRest = true;
         var completion = doc.EnsureCompleteAsync();
         while (!completion.IsCompleted && _doc == doc)
@@ -444,14 +470,27 @@ public sealed partial class Viewer : IAsyncDisposable
         try
         {
             await completion;
+            if (_doc == doc) _restBackoff.Reset();
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
         {
             if (_doc != doc) return;
-            _loadingRest = false; // the next page drawn tries again
-            _status = $"The rest of the file could not be read ({ex.GetType().Name}). Pages already read still show.";
+            _loadingRest = false;
+            var wait = _restBackoff.Failed();
+            string why = ex is ViewerOpenException open ? open.Message : $"The rest of the file could not be read ({ex.GetType().Name}).";
+            _status = _restBackoff.GaveUp
+                ? $"{why} Pages already read still show. Choose Try again to read the rest."
+                : $"{why} Pages already read still show; trying again in {wait.TotalSeconds:0} s.";
             StateHasChanged();
         }
+    }
+
+    /// <summary>The reader's "Try again" after the background read gave up.</summary>
+    private Task RetryLoadRestAsync()
+    {
+        if (_doc is not { IsComplete: false } doc) return Task.CompletedTask;
+        _restBackoff.Reset();
+        return LoadRestAsync(doc);
     }
 
     /// <summary>Waits until the shown document is complete and its edits are read (at once for a document opened whole).</summary>
@@ -465,10 +504,13 @@ public sealed partial class Viewer : IAsyncDisposable
 
     private void CancelPassword()
     {
-        FailOpen(_passwordWasWrong ? EmbedErrors.WrongPassword : EmbedErrors.PasswordRequired,
+        FailOpen(_openRequest, _passwordWasWrong ? EmbedErrors.WrongPassword : EmbedErrors.PasswordRequired,
             _passwordWasWrong ? "The password given does not open this PDF." : "This PDF is protected by a password.");
         _dialog = Dialog.None;
         _pendingBytes = null;
+        // A ranged file waiting for its password: its requests end.
+        _pendingRange?.Reader.Close();
+        _pendingRange = null;
         _password = "";
         _status = _doc == null ? "Ready" : _status;
     }

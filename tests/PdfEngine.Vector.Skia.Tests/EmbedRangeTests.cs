@@ -323,6 +323,26 @@ public class EmbedRangeTests
     }
 
     [Fact]
+    public async Task RangedDocument_CompletionFailure_IsMapped_AndTheNextTryResumes()
+    {
+        var file = ImagePdf(40);
+        var (reader, host) = Connect(file);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 16 * 1024, CompletionRequestBytes = 64 * 1024 });
+        bool down = true;
+        host.Answer = (_, start, end) => Volatile.Read(ref down) && start >= file.Length / 2 ? (false, []) : (true, file[(int)start..(int)end]);
+        var ex = await Assert.ThrowsAsync<ViewerOpenException>(() => doc.EnsureCompleteAsync());
+        Assert.Equal(ViewerOpenFailure.NetworkError, ex.Failure);
+        Assert.False(doc.IsComplete);
+        long first = reader.BytesReceived;
+
+        Volatile.Write(ref down, false);
+        await doc.EnsureCompleteAsync();
+        Assert.True(doc.IsComplete);
+        Assert.Equal(file, doc.Bytes);
+        Assert.True(reader.BytesReceived < file.Length + first / 4, $"{reader.BytesReceived} received for {file.Length}");
+    }
+
+    [Fact]
     public async Task RangedDocument_TooLarge_IsRefusedBeforeAnyRead()
     {
         var reader = new MemoryRangeReader(new byte[2000]);

@@ -336,20 +336,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(bytes);
         options ??= new ViewerOptions();
-        if (bytes.LongLength > options.MaxFileBytes)
-            throw new ViewerOpenException(ViewerOpenFailure.TooLarge,
-                $"This file is larger than {options.MaxFileBytes / (1024 * 1024)} MB, the most this viewer opens.");
-
-        PdfVectorDocument document;
-        try
-        {
-            document = await PdfVectorDocument.OpenAsync(bytes, "Document.pdf", password: password, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (OpenFailure(ex, password) is { } failure)
-        {
-            throw failure;
-        }
-
+        var document = await ParseAsync(bytes, password, options, cancellationToken).ConfigureAwait(false);
         try
         {
             var pages = new ViewerPage[document.PageCount];
@@ -366,6 +353,22 @@ public sealed class ViewerDocument : IAsyncDisposable
         {
             document.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>The parse of a whole file, with the size cap of <paramref name="options"/>; failures as <see cref="ViewerOpenException"/>.</summary>
+    private static async Task<PdfVectorDocument> ParseAsync(byte[] bytes, string? password, ViewerOptions options, CancellationToken cancellationToken)
+    {
+        if (bytes.LongLength > options.MaxFileBytes)
+            throw new ViewerOpenException(ViewerOpenFailure.TooLarge,
+                $"This file is larger than {options.MaxFileBytes / (1024 * 1024)} MB, the most this viewer opens.");
+        try
+        {
+            return await PdfVectorDocument.OpenAsync(bytes, "Document.pdf", password: password, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (OpenFailure(ex, password) is { } failure)
+        {
+            throw failure;
         }
     }
 
@@ -454,12 +457,24 @@ public sealed class ViewerDocument : IAsyncDisposable
         return completion.WaitAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Reads the rest and parses the whole file as <see cref="OpenAsync"/> does (the same options
+    /// and failures): a failure is a <see cref="ViewerOpenException"/>, never a raw engine exception.
+    /// </summary>
     private async Task CompleteAsync()
     {
         var ranged = _ranged!;
         var token = _closing.Token;
-        byte[] bytes = await ranged.ReadAllAsync(new SyncProgress(n => Interlocked.Exchange(ref _loadedBytes, n)), token).ConfigureAwait(false);
-        var document = await PdfVectorDocument.OpenAsync(bytes, "Document.pdf", password: _password, cancellationToken: token).ConfigureAwait(false);
+        byte[] bytes;
+        try
+        {
+            bytes = await ranged.ReadAllAsync(new SyncProgress(n => Interlocked.Exchange(ref _loadedBytes, n)), token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not ObjectDisposedException && OpenFailure(ex, _password) is { } failure)
+        {
+            throw failure;
+        }
+        var document = await ParseAsync(bytes, _password, _options, token).ConfigureAwait(false);
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
