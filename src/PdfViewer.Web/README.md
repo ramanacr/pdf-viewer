@@ -82,6 +82,49 @@ Keyboard shortcuts are listed in the app (`?`).
    version as the rest of the solution) provides `libSkiaSharp.a`, linked into the runtime by
    the `wasm-tools` workload (Emscripten). There is no GPU or WebGL use: Skia's CPU raster.
 
+### Rendering in a worker (opt-in)
+
+`index.html?renderInWorker=1` draws the pages in view in a dedicated Web Worker, so that the
+page's thread stays free while a page is interpreted and drawn. Multithreaded WebAssembly needs
+`SharedArrayBuffer`, and so cross-origin isolation, which needs COOP/COEP headers that GitHub
+Pages cannot send. The worker (`wwwroot/js/render-worker.js`) starts a second, render-only .NET runtime from
+the same `_framework` files instead (`dotnet.withConfigSrc('blazor.boot.json').create()`, no
+`Main`), and calls `Interop/RenderWorkerExports.cs` through `[JSExport]`. The two runtimes share
+nothing: the PDF bytes go to the worker by `postMessage` (a transferred `ArrayBuffer`), and each
+page comes back as a transferred `ImageBitmap` that `viewer.js` draws into the page's canvas.
+
+- The worker holds its own copy of the document and opens it again when the bytes change (after
+  an edit). Text, search, selection, annotations, thumbnails and print stay on the page's thread.
+- It serves complete, unencrypted files drawn with the bundled fonts. Otherwise, and when it does
+  not start within 20 s or fails, the pages are drawn on the page's thread, as without the flag.
+- `dotnet.js` 9.0 decides when it is evaluated whether a worker is one of the multithreaded
+  runtime's own pthread workers: a worker that has a message handler at that moment and no
+  `globalThis.dotnetSidecar` flag is taken for one, and its start then waits forever (the loader
+  never resolves `coreAssetsInMemory`, after "onRuntimeInitialized"). The worker sets the flag
+  before it imports `dotnet.js`.
+
+Measured with headless Chrome on the development machine (loopback server, Release build, three
+runs of each mode, interleaved): open the engine tour, then zoom in three times and scroll to the
+end and back. Total blocking time is the sum of each long task's time over 50 ms.
+
+| | Main thread | Render worker |
+|---|---|---|
+| Open to first page: total blocking time (longest task) | 350 to 620 ms (333 to 596 ms) | 67 to 90 ms (101 to 118 ms) |
+| Open to first page: time | 641 to 964 ms | 684 to 1172 ms |
+| Zoom and scroll: total blocking time (longest task) | 110 to 188 ms (160 to 238 ms) | 0 ms (no task over 50 ms) |
+| Longest gap of a 10 ms timer while zooming and scrolling | 166 to 244 ms | 16 to 22 ms |
+| Pages drawn while zooming and scrolling | 4 | 6 (drawing does not wait for the view to rest) |
+
+The two long tasks left with the worker come during the open, which still runs on the page's
+thread (its own parse of the file, and Blazor's layout of the pages; not broken down further).
+The time to the first page is about the same: the worker's runtime is cold at its first page, as
+the page's own runtime is. On a busier machine the worker's first page came later (2.1 s against
+1.5 s), as the two runtimes then compete for the processor.
+
+The worker's runtime starts in about 0.3 s on loopback, beside the page's own start. It requests
+the runtime's files a second time (from the browser's HTTP cache when the server allows caching)
+and holds a second copy of the runtime and of the document in memory.
+
 ### Engine changes for the browser
 
 All guarded so that Windows behaves exactly as before:
@@ -378,10 +421,10 @@ and serve the folder with `node eng/webdemo/serve.mjs <folder> --base /pdf-viewe
 
 ## Next steps
 
-1. **Rendering off the main thread**: run the engine in a second, render-only .NET runtime in a
-   Web Worker (multi-threaded WebAssembly needs cross-origin isolation headers, which GitHub Pages
-   cannot send). Today pages are drawn in strips and nothing new starts while the view scrolls
-   (docs/sdk, "Responsiveness"), but one page's interpretation is still one task.
+1. **Rendering off the main thread by default**: the render worker ("Rendering in a worker",
+   above) is opt-in for now. Still to do before it is the default: files read by ranges and
+   encrypted files, device fonts, thumbnails and print in the worker, and one copy of the
+   document instead of two.
 2. **A lazy page tree** for files read by ranges (docs/sdk, "Large files").
 3. **Fonts**: bold Noto weights, and Noto Serif for serif text.
 4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is

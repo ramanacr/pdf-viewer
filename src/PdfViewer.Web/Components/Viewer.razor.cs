@@ -154,14 +154,18 @@ public sealed partial class Viewer : IAsyncDisposable
     private static string Pct(double v) => (v * 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
     private static string Percent(double zoom) => Math.Round(zoom * 100).ToString(CultureInfo.InvariantCulture) + "%";
 
-    protected override void OnInitialized() => ReadFrameUrl();
+    protected override void OnInitialized()
+    {
+        ReadFrameUrl();
+        ReadRenderWorkerFlag();
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=5");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=6");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {
@@ -530,6 +534,7 @@ public sealed partial class Viewer : IAsyncDisposable
         _thumbsDrawn.Clear();
         _thumbsVisible.Clear();
         _docBytes = null;
+        CloseInWorker();
         StopEdits();
         _docReady?.TrySetCanceled();
         _docReady = null;
@@ -603,41 +608,74 @@ public sealed partial class Viewer : IAsyncDisposable
                     continue;
                 }
 
-                if (!_cache.TryGet(page, scale, night, out var bitmap))
+                bool inWorker = await WorkerServesAsync(doc);
+                if (_doc != doc) break;
+                int textWithoutFont = 0, imagesNotDecoded = 0;
+                bool drawnByWorker = false;
+                if (inWorker)
                 {
-                    // While the reader scrolls, nothing new starts: a page's interpretation runs on
-                    // this (the only) thread, so it waits until the view rests for ScrollIdleMs.
-                    long since = Environment.TickCount64 - _lastViewportTicks;
-                    if (since < ScrollIdleMs && _drawn.Count > 0)
+                    // Drawn by the render worker: nothing waits for the view to rest, as this thread stays free.
+                    var sent = doc.Bytes;
+                    var shown = await RenderInWorkerAsync(page, scale, night);
+                    if (_doc != doc)
                     {
-                        await Task.Delay((int)(ScrollIdleMs - since) + 1);
-                        continue;
+                        if (shown != null) CanvasInterop.WorkerDiscard(page);
+                        break;
                     }
-                    try
+                    if (shown != null)
                     {
-                        // Drawn in strips, yielding to the browser between them; a page that leaves
-                        // the view (or a zoom or night change) stops it, and the next page starts.
-                        var drawn = await doc.RenderPageInStripsAsync(page, scale, night, async () =>
+                        // An edit replaces the bytes: a page rendered from the old ones is not shown.
+                        if (!_visible.Contains(page) || RenderScale != scale || _night != night || !ReferenceEquals(doc.Bytes, sent))
                         {
-                            await Task.Delay(1);
-                            return _doc == doc && _visible.Contains(page) && RenderScale == scale && _night == night;
-                        });
-                        if (drawn == null) continue;
-                        bitmap = drawn;
+                            CanvasInterop.WorkerDiscard(page);
+                            continue;
+                        }
+                        CanvasInterop.WorkerDraw(page);
+                        Measure(page, shown.InterpretMs, shown.DrawMs, shown.Width, shown.Height);
+                        (textWithoutFont, imagesNotDecoded) = (shown.TextWithoutFont, shown.ImagesNotDecoded);
+                        drawnByWorker = true;
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
-                    {
-                        // Diagnostics name the failure type only, never document content.
-                        _failed.Add((page, scale, night));
-                        _status = $"Page {page} could not be drawn ({ex.GetType().Name}).";
-                        StateHasChanged();
-                        continue;
-                    }
-                    if (_doc != doc) break;
-                    _cache.Add(page, scale, night, bitmap);
-                    Measure(bitmap);
+                    // Otherwise the worker could not draw the page, or stopped: it is drawn here.
                 }
-                CanvasInterop.DrawPage(page, bitmap.Pixels, bitmap.Width, bitmap.Height);
+                if (!drawnByWorker)
+                {
+                    if (!_cache.TryGet(page, scale, night, out var bitmap))
+                    {
+                        // While the reader scrolls, nothing new starts: a page's interpretation runs on
+                        // this (the only) thread, so it waits until the view rests for ScrollIdleMs.
+                        long since = Environment.TickCount64 - _lastViewportTicks;
+                        if (since < ScrollIdleMs && _drawn.Count > 0)
+                        {
+                            await Task.Delay((int)(ScrollIdleMs - since) + 1);
+                            continue;
+                        }
+                        try
+                        {
+                            // Drawn in strips, yielding to the browser between them; a page that leaves
+                            // the view (or a zoom or night change) stops it, and the next page starts.
+                            var drawn = await doc.RenderPageInStripsAsync(page, scale, night, async () =>
+                            {
+                                await Task.Delay(1);
+                                return _doc == doc && _visible.Contains(page) && RenderScale == scale && _night == night;
+                            });
+                            if (drawn == null) continue;
+                            bitmap = drawn;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
+                        {
+                            // Diagnostics name the failure type only, never document content.
+                            _failed.Add((page, scale, night));
+                            _status = $"Page {page} could not be drawn ({ex.GetType().Name}).";
+                            StateHasChanged();
+                            continue;
+                        }
+                        if (_doc != doc) break;
+                        _cache.Add(page, scale, night, bitmap);
+                        Measure(page, bitmap.BuildTime.TotalMilliseconds, bitmap.RasterTime.TotalMilliseconds, bitmap.Width, bitmap.Height);
+                    }
+                    CanvasInterop.DrawPage(page, bitmap.Pixels, bitmap.Width, bitmap.Height);
+                    (textWithoutFont, imagesNotDecoded) = (bitmap.TextRegionsWithoutFont, bitmap.ImagesNotDecoded);
+                }
                 _drawn[page] = (scale, night);
                 if (!_renderingDoneSent && _openedAt != null)
                 {
@@ -661,7 +699,7 @@ public sealed partial class Viewer : IAsyncDisposable
                     }
                     _ = LoadRestAsync(doc);
                 }
-                if (page == _currentPage) ShowPageNotices(bitmap);
+                if (page == _currentPage) ShowPageNotices(textWithoutFont, imagesNotDecoded);
                 // Let the browser paint before the next page.
                 await Task.Delay(1);
             }
@@ -676,21 +714,22 @@ public sealed partial class Viewer : IAsyncDisposable
         }
     }
 
-    private void Measure(ViewerBitmap bitmap)
+    private void Measure(int page, double interpretMs, double drawMs, int width, int height)
     {
-        double ms = (bitmap.BuildTime + bitmap.RasterTime).TotalMilliseconds;
-        CanvasInterop.MarkRender(bitmap.Page, bitmap.BuildTime.TotalMilliseconds, bitmap.RasterTime.TotalMilliseconds);
+        double ms = interpretMs + drawMs;
+        CanvasInterop.MarkRender(page, interpretMs, drawMs);
         _renderTimes.Add(ms);
         double median = _renderTimes.Order().ElementAt(_renderTimes.Count / 2);
-        _perf = $"Page {bitmap.Page}: {ms:0} ms (interpret {bitmap.BuildTime.TotalMilliseconds:0}, draw {bitmap.RasterTime.TotalMilliseconds:0}), " +
-                $"{bitmap.Width}×{bitmap.Height} px; median {median:0} ms over {_renderTimes.Count}";
+        _perf = $"Page {page}: {ms:0} ms (interpret {interpretMs:0}, draw {drawMs:0}), " +
+                $"{width}×{height} px; median {median:0} ms over {_renderTimes.Count}" +
+                (_worker == WorkerState.Ready ? " (render worker)" : "");
         StateHasChanged();
     }
 
-    private void ShowPageNotices(ViewerBitmap bitmap)
+    private void ShowPageNotices(int textRegionsWithoutFont, int imagesNotDecoded)
     {
         if (_noticeDismissed || _notice != null) return;
-        if (bitmap.TextRegionsWithoutFont > 0 && !_localFontsLoaded)
+        if (textRegionsWithoutFont > 0 && !_localFontsLoaded)
         {
             _noticeIsFonts = true;
             // Shown only for text that the bundled fonts (Liberation, then Noto by script) do not cover either.
@@ -698,7 +737,7 @@ public sealed partial class Viewer : IAsyncDisposable
                       (_canUseLocalFonts ? " This browser can let the page read your device's fonts (they stay on your device)." : " Chrome and Edge can lend the page your device's fonts.");
             StateHasChanged();
         }
-        else if (bitmap.ImagesNotDecoded > 0)
+        else if (imagesNotDecoded > 0)
         {
             _noticeIsFonts = false;
             _notice = "An image on this page could not be decoded here (four-component CMYK JPEG images are not supported by the web renderer yet).";
@@ -1013,6 +1052,8 @@ public sealed partial class Viewer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _searchCts?.Cancel();
+        try { StopRenderWorker(); }
+        catch (System.Runtime.InteropServices.JavaScript.JSException) { }
         if (_doc != null) await _doc.DisposeAsync();
         if (_module != null)
         {

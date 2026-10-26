@@ -734,3 +734,144 @@ export function markFirstPage(ms, bytes) {
 export function embedPost(json) {
     if (hostOrigin && window.parent !== window) window.parent.postMessage(JSON.parse(json), hostOrigin);
 }
+
+// ---------------------------------------------------------------- the render worker (opt-in)
+//
+// index.html?renderInWorker=1 draws pages in js/render-worker.js: a second .NET runtime in a
+// dedicated worker, so that interpreting and drawing a page never blocks this thread. Pages
+// come back as ImageBitmaps and wait here until the .NET side asks for them to be shown. When
+// the worker cannot start, startRenderWorker answers false and the pages are drawn here, as
+// without the flag.
+
+let renderWorker = null;
+let workerCalls = 0;
+const workerWaits = new Map();     // call id -> { resolve, reject }
+const workerBitmaps = new Map();   // page -> ImageBitmap rendered and not shown yet
+
+// A call that gets no answer in this time means the worker's runtime is stuck or gone.
+const WORKER_CALL_MS = { open: 30000, render: 20000, close: 5000 };
+
+function workerCall(msg, transfer) {
+    return new Promise((resolve, reject) => {
+        if (!renderWorker) {
+            reject(new Error('The render worker is not running.'));
+            return;
+        }
+        msg.id = ++workerCalls;
+        const timer = setTimeout(() => workerGone('The render worker did not answer.'), WORKER_CALL_MS[msg.op] ?? 20000);
+        workerWaits.set(msg.id, { resolve, reject, timer });
+        renderWorker.postMessage(msg, transfer ?? []);
+    });
+}
+
+/** Stops a worker that crashed or stopped answering: every call waiting on it fails, so the pages fall back to this thread. */
+function workerGone(message) {
+    renderWorker?.terminate();
+    renderWorker = null;
+    for (const wait of workerWaits.values()) {
+        clearTimeout(wait.timer);
+        wait.reject(new Error(message));
+    }
+    workerWaits.clear();
+    for (const bitmap of workerBitmaps.values()) bitmap.close();
+    workerBitmaps.clear();
+}
+
+/** Starts the render worker; true once its runtime is up, false when it fails or takes over 20 s. */
+export function startRenderWorker() {
+    if (typeof Worker !== 'function' || typeof createImageBitmap !== 'function') return Promise.resolve(false);
+    return new Promise(resolve => {
+        let settled = false;
+        const settle = ok => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (!ok) {
+                renderWorker?.terminate();
+                renderWorker = null;
+            }
+            resolve(ok);
+        };
+        const timer = setTimeout(() => settle(false), 20000);
+        try {
+            // The worker carries this module's version query (?v=), so both are replaced together.
+            const url = new URL('render-worker.js', import.meta.url);
+            url.search = new URL(import.meta.url).search;
+            renderWorker = new Worker(url, { type: 'module', name: 'render' });
+        } catch {
+            settle(false);
+            return;
+        }
+        renderWorker.onerror = () => {
+            if (settled) workerGone('The render worker failed.');
+            else settle(false);
+        };
+        renderWorker.onmessage = e => {
+            const d = e.data;
+            if (d.op === 'ready') return settle(true);
+            if (d.op === 'failed') return settled ? workerGone('The render worker failed.') : settle(false);
+            const wait = workerWaits.get(d.id);
+            if (!wait) return;
+            clearTimeout(wait.timer);
+            workerWaits.delete(d.id);
+            if (d.ok) wait.resolve(d.result);
+            else wait.reject(new Error(d.message));
+        };
+    });
+}
+
+/** Opens a copy of the document in the worker (the bytes are copied out of WebAssembly memory now). */
+export async function workerOpen(view) {
+    const bytes = view.slice();
+    for (const bitmap of workerBitmaps.values()) bitmap.close();
+    workerBitmaps.clear();
+    const result = await workerCall({ op: 'open', bytes: bytes.buffer }, [bytes.buffer]);
+    return result.pages;
+}
+
+/** Renders a page in the worker and keeps it here; its size and timings as JSON. */
+export async function workerRender(page, scale, night) {
+    const r = await workerCall({ op: 'render', page, scale, night });
+    workerBitmaps.get(page)?.close();
+    workerBitmaps.set(page, r.bitmap);
+    return JSON.stringify({ width: r.width, height: r.height, interpretMs: r.interpretMs, drawMs: r.drawMs,
+                            textWithoutFont: r.textWithoutFont, imagesNotDecoded: r.imagesNotDecoded });
+}
+
+/** Shows a page that the worker rendered in the page's canvas. */
+export function workerDraw(page) {
+    const bitmap = workerBitmaps.get(page);
+    workerBitmaps.delete(page);
+    if (!bitmap) return;
+    const canvas = document.querySelector(`#page-${page} canvas`);
+    if (canvas) {
+        if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
+        if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
+        canvas.getContext('2d', { alpha: false }).drawImage(bitmap, 0, 0);
+        canvas.closest('.page')?.classList.add('drawn');
+    }
+    bitmap.close();
+}
+
+/** Drops a page that the worker rendered and that is not wanted any more. */
+export function workerDiscard(page) {
+    workerBitmaps.get(page)?.close();
+    workerBitmaps.delete(page);
+}
+
+/** Closes the worker's copy of the document. */
+export function workerClose() {
+    for (const bitmap of workerBitmaps.values()) bitmap.close();
+    workerBitmaps.clear();
+    if (renderWorker) workerCall({ op: 'close' }).catch(() => { });
+}
+
+/** Whether the render worker is running. */
+export function workerRunning() {
+    return renderWorker !== null;
+}
+
+/** Stops the render worker and its copy of the document. */
+export function workerTerminate() {
+    workerGone('The render worker was stopped.');
+}

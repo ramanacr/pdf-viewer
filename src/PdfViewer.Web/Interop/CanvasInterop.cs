@@ -105,4 +105,39 @@ internal static partial class CanvasInterop
     /// <summary>The annotation tool the pages' pointer handling follows ("select", "highlight", "ink", …).</summary>
     [JSImport("setTool", ModuleName)]
     public static partial void SetTool(string tool);
+
+    // The opt-in render worker (index.html?renderInWorker=1, wwwroot/js/render-worker.js).
+
+    /// <summary>Starts the render worker: true once its runtime is up, false when it cannot start.</summary>
+    [JSImport("startRenderWorker", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.Boolean>>]
+    public static partial Task<bool> StartRenderWorker();
+
+    /// <summary>Opens a copy of the document in the worker (the script copies the bytes before it returns); its page count.</summary>
+    [JSImport("workerOpen", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.Number>>]
+    public static partial Task<int> WorkerOpen([JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bytes);
+
+    /// <summary>Renders a page in the worker and keeps the bitmap in the script; its size and timings as JSON.</summary>
+    [JSImport("workerRender", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.String>>]
+    public static partial Task<string> WorkerRender(int page, double scale, bool night);
+
+    /// <summary>Shows the page that <see cref="WorkerRender"/> kept in its canvas.</summary>
+    [JSImport("workerDraw", ModuleName)]
+    public static partial void WorkerDraw(int page);
+
+    [JSImport("workerDiscard", ModuleName)]
+    public static partial void WorkerDiscard(int page);
+
+    [JSImport("workerClose", ModuleName)]
+    public static partial void WorkerClose();
+
+    /// <summary>Whether the worker is still running (false after it crashed, stopped answering or was stopped).</summary>
+    [JSImport("workerRunning", ModuleName)]
+    public static partial bool WorkerRunning();
+
+    /// <summary>Stops the worker; calls still waiting on it fail.</summary>
+    [JSImport("workerTerminate", ModuleName)]
+    public static partial void WorkerTerminate();
 }
