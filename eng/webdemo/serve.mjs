@@ -47,9 +47,13 @@ function throttle() {
     });
 }
 
-/** Sends a stream, through the throttle when one is set. */
-function send(res, stream) {
-    (rate > 0 ? stream.pipe(throttle()) : stream).pipe(res);
+/** Pipes the file to the response (through `transform`, if any); when the client goes away first, the streams are destroyed and the file closed. */
+function send(res, file, transform) {
+    const streams = [file, transform, rate > 0 ? throttle() : null].filter(Boolean);
+    res.on('close', () => {
+        if (!res.writableFinished) for (const stream of streams) stream.destroy();
+    });
+    streams.reduce((from, to) => from.pipe(to)).pipe(res);
 }
 
 /** One range "bytes=a-b", "bytes=a-" or "bytes=-n" as { start, end } (inclusive); null when there is none (or several); false when it is outside the file. */
@@ -89,7 +93,14 @@ function handle(req, res) {
         res.writeHead(302, { Location: base });
         return res.end();
     }
-    let relative = decodeURIComponent(url.pathname.slice(base.length)) || 'index.html';
+    let relative;
+    try {
+        relative = decodeURIComponent(url.pathname.slice(base.length)) || 'index.html';
+    } catch (e) {
+        if (!(e instanceof URIError)) throw e;
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        return res.end('Bad request: the path is not valid percent-encoding');
+    }
     let file = normalize(join(root, relative));
     if (file !== root && !file.startsWith(root + sep)) {
         res.writeHead(403);
@@ -121,7 +132,7 @@ function handle(req, res) {
     if (gzip && compressible.has(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '')) {
         res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
         if (head) return res.end();
-        send(res, createReadStream(file).pipe(createGzip({ level: 6 })));
+        send(res, createReadStream(file), createGzip({ level: 6 }));
     } else {
         res.writeHead(200, { ...headers, 'Content-Length': stat.size });
         if (head) return res.end();
