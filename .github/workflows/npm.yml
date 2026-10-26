@@ -60,6 +60,7 @@ jobs:
     - name: Pack
       run: |
         cd packages/pdfviewer-embed
+        mkdir -p "$RUNNER_TEMP/npm"
         npm pack --pack-destination "$RUNNER_TEMP/npm"
         tar -tzf "$RUNNER_TEMP"/npm/*.tgz
 
