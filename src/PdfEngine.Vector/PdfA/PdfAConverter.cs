@@ -33,7 +33,7 @@ public sealed class PdfAConversionOptions
     public PdfFlatteningOptions Flattening { get; init; } = new();
     /// <summary>Where fonts for embedding come from (the installed fonts by default).</summary>
     public SystemFontCatalog? Fonts { get; init; }
-    /// <summary>A CMYK ICC profile for DeviceCMYK content (by default the colour profile provider's, <see cref="PdfEngine.Vector.Color.ColorProfiles"/>: on Windows the one Windows installs, when present).</summary>
+    /// <summary>A CMYK ICC profile for DeviceCMYK content. By default, the output intent profile of the registered colour profile provider (<see cref="PdfEngine.Vector.Color.ColorProfiles"/>): none with the built-in provider, RSWOP.icm when a host registered <c>WindowsColorProfileProvider</c>.</summary>
     public byte[]? CmykProfile { get; init; }
     /// <summary>Builds a normal appearance for an annotation that has none (drawn as Acrobat draws it); null removes such annotations instead.</summary>
     public Func<PdfDictionary, PdfObjectResolver, Func<PdfObject, int>, PdfStream?>? AnnotationAppearance { get; init; } = Annotations.PdfAnnotationAppearances.Generate;

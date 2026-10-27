@@ -33,7 +33,7 @@ internal static class CmykSeparation
         var last = System.Threading.Volatile.Read(ref _last);
         if (last != null && ReferenceEquals(last.Provider, provider))
             return last.Table;
-        var table = Tables.GetValue(provider, _ => Build());
+        var table = Tables.GetValue(provider, Build);
         System.Threading.Volatile.Write(ref _last, new Entry(provider, table));
         return table;
     }
@@ -56,9 +56,10 @@ internal static class CmykSeparation
         }
     }
 
-    private static float[] Build()
+    // The provider is passed in, not read again, so the table is always that provider's.
+    private static float[] Build(IColorProfileProvider provider)
     {
-        var transform = DefaultCmyk.For(PdfColorSpace.DefaultCmykIntent);
+        var transform = DefaultCmyk.For(provider, PdfColorSpace.DefaultCmykIntent);
         var table = new float[Grid * Grid * Grid * 4];
         Parallel.For(0, Grid, ir =>
         {

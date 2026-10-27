@@ -19,7 +19,7 @@ public interface IColorProfileProvider
 {
     /// <summary>
     /// A CMYK profile to convert DeviceCMYK with for display (Acrobat uses Adobe's U.S. Web Coated (SWOP) v2),
-    /// or null to use the built-in model of it (<see cref="BuiltInColorProfiles"/>).
+    /// or null to use the built-in model of it (<see cref="BuiltInColorProfileProvider"/>).
     /// </summary>
     byte[]? GetDisplayCmykProfile();
 
@@ -31,12 +31,12 @@ public interface IColorProfileProvider
 }
 
 /// <summary>The default provider: no installed profiles. DeviceCMYK uses the built-in SWOP model (<see cref="SwopApproximation"/>).</summary>
-public sealed class BuiltInColorProfiles : IColorProfileProvider
+public sealed class BuiltInColorProfileProvider : IColorProfileProvider
 {
     /// <summary>The single instance.</summary>
-    public static BuiltInColorProfiles Instance { get; } = new();
+    public static BuiltInColorProfileProvider Instance { get; } = new();
 
-    private BuiltInColorProfiles() { }
+    private BuiltInColorProfileProvider() { }
 
     /// <inheritdoc />
     public byte[]? GetDisplayCmykProfile() => null;
@@ -45,10 +45,10 @@ public sealed class BuiltInColorProfiles : IColorProfileProvider
     public byte[]? GetOutputIntentCmykProfile() => null;
 }
 
-/// <summary>The colour profile provider the engine uses (<see cref="BuiltInColorProfiles"/> until a host registers another).</summary>
+/// <summary>The colour profile provider the engine uses (<see cref="BuiltInColorProfileProvider"/> until a host registers another).</summary>
 public static class ColorProfiles
 {
-    private static IColorProfileProvider _registered = BuiltInColorProfiles.Instance;
+    private static IColorProfileProvider _registered = BuiltInColorProfileProvider.Instance;
 
     // Per async flow, so that a test overriding it does not change what tests running beside it see.
     private static readonly AsyncLocal<IColorProfileProvider?> Override = new();
@@ -57,8 +57,10 @@ public static class ColorProfiles
     public static IColorProfileProvider Provider => Override.Value ?? Volatile.Read(ref _registered);
 
     /// <summary>
-    /// Makes <paramref name="provider"/> the provider for the process. Register it at start-up, before
-    /// documents are opened: pages already read keep the colours of the provider they were read with.
+    /// Makes <paramref name="provider"/> the provider for the process. Register it once at start-up, before
+    /// documents are opened. Pages already read keep the colours of the provider they were read with, and the
+    /// provider is looked up for each colour conversion, so a page read while another registration happens
+    /// can mix the colours of both providers.
     /// </summary>
     public static void Register(IColorProfileProvider provider)
     {
@@ -67,10 +69,10 @@ public static class ColorProfiles
     }
 
     /// <summary>
-    /// Reads a profile file for a provider: its bytes, or null when the file is missing, unreadable or larger
-    /// than a profile may be.
+    /// Reads a profile file for a provider (the Windows one): its bytes, or null when the file is missing,
+    /// unreadable or larger than a profile may be.
     /// </summary>
-    public static byte[]? ReadProfileFile(string path)
+    internal static byte[]? ReadProfileFile(string path)
     {
         try
         {
@@ -117,13 +119,15 @@ internal static class DefaultCmyk
     private sealed record Entry(IColorProfileProvider Provider, ColorTransform[] Transforms);
 
     /// <summary>True when the conversion comes from an installed profile rather than the built-in model.</summary>
-    public static bool UsesInstalledProfile => Transforms()[0] is IccTransform;
+    public static bool UsesInstalledProfile => Transforms(ColorProfiles.Provider)[0] is IccTransform;
 
-    public static ColorTransform For(PdfRenderingIntent intent) => Transforms()[(int)intent & 3];
+    public static ColorTransform For(PdfRenderingIntent intent) => For(ColorProfiles.Provider, intent);
 
-    private static ColorTransform[] Transforms()
+    /// <summary>The conversion of <paramref name="provider"/>, for a cache built from it (<see cref="CmykSeparation"/>).</summary>
+    public static ColorTransform For(IColorProfileProvider provider, PdfRenderingIntent intent) => Transforms(provider)[(int)intent & 3];
+
+    private static ColorTransform[] Transforms(IColorProfileProvider provider)
     {
-        var provider = ColorProfiles.Provider;
         var last = Volatile.Read(ref _last);
         if (last != null && ReferenceEquals(last.Provider, provider))
             return last.Transforms;
@@ -134,7 +138,17 @@ internal static class DefaultCmyk
 
     private static ColorTransform[] Load(IColorProfileProvider provider)
     {
-        if (provider.GetDisplayCmykProfile() is { } bytes
+        byte[]? bytes;
+        try
+        {
+            bytes = provider.GetDisplayCmykProfile();
+        }
+        catch (Exception)
+        {
+            // A host's provider failing must not fail every CMYK conversion: this provider gets the built-in model.
+            bytes = null;
+        }
+        if (bytes != null
             && bytes.Length <= IccProfile.MaxProfileBytes
             && IccProfile.TryParse(bytes, out _) is { Channels: 4 } profile)
         {

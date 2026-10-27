@@ -30,8 +30,18 @@ ColorProfiles.Register(new MyColorProfiles()); // implements IColorProfileProvid
 
 `GetDisplayCmykProfile` gives the profile for DeviceCMYK on screen (null: the built-in model).
 `GetOutputIntentCmykProfile` gives the CMYK profile that PDF/A conversion embeds as the output intent
-when the caller sets no `CmykProfile` (null: none). `ColorProfiles.ReadProfileFile` reads a profile
-file safely. The Windows desktop app registers the profiles Windows and Adobe applications install.
+when the caller sets no `CmykProfile` (null: none). The Windows desktop app registers the profiles
+Windows and Adobe applications install.
+
+**Behaviour change on Windows.** Earlier builds found these profiles themselves on Windows. A Windows
+host that registers no provider now gets the built-in SWOP model for display, and PDF/A conversion adds
+no RSWOP.icm output intent by itself. To keep the earlier results, register a Windows provider once at
+start-up. In the repository, `PdfEngine.Vector.Windows` has one (it is not a NuGet package; its
+`WindowsColorProfileProvider` is about 20 lines to copy):
+
+```csharp
+ColorProfiles.Register(PdfEngine.Vector.Windows.WindowsColorProfileProvider.Instance);
+```
 
 The API is not stable before version 1.0. Licence: MIT. Third-party data inside the package (the
 Adobe predefined CJK CMaps, BSD-3-Clause) is listed in `THIRD_PARTY_NOTICES.md` in the package.
