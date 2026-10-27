@@ -1,0 +1,264 @@
+---
+layout: home
+title: PDF Viewer Native
+description: A private, script-free PDF viewer and editor for Windows, with its own open-source PDF engine. Also in your browser, in your web page, and as NuGet packages.
+---
+<section class="hero">
+  <div class="hero-inner">
+    <div>
+      <p class="eyebrow">PDF viewer and editor for Windows</p>
+      <h1>PDF Viewer <span class="accent">Native</span></h1>
+      <p class="hero-lead">A private, script-free PDF viewer and editor for Windows, with its own open-source PDF engine.</p>
+      <ul class="hero-badges">
+        <li>{% include icon.html name="eye-off" %} No telemetry</li>
+        <li>{% include icon.html name="noscript" %} Document JavaScript never runs</li>
+        <li>{% include icon.html name="license" %} MIT licence</li>
+      </ul>
+      <div class="hero-actions">
+        <a class="button button-primary" href="{{ site.links.store }}">{% include icon.html name="windows" %} Get it from Microsoft Store</a>
+        <a class="button" href="{{ site.links.releases }}">{% include icon.html name="download" %} Download installer</a>
+        <a class="button button-quiet" href="{{ '/demo/' | relative_url }}">{% include icon.html name="browser" %} Try in your browser</a>
+      </div>
+      <p class="hero-note">The installer (<code>PdfViewerSetup.exe</code>) and the portable <code>PdfViewer.exe</code> are on GitHub releases: Windows 10 version 2004 or later, or Windows 11, x64, with the .NET 9 Desktop Runtime. They are signed with the project's own self-signed certificate.</p>
+    </div>
+    <figure class="app-frame">
+      <img src="{{ '/assets/img/app-window-1600.webp' | relative_url }}"
+           srcset="{{ '/assets/img/app-window-960.webp' | relative_url }} 960w, {{ '/assets/img/app-window-1600.webp' | relative_url }} 1600w"
+           sizes="(max-width: 960px) 100vw, 700px" width="1600" height="900"
+           alt="The PDF Viewer Native window on Windows: page thumbnails on the left, a page with vector shapes zoomed to 258 percent, and the toolbar with annotation tools." />
+      <figcaption>The Windows app. Pages are drawn from vectors, so they stay sharp at every zoom.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="get-it">
+  <div class="section-inner">
+    <div class="section-head">
+      <p class="eyebrow">One engine</p>
+      <h2 id="get-it">On Windows, in the browser and on Android</h2>
+      <p>The engine, <code>PdfEngine.Vector</code>, is pure C# (.NET 9). The published app contains no PDFium.</p>
+    </div>
+    <div class="card-grid three">
+      <div class="card">
+        <span class="card-icon">{% include icon.html name="windows" %}</span>
+        <span class="tag">Released</span>
+        <h3>Windows app</h3>
+        <p>WPF on .NET 9. Direct2D and DirectWrite draw the pages; a WPF renderer is the fallback.</p>
+        <div class="card-links">
+          <a href="{{ site.links.store }}">Microsoft Store {% include icon.html name="arrow" %}</a>
+          <a href="{{ site.links.releases }}">GitHub releases {% include icon.html name="arrow" %}</a>
+        </div>
+      </div>
+      <div class="card">
+        <span class="card-icon">{% include icon.html name="browser" %}</span>
+        <span class="tag">Live</span>
+        <h3>Web demo</h3>
+        <p>Runs in the tab as WebAssembly; nothing is uploaded. There are no cookies, no analytics and no third-party requests.</p>
+        <div class="card-links">
+          <a href="{{ '/demo/' | relative_url }}">Open the web demo {% include icon.html name="arrow" %}</a>
+        </div>
+      </div>
+      <div class="card">
+        <span class="card-icon">{% include icon.html name="android" %}</span>
+        <span class="tag">Proof of concept</span>
+        <h3>Android</h3>
+        <p>Build from source, or take the APK artifact of the <code>android.yml</code> workflow.</p>
+        <div class="card-links">
+          <a href="{{ site.links.repo }}/blob/main/src/PdfViewer.Android/README.md">Android README {% include icon.html name="arrow" %}</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" aria-labelledby="features">
+  <div class="section-inner">
+    <div class="section-head">
+      <p class="eyebrow">Features</p>
+      <h2 id="features">Everything you do with a PDF</h2>
+      <p>It views, searches, annotates, measures, stamps, fills forms, signs, redacts, edits text and images, tags for accessibility, converts to PDF/A, checks print output, and exports to Word, Excel and PowerPoint.</p>
+    </div>
+    <div class="feature-grid">
+      <a class="feature" href="{{ '/features/' | relative_url }}#viewing-and-navigation">
+        <h3>{% include icon.html name="view" %} View</h3>
+        <p>Continuous, single-page and facing views; zoom from 25 % to 1600 %, sharp at every zoom; tabs, bookmarks, thumbnails, night mode, full screen and navigation history.</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#reading-and-accessibility">
+        <h3>{% include icon.html name="read" %} Read</h3>
+        <p>Read mode that screen readers can navigate, tagged-PDF reading order, Read Aloud, PDF/UA-1 accessibility check, and Make Accessible (auto-tagging).</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#text-selection-and-search">
+        <h3>{% include icon.html name="search" %} Select and search</h3>
+        <p>Word-processor text selection, search with a results list, and OCR for scanned pages (Windows OCR, on this computer).</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#comments-measuring-and-stamps">
+        <h3>{% include icon.html name="comment" %} Comment and measure</h3>
+        <p>Highlights, notes, shapes and ink; distance, perimeter and area measuring with snapping; standard, dynamic and custom stamps; annotation edit handles.</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#editing-and-page-organisation">
+        <h3>{% include icon.html name="edit" %} Edit</h3>
+        <p>Text and images in place, page organisation, merge and split, headers, footers, watermarks and Bates numbers, reduce file size, compare documents.</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#forms-signatures-and-security">
+        <h3>{% include icon.html name="sign" %} Forms, signatures and security</h3>
+        <p>Fill and flatten forms, sign (PAdES-B-LT and B-LTA) and verify signatures, password protection (AES-256), true redaction.</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#create-convert-and-export">
+        <h3>{% include icon.html name="convert" %} Create and convert</h3>
+        <p>PDF from images, a scanner or Office files; PDF/A; export to Word, Excel, PowerPoint, text and images.</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#printing-and-print-production">
+        <h3>{% include icon.html name="print" %} Print production</h3>
+        <p>Print with live preview, Output Preview (separations, overprint, total ink) and Preflight.</p>
+      </a>
+      <a class="feature" href="{{ '/features/' | relative_url }}#text-in-fonts-that-a-pdf-does-not-embed">
+        <h3>{% include icon.html name="type" %} Fonts a PDF does not embed</h3>
+        <p>Arabic and Indic shaping, a fallback font for each missing character, and the right Chinese, Japanese or Korean font for the language.</p>
+      </a>
+    </div>
+    <p class="section-more"><a class="button" href="{{ '/features/' | relative_url }}">All features, user guide and keyboard shortcuts {% include icon.html name="arrow" %}</a></p>
+  </div>
+</section>
+
+<section class="section trust" aria-labelledby="trust">
+  <div class="section-inner">
+    <div class="section-head">
+      <p class="eyebrow">Privacy and safety</p>
+      <h2 id="trust">A document is data. It never acts.</h2>
+      <p>A PDF can carry JavaScript, launch actions, embedded files and remote references. Many viewer vulnerabilities come from these features.</p>
+    </div>
+    <ul class="trust-grid">
+      <li>{% include icon.html name="noscript" %}<strong>No script engine</strong><span>The engine has no JavaScript interpreter. A test checks that no JavaScript runtime ships with the app.</span></li>
+      <li>{% include icon.html name="shield" %}<strong>Active content is never run</strong><span>JavaScript, <code>/Launch</code> actions and embedded files are parsed, reported and left inert.</span></li>
+      <li>{% include icon.html name="eye-off" %}<strong>No telemetry, no account</strong><span>Nothing about you or your documents is recorded or sent. There is no sign-in and no cloud storage.</span></li>
+      <li>{% include icon.html name="wifi-off" %}<strong>Network only when you ask</strong><span>The update check is off until you allow it. Optional components download only when you ask.</span></li>
+      <li>{% include icon.html name="engine" %}<strong>Its own engine</strong><span>Pure C# on .NET 9. The published app contains no PDFium.</span></li>
+      <li>{% include icon.html name="list" %}<strong>Published bill of materials</strong><span>Every release ships CycloneDX and SPDX SBOMs.</span></li>
+      <li>{% include icon.html name="license" %}<strong>Open source</strong><span>MIT licence. Read the code, build it, and take part.</span></li>
+      <li>{% include icon.html name="check" %}<strong>Signed releases</strong><span>Built only by this repository's release workflow from tagged source. <a href="{{ site.links.repo }}/blob/main/CODE_SIGNING_POLICY.md">Code signing policy</a>.</span></li>
+    </ul>
+    <p class="section-more"><a class="button" href="{{ '/privacy/' | relative_url }}">Read the privacy policy {% include icon.html name="arrow" %}</a></p>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="developers">
+  <div class="section-inner">
+    <div class="section-head">
+      <p class="eyebrow">For developers</p>
+      <h2 id="developers">Put the engine in your web page or your .NET app</h2>
+      <p>The same engine is a script for web pages and a set of NuGet packages. Both are previews: the API can change before version 1.0.</p>
+    </div>
+    <div class="card-grid three">
+      <div class="card">
+        <span class="card-icon">{% include icon.html name="code" %}</span>
+        <h3>Web embed SDK</h3>
+        <p>Show PDF files in your web page. The API follows the Adobe PDF Embed API, with no client ID, no server and no telemetry.</p>
+        <div class="snippet"><pre><code>npm install pdfviewer-embed</code></pre></div>
+        <div class="card-links">
+          <a href="{{ '/sdk/' | relative_url }}">SDK guide {% include icon.html name="arrow" %}</a>
+          <a href="{{ '/sdk/examples/' | relative_url }}">Examples {% include icon.html name="arrow" %}</a>
+        </div>
+      </div>
+      <div class="card">
+        <span class="card-icon">{% include icon.html name="package" %}</span>
+        <h3>NuGet packages</h3>
+        <p><code>PdfEngine.Abstractions</code>, <code>PdfEngine.Vector</code> and <code>PdfEngine.Vector.Skia</code>. Open, read, search, edit and save PDF files, and draw pages with Skia.</p>
+        <div class="snippet"><pre><code>dotnet add package PdfEngine.Vector.Skia --prerelease</code></pre></div>
+        <div class="card-links">
+          <a href="{{ '/developers/' | relative_url }}">Use the engine as a library {% include icon.html name="arrow" %}</a>
+        </div>
+      </div>
+      <div class="card">
+        <span class="card-icon">{% include icon.html name="book" %}</span>
+        <h3>API reference</h3>
+        <p>The API reference of the NuGet packages, with short guides.</p>
+        <div class="snippet"><pre><code>using PdfEngine.Vector.Document;</code></pre></div>
+        <div class="card-links">
+          <a href="{{ '/api/' | relative_url }}">Open the API reference {% include icon.html name="arrow" %}</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" aria-labelledby="live">
+  <div class="section-inner split">
+    <div>
+      <div class="section-head">
+        <p class="eyebrow">Live</p>
+        <h2 id="live">See the embed SDK in this page</h2>
+        <p>This box uses the web embed SDK in the sized container mode. The engine runs in your browser as WebAssembly. The PDF is written by the page itself, so nothing is uploaded.</p>
+      </div>
+{% capture quick %}
+```js
+const view = new PdfViewer.View({ divId: 'viewer' });
+view.previewFile(
+  { content: { location: { url: '/files/report.pdf' } },
+    metaData: { fileName: 'report.pdf' } },
+  { embedMode: 'SIZED_CONTAINER' });
+```
+{% endcapture %}
+      {{ quick | markdownify }}
+      <p><a href="{{ '/sdk/' | relative_url }}#quick-start">Read the quick start</a></p>
+    </div>
+    <div class="live-demo" data-live-demo data-sdk="{{ '/demo/pdfviewer-embed.js' | relative_url }}" data-sample="{{ '/sdk/examples/sample-pdf.js' | relative_url }}">
+      <div id="home-viewer"></div>
+      <div class="live-demo-placeholder">
+        <span class="card-icon">{% include icon.html name="play" %}</span>
+        <p>The viewer loads only when you click, and only from this site.</p>
+        <button class="button button-primary" type="button" data-live-demo-start>Load the live viewer</button>
+        <p data-live-demo-status role="status"></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section compare" aria-labelledby="compare">
+  <div class="section-inner split">
+    <div class="section-head">
+      <p class="eyebrow">Compared</p>
+      <h2 id="compare">Compared with the Adobe PDF Embed API</h2>
+      <p>The JavaScript API follows the Adobe PDF Embed API, so code written for it needs few changes.</p>
+      <p style="margin-top:20px"><a class="button" href="{{ '/sdk/' | relative_url }}">Read the SDK guide {% include icon.html name="arrow" %}</a></p>
+    </div>
+    <div class="table-wrap">
+{% capture compare %}{% include adobe-compare.md %}{% endcapture %}
+      {{ compare | markdownify | replace: '<table>', '<table class="compare-table">' }}
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" aria-labelledby="docs">
+  <div class="section-inner">
+    <div class="section-head">
+      <p class="eyebrow">Documentation</p>
+      <h2 id="docs">Read the documentation</h2>
+    </div>
+    <ul class="doc-links">
+      <li><a href="{{ '/getting-started/' | relative_url }}">{% include icon.html name="arrow" %}<span>Getting started<small>Get each part</small></span></a></li>
+      <li><a href="{{ '/features/' | relative_url }}">{% include icon.html name="list" %}<span>Features<small>User guide and keyboard shortcuts</small></span></a></li>
+      <li><a href="{{ '/sdk/' | relative_url }}">{% include icon.html name="code" %}<span>Web embed SDK<small>Options, events, APIs</small></span></a></li>
+      <li><a href="{{ '/sdk/examples/' | relative_url }}">{% include icon.html name="browser" %}<span>SDK examples<small>Embed modes, annotations, forms</small></span></a></li>
+      <li><a href="{{ '/developers/' | relative_url }}">{% include icon.html name="package" %}<span>Use the engine as a library<small>NuGet packages and an example</small></span></a></li>
+      <li><a href="{{ '/api/' | relative_url }}">{% include icon.html name="book" %}<span>API reference<small>PdfEngine packages</small></span></a></li>
+      <li><a href="{{ '/building/' | relative_url }}">{% include icon.html name="engine" %}<span>Build from source<small>Build, test and package</small></span></a></li>
+      <li><a href="{{ '/architecture/' | relative_url }}">{% include icon.html name="scale" %}<span>Architecture<small>Engine and renderers</small></span></a></li>
+      <li><a href="{{ '/privacy/' | relative_url }}">{% include icon.html name="shield" %}<span>Privacy policy<small>What the app never does</small></span></a></li>
+      <li><a href="{{ '/microsoft-store/' | relative_url }}">{% include icon.html name="windows" %}<span>Microsoft Store build<small>The MSIX package</small></span></a></li>
+      <li><a href="{{ '/pdf-viewer-vector-migration/00_README.html' | relative_url }}">{% include icon.html name="read" %}<span>Engine design record<small>Design and status</small></span></a></li>
+      <li><a href="{{ site.links.repo }}/blob/main/CONTRIBUTING.md">{% include icon.html name="github" %}<span>Contributing guide<small>Take part</small></span></a></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section cta-band" aria-labelledby="cta">
+  <div class="section-inner">
+    <h2 id="cta">Open your next PDF with it</h2>
+    <p>Open source under the MIT licence. No account, no telemetry, and your documents never leave your computer.</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="{{ site.links.store }}">{% include icon.html name="windows" %} Get it from Microsoft Store</a>
+      <a class="button" href="{{ site.links.releases }}">{% include icon.html name="download" %} Download installer</a>
+      <a class="button button-quiet" href="{{ '/demo/' | relative_url }}">{% include icon.html name="browser" %} Try in your browser</a>
+    </div>
+  </div>
+</section>

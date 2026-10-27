@@ -1,0 +1,21 @@
+---
+layout: default
+kind: docs
+---
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    {% include sidebar.html %}
+  </aside>
+  <main id="main" class="docs-main">
+    <article class="prose" data-toc-source>
+{{ content }}
+    </article>
+    {%- if page.path and page.path contains '.md' %}
+    <p class="edit-link"><a href="{{ site.links.repo }}/blob/main/docs/{{ page.path }}">{% include icon.html name="edit" %} Edit this page on GitHub</a></p>
+    {%- endif %}
+  </main>
+  <aside class="docs-toc" aria-label="On this page" hidden>
+    <p class="toc-title">On this page</p>
+    <nav class="toc-list"></nav>
+  </aside>
+</div>

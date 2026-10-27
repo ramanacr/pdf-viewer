@@ -1,5 +1,33 @@
 title: PDF Viewer
 description: A private, script-free Windows PDF viewer and editor with its own PDF engine.
-theme: jekyll-theme-minimal
+
+# The site has its own layouts (_layouts), includes (_includes) and one style sheet
+# (assets/css/site.css). Everything is served from this site: no web fonts, no CDN, no analytics.
+markdown: kramdown
+highlighter: rouge
+kramdown:
+  input: GFM
+  auto_ids: true
+  syntax_highlighter: rouge
+
+plugins:
+  - jekyll-seo-tag
+
 exclude:
   - archive
+
+# Every Markdown page uses the documentation layout (sidebar and table of contents) unless its
+# front matter says otherwise. The home page uses the "home" layout.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: docs
+
+# Links that more than one page uses.
+links:
+  repo: https://github.com/ramanacr/pdf-viewer
+  releases: https://github.com/ramanacr/pdf-viewer/releases/latest
+  store: https://apps.microsoft.com/detail/9N6QDM774R62
+  npm: https://www.npmjs.com/package/pdfviewer-embed
+  nuget: https://www.nuget.org/packages/PdfEngine.Vector.Skia

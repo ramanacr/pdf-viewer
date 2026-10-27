@@ -1,14 +1,31 @@
-/* Shared look of the SDK examples. Nothing here is needed by the SDK itself. */
-:root { color-scheme: light dark; --accent: #0b6e7a; --muted: #5b6676; --border: #d5dbe3; }
+/* Shared look of the SDK examples, matched to the documentation site (assets/css/site.css).
+   Nothing here is needed by the SDK itself. */
+:root {
+  color-scheme: light dark;
+  --accent: #c8102e; --accent-hover: #a50d26; --accent-text: #fff;
+  --text: #1d1f24; --muted: #5a606b; --border: #e1e4e9; --bg: #fff; --bg-subtle: #f6f7f9;
+  --error: #b42318;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --accent: #f0525f; --accent-hover: #ff6d78; --accent-text: #160709; --text: #e8eaed; --muted: #a8adb6; --border: #2b2f36; --bg: #121316; --bg-subtle: #17191d; --error: #ff8a80; }
+}
 * { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header.example { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
-header.example h1 { font-size: 18px; margin: 0; }
-header.example nav { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13.5px; }
-a { color: var(--accent); }
-main.article { max-width: 760px; margin: 0 auto; padding: 16px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+header.example {
+  position: sticky; top: 0; z-index: 5; padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+}
+header.example h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+header.example h1::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 10px; border-radius: 3px; background: var(--accent); vertical-align: 1px; }
+header.example nav { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; margin-left: auto; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { color: var(--accent-hover); }
+main.article { max-width: 800px; margin: 0 auto; padding: 24px 20px; }
 .status { font-size: 13.5px; color: var(--muted); margin: 8px 0; min-height: 1.5em; }
-.status.error { color: #b42318; }
-button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-code { font-size: 0.92em; }
+.status.error { color: var(--error); }
+button { font: inherit; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+code { font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; font-size: 0.88em; padding: 0.1em 0.35em; border-radius: 4px; background: var(--bg-subtle); border: 1px solid var(--border); }
+:focus-visible { outline: 2px solid #1a6dd6; outline-offset: 2px; }
