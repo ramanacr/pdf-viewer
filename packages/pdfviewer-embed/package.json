@@ -1,6 +1,6 @@
 {
   "name": "pdfviewer-embed",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Embed PDF Viewer Native in a web page: an API modelled on Adobe PDF Embed API, with the viewer's own engine running in the browser as WebAssembly. No client ID, no server, no telemetry.",
   "keywords": [
     "pdf",
