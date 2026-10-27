@@ -421,7 +421,8 @@ kbd {
 .swatch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .pages[data-tool="note"] .page, .pages[data-tool="freetext"] .page, .pages[data-tool="ink"] .page,
-.pages[data-tool="square"] .page, .pages[data-tool="circle"] .page { cursor: crosshair; }
+.pages[data-tool="square"] .page, .pages[data-tool="circle"] .page, .pages[data-tool="line"] .page, .pages[data-tool="arrow"] .page,
+.pages[data-tool="polygon"] .page, .pages[data-tool="polyline"] .page, .pages[data-tool="stamp"] .page { cursor: crosshair; }
 .annot-hit {
     position: absolute; border-radius: 2px; cursor: move;
     outline: 1px solid transparent; outline-offset: 1px;
@@ -443,6 +444,11 @@ kbd {
 .annot-editor textarea { font: inherit; font-size: 13.5px; resize: vertical; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 .annot-editor-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .comments .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
+/* A thread: the replies under the comment they answer, indented by their level (set on the item). */
+.comments .reply-form { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 8px 14px; }
+.comments .reply-form textarea { font: inherit; font-size: 13px; resize: vertical; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.comments .reply-form .button { align-self: flex-end; }
+.annot-toolbar select { font: inherit; font-size: 13px; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 
 /* Form fields: the page shows the field's appearance; the input shows its text only while it has the focus. */
 .form-field {

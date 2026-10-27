@@ -25,6 +25,21 @@ public static class PdfAnnotationLimits
     /// <summary>Most points of one ink annotation, over all its strokes.</summary>
     public const int MaxInkPoints = 50000;
 
-    /// <summary>Most ink and quadrilateral points of all annotations of one document (a quadrilateral has 4).</summary>
+    /// <summary>Most ink, quadrilateral and vertex points of all annotations of one document (a quadrilateral has 4).</summary>
     public const int MaxPointsPerDocument = 1_000_000;
+
+    /// <summary>
+    /// Most /Vertices points of one polygon or polyline. The reader keeps no more than this of a
+    /// file's list, and the appearance generator draws no more.
+    /// </summary>
+    public const int MaxVertices = 10000;
+
+    /// <summary>Most replies between a reply and the annotation its thread starts at (/IRT chains, 12.5.6.4).</summary>
+    public const int MaxReplyDepth = 64;
+
+    /// <summary>The line ending names of /LE (ISO 32000-2 Table 179); untrusted input gives one of these.</summary>
+    public static IReadOnlySet<string> LineEndings { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "None", "Square", "Circle", "Diamond", "OpenArrow", "ClosedArrow", "Butt", "ROpenArrow", "RClosedArrow", "Slash",
+    };
 }

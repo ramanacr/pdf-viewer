@@ -763,7 +763,8 @@ public static class PdfAnnotationAppearances
                 return true;
             }
             var points = new List<Pt>();
-            for (int i = 0; i + 1 < v.Length; i += 2) points.Add(Local(v[i], v[i + 1]));
+            // A hostile vertex list is drawn up to the limit, so the appearance stream stays bounded.
+            for (int i = 0; i + 1 < v.Length && points.Count < PdfAnnotationLimits.MaxVertices; i += 2) points.Add(Local(v[i], v[i + 1]));
             if (fill == null && stroke == null) return true;
 
             Colours(fill, stroke);

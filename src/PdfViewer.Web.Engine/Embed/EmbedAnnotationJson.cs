@@ -27,9 +27,11 @@ public sealed record EmbedSaveOptions(bool Enabled, int AutoSaveSeconds, bool Fo
 /// <code>
 /// { id, type: "Annotation", motivation: "commenting" | "highlighting", bodyValue,
 ///   target: { source, selector: { node: { index }, subtype, boundingBox: [x1, y1, x2, y2],
-///             quadPoints, inkList, strokeColor, fillColor, strokeWidth, opacity, fontSize } },
+///             quadPoints, inkList, vertices, lineEndings, stampName, strokeColor, fillColor,
+///             strokeWidth, opacity, fontSize } },
 ///   creator: { type: "Person", name }, created, modified }
 /// </code>
+/// A reply is <c>{ id, type, motivation: "replying", bodyValue, target: "&lt;id it answers&gt;", creator, created, modified }</c>.
 /// node.index counts pages from 0; coordinates are PDF points in the page's user space, origin at
 /// the lower-left, y up.
 /// </remarks>
@@ -74,6 +76,20 @@ public static class EmbedAnnotationJson
         var created = Date(e, "created", what, requestId) ?? now;
         var modified = Date(e, "modified", what, requestId) ?? (created == default ? default : created);
 
+        // A reply: motivation "replying" and target the id of the annotation it answers (its page and box come from that one).
+        if (e.TryGetProperty("motivation", out var motivation) && motivation.ValueKind == JsonValueKind.String && motivation.GetString() == "replying")
+        {
+            string parent = e.TryGetProperty("target", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString()! : "";
+            if (parent.Length is 0 or > ViewerAnnotationStore.MaxIdLength || parent.Any(char.IsControl))
+                throw Bad(requestId, $"{what}: a reply's target is the id of the annotation it answers.");
+            return new ViewerAnnotation
+            {
+                Id = id, Page = 1, Kind = ViewerAnnotationKind.Reply, Box = default, InReplyTo = parent,
+                Color = ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Reply),
+                Contents = contents, Author = name, Created = created, Modified = modified,
+            };
+        }
+
         var target = Object(e, "target", what, requestId) ?? throw Bad(requestId, $"{what}: target is required.");
         var selector = Object(target, "selector", what + ".target", requestId) ?? throw Bad(requestId, $"{what}: target.selector is required.");
         string w = what + ".target.selector";
@@ -82,7 +98,7 @@ public static class EmbedAnnotationJson
             ? p : throw Bad(requestId, $"{w}.node.index must be a page index from 0.");
         string subtypeName = String(selector, "subtype", 32, w, requestId) ?? throw Bad(requestId, $"{w}: subtype is required.");
         var kind = ViewerAnnotation.ParseSubtype(subtypeName)
-                   ?? throw Bad(requestId, $"{w}.subtype must be one of {string.Join(", ", ViewerAnnotation.SubtypeNames)}.");
+                   ?? throw Bad(requestId, $"{w}.subtype must be one of {string.Join(", ", ViewerAnnotation.SubtypeNames.Where(n => n != "reply"))} (a reply has motivation \"replying\").");
 
         double[]? quads = kind is ViewerAnnotationKind.Highlight or ViewerAnnotationKind.Underline or ViewerAnnotationKind.StrikeOut
             ? Numbers(selector, "quadPoints", 8 * ViewerAnnotationStore.MaxQuads, w, requestId) : null;
@@ -104,6 +120,30 @@ public static class EmbedAnnotationJson
                 ink.Add(pts);
             }
         }
+        double[]? vertices = null;
+        string start = "None", end = "None";
+        if (kind is ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine)
+        {
+            vertices = Numbers(selector, "vertices", 2 * ViewerAnnotationStore.MaxVertices, w, requestId)
+                       ?? throw Bad(requestId, $"{w}: a {subtypeName} needs vertices, x, y pairs ([x1, y1, x2, y2] for a line).");
+            int least = kind switch { ViewerAnnotationKind.Polygon => 6, _ => 4 };
+            if (vertices.Length % 2 != 0 || vertices.Length < least || kind == ViewerAnnotationKind.Line && vertices.Length != 4)
+                throw Bad(requestId, $"{w}.vertices must be x, y pairs: two points for a line, {least / 2} or more for a {subtypeName}.");
+            if (selector.TryGetProperty("lineEndings", out var le) && le.ValueKind != JsonValueKind.Null)
+            {
+                if (le.ValueKind != JsonValueKind.Array || le.GetArrayLength() != 2 || le.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String))
+                    throw Bad(requestId, $"{w}.lineEndings must be two names, [start, end].");
+                start = le[0].GetString()!;
+                end = le[1].GetString()!;
+            }
+        }
+        string stampName = "";
+        if (kind == ViewerAnnotationKind.Stamp)
+        {
+            stampName = String(selector, "stampName", 64, w, requestId) ?? "Draft";
+            if (!ViewerAnnotationStore.StampNames.Contains(stampName))
+                throw Bad(requestId, $"{w}.stampName must be one of {string.Join(", ", ViewerAnnotationStore.StampNames)}.");
+        }
         double strokeWidth = Number(selector, "strokeWidth", 0, ViewerAnnotationStore.MaxStrokeWidth, w, requestId) ?? 1;
         var bb = Numbers(selector, "boundingBox", 4, w, requestId);
         ViewerBox box;
@@ -111,6 +151,7 @@ public static class EmbedAnnotationJson
         else if (bb != null) throw Bad(requestId, $"{w}.boundingBox must be [x1, y1, x2, y2].");
         else if (quads != null) box = ViewerBox.Around(quads);
         else if (ink != null) box = ViewerBox.Around(ink.SelectMany(s => s), strokeWidth / 2 + 1);
+        else if (vertices != null) box = ViewerBox.Around(vertices, ViewerAnnotationStore.ShapeMargin(strokeWidth, start != "None" || end != "None"));
         else throw Bad(requestId, $"{w}: boundingBox is required.");
 
         string color = ColourValue(selector, "strokeColor", w, requestId) ?? ViewerAnnotationPdf.DefaultColor(kind);
@@ -122,6 +163,10 @@ public static class EmbedAnnotationJson
             Box = box,
             QuadPoints = quads ?? [],
             InkList = ink ?? [],
+            Vertices = vertices ?? [],
+            StartEnding = start,
+            EndEnding = end,
+            StampName = stampName,
             Color = color.ToUpperInvariant(),
             FillColor = ColourValue(selector, "fillColor", w, requestId)?.ToUpperInvariant(),
             Opacity = Number(selector, "opacity", 0, 1, w, requestId) ?? 1,
@@ -203,6 +248,14 @@ public static class EmbedAnnotationJson
         w.WriteEndArray();
         w.WriteString("id", a.Id);
         w.WriteString("type", "Annotation");
+        if (a.Kind == ViewerAnnotationKind.Reply)
+        {
+            w.WriteString("motivation", "replying");
+            w.WriteString("bodyValue", a.Contents);
+            w.WriteString("target", a.InReplyTo);
+            WriteCreator(w, a);
+            return;
+        }
         w.WriteString("motivation", a.IsMarkup ? "highlighting" : "commenting");
         w.WriteString("bodyValue", a.Contents);
         w.WriteStartObject("target");
@@ -226,14 +279,29 @@ public static class EmbedAnnotationJson
             }
             w.WriteEndArray();
         }
+        if (a.HasVertices) WriteNumbers(w, "vertices", a.Vertices);
+        if (a.HasEndings)
+        {
+            w.WriteStartArray("lineEndings");
+            w.WriteStringValue(a.StartEnding);
+            w.WriteStringValue(a.EndEnding);
+            w.WriteEndArray();
+        }
+        if (a.Kind == ViewerAnnotationKind.Stamp) w.WriteString("stampName", a.StampName);
         w.WriteString("strokeColor", a.Color);
         if (a.FillColor != null) w.WriteString("fillColor", a.FillColor);
-        if (a.Kind is ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.FreeText)
+        if (a.Kind is ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.FreeText || a.HasVertices)
             w.WriteNumber("strokeWidth", Round(a.StrokeWidth));
         if (a.Kind == ViewerAnnotationKind.FreeText) w.WriteNumber("fontSize", Round(a.FontSize));
         w.WriteNumber("opacity", Round(a.Opacity));
         w.WriteEndObject();
         w.WriteEndObject();
+        WriteCreator(w, a);
+    }
+
+    /// <summary>The creator, the dates and the end of the annotation's object.</summary>
+    private static void WriteCreator(Utf8JsonWriter w, ViewerAnnotation a)
+    {
         w.WriteStartObject("creator");
         w.WriteString("type", "Person");
         w.WriteString("name", a.Author);

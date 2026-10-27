@@ -57,17 +57,37 @@ public sealed class PdfAnnotationEditor
 
     // ------------------------------------------------------------------ add, change, delete
 
-    /// <summary>Adds an annotation to its page; returns its object number.</summary>
+    /// <summary>
+    /// Adds an annotation to its page; returns its object number. A reply given by
+    /// <see cref="PdfAnnotation.InReplyToName"/> is matched to an annotation added before by this
+    /// editor, or else on the same page, with that /NM; <see cref="PdfAnnotation.InReplyTo"/> is
+    /// set to it (left 0, and no /IRT written, when there is none).
+    /// </summary>
     public int Add(PdfAnnotation annotation)
     {
         ArgumentNullException.ThrowIfNull(annotation);
         var page = State(annotation.PageNumber);
+        if (annotation.InReplyTo <= 0 && !string.IsNullOrEmpty(annotation.InReplyToName))
+            annotation.InReplyTo = FindByName(page, annotation.InReplyToName);
         int self = _update.Add(PdfNull.Instance);
+        if (annotation.InReplyTo == self) annotation.InReplyTo = 0;
         var dict = Build(annotation, null, new PdfIndirectRef(page.Number), self, page);
         _update.Set(self, dict);
         page.Added.Add(new PdfIndirectRef(self));
         page.Changed = true;
+        if (!string.IsNullOrEmpty(annotation.Name)) _addedNames.TryAdd(annotation.Name, self);
         return self;
+    }
+
+    private readonly Dictionary<string, int> _addedNames = new(StringComparer.Ordinal);
+
+    /// <summary>The object number of the annotation named <paramref name="name"/> (/NM): added by this editor, else on the page; 0 when none.</summary>
+    private int FindByName(PageState page, string name)
+    {
+        if (_addedNames.TryGetValue(name, out int added)) return added;
+        foreach (var item in page.Items)
+            if (item is PdfIndirectRef r && Resolved(item) is { } d && PdfTextStrings.Decode(_update.Resolve(d["NM"])) == name) return r.ObjectNumber;
+        return 0;
     }
 
     /// <summary>Replaces the managed entries of the annotation at <see cref="PdfAnnotation.Index"/> on its page and draws it again.</summary>
@@ -106,23 +126,31 @@ public sealed class PdfAnnotationEditor
 
     private void Remove(PageState page, int index, bool cascadeReplies = true)
     {
-        var item = page.Items[index];
-        if (item == null) return;
-        page.Items[index] = null;
-        page.Changed = true;
-        var dict = Resolved(item);
-        int self = item is PdfIndirectRef r ? r.ObjectNumber : 0;
-        if (dict?.GetName("Subtype") == "Widget" && self > 0) _removedWidgets.Add(self);
-        int popup = dict?["Popup"] is PdfIndirectRef p ? p.ObjectNumber : 0;
-        for (int i = 0; i < page.Items.Count; i++)
+        // A work list, not recursion: a file's /IRT chain can be as long as its /Annots, and a
+        // removed item is never visited again, so a chain that loops ends too.
+        var pending = new Stack<int>();
+        pending.Push(index);
+        while (pending.Count > 0)
         {
-            if (page.Items[i] is not { } other) continue;
-            int number = other is PdfIndirectRef o ? o.ObjectNumber : 0;
-            var od = Resolved(other);
-            bool isPopup = number > 0 && number == popup
-                || self > 0 && od?.GetName("Subtype") == "Popup" && od["Parent"] is PdfIndirectRef parent && parent.ObjectNumber == self;
-            bool isReply = cascadeReplies && self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
-            if (isPopup || isReply) Remove(page, i, cascadeReplies);
+            int at = pending.Pop();
+            var item = page.Items[at];
+            if (item == null) continue;
+            page.Items[at] = null;
+            page.Changed = true;
+            var dict = Resolved(item);
+            int self = item is PdfIndirectRef r ? r.ObjectNumber : 0;
+            if (dict?.GetName("Subtype") == "Widget" && self > 0) _removedWidgets.Add(self);
+            int popup = dict?["Popup"] is PdfIndirectRef p ? p.ObjectNumber : 0;
+            for (int i = 0; i < page.Items.Count; i++)
+            {
+                if (page.Items[i] is not { } other) continue;
+                int number = other is PdfIndirectRef o ? o.ObjectNumber : 0;
+                var od = Resolved(other);
+                bool isPopup = number > 0 && number == popup
+                    || self > 0 && od?.GetName("Subtype") == "Popup" && od["Parent"] is PdfIndirectRef parent && parent.ObjectNumber == self;
+                bool isReply = cascadeReplies && self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
+                if (isPopup || isReply) pending.Push(i);
+            }
         }
     }
 
@@ -224,6 +252,15 @@ public sealed class PdfAnnotationEditor
             return new PdfDictionary(e);
         }
 
+        // A reply note belongs in the comments list, not on the page: its appearance is empty, so
+        // no reader draws a second note icon over the annotation it answers.
+        if (a.Subtype == "Text" && PdfAnnotationThreads.IsReply(a))
+        {
+            e["AP"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = _update.AddRef(EmptyForm(rect)) });
+            e.Remove("AS");
+            return new PdfDictionary(e);
+        }
+
         // A new normal appearance in place of the old one; a type the generator does not draw keeps what it had.
         var draft = new PdfDictionary(e);
         var form = a.Subtype == "Stamp" && a.Stamp != null
@@ -236,6 +273,14 @@ public sealed class PdfAnnotationEditor
         }
         return new PdfDictionary(e);
     }
+
+    /// <summary>A form XObject the size of the rectangle that draws nothing.</summary>
+    private static PdfStream EmptyForm(PdfRect rect) => PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
+    {
+        ["Type"] = new PdfName("XObject"),
+        ["Subtype"] = new PdfName("Form"),
+        ["BBox"] = PdfUpdate.Numbers(0, 0, Math.Max(rect.Width, 1), Math.Max(rect.Height, 1)),
+    }, Array.Empty<byte>());
 
     // ------------------------------------------------------------------ flattening
 

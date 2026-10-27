@@ -380,25 +380,34 @@ let tool = 'select';       // the annotation tool (Viewer.Annotations.cs): selec
 let drawing = null;        // { page, el, points, preview } while a shape or a stroke is drawn
 let moving = null;         // { id, el, x, y, dx, dy } while an annotation is dragged
 const markupTools = new Set(['select', 'highlight', 'underline', 'strikeout']);
+const clickTools = new Set(['note', 'stamp']);       // a click places them
+const polyTools = new Set(['polygon', 'polyline']);  // a click a point, a double-click (or Enter) ends
 const MaxInkPoints = 10000;
 
 /** The tool the pages follow: text tools select text, the others draw. */
 export function setTool(name) {
     tool = String(name);
     if (scroller) scroller.dataset.tool = tool;
+    cancelDrawing();
+}
+
+function cancelDrawing() {
+    drawing?.preview?.ownerSVGElement?.remove();
+    drawing = null;
 }
 
 function startDrawing(el, e) {
     const [x, y] = pointOn(el, e);
-    drawing = { page: Number(el.dataset.page), el, points: [x, y], preview: null };
-    if (tool === 'note') return;
+    drawing = { page: Number(el.dataset.page), el, points: [x, y], hover: [x, y], preview: null };
+    if (clickTools.has(tool)) return;
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('class', 'draw-preview');
     svg.setAttribute('viewBox', '0 0 1 1');
     svg.setAttribute('preserveAspectRatio', 'none');
     svg.setAttribute('aria-hidden', 'true');
-    const shape = document.createElementNS(ns, tool === 'ink' ? 'polyline' : tool === 'circle' ? 'ellipse' : 'rect');
+    const kind = { ink: 'polyline', polyline: 'polyline', polygon: 'polygon', circle: 'ellipse', line: 'line', arrow: 'line' }[tool] ?? 'rect';
+    const shape = document.createElementNS(ns, kind);
     svg.appendChild(shape);
     el.appendChild(svg);
     drawing.preview = shape;
@@ -408,15 +417,18 @@ function startDrawing(el, e) {
 function drawShape() {
     const d = drawing;
     if (!d || !d.preview) return;
-    const p = d.points;
-    if (tool === 'ink') {
+    const p = polyTools.has(tool) ? d.points.concat(d.hover) : d.points;
+    if (tool === 'ink' || polyTools.has(tool)) {
         let s = '';
         for (let i = 0; i + 1 < p.length; i += 2) s += `${p[i]},${p[i + 1]} `;
         d.preview.setAttribute('points', s);
         return;
     }
     const [x0, y0] = p, x1 = p[p.length - 2], y1 = p[p.length - 1];
-    if (tool === 'circle') {
+    if (tool === 'line' || tool === 'arrow') {
+        d.preview.setAttribute('x1', x0); d.preview.setAttribute('y1', y0);
+        d.preview.setAttribute('x2', x1); d.preview.setAttribute('y2', y1);
+    } else if (tool === 'circle') {
         d.preview.setAttribute('cx', (x0 + x1) / 2); d.preview.setAttribute('cy', (y0 + y1) / 2);
         d.preview.setAttribute('rx', Math.abs(x1 - x0) / 2); d.preview.setAttribute('ry', Math.abs(y1 - y0) / 2);
     } else {
@@ -431,8 +443,24 @@ function finishDrawing() {
     if (!d) return;
     d.preview?.ownerSVGElement?.remove();
     let points = d.points;
-    if (tool !== 'ink') points = points.length >= 4 ? [points[0], points[1], points[points.length - 2], points[points.length - 1]] : [points[0], points[1], points[0], points[1]];
+    if (tool !== 'ink' && !polyTools.has(tool)) points = points.length >= 4 ? [points[0], points[1], points[points.length - 2], points[points.length - 1]] : [points[0], points[1], points[0], points[1]];
     app.invokeMethodAsync('OnToolStroke', tool, d.page, points);
+}
+
+/** A polygon or polyline tool: a click adds a point; the second click of a double-click, or Enter, ends it. */
+function polyClick(el, e) {
+    if (drawing && drawing.el !== el) cancelDrawing();
+    if (!drawing) {
+        startDrawing(el, e);
+        return;
+    }
+    if (e.detail >= 2) {
+        finishDrawing();
+        return;
+    }
+    const [x, y] = pointOn(el, e);
+    if (drawing.points.length < 2 * MaxInkPoints) drawing.points.push(x, y);
+    drawShape();
 }
 
 function moveAnnotation(dx, dy) {
@@ -464,6 +492,12 @@ function initSelection() {
             if (selectionText !== null) app.invokeMethodAsync('OnSelectClear');
             return;
         }
+        if (polyTools.has(tool)) {
+            e.preventDefault();
+            scroller.focus({ preventScroll: true });
+            polyClick(el, e);
+            return;
+        }
         if (!markupTools.has(tool)) {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
@@ -485,7 +519,9 @@ function initSelection() {
         }
         if (drawing) {
             const [x, y] = pointOn(drawing.el, e);
-            if (tool === 'ink') {
+            if (polyTools.has(tool)) {
+                drawing.hover = [x, y];
+            } else if (tool === 'ink') {
                 if (drawing.points.length < 2 * MaxInkPoints) drawing.points.push(x, y);
             } else {
                 drawing.points = [drawing.points[0], drawing.points[1], x, y];
@@ -516,8 +552,9 @@ function initSelection() {
             return;
         }
         if (drawing) {
+            if (polyTools.has(tool) && e.type === 'pointerup') return; // the polygon goes on until a double-click
             if (e.type === 'pointerup') finishDrawing();
-            else { drawing.preview?.ownerSVGElement?.remove(); drawing = null; }
+            else cancelDrawing();
             return;
         }
         const wasSelecting = dragging !== null;
@@ -527,6 +564,11 @@ function initSelection() {
     };
     scroller.addEventListener('pointerup', end);
     scroller.addEventListener('pointercancel', end);
+    scroller.addEventListener('keydown', e => {
+        if (!drawing || !polyTools.has(tool)) return;
+        if (e.key === 'Enter') { e.preventDefault(); finishDrawing(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancelDrawing(); }
+    });
 }
 
 function onCopy(e) {
