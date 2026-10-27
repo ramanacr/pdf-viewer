@@ -2,6 +2,7 @@ using Android.Content;
 using Android.Views;
 using Android.Widget;
 using PdfViewer.Web.Engine;
+using PdfViewer.Web.Engine.Annotations;
 using SkiaSharp;
 
 namespace PdfViewer.Android;
@@ -12,9 +13,15 @@ namespace PdfViewer.Android;
 /// a worker thread, one job at a time, nearest the current page first. Each page has one bitmap of
 /// at most <see cref="BaseMaxPixels"/> pixels; at a deeper zoom the view's part of the page is
 /// drawn over it in tiles at the zoom's own scale (<see cref="PageTiles"/>), so 8× stays sharp.
+/// With an edit session, a tap fills a form field or picks an annotation, the ink tool draws with
+/// one finger (two still zoom), and the note tool places a note; the engine draws the edits into
+/// the pages, which are drawn again after each change (<see cref="Refresh"/>).
 /// </summary>
 internal sealed class PageView : SkiaView
 {
+    /// <summary>What one finger does on a page: browse (scroll, tap, long press), draw, or place a note.</summary>
+    public enum PageTool { Browse, Ink, Note }
+
     /// <summary>Whole-page bitmaps kept for scrolling back (native Skia memory, not the Java heap).</summary>
     private const long ImageBudgetBytes = 96L * 1024 * 1024;
 
@@ -38,6 +45,17 @@ internal sealed class PageView : SkiaView
     private readonly SKPaint _selected = new() { Color = new SKColor(0x1F, 0x5F, 0xA8, 80) };
     private readonly SKPaint _handle = new() { Color = new SKColor(0x1F, 0x5F, 0xA8), IsAntialias = true };
     private readonly SKSamplingOptions _sampling = new(SKFilterMode.Linear, SKMipmapMode.None);
+    private readonly SKPaint _field = new() { Color = new SKColor(0x1F, 0x5F, 0xA8, 28) };
+    private readonly SKPaint _picked = new() { Color = new SKColor(0x1F, 0x5F, 0xA8), Style = SKPaintStyle.Stroke, IsAntialias = true };
+    private readonly SKPaint _ink = new() { Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round, IsAntialias = true };
+
+    // Edits: each change starts a new generation; a page image of an older one is shown only until
+    // the page is drawn again. Strokes stay drawn over the page until it is drawn with them.
+    private int _generation;
+    private readonly Dictionary<(int Page, bool Night), int> _imageGeneration = new();
+    private List<ViewerPoint>? _stroke;
+    private int _strokePage;
+    private readonly List<(int Page, int Generation, List<ViewerPoint> Points)> _pendingInk = new();
 
     private ViewerDocument? _doc;
     private ContinuousPageLayout? _layout;
@@ -77,6 +95,87 @@ internal sealed class PageView : SkiaView
     /// <summary>The document lets its text be copied; when it does not, a long press selects nothing.</summary>
     public bool CopyAllowed { get; set; } = true;
 
+    /// <summary>The reader's edits of the document shown, or null when it cannot be edited.</summary>
+    public ViewerEditSession? Session { get; set; }
+
+    /// <summary>A tap on a fillable form field.</summary>
+    public event Action<ViewerFormWidget>? FieldTapped;
+
+    /// <summary>A tap on an annotation (the browse tool).</summary>
+    public event Action<ViewerAnnotation>? AnnotationTapped;
+
+    /// <summary>A tap on a page away from fields and annotations.</summary>
+    public event Action? EmptyTapped;
+
+    /// <summary>The ink tool drew a stroke: its page and its points on the shown page.</summary>
+    public event Action<int, IReadOnlyList<ViewerPoint>>? InkDrawn;
+
+    /// <summary>The note tool was tapped on a page: the page and the point on it.</summary>
+    public event Action<int, ViewerPoint>? NoteRequested;
+
+    private PageTool _tool;
+
+    public PageTool Tool
+    {
+        get => _tool;
+        set
+        {
+            _tool = value;
+            _stroke = null;
+            if (value != PageTool.Browse) ClearSelection();
+            Invalidate();
+        }
+    }
+
+    private string? _pickedAnnotation;
+
+    /// <summary>The annotation outlined as chosen, or null.</summary>
+    public string? PickedAnnotation
+    {
+        get => _pickedAnnotation;
+        set
+        {
+            _pickedAnnotation = value;
+            Invalidate();
+        }
+    }
+
+    /// <summary>The text selection, for marking it up.</summary>
+    public ViewerTextSelection? Selection => _selection is { IsEmpty: false } s ? s : null;
+
+    /// <summary>
+    /// The document has the latest edits: every page is drawn again. Until a page is, its last
+    /// image stays (no blank flash), with the strokes not yet in it drawn over.
+    /// </summary>
+    public void Refresh()
+    {
+        _generation++;
+        _tiles.Clear();
+        _tileScale = 0;
+        _failed.Clear();
+        _textLayouts.Clear();
+        Invalidate();
+        RequestRender();
+    }
+
+    /// <summary>The strokes waiting to be drawn into the pages are dropped (writing them failed).</summary>
+    public void DropPendingInk()
+    {
+        _pendingInk.Clear();
+        Invalidate();
+    }
+
+    /// <summary>Scrolls to an annotation's place.</summary>
+    public void GoToAnnotation(ViewerAnnotation a)
+    {
+        if (_layout == null || _doc == null || a.Page < 1 || a.Page > _doc.Geometry.Count) return;
+        _scroller.ForceFinished(true);
+        _layout.GoTo(a.Page, Math.Max(1, _doc.Geometry[a.Page - 1].ToShown(a.Box).Y));
+        ReportPage();
+        Invalidate();
+        RequestRender();
+    }
+
     /// <summary>Shows <paramref name="document"/> from its first page (null shows nothing).</summary>
     public void SetDocument(ViewerDocument? document)
     {
@@ -90,6 +189,11 @@ internal sealed class PageView : SkiaView
         _toldMissingFonts = false;
         _pendingView = null;
         _textLayouts.Clear();
+        _imageGeneration.Clear();
+        _pendingInk.Clear();
+        _stroke = null;
+        _pickedAnnotation = null;
+        _tool = PageTool.Browse;
         ClearSelection();
         _doc = document;
         _layout = document == null ? null : new ContinuousPageLayout(document.Pages, gap: 12 * Density, margin: 8 * Density);
@@ -140,6 +244,7 @@ internal sealed class PageView : SkiaView
         _edge.Color = dark ? new SKColor(255, 255, 255, 50) : new SKColor(0, 0, 0, 40);
         var accent = dark ? new SKColor(0x8A, 0xB4, 0xF8) : new SKColor(0x1F, 0x5F, 0xA8);
         _handle.Color = accent;
+        _picked.Color = accent;
         _selected.Color = accent.WithAlpha(dark ? (byte)90 : (byte)80);
         Invalidate();
     }
@@ -224,8 +329,47 @@ internal sealed class PageView : SkiaView
                 canvas.DrawRect(new SKRect((float)v.X, (float)v.Y, (float)v.Right, (float)v.Bottom), i == _currentHitIndex ? _currentHit : _hit);
             }
         }
+        DrawEdits(canvas);
         DrawSelection(canvas);
     }
+
+    /// <summary>The fillable fields tinted (as Acrobat shows them), the chosen annotation outlined, and strokes not yet in the pages.</summary>
+    private void DrawEdits(SKCanvas canvas)
+    {
+        if (Session is not { } session || _layout == null) return;
+        var visible = _layout.VisiblePages().ToHashSet();
+        foreach (var w in session.Widgets)
+        {
+            if (w.ReadOnly || !visible.Contains(w.Page)) continue;
+            canvas.DrawRect(Sk(_layout.ToView(w.Page, w.Rect)), _field);
+        }
+        if (_pickedAnnotation != null && session.Store.Find(_pickedAnnotation) is { } a && visible.Contains(a.Page))
+        {
+            var r = Sk(_layout.ToView(a.Page, session.Document.Geometry[a.Page - 1].ToShown(a.Box)));
+            float grow = 3 * Density;
+            _picked.StrokeWidth = 2 * Density;
+            canvas.DrawRect(new SKRect(r.Left - grow, r.Top - grow, r.Right + grow, r.Bottom + grow), _picked);
+        }
+        _ink.Color = SKColor.Parse(ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Ink));
+        _ink.StrokeWidth = (float)(ViewerEditSession.InkWidth * _layout.PixelsPerPoint);
+        foreach (var (page, _, points) in _pendingInk)
+            if (visible.Contains(page)) DrawStroke(canvas, page, points);
+        if (_stroke != null) DrawStroke(canvas, _strokePage, _stroke);
+    }
+
+    private void DrawStroke(SKCanvas canvas, int page, IReadOnlyList<ViewerPoint> points)
+    {
+        if (points.Count == 0) return;
+        var r = _layout!.PageRectInView(page);
+        double s = _layout.PixelsPerPoint;
+        using var path = new SKPath();
+        path.MoveTo((float)(r.X + points[0].X * s), (float)(r.Y + points[0].Y * s));
+        for (int i = 1; i < points.Count; i++) path.LineTo((float)(r.X + points[i].X * s), (float)(r.Y + points[i].Y * s));
+        if (points.Count == 1) path.LineTo((float)(r.X + points[0].X * s) + 0.1f, (float)(r.Y + points[0].Y * s));
+        canvas.DrawPath(path, _ink);
+    }
+
+    private static SKRect Sk(LayoutRect r) => new((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom);
 
     private void DrawTiles(SKCanvas canvas, int page, LayoutRect pageInView, bool sharp)
     {
@@ -285,7 +429,7 @@ internal sealed class PageView : SkiaView
         _ = RenderLoopAsync();
     }
 
-    private readonly record struct Job(ViewerDocument Doc, int Page, double Scale, bool Night, PageTile? Tile);
+    private readonly record struct Job(ViewerDocument Doc, int Page, double Scale, bool Night, PageTile? Tile, int Generation);
 
     private async Task RenderLoopAsync()
     {
@@ -313,6 +457,7 @@ internal sealed class PageView : SkiaView
                     continue;
                 }
                 if (!ReferenceEquals(job.Doc, _doc)) break;
+                if (job.Generation != _generation) continue; // drawn before the latest edit
                 if (bitmap.TextRegionsWithoutFont > 0 && !_toldMissingFonts)
                 {
                     _toldMissingFonts = true;
@@ -343,6 +488,9 @@ internal sealed class PageView : SkiaView
                 else
                 {
                     _images.Add(job.Page, job.Night, job.Scale, image, bitmap.ByteLength);
+                    _imageGeneration[(job.Page, job.Night)] = job.Generation;
+                    // The page now has its strokes (a stroke drawn meanwhile is a newer edit, drawn by the next refresh).
+                    _pendingInk.RemoveAll(s => s.Page == job.Page && s.Generation < job.Generation);
                 }
                 Invalidate();
             }
@@ -384,7 +532,7 @@ internal sealed class PageView : SkiaView
             foreach (var tile in tiles)
             {
                 if (_tiles.Has(page, _night, scale, tile.Column, tile.Row)) continue;
-                var job = new Job(doc, page, scale, _night, tile);
+                var job = new Job(doc, page, scale, _night, tile, _generation);
                 if (!_failed.Contains(FailKey(job))) return job;
             }
         }
@@ -396,8 +544,8 @@ internal sealed class PageView : SkiaView
         Job? BaseJob(int page)
         {
             double bs = BaseScale(page, scale);
-            if (_images.Has(page, _night, bs)) return null;
-            var job = new Job(doc, page, bs, _night, null);
+            if (_images.Has(page, _night, bs) && _imageGeneration.GetValueOrDefault((page, _night)) == _generation) return null;
+            var job = new Job(doc, page, bs, _night, null, _generation);
             return _failed.Contains(FailKey(job)) ? null : job;
         }
     }
@@ -436,11 +584,63 @@ internal sealed class PageView : SkiaView
     }
 
     /// <summary>A view point as a point on <paramref name="page"/> (shown-page points; outside the page when the point is).</summary>
-    private ViewerPoint ToPage(int page, float x, float y)
+    private ViewerPoint ToPage(int page, float x, float y) => _layout!.ToPagePoint(page, x, y);
+
+    /// <summary>A tap with the browse or note tool: a field, an annotation, a place for a note, or nothing.</summary>
+    private void Tap(float x, float y)
     {
-        var r = _layout!.PageRectInView(page);
-        double s = _layout.PixelsPerPoint;
-        return new ViewerPoint((x - r.X) / s, (y - r.Y) / s);
+        if (_layout?.PageAt(x, y) is not var (page, point)) return;
+        if (_tool == PageTool.Note)
+        {
+            NoteRequested?.Invoke(page, point);
+            return;
+        }
+        if (Session is not { } session) return;
+        if (session.WidgetAt(page, point) is { } widget)
+            FieldTapped?.Invoke(widget);
+        else if (session.AnnotationAt(page, point, slack: 8 * Density / _layout.PixelsPerPoint) is { } annotation)
+            AnnotationTapped?.Invoke(annotation);
+        else
+            EmptyTapped?.Invoke();
+    }
+
+    /// <summary>
+    /// The ink tool: one finger draws on the page it starts on; a second finger ends the stroke
+    /// unfinished and zooms instead. True when the event was the stroke's.
+    /// </summary>
+    private bool DrawInk(MotionEvent e)
+    {
+        switch (e.ActionMasked)
+        {
+            case MotionEventActions.Down:
+                if (_layout!.PageAt(e.GetX(), e.GetY()) is not var (page, point)) return false;
+                _scroller.ForceFinished(true);
+                _strokePage = page;
+                _stroke = [point];
+                Parent?.RequestDisallowInterceptTouchEvent(true);
+                return true;
+            case MotionEventActions.PointerDown:
+                _stroke = null;
+                Invalidate();
+                return false;
+            case MotionEventActions.Move when _stroke != null:
+                for (int i = 0; i < e.HistorySize; i++) _stroke.Add(ToPage(_strokePage, e.GetHistoricalX(i), e.GetHistoricalY(i)));
+                _stroke.Add(ToPage(_strokePage, e.GetX(), e.GetY()));
+                Invalidate();
+                return true;
+            case MotionEventActions.Up when _stroke != null:
+                var stroke = _stroke;
+                _stroke = null;
+                _pendingInk.Add((_strokePage, _generation, stroke));
+                Invalidate();
+                InkDrawn?.Invoke(_strokePage, stroke);
+                return true;
+            case MotionEventActions.Cancel:
+                _stroke = null;
+                Invalidate();
+                return false;
+        }
+        return _stroke != null;
     }
 
     private async Task SelectAtAsync(float x, float y)
@@ -522,7 +722,9 @@ internal sealed class PageView : SkiaView
             return true;
         }
         _pinch.OnTouchEvent(e);
-        if (!_pinch.IsInProgress) _gestures.OnTouchEvent(e);
+        if (_tool == PageTool.Ink && Session != null && !_pinch.IsInProgress && e.PointerCount == 1 && DrawInk(e)) return true;
+        if (_tool == PageTool.Ink && e.ActionMasked is MotionEventActions.PointerDown) DrawInk(e);
+        if (!_pinch.IsInProgress && _tool != PageTool.Ink) _gestures.OnTouchEvent(e);
         if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel && !_flinging)
             RequestRender();
         return true;
@@ -611,10 +813,11 @@ internal sealed class PageView : SkiaView
             return true;
         }
 
-        /// <summary>A tap ends a selection.</summary>
+        /// <summary>A tap ends a selection; otherwise it fills a field, picks an annotation or places a note.</summary>
         public override bool OnSingleTapConfirmed(MotionEvent e)
         {
-            view.ClearSelection();
+            if (view.HasSelection) view.ClearSelection();
+            else view.Tap(e.GetX(), e.GetY());
             return true;
         }
 
@@ -664,6 +867,9 @@ internal sealed class PageView : SkiaView
             _currentHit.Dispose();
             _selected.Dispose();
             _handle.Dispose();
+            _field.Dispose();
+            _picked.Dispose();
+            _ink.Dispose();
         }
         base.Dispose(disposing);
     }

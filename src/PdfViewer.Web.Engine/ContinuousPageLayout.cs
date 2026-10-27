@@ -172,6 +172,23 @@ public sealed class ContinuousPageLayout
         return new PageAnchor(i + 1, Math.Clamp((x - r.X) / r.Width, 0, 1), Math.Clamp((y - r.Y) / r.Height, 0, 1));
     }
 
+    /// <summary>A view point as a point on <paramref name="page"/>: points from the shown page's top-left corner, outside the page when the view point is.</summary>
+    public ViewerPoint ToPagePoint(int page, double viewX, double viewY)
+    {
+        var r = PageRectInView(page);
+        return new ViewerPoint((viewX - r.X) / PixelsPerPoint, (viewY - r.Y) / PixelsPerPoint);
+    }
+
+    /// <summary>The page under a view point and the point on it, or null in a gap or margin (a touch there is on no page).</summary>
+    public (int Page, ViewerPoint Point)? PageAt(double viewX, double viewY)
+    {
+        if (_pages.Count == 0) return null;
+        int page = AnchorAt(viewX, viewY).Page;
+        var r = PageRectInView(page);
+        if (viewX < r.X || viewX > r.Right || viewY < r.Y || viewY > r.Bottom) return null;
+        return (page, ToPagePoint(page, viewX, viewY));
+    }
+
     private void ScrollToAnchor(PageAnchor anchor, double viewX, double viewY)
     {
         var r = PageRect(anchor.Page);
