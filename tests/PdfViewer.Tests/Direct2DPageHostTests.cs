@@ -88,7 +88,7 @@ public class Direct2DPageHostTests : IDisposable
         await service.OpenDocumentAsync(SquarePdf());
         string outDir = Path.Combine(_dir, "export");
         await service.ExportPagesToImagesAsync(outDir, "page", 1, 1, "PNG", 72);
-        string file = Path.Combine(outDir, "page_page_001.png");
+        string file = Path.Combine(outDir, "page_page_0001.png");
         Assert.True(File.Exists(file));
         BitmapSource exported;
         using (var fs = File.OpenRead(file))

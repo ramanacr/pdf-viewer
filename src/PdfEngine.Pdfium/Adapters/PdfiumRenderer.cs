@@ -138,11 +138,14 @@ public sealed class PdfiumRenderer : IPdfRenderer
                 // Report the DPI the raster was ACTUALLY produced at. When the caller drives
                 // size via TargetWidth/HeightPixels, request.Dpi describes nothing, and a
                 // consumer using it for BitmapSource.Create renders at the wrong physical size.
+                // When the two axes differ, report the larger, as the vector renderers do.
                 double effectiveDpi = request.Dpi;
-                double sourcePoints = (userRotation == 1 || userRotation == 3) ? displayH : displayW;
-                if (sourcePoints > 0)
+                bool sideways = userRotation == 1 || userRotation == 3;
+                double sourceW = sideways ? displayH : displayW;
+                double sourceH = sideways ? displayW : displayH;
+                if (sourceW > 0 && sourceH > 0)
                 {
-                    effectiveDpi = pixelW / sourcePoints * 72.0;
+                    effectiveDpi = Math.Max(pixelW / sourceW, pixelH / sourceH) * 72.0;
                 }
 
                 return new RenderedPage(

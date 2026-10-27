@@ -241,7 +241,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>A page's content for accessibility (tags when present, else inferred).</summary>
     public Task<PdfViewer.Text.PageAccessibleContent> ExtractAccessibleContentAsync(int pageNumber, CancellationToken ct = default) =>
         _docService.ExtractAccessibleContentAsync(pageNumber, ct);
-    public Func<DocumentMetadata, (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi)>? ShowExportDialogFunc { get; set; }
+    public Func<DocumentMetadata, (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi, int JpegQuality)>? ShowExportDialogFunc { get; set; }
     public Func<DocumentMetadata, (bool Confirmed, string TargetPath, AnnotationSaveMode Mode)>? ShowSaveAnnotatedDialogFunc { get; set; }
     public Func<IPdfDocumentService, int, bool>? ShowPrintDialogFunc { get; set; }
     public Action<int>? ScrollToPageAction { get; set; }
@@ -3426,7 +3426,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (!Permit(DocumentPermissions.CanCopy, "exporting page images")) return;
         if (!IsDocumentLoaded || Metadata == null || ShowExportDialogFunc == null) return;
 
-        var (confirmed, outDir, prefix, start, end, format, dpi) = ShowExportDialogFunc(Metadata);
+        var (confirmed, outDir, prefix, start, end, format, dpi, jpegQuality) = ShowExportDialogFunc(Metadata);
         if (!confirmed) return;
 
         StatusText = $"Exporting pages {start} to {end} as {format}...";
@@ -3438,7 +3438,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 StatusText = $"Exporting: {pct:F0}%";
             });
 
-            await _docService.ExportPagesToImagesAsync(outDir, prefix, start, end, format, dpi, progress);
+            await _docService.ExportPagesToImagesAsync(outDir, prefix, start, end, format, dpi, jpegQuality, progress);
             StatusText = $"Successfully exported {end - start + 1} images to {outDir}";
             ShowAlert($"Successfully exported {end - start + 1} pages to:\n{outDir}", "Export Completed", MessageBoxButton.OK, MessageBoxImage.Information);
         }

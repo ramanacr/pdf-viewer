@@ -185,7 +185,9 @@ public interface IPdfDocumentService : IDisposable
     }
 
     /// <summary>
-    /// Exports pages to image files (PNG/JPEG) at custom DPI.
+    /// Exports pages to image files named <c>prefix_page_0001.ext</c> at custom DPI. The format is
+    /// PNG (the default), JPEG (at <paramref name="jpegQuality"/>, 1 to 100), TIFF or BMP
+    /// (<see cref="PageImageFormats"/>); another format throws <see cref="NotSupportedException"/>.
     /// </summary>
     Task ExportPagesToImagesAsync(
         string outputDirectory,
@@ -194,6 +196,7 @@ public interface IPdfDocumentService : IDisposable
         int endPage,
         string format = "PNG",
         int dpi = 300,
+        int jpegQuality = PageImageFormats.DefaultJpegQuality,
         IProgress<double>? progress = null,
         CancellationToken ct = default);
 

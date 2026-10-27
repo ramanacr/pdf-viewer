@@ -61,22 +61,40 @@
             </StackPanel>
             <StackPanel Grid.Column="1">
                 <TextBlock Text="Format:" FontWeight="SemiBold" Margin="0,0,0,4" />
-                <ComboBox x:Name="FormatComboBox" SelectedIndex="0" Height="28">
+                <ComboBox x:Name="FormatComboBox" SelectedIndex="0" Height="28" SelectionChanged="FormatComboBox_SelectionChanged">
                     <ComboBoxItem Content="PNG (*.png)" Tag="PNG" />
                     <ComboBoxItem Content="JPEG (*.jpg)" Tag="JPEG" />
+                    <ComboBoxItem Content="TIFF (*.tiff)" Tag="TIFF" />
+                    <ComboBoxItem Content="BMP (*.bmp)" Tag="BMP" />
                 </ComboBox>
             </StackPanel>
         </Grid>
 
-        <!-- Resolution DPI -->
-        <StackPanel Grid.Row="3" Margin="0,0,0,12">
-            <TextBlock Text="Resolution (DPI):" FontWeight="SemiBold" Margin="0,0,0,4" />
-            <ComboBox x:Name="DpiComboBox" SelectedIndex="1" Height="28">
-                <ComboBoxItem Content="150 DPI (Standard Screen)" Tag="150" />
-                <ComboBoxItem Content="300 DPI (High Quality Print)" Tag="300" />
-                <ComboBoxItem Content="600 DPI (Ultra Sharp)" Tag="600" />
-            </ComboBox>
-        </StackPanel>
+        <!-- Resolution DPI & JPEG quality -->
+        <Grid Grid.Row="3" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="120" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                <TextBlock Text="Resolution (DPI):" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ComboBox x:Name="DpiComboBox" SelectedIndex="1" Height="28">
+                    <ComboBoxItem Content="150 DPI (Standard Screen)" Tag="150" />
+                    <ComboBoxItem Content="300 DPI (High Quality Print)" Tag="300" />
+                    <ComboBoxItem Content="600 DPI (Ultra Sharp)" Tag="600" />
+                </ComboBox>
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+                <TextBlock Text="JPEG Quality:" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ComboBox x:Name="QualityComboBox" SelectedIndex="1" Height="28" IsEnabled="False"
+                          ToolTip="Higher quality makes larger files. Used for JPEG only.">
+                    <ComboBoxItem Content="Maximum (100)" Tag="100" />
+                    <ComboBoxItem Content="High (95)" Tag="95" />
+                    <ComboBoxItem Content="Medium (85)" Tag="85" />
+                    <ComboBoxItem Content="Low (70)" Tag="70" />
+                </ComboBox>
+            </StackPanel>
+        </Grid>
 
         <!-- Page Range -->
         <GroupBox Grid.Row="4" Header="Page Range" Padding="8" Margin="0,0,0,20">
