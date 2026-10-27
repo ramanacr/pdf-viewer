@@ -13,8 +13,8 @@ The installer (`PdfViewerSetup.exe`) and the portable `PdfViewer.exe` stay as th
 package is a third way to get the same application.
 
 **Status:** the app is registered in Partner Center as "PDF Viewer Native" (Store ID
-9N6QDM774R62), and its identity is in `eng/msix/identity.json`. The Store listing is not live
-yet.
+9N6QDM774R62), and its identity is in `eng/msix/identity.json`. The Store listing is live:
+[apps.microsoft.com/detail/9N6QDM774R62](https://apps.microsoft.com/detail/9N6QDM774R62).
 
 ## What is in the repository
 

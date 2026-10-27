@@ -1,0 +1,30 @@
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="{{ '/' | relative_url }}">
+      <img src="{{ '/assets/img/app-icon.png' | relative_url }}" alt="" width="28" height="28" />
+      <span>PDF Viewer <span class="brand-muted">Native</span></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+      {% include icon.html name="menu" %}
+    </button>
+    <nav id="site-nav" class="site-nav" aria-label="Main">
+      {%- assign u = page.url -%}
+      <a href="{{ '/getting-started/' | relative_url }}"{% if u contains '/getting-started/' %} aria-current="page"{% endif %}>Get started</a>
+      <a href="{{ '/features/' | relative_url }}"{% if u contains '/features/' %} aria-current="page"{% endif %}>Features</a>
+      <a href="{{ '/sdk/' | relative_url }}"{% if u == '/sdk/' %} aria-current="page"{% endif %}>Web SDK</a>
+      <a href="{{ '/sdk/examples/' | relative_url }}"{% if u contains '/sdk/examples/' %} aria-current="page"{% endif %}>Examples</a>
+      <a href="{{ '/developers/' | relative_url }}"{% if u contains '/developers/' %} aria-current="page"{% endif %}>.NET engine</a>
+      <a href="{{ '/api/' | relative_url }}">API reference</a>
+      <a href="{{ '/demo/' | relative_url }}">Demo</a>
+    </nav>
+    <div class="header-actions">
+      <button class="icon-button theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch theme">
+        <span class="when-light">{% include icon.html name="moon" %}</span>
+        <span class="when-dark">{% include icon.html name="sun" %}</span>
+      </button>
+      <a class="icon-button" href="{{ site.links.repo }}" aria-label="Source code on GitHub" title="Source code on GitHub">{% include icon.html name="github" %}</a>
+      <a class="button button-primary button-small header-cta" href="{{ site.links.store }}">Get the app</a>
+    </div>
+  </div>
+</header>

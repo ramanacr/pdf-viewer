@@ -1,34 +1,67 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PDF Viewer embed SDK: examples</title>
-    <link rel="stylesheet" href="examples.css" />
-</head>
-<body>
-<header class="example"><h1>PDF Viewer embed SDK: examples</h1><nav><a href="../">SDK documentation</a></nav></header>
-<main class="article">
-    <p>Each page embeds the viewer with <code>pdfviewer-embed.js</code>. The PDF is written by the page itself
-        (<code>sample-pdf.js</code>), so nothing is downloaded but the viewer, and nothing is uploaded.
-        View the source of a page to copy its code.</p>
-    <ul>
-        <li><a href="full-window.html">Full window</a>: the viewer fills the page, with the side panel. Add <code>?url=…</code> to open another PDF of this site (other sites are refused).</li>
-        <li><a href="sized-container.html">Sized container</a>: a fixed box in an article, with a full-screen button.</li>
-        <li><a href="in-line.html">In line</a>: every page in the flow of the article; the article scrolls.</li>
-        <li><a href="lightbox.html">Light box</a>: the viewer opens over the page and closes back to it.</li>
-        <li><a href="events-and-apis.html">Events and APIs</a>: every event in a log, and buttons for each API.</li>
-        <li><a href="file-picker.html">File picker</a>: open a PDF from your device with <code>content.promise</code>.</li>
-        <li><a href="annotations.html">Annotations and saving</a>: the annotation tools, the annotation manager (add, get, update, delete, XFDF), its events, and a <code>SAVE_API</code> callback that offers the saved PDF as a download.</li>
-        <li><a href="forms.html">Forms</a>: fill an order form (text, check box, radio buttons, combo box, a calculated total) and save it.</li>
-        <li><a href="large-file.html">Large files</a>: a 46 MB document written by the page (<code>large-pdf.js</code>), opened by ranges (<code>linearizationInfo</code>) or whole over a simulated network, with the time to the first page and the bytes read; <code>?url=…</code> uses real range requests.</li>
-    </ul>
-    <h2>Frameworks (copy into your app)</h2>
-    <p>These files are not run here. Copy one into your app and change the script URL to where you serve the viewer.</p>
-    <ul>
-        <li><a href="react/PdfViewerEmbed.jsx">React component</a> (<code>react/PdfViewerEmbed.jsx</code>)</li>
-        <li><a href="angular/pdf-viewer.component.ts">Angular component</a> (<code>angular/pdf-viewer.component.ts</code>)</li>
-    </ul>
-</main>
-</body>
-</html>
+---
+title: "Web embed SDK: examples"
+description: Live examples of the PDF Viewer web embed SDK — embed modes, events and APIs, file picker, annotations and saving, forms, large files, React and Angular.
+---
+{%- comment -%}
+The gallery is a Jekyll page (docs layout). The example pages next to it are plain HTML files
+with no front matter, so Jekyll copies them unchanged.
+{%- endcomment -%}
+{%- capture page_box -%}<rect x="1" y="1" width="118" height="82" rx="6" fill="var(--surface)" stroke="var(--border-strong)"/>{%- endcapture -%}
+<h1 id="examples">Examples</h1>
+
+<p>Each page embeds the viewer with <code>pdfviewer-embed.js</code>. The PDF is written by the page itself
+  (<code>sample-pdf.js</code>), so nothing is downloaded but the viewer, and nothing is uploaded.
+  View the source of a page to copy its code.</p>
+
+<h2 id="live-examples">Live examples</h2>
+<ul class="gallery-grid">
+  <li><a class="gallery-card" href="full-window.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="1" y="1" width="118" height="12" rx="6" fill="currentColor" opacity=".9"/><rect x="6" y="18" width="22" height="60" rx="2" fill="var(--bg-muted)"/><rect x="34" y="18" width="80" height="60" rx="2" fill="var(--bg-muted)"/><rect x="54" y="22" width="40" height="52" fill="var(--surface)" stroke="var(--border-strong)"/></svg></span>
+    <span class="gallery-body"><strong>Full window</strong><span>The viewer fills the page, with the side panel. Add <code>?url=…</code> to open another PDF of this site (other sites are refused).</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="sized-container.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="10" y="8" width="70" height="4" rx="2" fill="var(--border-strong)"/><rect x="10" y="18" width="100" height="48" rx="4" fill="var(--bg-muted)" stroke="currentColor"/><rect x="10" y="18" width="100" height="8" rx="4" fill="currentColor" opacity=".9"/><rect x="45" y="30" width="30" height="32" fill="var(--surface)"/><rect x="10" y="72" width="80" height="4" rx="2" fill="var(--border-strong)"/></svg></span>
+    <span class="gallery-body"><strong>Sized container</strong><span>A fixed box in an article, with a full-screen button.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="in-line.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="10" y="8" width="70" height="4" rx="2" fill="var(--border-strong)"/><rect x="35" y="18" width="50" height="28" fill="var(--bg-muted)" stroke="currentColor"/><rect x="35" y="50" width="50" height="28" fill="var(--bg-muted)" stroke="currentColor"/></svg></span>
+    <span class="gallery-body"><strong>In line</strong><span>Every page in the flow of the article; the article scrolls.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="lightbox.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="1" y="1" width="118" height="82" rx="6" fill="#000" opacity=".35"/><rect x="16" y="10" width="88" height="66" rx="4" fill="var(--surface)" stroke="currentColor"/><rect x="16" y="10" width="88" height="9" rx="4" fill="currentColor" opacity=".9"/><rect x="44" y="24" width="32" height="46" fill="var(--bg-muted)"/></svg></span>
+    <span class="gallery-body"><strong>Light box</strong><span>The viewer opens over the page and closes back to it.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="events-and-apis.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="8" y="8" width="60" height="68" rx="3" fill="var(--bg-muted)" stroke="currentColor"/><rect x="74" y="10" width="38" height="4" rx="2" fill="currentColor"/><rect x="74" y="20" width="30" height="4" rx="2" fill="var(--border-strong)"/><rect x="74" y="30" width="34" height="4" rx="2" fill="var(--border-strong)"/><rect x="74" y="40" width="26" height="4" rx="2" fill="var(--border-strong)"/><rect x="74" y="62" width="17" height="10" rx="3" fill="currentColor"/><rect x="94" y="62" width="17" height="10" rx="3" fill="none" stroke="currentColor"/></svg></span>
+    <span class="gallery-body"><strong>Events and APIs</strong><span>Every event in a log, and buttons for each API.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="file-picker.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<path d="M40 30h14l5 5h21v28H40z" fill="var(--bg-muted)" stroke="currentColor" stroke-width="2"/><path d="M60 58V42M54 48l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+    <span class="gallery-body"><strong>File picker</strong><span>Open a PDF from your device with <code>content.promise</code>.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="annotations.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="30" y="8" width="60" height="70" fill="var(--bg-muted)"/><rect x="36" y="18" width="40" height="6" fill="currentColor" opacity=".35"/><rect x="36" y="30" width="46" height="3" fill="var(--border-strong)"/><rect x="36" y="38" width="42" height="3" fill="var(--border-strong)"/><path d="M38 60c6-8 12 4 18-4s10 2 16-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="72" y="14" width="12" height="10" rx="2" fill="currentColor"/></svg></span>
+    <span class="gallery-body"><strong>Annotations and saving</strong><span>The annotation tools, the annotation manager (add, get, update, delete, XFDF), its events, and a <code>SAVE_API</code> callback that offers the saved PDF as a download.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="forms.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="30" y="8" width="60" height="70" fill="var(--bg-muted)"/><rect x="36" y="16" width="48" height="8" rx="2" fill="var(--surface)" stroke="currentColor"/><rect x="36" y="30" width="48" height="8" rx="2" fill="var(--surface)" stroke="currentColor"/><rect x="36" y="44" width="8" height="8" rx="1" fill="currentColor"/><rect x="48" y="46" width="24" height="4" rx="2" fill="var(--border-strong)"/><circle cx="40" cy="62" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="48" y="60" width="20" height="4" rx="2" fill="var(--border-strong)"/></svg></span>
+    <span class="gallery-body"><strong>Forms</strong><span>Fill an order form (text, check box, radio buttons, combo box, a calculated total) and save it.</span></span>
+  </a></li>
+  <li><a class="gallery-card" href="large-file.html">
+    <span class="gallery-thumb"><svg viewBox="0 0 120 84" aria-hidden="true">{{ page_box }}<rect x="40" y="10" width="40" height="52" fill="var(--bg-muted)" stroke="var(--border-strong)"/><rect x="36" y="14" width="40" height="52" fill="var(--bg-muted)" stroke="var(--border-strong)"/><rect x="32" y="18" width="40" height="52" fill="var(--surface)" stroke="currentColor"/><rect x="14" y="74" width="92" height="4" rx="2" fill="var(--bg-muted)"/><rect x="14" y="74" width="34" height="4" rx="2" fill="currentColor"/></svg></span>
+    <span class="gallery-body"><strong>Large files</strong><span>A 46 MB document written by the page (<code>large-pdf.js</code>), opened by ranges (<code>linearizationInfo</code>) or whole over a simulated network, with the time to the first page and the bytes read; <code>?url=…</code> uses real range requests.</span></span>
+  </a></li>
+</ul>
+
+<h2 id="frameworks">Frameworks (copy into your app)</h2>
+<p>These files are not run here. Copy one into your app and change the script URL to where you serve the viewer.</p>
+<ul class="gallery-grid">
+  <li><a class="gallery-card" href="react/PdfViewerEmbed.jsx">
+    <span class="gallery-body"><strong>React component</strong><span><code>react/PdfViewerEmbed.jsx</code></span></span>
+  </a></li>
+  <li><a class="gallery-card" href="angular/pdf-viewer.component.ts">
+    <span class="gallery-body"><strong>Angular component</strong><span><code>angular/pdf-viewer.component.ts</code></span></span>
+  </a></li>
+</ul>
+
+<p><a href="{{ '/sdk/' | relative_url }}">Back to the SDK documentation</a></p>

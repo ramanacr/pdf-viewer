@@ -19,10 +19,11 @@ The published app contains no PDFium.
 | Platform | Status | How |
 | --- | --- | --- |
 | **Windows app** | Released (latest: [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases/latest)) | `PdfViewerSetup.exe` (installer) or `PdfViewer.exe` (portable). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). |
-| **Microsoft Store** | Coming soon | Not available yet. See [Microsoft Store build](docs/microsoft-store.md). |
+| **Microsoft Store** | Released | [Get it from Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62) (Store ID 9N6QDM774R62). Updates come through the Store. See [Microsoft Store build](docs/microsoft-store.md). |
 | **Web demo** | Live | [ramanacr.github.io/pdf-viewer/demo/](https://ramanacr.github.io/pdf-viewer/demo/). Runs in the tab as WebAssembly; nothing is uploaded. |
 | **Android** | Proof of concept | Build from source, or take the APK artifact of the `android.yml` workflow. See [its README](src/PdfViewer.Android/README.md). |
 | **NuGet packages** | Preview (`0.1.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). |
+| **Web embed SDK** | Preview (npm [`pdfviewer-embed`](https://www.npmjs.com/package/pdfviewer-embed)) | `npm install pdfviewer-embed`. An API like the Adobe PDF Embed API. See [Web embed SDK](https://ramanacr.github.io/pdf-viewer/sdk/). |
 
 Release binaries are Authenticode-signed with the project's own self-signed certificate, so
 Windows can show "unknown publisher". Each release states the certificate thumbprint. See the
@@ -133,7 +134,7 @@ Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 | Page | Contents |
 | --- | --- |
 | [docs/features.md](docs/features.md) | All features, user guide, keyboard shortcuts |
-| [docs/developers.md](docs/developers.md) | NuGet packages, example, API reference (coming soon) |
+| [docs/developers.md](docs/developers.md) | NuGet packages, example, [API reference](https://ramanacr.github.io/pdf-viewer/api/) |
 | [docs/building.md](docs/building.md) | Build, test, package, CI, releases |
 | [docs/architecture.md](docs/architecture.md) | Engine, renderers, app layers |
 | [docs/privacy.md](docs/privacy.md) | Privacy policy |

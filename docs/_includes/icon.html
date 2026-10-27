@@ -1,0 +1,40 @@
+{%- comment -%}
+Inline SVG icons, drawn for this site (24 x 24, stroke). Usage: {% include icon.html name="shield" %}
+{%- endcomment -%}
+<svg class="icon{% if include.class %} {{ include.class }}{% endif %}" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+{%- case include.name -%}
+{%- when "github" -%}<path stroke="none" fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.3 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/>
+{%- when "sun" -%}<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+{%- when "moon" -%}<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>
+{%- when "menu" -%}<path d="M4 6h16M4 12h16M4 18h16"/>
+{%- when "windows" -%}<path stroke="none" fill="currentColor" d="M3 5.5l7.5-1v7H3zM11.5 4.4L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.4z"/>
+{%- when "download" -%}<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>
+{%- when "browser" -%}<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/>
+{%- when "code" -%}<path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>
+{%- when "package" -%}<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>
+{%- when "book" -%}<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7"/>
+{%- when "android" -%}<path d="M6 10h12v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1z"/><path d="M6 10a6 6 0 0 1 12 0M8.5 4.5l1 1.6M15.5 4.5l-1 1.6M9.5 21v-3M14.5 21v-3M3.5 11v4M20.5 11v4"/>
+{%- when "shield" -%}<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>
+{%- when "noscript" -%}<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8M9 9.5l-2 2.5 2 2.5M15 9.5l2 2.5-2 2.5"/>
+{%- when "eye-off" -%}<path d="M3 3l18 18M10.6 6.1A9.7 9.7 0 0 1 12 6c5 0 8.5 4.5 9.5 6-.5.8-1.6 2.3-3.2 3.6M6.2 7.6C4.4 8.9 3.1 10.7 2.5 12c1 1.5 4.5 6 9.5 6 1.5 0 2.9-.4 4.1-1"/><path d="M9.9 10a3 3 0 0 0 4.1 4.1"/>
+{%- when "wifi-off" -%}<path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 4.2-2.5M12 20h.01M15.5 10.6A10 10 0 0 1 19 13M2 9.5a15 15 0 0 1 4-2.6M10.5 6.1A15 15 0 0 1 22 9.5"/>
+{%- when "list" -%}<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>
+{%- when "scale" -%}<path d="M12 3v18M7 21h10M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/>
+{%- when "license" -%}<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>
+{%- when "engine" -%}<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>
+{%- when "view" -%}<path d="M2.5 12C4 9 7.5 5.5 12 5.5S20 9 21.5 12C20 15 16.5 18.5 12 18.5S4 15 2.5 12z"/><circle cx="12" cy="12" r="3"/>
+{%- when "read" -%}<path d="M3 5.5c3-1 6-1 9 1 3-2 6-2 9-1V19c-3-1-6-1-9 1-3-2-6-2-9-1z"/><path d="M12 6.5V20"/>
+{%- when "search" -%}<circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/>
+{%- when "comment" -%}<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12.5h5"/>
+{%- when "edit" -%}<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>
+{%- when "sign" -%}<path d="M3 17c3 0 4-9 6.5-9S9 17 12 17s2.5-4 4-4 1 4 2.5 4H21"/><path d="M3 21h18"/>
+{%- when "convert" -%}<path d="M4 8h13l-3-3M20 16H7l3 3"/>
+{%- when "print" -%}<path d="M7 9V3h10v6M7 17H4V9h16v8h-3"/><rect x="7" y="14" width="10" height="7"/>
+{%- when "type" -%}<path d="M4 7V5h16v2M12 5v14M9 19h6"/>
+{%- when "arrow" -%}<path d="M5 12h14M13 6l6 6-6 6"/>
+{%- when "external" -%}<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>
+{%- when "copy" -%}<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>
+{%- when "check" -%}<path d="M5 12.5l4.5 4.5L19 7.5"/>
+{%- when "play" -%}<path d="M7 4.5v15l12-7.5z"/>
+{%- endcase -%}
+</svg>

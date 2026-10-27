@@ -1,0 +1,25 @@
+{%- assign u = page.url -%}
+<details class="sidebar-details" open>
+  <summary>Documentation</summary>
+  <nav class="sidebar-nav" aria-label="Documentation">
+    <p class="sidebar-group">Get started</p>
+    <a href="{{ '/getting-started/' | relative_url }}"{% if u == '/getting-started/' %} aria-current="page"{% endif %}>Getting started</a>
+    <a href="{{ '/features/' | relative_url }}"{% if u == '/features/' %} aria-current="page"{% endif %}>Features and user guide</a>
+    <a href="{{ '/privacy/' | relative_url }}"{% if u == '/privacy/' %} aria-current="page"{% endif %}>Privacy policy</a>
+
+    <p class="sidebar-group">Web</p>
+    <a href="{{ '/sdk/' | relative_url }}"{% if u == '/sdk/' %} aria-current="page"{% endif %}>Web embed SDK</a>
+    <a href="{{ '/sdk/examples/' | relative_url }}"{% if u contains '/sdk/examples/' %} aria-current="page"{% endif %}>Examples</a>
+    <a href="{{ '/demo/' | relative_url }}">Web demo</a>
+
+    <p class="sidebar-group">.NET engine</p>
+    <a href="{{ '/developers/' | relative_url }}"{% if u == '/developers/' %} aria-current="page"{% endif %}>NuGet packages</a>
+    <a href="{{ '/api/' | relative_url }}">API reference</a>
+
+    <p class="sidebar-group">Project</p>
+    <a href="{{ '/building/' | relative_url }}"{% if u == '/building/' %} aria-current="page"{% endif %}>Build from source</a>
+    <a href="{{ '/architecture/' | relative_url }}"{% if u == '/architecture/' %} aria-current="page"{% endif %}>Architecture</a>
+    <a href="{{ '/microsoft-store/' | relative_url }}"{% if u == '/microsoft-store/' %} aria-current="page"{% endif %}>Microsoft Store build</a>
+    <a href="{{ '/pdf-viewer-vector-migration/00_README.html' | relative_url }}"{% if u contains '/pdf-viewer-vector-migration/' %} aria-current="page"{% endif %}>Engine design record</a>
+  </nav>
+</details>

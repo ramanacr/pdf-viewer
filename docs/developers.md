@@ -87,10 +87,9 @@ It is also on npm as [`pdfviewer-embed`](https://www.npmjs.com/package/pdfviewer
 
 ## API reference
 
-The generated API reference will be at
-[ramanacr.github.io/pdf-viewer/api/](https://ramanacr.github.io/pdf-viewer/api/). **Coming soon.**
-Until then, the XML documentation comments in the packages show in your IDE, and the
-[source](https://github.com/ramanacr/pdf-viewer/tree/main/src) is the reference.
+The generated API reference is at
+[ramanacr.github.io/pdf-viewer/api/](https://ramanacr.github.io/pdf-viewer/api/), with short
+guides. The XML documentation comments in the packages also show in your IDE.
 
 More detail:
 

@@ -116,20 +116,27 @@ jobs:
 
     # Pages serves only what this workflow deploys, so the documentation site in docs/ (home page,
     # privacy policy) is built here too and kept at the site root; the demo goes under /demo/.
+    # The whole site is also built and checked on pull requests, so that a broken layout or page
+    # fails the check; only the deploy is kept for main.
     - name: Build the documentation site
-      if: github.event_name != 'pull_request'
       uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697 # v1.0.13
       with:
         source: ./docs
         destination: ./publish/pages
 
     - name: Put the demo under /demo/
-      if: github.event_name != 'pull_request'
       shell: bash
       run: |
         sudo chown -R "$(id -u)":"$(id -g)" publish/pages
         test -f publish/pages/index.html
         test -f publish/pages/privacy/index.html
+        test -f publish/pages/getting-started/index.html
+        test -f publish/pages/features/index.html
+        test -f publish/pages/developers/index.html
+        test -s publish/pages/assets/css/site.css
+        test -s publish/pages/assets/js/site.js
+        grep -q 'assets/css/site.css' publish/pages/index.html
+        grep -q 'class="docs-sidebar"' publish/pages/features/index.html
         mkdir -p publish/pages/demo
         cp -r publish/web/wwwroot/. publish/pages/demo/
         touch publish/pages/.nojekyll
@@ -137,7 +144,6 @@ jobs:
     # Subresource Integrity (SRI) hashes of the SDK scripts as deployed, for pages that load them
     # with integrity="sha384-...": /demo/pdfviewer-embed.integrity.json and the step summary.
     - name: Write the SRI hashes of the embed SDK
-      if: github.event_name != 'pull_request'
       shell: bash
       run: |
         cd publish/pages/demo
@@ -156,7 +162,6 @@ jobs:
     # The SDK script is served from /demo/ next to the viewer, its default baseUrl; Jekyll copies
     # the documentation and the examples (docs/sdk) to /sdk/.
     - name: Check the embed SDK pages
-      if: github.event_name != 'pull_request'
       shell: bash
       run: |
         test -f publish/pages/demo/pdfviewer-embed.js
@@ -180,12 +185,23 @@ jobs:
         echo "API reference: $(du -sh --apparent-size eng/apidocs/_site | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Put the API reference under /api/
-      if: github.event_name != 'pull_request'
       shell: bash
       run: |
         mkdir -p publish/pages/api
         cp -r eng/apidocs/_site/. publish/pages/api/
         test -f publish/pages/api/index.html
+        test -f publish/pages/api/public/main.css
+
+    # On a pull request, the built site is kept for a few days so that reviewers can look at it
+    # (download it, serve the folder under /pdf-viewer/). It is never deployed.
+    - name: Upload the site for review
+      if: github.event_name == 'pull_request'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: site-preview
+        path: publish/pages
+        retention-days: 5
+        include-hidden-files: true
 
     - name: Upload the Pages artifact
       if: github.event_name != 'pull_request'

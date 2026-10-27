@@ -31,7 +31,7 @@
       { "src": "../../assets", "files": [ "app_icon.png" ], "dest": "images" }
     ],
     "output": "_site",
-    "template": [ "default", "modern" ],
+    "template": [ "default", "modern", "template" ],
     "globalMetadata": {
       "_appName": "PdfEngine",
       "_appTitle": "PdfEngine API",

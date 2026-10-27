@@ -1,0 +1,66 @@
+/* PdfEngine API reference: the look of the documentation site (docs/assets/css/site.css) on
+   top of the docfx modern template. System fonts only; nothing is loaded from other sites. */
+:root, [data-bs-theme="light"] {
+  --bs-body-font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bs-font-sans-serif: var(--bs-body-font-family);
+  --bs-font-monospace: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, "Liberation Mono", monospace;
+  --bs-body-color: #1d1f24;
+  --bs-body-bg: #ffffff;
+  --bs-secondary-color: #5a606b;
+  --bs-border-color: #e1e4e9;
+  --bs-primary: #c8102e;
+  --bs-primary-rgb: 200, 16, 46;
+  --bs-link-color: #b3122b;
+  --bs-link-color-rgb: 179, 18, 43;
+  --bs-link-hover-color: #a50d26;
+  --bs-link-hover-color-rgb: 165, 13, 38;
+  --bs-code-color: #a50d26;
+  --pv-accent: #c8102e;
+  --pv-accent-hover: #a50d26;
+  --pv-subtle: #f6f7f9;
+}
+[data-bs-theme="dark"] {
+  --bs-body-color: #e8eaed;
+  --bs-body-bg: #121316;
+  --bs-secondary-color: #a8adb6;
+  --bs-border-color: #2b2f36;
+  --bs-primary: #f0525f;
+  --bs-primary-rgb: 240, 82, 95;
+  --bs-link-color: #ff7a85;
+  --bs-link-color-rgb: 255, 122, 133;
+  --bs-link-hover-color: #ff9aa3;
+  --bs-link-hover-color-rgb: 255, 154, 163;
+  --bs-code-color: #ff9aa3;
+  --pv-accent: #f0525f;
+  --pv-accent-hover: #ff6d78;
+  --pv-subtle: #17191d;
+}
+body { font-family: var(--bs-body-font-family); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, h5 { letter-spacing: -0.01em; font-weight: 650; }
+
+/* Header: a thin accent line, like the site. */
+header.bg-body { border-bottom: 1px solid var(--bs-border-color); box-shadow: inset 0 3px 0 var(--pv-accent); }
+.navbar-brand { font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+/* The logo is a PNG: docfx sizes only SVG logos, so it is sized here. */
+.navbar-brand #logo { width: 28px; height: 28px; object-fit: contain; }
+.navbar .nav-link.active, .navbar .nav-link:hover { color: var(--pv-accent) !important; }
+.pv-site-link {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; padding: 4px 12px;
+  border: 1px solid var(--bs-border-color); border-radius: 999px;
+  font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.pv-site-link:hover { border-color: var(--pv-accent); }
+
+/* Tables of contents. */
+.toc a.active, .toc li.active > a { color: var(--pv-accent) !important; font-weight: 600; }
+.affix a.active { color: var(--pv-accent); }
+
+/* Buttons, code and tables. */
+.btn-primary {
+  --bs-btn-bg: var(--pv-accent); --bs-btn-border-color: var(--pv-accent);
+  --bs-btn-hover-bg: var(--pv-accent-hover); --bs-btn-hover-border-color: var(--pv-accent-hover);
+}
+pre { border: 1px solid var(--bs-border-color); border-radius: 10px; background: var(--pv-subtle) !important; }
+pre code.hljs { background: transparent; }
+table.table { border: 1px solid var(--bs-border-color); }
+table.table thead th { background: var(--pv-subtle); }
