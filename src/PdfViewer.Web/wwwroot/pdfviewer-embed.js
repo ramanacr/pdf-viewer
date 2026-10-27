@@ -25,7 +25,7 @@
 
     const PROTOCOL = 'pdfviewer-embed';
     const PROTOCOL_VERSION = 1;
-    const SDK_VERSION = '0.4.0';
+    const SDK_VERSION = '0.4.1';
     const MAX_FILE_BYTES = 512 * 1024 * 1024;
     // Range loading (docs/sdk, "Large files"): the viewer asks for at most this many bytes at a
     // time, with at most this many requests waiting; files smaller than RANGE_MIN_BYTES are read whole.
