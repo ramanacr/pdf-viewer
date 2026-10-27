@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
@@ -397,6 +398,90 @@ public class LazyPageTreeTests
         Assert.NotNull(ranged.PageTreeFallbackReason);
         Assert.Equal(4, ranged.Document.PageCount);
         Assert.Equal("Page 4", (await TextOf(ranged, 4)).Trim());
+    }
+
+    [Fact]
+    public async Task AKidListedTwice_ReadsTheWholeTree()
+    {
+        // The full walk reads p1 once (2 pages); the counts would make it pages 1 and 2.
+        var tree = new Tree();
+        int root = tree.Reserve();
+        int p1 = tree.Page(), p2 = tree.Page();
+        tree.Node(root, [p1, p1, p2], 3, "/MediaBox [0 0 612 792]");
+        var bytes = tree.Build(root, padding: 512);
+        using var ranged = await PdfRangedDocument.OpenAsync(new MemoryRangeReader(bytes), new PdfRangedOptions { TailBytes = 4096 });
+        Assert.Contains("twice", ranged.PageTreeFallbackReason);
+        Assert.Equal(2, ranged.Document.PageCount);
+        Assert.Equal("Page 2", (await TextOf(ranged, 2)).Trim());
+    }
+
+    /// <summary>B claims 7 pages and has 5 (see <see cref="CountTooHighBelowTheRoot_IsFoundWhenAPageUnderItIsAskedFor"/>), spread out.</summary>
+    private static byte[] LieUnderB(int padding)
+    {
+        var tree = new Tree();
+        int root = tree.Reserve(), a = tree.Reserve();
+        var aKids = Enumerable.Range(0, 5).Select(_ => tree.Page()).ToList();
+        int b = tree.Reserve();
+        var bKids = Enumerable.Range(0, 5).Select(_ => tree.Page()).ToList();
+        tree.Node(a, aKids, 5);
+        tree.Node(b, bKids, 7);
+        tree.Node(root, [a, b], 12, "/MediaBox [0 0 612 792]");
+        return tree.Build(root, padding);
+    }
+
+    [Fact]
+    public async Task AFailedReadWhileTheWholeTreeIsRead_KeepsTheLazyTree_AndTheNextTryWorks()
+    {
+        var bytes = LieUnderB(padding: 4096);
+        bool down = false;
+        var reader = new MemoryRangeReader(bytes)
+        {
+            BeforeRead = (_, _) => Volatile.Read(ref down) ? ValueTask.FromException(new IOException("network down")) : ValueTask.CompletedTask,
+        };
+        using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 4096, ReadAheadBytes = 4096, MergeGapBytes = 0 });
+        Assert.True(ranged.Document.PageTree.IsLazy);
+
+        // Page 12 shows the lie; reading the whole tree then fails.
+        Volatile.Write(ref down, true);
+        await Assert.ThrowsAsync<IOException>(() => ranged.FindPageAsync(12));
+        Assert.True(ranged.Document.PageTree.IsLazy);   // the document and the flag agree
+        Assert.Null(ranged.PageTreeFallbackReason);
+        Assert.Equal(12, ranged.Document.PageCount);
+
+        // Back online: an operation that misses (so the document is parsed again) works, and the lie is found again.
+        Volatile.Write(ref down, false);
+        using var memory = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        int otherContent = ((PdfEngine.Vector.Objects.PdfIndirectRef)memory.PageTree.Pages[8].Dictionary["Contents"]!).ObjectNumber;
+        string text = await ranged.RunAsync(4, (d, ct) =>
+        {
+            _ = d.Resolver.Resolve(otherContent);
+            return ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 4, ct).Text);
+        });
+        Assert.Equal("Page 4", text.Trim());
+        Assert.True(ranged.Retries > 0);
+        Assert.True(ranged.Document.PageTree.IsLazy);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => ranged.FindPageAsync(12));
+        Assert.NotNull(ranged.PageTreeFallbackReason);
+        Assert.False(ranged.Document.PageTree.IsLazy);
+        Assert.Equal(10, ranged.Document.PageCount);
+        Assert.Equal("Page 9", (await TextOf(ranged, 9)).Trim());
+    }
+
+    [Fact]
+    public async Task AFailedReadOfPageOnesPath_FailsTheOpen_AtOnce()
+    {
+        var bytes = RangeLoadingTests.LargePdf(40);
+        using var memory = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        long page1 = memory.XrefTable.Entries[memory.PageTree.PageObjectNumbers[0]].ByteOffset;
+        var reader = new MemoryRangeReader(bytes)
+        {
+            BeforeRead = (offset, length) => offset <= page1 && page1 < offset + length
+                ? ValueTask.FromException(new IOException("network down"))
+                : ValueTask.CompletedTask,
+        };
+        await Assert.ThrowsAsync<IOException>(() => PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 16 * 1024 }));
+        // The read error ends the open; the file is not read whole instead.
+        Assert.True(reader.BytesRead < bytes.Length / 10, $"{reader.BytesRead} of {bytes.Length} bytes read");
     }
 
     [Fact]

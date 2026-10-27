@@ -428,8 +428,15 @@ public sealed partial class Viewer : IAsyncDisposable
     {
         if (_doc != doc) return;
         _currentPage = Math.Clamp(_currentPage, 1, Math.Max(1, doc.PageCount));
+        // Bitmaps drawn before may be of another size, or of another page: all are drawn again.
+        foreach (var page in _drawn.Keys) CanvasInterop.ClearPage(page);
+        _cache.Clear();
+        _drawn.Clear();
+        _failed.Clear();
+        _thumbsDrawn.Clear();
         _layoutChanged = true;
         StateHasChanged();
+        _ = PumpAsync();
     }
 
     /// <summary>A ranged document is complete: everything that waited for the whole file is read now.</summary>

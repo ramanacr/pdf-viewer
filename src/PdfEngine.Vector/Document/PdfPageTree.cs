@@ -275,6 +275,9 @@ public sealed class PdfPageTree
                 }
                 if (_resolver.Resolve(node["Kids"]) is not PdfArray kids)
                     throw new PdfPageTreeMismatchException("A /Pages node has no /Kids.");
+                // The full walk reads a node once, wherever it is listed; the counts would not.
+                if (ListsAKidTwice(kids))
+                    throw new PdfPageTreeMismatchException("A /Pages node lists the same kid twice.");
                 path.Add(number);
                 (node, number, count, local) = FindKid(kids, local, count);
             }
@@ -330,6 +333,26 @@ public sealed class PdfPageTree
         if (before != count || found is not { } kidFound)
             throw new PdfPageTreeMismatchException($"The kids of a /Pages node hold {before} pages, not the {count} of its /Count.");
         return kidFound;
+    }
+
+    // Whether a /Kids array names an object twice, by array (checked once per node: no bytes are read).
+    private readonly Dictionary<PdfArray, bool> _duplicateKids = new(ReferenceEqualityComparer.Instance);
+
+    private bool ListsAKidTwice(PdfArray kids)
+    {
+        if (_duplicateKids.TryGetValue(kids, out bool known)) return known;
+        var seen = new HashSet<int>();
+        bool twice = false;
+        foreach (var kid in kids)
+        {
+            if (kid is PdfIndirectRef r && !seen.Add(r.ObjectNumber))
+            {
+                twice = true;
+                break;
+            }
+        }
+        _duplicateKids[kids] = twice;
+        return twice;
     }
 
     /// <summary>The pages under a kid: 1 for a page, its /Count for a /Pages node (which must have one).</summary>

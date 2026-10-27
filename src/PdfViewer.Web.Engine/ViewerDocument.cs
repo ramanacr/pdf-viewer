@@ -218,7 +218,9 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>
     /// Raised when <see cref="Pages"/> changed for a document opened by ranges: a page read for
     /// the first time is not the size of the first page, or the whole file showed other sizes or
-    /// another page count. The host lays the pages out again.
+    /// another page count, or a page drawn before showed another page's dictionary (a page tree
+    /// whose counts did not match its kids). The host lays the pages out again and draws again
+    /// the pages it has drawn.
     /// </summary>
     public event Action? PagesChanged;
 
@@ -251,9 +253,31 @@ public sealed class ViewerDocument : IAsyncDisposable
             // The lazy tree did not match the file and was read whole: another page count.
             if (tree.Count == 0) return false;
             (_pages, _geometry) = LayoutOf(tree);
+            _shownObjects.Clear();
             return true;
         }
-        return page >= 1 && page <= tree.Count && tree.LoadedPage(page - 1) is { } node && SetPage(page - 1, node);
+        bool changed = false;
+        // Read whole after a mismatch: a page shown before may have been another page's dictionary.
+        if (!tree.IsLazy) changed |= ForgetStalePages(tree);
+        if (page >= 1 && page <= tree.Count && tree.LoadedPage(page - 1) is { } node)
+        {
+            changed |= SetPage(page - 1, node);
+            _shownObjects[page] = tree.PageObjectNumbers[page - 1];
+        }
+        return changed;
+    }
+
+    // The page dictionary (object number) each page was read from while the file was read by
+    // ranges: a lazy tree that does not match its counts can show another page's dictionary
+    // until the tree is read whole.
+    private readonly Dictionary<int, int> _shownObjects = new();
+
+    /// <summary>True when a page read so far is another page's dictionary by <paramref name="tree"/> (read whole); those pages are forgotten.</summary>
+    private bool ForgetStalePages(PdfPageTree tree)
+    {
+        var stale = _shownObjects.Where(e => e.Key > tree.Count || tree.PageObjectNumbers[e.Key - 1] != e.Value).Select(e => e.Key).ToList();
+        foreach (int p in stale) _shownObjects.Remove(p);
+        return stale.Count > 0;
     }
 
     private bool SetPage(int index, PdfPageNode node)
@@ -282,10 +306,11 @@ public sealed class ViewerDocument : IAsyncDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_ranged is not { } ranged) return;
             if (ranged.Document.PageTree.LoadedPage(page - 1) == null) await ranged.FindPageAsync(page, cancellationToken).ConfigureAwait(false);
-            changed = SyncRangedPage(ranged, page);
         }
         finally
         {
+            // Also after a failure: a page the lazy tree could not place may have changed the page count.
+            if (_ranged is { } synced && !_disposed) changed |= SyncRangedPage(synced, page);
             _gate.Release();
             if (changed) PagesChanged?.Invoke();
         }
@@ -567,7 +592,10 @@ public sealed class ViewerDocument : IAsyncDisposable
             else
             {
                 for (int i = 0; i < _pages.Length; i++) changed |= SetPage(i, document.PageTree.Pages[i]);
+                // A page drawn from a lazy tree that did not match its counts showed another page.
+                changed |= ForgetStalePages(document.PageTree);
             }
+            _shownObjects.Clear();
             _lastRangeStatistics = ranged.Statistics;
             _original = _document = document;
             _originalBytes = _bytes = bytes;
@@ -653,13 +681,14 @@ public sealed class ViewerDocument : IAsyncDisposable
             if (_ranged is { } ranged)
             {
                 var bitmap = await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderCoreAsync(d, page, scale, night, ct)), cancellationToken).ConfigureAwait(false);
-                changed = SyncRangedPage(ranged, page);
                 return bitmap;
             }
             return await RenderCoreAsync(asOpened ? _original : _document, page, scale, night, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
+            // Also after a failure: a page the lazy tree could not place may have changed the page count.
+            if (_ranged is { } synced && !_disposed) changed |= SyncRangedPage(synced, page);
             _gate.Release();
             if (changed) PagesChanged?.Invoke();
         }
@@ -721,13 +750,14 @@ public sealed class ViewerDocument : IAsyncDisposable
             if (_ranged is { } ranged)
             {
                 var bitmap = await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderRegionCoreAsync(d, page, scale, region, night, ct)), cancellationToken).ConfigureAwait(false);
-                changed = SyncRangedPage(ranged, page);
                 return bitmap;
             }
             return await RenderRegionCoreAsync(_document, page, scale, region, night, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
+            // Also after a failure: a page the lazy tree could not place may have changed the page count.
+            if (_ranged is { } synced && !_disposed) changed |= SyncRangedPage(synced, page);
             _gate.Release();
             if (changed) PagesChanged?.Invoke();
         }
@@ -830,13 +860,14 @@ public sealed class ViewerDocument : IAsyncDisposable
             if (_ranged is { } ranged)
             {
                 var layout = await ranged.RunAsync(page, (d, ct) => ValueTask.FromResult(ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(d, page, ct))), cancellationToken).ConfigureAwait(false);
-                changed = SyncRangedPage(ranged, page);
                 return layout;
             }
             return ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(_document, page, cancellationToken));
         }
         finally
         {
+            // Also after a failure: a page the lazy tree could not place may have changed the page count.
+            if (_ranged is { } synced && !_disposed) changed |= SyncRangedPage(synced, page);
             _gate.Release();
             if (changed) PagesChanged?.Invoke();
         }

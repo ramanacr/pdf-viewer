@@ -298,13 +298,13 @@ the root's `/Count`, checked against the number of objects in the file before an
 by it. A page is found when it is first needed: from the root, the engine goes down to the kid
 whose `/Count` holds the page, one level per round of requests. A node with one kid per page
 goes straight to the kid; in other nodes every kid is read (at most 64 more per round), and the
-kids' pages must add up to the node's `/Count`. A loop, a tree deeper than
+kids' pages must add up to the node's `/Count`. A loop, a kid listed twice, a tree deeper than
 `PdfSecurityLimits.MaxPageTreeDepth` or a count that does not add up turns the lazy tree off (see
 fallbacks). Pages not read yet are laid out at the first page's size. When a page of another
 size is read (before it is drawn) or when the whole file is in, the layout is corrected
 (`ViewerDocument.PagesChanged`). Below a node, the engine checks only the counts on the path to
 a page. A wrong `/Count` in a node beside that path can put pages in the wrong order until the
-whole file is read.
+whole file is read; the viewer then draws again the pages it drew.
 
 ### Measured
 

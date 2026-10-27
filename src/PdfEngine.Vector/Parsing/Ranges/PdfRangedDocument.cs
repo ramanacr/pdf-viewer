@@ -175,7 +175,7 @@ public sealed class PdfRangedDocument : IDisposable
         var doc = new PdfRangedDocument(reader, options ?? new PdfRangedOptions(), password, limits, name);
         try
         {
-            await doc.OpenCoreAsync(cancellationToken).ConfigureAwait(false);
+            await doc.OpenCoreAsync(doc._lazyTree, cancellationToken).ConfigureAwait(false);
             return doc;
         }
         catch
@@ -185,7 +185,12 @@ public sealed class PdfRangedDocument : IDisposable
         }
     }
 
-    private async Task OpenCoreAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Opens (or opens again) the document over the cache, with a lazy page tree when
+    /// <paramref name="lazy"/>. <see cref="_lazyTree"/> follows the document put in place, so a
+    /// reopen that fails leaves both as they were.
+    /// </summary>
+    private async Task OpenCoreAsync(bool lazy, CancellationToken cancellationToken)
     {
         long length = Length;
         long tail = Math.Min(length, _options.TailBytes);
@@ -208,6 +213,7 @@ public sealed class PdfRangedDocument : IDisposable
             long misses = _cache.MissCount;
             PdfVectorDocument? opened = null;
             PdfXrefTable? xref = null;
+            bool ready = false;
             try
             {
                 xref = new PdfXrefTable(_limits);
@@ -218,33 +224,35 @@ public sealed class PdfRangedDocument : IDisposable
                     return;
                 }
                 _planner = new PdfRangePlanner(xref, length);
-                if (await PrefetchStructureAsync(xref, cancellationToken).ConfigureAwait(false) is { } limit)
+                if (await PrefetchStructureAsync(xref, lazy, cancellationToken).ConfigureAwait(false) is { } limit)
                 {
                     await FallBackAsync(limit, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
                 misses = _cache.MissCount;
-                opened = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password, lazyPages: _lazyTree);
+                opened = PdfVectorDocument.OpenDeferred(new PdfChunkedByteSource(_cache), _name, _limits, _password, lazyPages: lazy);
                 if (_cache.MissCount == misses && !opened.WasRepaired)
                 {
                     var document = opened;
                     opened = null; // Replace owns it now, also when it throws
                     Replace(document);
                     _planner = new PdfRangePlanner(document.XrefTable, length);
-                    // A lazy tree: the path to page 1 now, so that its size is known (the viewer lays the other pages out with it).
-                    if (_lazyTree) await EnsurePageFoundAsync(1, cancellationToken).ConfigureAwait(false);
-                    return;
+                    _lazyTree = lazy;
+                    ready = true;
                 }
-                if (opened.WasRepaired)
+                else if (opened.WasRepaired)
                 {
                     opened.Dispose();
                     await FallBackAsync("The file's cross-reference data does not match its objects; the file was read whole to rebuild it.", cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                opened.Dispose();
+                else
+                {
+                    opened.Dispose();
+                }
             }
-            catch (PdfPageTreeMismatchException ex) when (_lazyTree)
+            catch (PdfPageTreeMismatchException ex) when (lazy)
             {
                 // The root's /Count cannot be trusted: the tree is read whole, as without a lazy tree.
                 opened?.Dispose();
@@ -254,6 +262,14 @@ public sealed class PdfRangedDocument : IDisposable
             catch (Exception ex) when (IsMiss(ex, misses))
             {
                 opened?.Dispose();
+            }
+            if (ready)
+            {
+                // A lazy tree: the path to page 1 now, so that its size is known (the viewer lays the
+                // other pages out with it). Outside the try above: its own failures (a read that
+                // fails) are not misses of opening.
+                if (lazy) await EnsurePageFoundAsync(1, cancellationToken).ConfigureAwait(false);
+                return;
             }
             if (xref?.WasReconstructed == true)
             {
@@ -284,14 +300,14 @@ public sealed class PdfRangedDocument : IDisposable
     /// at a time. Opening needs all of them at once, so they count as one round
     /// (<see cref="PdfRangedOptions.MaxRoundBytes"/>). Returns why the file must be read whole, or null.
     /// </summary>
-    private async Task<string?> PrefetchStructureAsync(PdfXrefTable xref, CancellationToken cancellationToken)
+    private async Task<string?> PrefetchStructureAsync(PdfXrefTable xref, bool lazy, CancellationToken cancellationToken)
     {
         var resolver = new PdfObjectResolver(new PdfChunkedByteSource(_cache), xref, _limits);
         var closure = new PdfObjectClosure(_planner!, PdfClosureKind.Structure)
         {
             MaxBytes = Math.Min(_options.MaxWalkBytes, _options.MaxRoundBytes),
             // A lazy tree reads its nodes when a page is asked for (EnsurePageFoundAsync).
-            FollowKids = !_lazyTree,
+            FollowKids = !lazy,
         };
         if (xref.Trailer != null) closure.AddDirectRoot(xref.Trailer);
         await WalkAsync(closure, resolver, cancellationToken).ConfigureAwait(false);
@@ -430,14 +446,18 @@ public sealed class PdfRangedDocument : IDisposable
         }
     }
 
-    /// <summary>Turns the lazy page tree off and opens the document again with the whole tree (its bytes are fetched by ranges, as when it opens).</summary>
+    /// <summary>
+    /// Opens the document again with the whole tree (its bytes are fetched by ranges, as when it
+    /// opens), which turns the lazy page tree off. When that fails (a read fails, the operation
+    /// is canceled), the lazy document and <see cref="_lazyTree"/> stay as they were, so the next
+    /// operation finds the mismatch again and tries again.
+    /// </summary>
     private async Task UseFullPageTreeAsync(string reason, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        PageTreeFallbackReason ??= reason;
-        _lazyTree = false;
         if (_completeDocument) return;
-        await OpenCoreAsync(cancellationToken).ConfigureAwait(false);
+        await OpenCoreAsync(lazy: false, cancellationToken).ConfigureAwait(false);
+        PageTreeFallbackReason ??= reason;
     }
 
     /// <summary>
