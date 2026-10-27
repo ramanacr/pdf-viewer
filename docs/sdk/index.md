@@ -110,6 +110,7 @@ is not pinned by it. For production:
 | `baseUrl` | Where the viewer files are. Default: the folder of `pdfviewer-embed.js`. |
 | `locale` | Accepted. The viewer is in English only for now. |
 | `isolation` | `'warn'` (default) or `'require'`: what to do when the viewer has the same origin as your page. `'warn'` writes one console warning; `'require'` throws `INVALID_ARGUMENT`. See [Same-origin viewer](#same-origin-viewer). |
+| `renderInWorker` | `true` to draw pages in a Web Worker, so the reader's main thread stays free; `false` (default) draws them on the main thread. Preview: see [Rendering in a worker](#rendering-in-a-worker). |
 
 `view.destroy()` removes the viewer from the page (not in the Adobe API).
 
@@ -745,18 +746,35 @@ What remains: the interpretation of one page is one task (here up to 1 s), when 
   `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.
   GitHub Pages cannot send response headers, and an embedded viewer would also need the host page
   to be isolated (or to frame it with `allow="cross-origin-isolated"`).
-- **A second .NET runtime in a Web Worker** needs no headers, but the app's own runtime does not
-  start in a worker as it is: in a test, `dotnet.create()` with the app's `blazor.boot.json`
-  loaded every assembly in a module worker and then never finished starting (.NET 9.0.21). It
-  needs a separate worker build (a plain `wasmbrowser` project with only the engine, about
-  10 MB more on the site), the document's bytes in the worker (a second copy, and range requests
-  through the main thread for files read by ranges), and fonts fetched from the worker. That is
-  the planned next step.
+- **A second .NET runtime in a Web Worker** needs no headers. The viewer has one, as an option:
+  see the next section.
+
+### Rendering in a worker
+
+With `renderInWorker: true` (or `index.html?renderInWorker=1` for the viewer on its own), the
+pages in view are interpreted and drawn by a second, render-only .NET runtime in a dedicated Web
+Worker. The viewer's own runtime keeps the text, search, selection, annotations, forms,
+thumbnails and printing.
+
+```js
+const view = new PdfViewer.View({ divId: 'viewer', renderInWorker: true });
+```
+
+- **Measured** in headless Chrome, engine tour, zoom and scroll: total blocking time 110 to 188 ms
+  on the main thread, 0 ms with the worker; the longest gap of a 10 ms timer 166 to 244 ms, against
+  16 to 22 ms. The time to the first page is about the same.
+- **Cost:** the worker requests the runtime's files a second time (from the HTTP cache when the
+  server allows caching) and holds a second copy of the runtime and of the document in memory.
+- **Scope:** the worker draws complete, unencrypted files with the bundled fonts. Files still
+  loading by ranges, encrypted files and fonts lent by the host are drawn on the main thread.
+- **Fallback:** while the worker starts, and when it fails, stops answering or cannot draw a page,
+  the pages are drawn on the main thread as without the option.
+- **Checked** in Chrome and Firefox on Windows; not yet in Safari or on a phone, so it is off by
+  default.
 
 ## Planned
 
-- Rendering in a Web Worker (a separate .NET runtime that only renders; see
-  [responsiveness](#responsiveness)), so that no page work runs on the main thread.
+- Rendering in a worker by default, once it is checked in Safari and on phones.
 - A lazy page tree for files read by ranges, so that a file whose page dictionaries are spread
   through it opens without reading every page's dictionary.
 - Later: more annotation types (replies, stamps, lines and polygons), comment threads.

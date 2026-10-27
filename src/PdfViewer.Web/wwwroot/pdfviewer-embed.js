@@ -25,7 +25,7 @@
 
     const PROTOCOL = 'pdfviewer-embed';
     const PROTOCOL_VERSION = 1;
-    const SDK_VERSION = '0.3.0';
+    const SDK_VERSION = '0.4.0';
     const MAX_FILE_BYTES = 512 * 1024 * 1024;
     // Range loading (docs/sdk, "Large files"): the viewer asks for at most this many bytes at a
     // time, with at most this many requests waiting; files smaller than RANGE_MIN_BYTES are read whole.
@@ -726,11 +726,12 @@
         console.warn(`PdfViewer: the viewer (${viewerOrigin}) has the same origin as this page. The iframe sandbox then does not isolate it: a fault in the viewer could reach this page. For production, serve the viewer from another origin (for example a subdomain). See ${ISOLATION_DOCS}`);
     }
 
-    /** One viewer in one element of the page: new PdfViewer.View({ divId, locale, baseUrl, isolation }). */
+    /** One viewer in one element of the page: new PdfViewer.View({ divId, locale, baseUrl, isolation, renderInWorker }). */
     class View {
         constructor(options) {
-            const { divId, locale = 'en-US', baseUrl, isolation = 'warn' } = options || {};
+            const { divId, locale = 'en-US', baseUrl, isolation = 'warn', renderInWorker = false } = options || {};
             if (isolation !== 'warn' && isolation !== 'require') throw fail(ErrorCode.INVALID_ARGUMENT, "isolation must be 'warn' or 'require'.");
+            if (typeof renderInWorker !== 'boolean') throw fail(ErrorCode.INVALID_ARGUMENT, 'renderInWorker must be true or false.');
             const document = global.document;
             const container = typeof divId === 'string' ? document.getElementById(divId) : null;
             if (!container) throw fail(ErrorCode.INVALID_ARGUMENT, `No element has the id "${divId}".`);
@@ -739,6 +740,7 @@
             }
             this._container = container;
             this._locale = typeof locale === 'string' ? locale : 'en-US';
+            this._renderInWorker = renderInWorker;
             this._base = viewerBase(baseUrl);
             this._viewerOrigin = this._base.origin;
             checkIsolation(this._viewerOrigin, isolation);
@@ -806,10 +808,13 @@
             this._exitLabel = settings.exitPDFViewerType === 'RETURN' ? 'Return' : 'Close';
             // A previewFile still fetching its file is replaced: its fetches stop (it rejects with CLOSED).
             if (this._preparing) this._preparing.abort(fail(ErrorCode.CLOSED, 'Another file was opened before this one was ready.'));
+            this._preparing = null;
+            // The frame first: a new frame closes the old one, and with it the old file's fetches,
+            // which must not include this file's.
+            const ready = this._ensureFrame(mode, fileName);
             const preparing = new AbortController();
             this._preparing = preparing;
             const signal = preparing.signal;
-            const ready = this._ensureFrame(mode, fileName);
             const content = prepareContent(file.content, signal);
             // Both run at once: the viewer boots while the file (or its end) downloads.
             let prepared, buffer;
@@ -901,6 +906,7 @@
             src.searchParams.set('embed', String(PROTOCOL_VERSION));
             src.searchParams.set('mode', mode);
             src.searchParams.set('origin', global.location.origin);
+            if (this._renderInWorker) src.searchParams.set('renderInWorker', '1');
             frame.src = src.href;
             frame.title = `PDF viewer: ${fileName}`;
             // As strict as the viewer allows: scripts (the engine), its own origin (its files and
