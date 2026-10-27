@@ -16,5 +16,22 @@ Console.WriteLine($"{doc.PageCount} pages");
 Console.WriteLine(await new PdfVectorTextService().ExtractPageTextAsync(doc, 1));
 ```
 
+## Colour profiles
+
+The engine reads no colour profile from the machine, so it converts colour the same way on every
+platform. DeviceCMYK uses a built-in model of U.S. Web Coated (SWOP). To use installed profiles,
+register a provider once at start-up, before documents are opened:
+
+```csharp
+using PdfEngine.Vector.Color;
+
+ColorProfiles.Register(new MyColorProfiles()); // implements IColorProfileProvider
+```
+
+`GetDisplayCmykProfile` gives the profile for DeviceCMYK on screen (null: the built-in model).
+`GetOutputIntentCmykProfile` gives the CMYK profile that PDF/A conversion embeds as the output intent
+when the caller sets no `CmykProfile` (null: none). `ColorProfiles.ReadProfileFile` reads a profile
+file safely. The Windows desktop app registers the profiles Windows and Adobe applications install.
+
 The API is not stable before version 1.0. Licence: MIT. Third-party data inside the package (the
 Adobe predefined CJK CMaps, BSD-3-Clause) is listed in `THIRD_PARTY_NOTICES.md` in the package.

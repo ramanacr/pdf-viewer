@@ -33,7 +33,7 @@ public sealed class PdfAConversionOptions
     public PdfFlatteningOptions Flattening { get; init; } = new();
     /// <summary>Where fonts for embedding come from (the installed fonts by default).</summary>
     public SystemFontCatalog? Fonts { get; init; }
-    /// <summary>A CMYK ICC profile for DeviceCMYK content (by default the one Windows installs, when present).</summary>
+    /// <summary>A CMYK ICC profile for DeviceCMYK content (by default the colour profile provider's, <see cref="PdfEngine.Vector.Color.ColorProfiles"/>: on Windows the one Windows installs, when present).</summary>
     public byte[]? CmykProfile { get; init; }
     /// <summary>Builds a normal appearance for an annotation that has none (drawn as Acrobat draws it); null removes such annotations instead.</summary>
     public Func<PdfDictionary, PdfObjectResolver, Func<PdfObject, int>, PdfStream?>? AnnotationAppearance { get; init; } = Annotations.PdfAnnotationAppearances.Generate;
@@ -283,7 +283,7 @@ public static class PdfAConverter
             {
                 // CMYK content keeps being device CMYK (a CMYK output intent), so it looks as it did in
                 // every viewer; RGB then gets sRGB, which draws the same as device RGB.
-                var cmyk = Uses("DeviceCMYK") ? _options.CmykProfile ?? WindowsCmykProfile() : null;
+                var cmyk = Uses("DeviceCMYK") ? _options.CmykProfile ?? HostCmykProfile() : null;
                 if (cmyk != null && PdfAChecker.IccHeader.Read(cmyk) is { Space: "CMYK", Class: "prtr" or "mntr" })
                 {
                     _cmyk = new PdfIndirectRef(Add(IccStream(cmyk, 4)));
@@ -303,7 +303,7 @@ public static class PdfAConverter
             }
             if (_needDefaultCmyk)
             {
-                var cmyk = _options.CmykProfile ?? WindowsCmykProfile();
+                var cmyk = _options.CmykProfile ?? HostCmykProfile();
                 if (cmyk != null && PdfAChecker.IccHeader.Read(cmyk) is { Space: "CMYK" }) _cmyk = new PdfIndirectRef(Add(IccStream(cmyk, 4)));
                 else _needDefaultCmyk = false; // reported by the validation of the result
             }
@@ -322,7 +322,8 @@ public static class PdfAConverter
             return null;
         }
 
-        private static byte[]? WindowsCmykProfile() => PdfEngine.Vector.Color.SystemColorProfiles.WindowsCmykProfile();
+        // The host's CMYK profile (on Windows, RSWOP.icm), or none: the engine core reads no profile itself.
+        private static byte[]? HostCmykProfile() => PdfEngine.Vector.Color.ColorProfiles.Provider.GetOutputIntentCmykProfile();
 
         private static PdfStream IccStream(byte[] profile, int n) => PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
         {

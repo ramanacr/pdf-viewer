@@ -1,11 +1,12 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace PdfEngine.Vector.Color;
 
 /// <summary>
 /// sRGB to CMYK for separations: the numerical inverse of the DeviceCMYK conversion (<see cref="DefaultCmyk"/>,
-/// the built-in SWOP model unless Adobe's profile is installed), with a fixed black generation and a 300 % ink
+/// the built-in SWOP model unless the colour profile provider gives a display profile), with a fixed black generation and a 300 % ink
 /// limit. It is not Adobe's U.S. Web Coated (SWOP) B2A table: colours inside the CMYK gamut convert back to the
 /// colour they show on screen (on a 54-colour test grid: mean ΔE76 0.65, worst 2.5), while black generation and gamut mapping are this
 /// engine's own choices, so plate values for RGB content are approximate.
@@ -20,12 +21,27 @@ internal static class CmykSeparation
 {
     private const int Grid = 17;
     public const double InkLimit = 3.0;
-    private static readonly Lazy<float[]> Table = new(Build);
+    // One table per colour profile provider, as the DeviceCMYK conversion it inverts is (DefaultCmyk).
+    private static readonly ConditionalWeakTable<IColorProfileProvider, float[]> Tables = new();
+    private static Entry? _last;
+
+    private sealed record Entry(IColorProfileProvider Provider, float[] Table);
+
+    private static float[] Table()
+    {
+        var provider = ColorProfiles.Provider;
+        var last = System.Threading.Volatile.Read(ref _last);
+        if (last != null && ReferenceEquals(last.Provider, provider))
+            return last.Table;
+        var table = Tables.GetValue(provider, _ => Build());
+        System.Threading.Volatile.Write(ref _last, new Entry(provider, table));
+        return table;
+    }
 
     /// <summary>The CMYK (0..1) for an sRGB colour (0..1, companded).</summary>
     public static void FromSrgb(double r, double g, double b, Span<double> cmyk)
     {
-        var t = Table.Value;
+        var t = Table();
         double fr = Math.Clamp(r, 0, 1) * (Grid - 1), fg = Math.Clamp(g, 0, 1) * (Grid - 1), fb = Math.Clamp(b, 0, 1) * (Grid - 1);
         int r0 = Math.Min((int)fr, Grid - 2), g0 = Math.Min((int)fg, Grid - 2), b0 = Math.Min((int)fb, Grid - 2);
         double dr = fr - r0, dg = fg - g0, db = fb - b0;

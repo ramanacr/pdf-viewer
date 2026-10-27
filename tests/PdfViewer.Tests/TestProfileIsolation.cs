@@ -53,6 +53,13 @@ public class TestProfileIsolationTests
         Assert.False(ShellIntegrationService.ClassesRoot.Equals(@"Software\Classes", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void TheViewerGivesTheEngineTheWindowsColourProfiles()
+    {
+        // The engine core reads no colour profile itself (issue #80); the viewer registers Windows' own.
+        Assert.Same(PdfEngine.Vector.Windows.WindowsColorProfileProvider.Instance, PdfEngine.Vector.Color.ColorProfiles.Provider);
+    }
+
     private static bool IsUnderProfile(string directory) =>
         Path.GetFullPath(directory).StartsWith(Path.GetFullPath(Profile), StringComparison.OrdinalIgnoreCase);
 }

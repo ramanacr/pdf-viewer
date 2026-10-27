@@ -13,6 +13,15 @@ public partial class App : Application
     /// <summary>Set only for a <c>--startup-probe</c> launch (the cold-start release gate).</summary>
     internal static StartupProbe? Probe { get; private set; }
 
+    /// <summary>
+    /// Gives the engine the CMYK profiles Windows and Adobe applications install; the engine core reads
+    /// none itself. A module initializer, so it runs before the first document is read, in the app and
+    /// in the tests that use the viewer's code alike.
+    /// </summary>
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void RegisterColorProfiles() =>
+        PdfEngine.Vector.Color.ColorProfiles.Register(PdfEngine.Vector.Windows.WindowsColorProfileProvider.Instance);
+
     protected override void OnStartup(StartupEventArgs e)
     {
         // First, so the milestone measures what the runtime and host cost before any of ours.
