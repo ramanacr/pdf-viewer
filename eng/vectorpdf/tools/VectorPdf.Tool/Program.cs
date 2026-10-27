@@ -32,6 +32,9 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // The engine core reads no colour profile itself; convert colour as the desktop app does.
+        PdfEngine.Vector.Color.ColorProfiles.Register(WindowsColorProfileProvider.Instance);
+
         if (args.Length == 0)
         {
             Console.Error.WriteLine("usage: vectorpdf bench [--pages N] | corpus <dir> [--out report.jsonl] [--diff | --diff-all] | live <file.pdf> [--frames N] [--pages N] | tiles <dir> [--software] [--top N]");

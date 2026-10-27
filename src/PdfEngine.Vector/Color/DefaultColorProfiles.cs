@@ -3,38 +3,76 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Threading;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Objects;
 
 namespace PdfEngine.Vector.Color;
 
-/// <summary>Colour profiles installed on the machine, read at run time and never shipped.</summary>
-internal static class SystemColorProfiles
+/// <summary>
+/// Gives the engine the CMYK colour profiles of the machine it runs on. The engine core reads no profile
+/// itself, so it behaves the same on every platform (Windows, Linux, macOS, Android, a browser); a host
+/// that has profiles to offer registers a provider with <see cref="ColorProfiles.Register"/>. Profiles are
+/// read at run time and never shipped.
+/// </summary>
+public interface IColorProfileProvider
 {
-    /// <summary>The SWOP profile Windows installs (RSWOP.icm), or null when it is not available.</summary>
-    public static byte[]? WindowsCmykProfile() =>
-        OperatingSystem.IsWindows()
-            ? Read(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "spool", "drivers", "color", "RSWOP.icm"))
-            : null;
+    /// <summary>
+    /// A CMYK profile to convert DeviceCMYK with for display (Acrobat uses Adobe's U.S. Web Coated (SWOP) v2),
+    /// or null to use the built-in model of it (<see cref="BuiltInColorProfileProvider"/>).
+    /// </summary>
+    byte[]? GetDisplayCmykProfile();
 
     /// <summary>
-    /// Adobe's U.S. Web Coated (SWOP) v2 profile, which Acrobat and other Adobe applications install and
-    /// convert DeviceCMYK with by default; null when no Adobe application installed it.
+    /// A CMYK printer or monitor profile that PDF/A conversion embeds as the output intent of a CMYK document
+    /// when the caller gives none (<c>PdfAConversionOptions.CmykProfile</c>), or null when there is none.
     /// </summary>
-    public static byte[]? AdobeSwopProfile()
+    byte[]? GetOutputIntentCmykProfile();
+}
+
+/// <summary>The default provider: no installed profiles. DeviceCMYK uses the built-in SWOP model (<see cref="SwopApproximation"/>).</summary>
+public sealed class BuiltInColorProfileProvider : IColorProfileProvider
+{
+    /// <summary>The single instance.</summary>
+    public static BuiltInColorProfileProvider Instance { get; } = new();
+
+    private BuiltInColorProfileProvider() { }
+
+    /// <inheritdoc />
+    public byte[]? GetDisplayCmykProfile() => null;
+
+    /// <inheritdoc />
+    public byte[]? GetOutputIntentCmykProfile() => null;
+}
+
+/// <summary>The colour profile provider the engine uses (<see cref="BuiltInColorProfileProvider"/> until a host registers another).</summary>
+public static class ColorProfiles
+{
+    private static IColorProfileProvider _registered = BuiltInColorProfileProvider.Instance;
+
+    // Per async flow, so that a test overriding it does not change what tests running beside it see.
+    private static readonly AsyncLocal<IColorProfileProvider?> Override = new();
+
+    /// <summary>The provider in use.</summary>
+    public static IColorProfileProvider Provider => Override.Value ?? Volatile.Read(ref _registered);
+
+    /// <summary>
+    /// Makes <paramref name="provider"/> the provider for the process. Register it once at start-up, before
+    /// documents are opened. Pages already read keep the colours of the provider they were read with, and the
+    /// provider is looked up for each colour conversion, so a page read while another registration happens
+    /// can mix the colours of both providers.
+    /// </summary>
+    public static void Register(IColorProfileProvider provider)
     {
-        if (!OperatingSystem.IsWindows())
-            return null;
-        foreach (var folder in new[] { Environment.SpecialFolder.CommonProgramFiles, Environment.SpecialFolder.CommonProgramFilesX86 })
-        {
-            string root = Environment.GetFolderPath(folder);
-            if (root.Length > 0 && Read(Path.Combine(root, "Adobe", "Color", "Profiles", "Recommended", "USWebCoatedSWOP.icc")) is { } bytes)
-                return bytes;
-        }
-        return null;
+        ArgumentNullException.ThrowIfNull(provider);
+        Volatile.Write(ref _registered, provider);
     }
 
-    private static byte[]? Read(string path)
+    /// <summary>
+    /// Reads a profile file for a provider (the Windows one): its bytes, or null when the file is missing,
+    /// unreadable or larger than a profile may be.
+    /// </summary>
+    internal static byte[]? ReadProfileFile(string path)
     {
         try
         {
@@ -45,11 +83,25 @@ internal static class SystemColorProfiles
             return null;
         }
     }
+
+    /// <summary>Tests: use <paramref name="provider"/> in the calling flow only.</summary>
+    internal static IDisposable Simulate(IColorProfileProvider provider)
+    {
+        var previous = Override.Value;
+        Override.Value = provider;
+        return new Restore(() => Override.Value = previous);
+    }
+
+    private sealed class Restore(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
 }
 
 /// <summary>
 /// The conversion used for DeviceCMYK (and CMYK spaces without a usable profile), aiming at what Acrobat
-/// shows: Adobe's own U.S. Web Coated (SWOP) profile when an Adobe application installed it, else the
+/// shows: the provider's display profile (<see cref="IColorProfileProvider.GetDisplayCmykProfile"/>; on
+/// Windows, Adobe's own U.S. Web Coated (SWOP) profile when an Adobe application installed it), else the
 /// built-in model of it (<see cref="SwopApproximation"/>).
 /// </summary>
 /// <remarks>
@@ -60,16 +112,44 @@ internal static class SystemColorProfiles
 /// </remarks>
 internal static class DefaultCmyk
 {
-    private static readonly Lazy<ColorTransform[]> Transforms = new(Load);
+    // One set of transforms per provider, the last one used kept at hand.
+    private static readonly ConditionalWeakTable<IColorProfileProvider, ColorTransform[]> ByProvider = new();
+    private static Entry? _last;
+
+    private sealed record Entry(IColorProfileProvider Provider, ColorTransform[] Transforms);
 
     /// <summary>True when the conversion comes from an installed profile rather than the built-in model.</summary>
-    public static bool UsesInstalledProfile => Transforms.Value[0] is IccTransform;
+    public static bool UsesInstalledProfile => Transforms(ColorProfiles.Provider)[0] is IccTransform;
 
-    public static ColorTransform For(PdfRenderingIntent intent) => Transforms.Value[(int)intent & 3];
+    public static ColorTransform For(PdfRenderingIntent intent) => For(ColorProfiles.Provider, intent);
 
-    private static ColorTransform[] Load()
+    /// <summary>The conversion of <paramref name="provider"/>, for a cache built from it (<see cref="CmykSeparation"/>).</summary>
+    public static ColorTransform For(IColorProfileProvider provider, PdfRenderingIntent intent) => Transforms(provider)[(int)intent & 3];
+
+    private static ColorTransform[] Transforms(IColorProfileProvider provider)
     {
-        if (SystemColorProfiles.AdobeSwopProfile() is { } bytes
+        var last = Volatile.Read(ref _last);
+        if (last != null && ReferenceEquals(last.Provider, provider))
+            return last.Transforms;
+        var transforms = ByProvider.GetValue(provider, Load);
+        Volatile.Write(ref _last, new Entry(provider, transforms));
+        return transforms;
+    }
+
+    private static ColorTransform[] Load(IColorProfileProvider provider)
+    {
+        byte[]? bytes;
+        try
+        {
+            bytes = provider.GetDisplayCmykProfile();
+        }
+        catch (Exception)
+        {
+            // A host's provider failing must not fail every CMYK conversion: this provider gets the built-in model.
+            bytes = null;
+        }
+        if (bytes != null
+            && bytes.Length <= IccProfile.MaxProfileBytes
             && IccProfile.TryParse(bytes, out _) is { Channels: 4 } profile)
         {
             var result = new ColorTransform[4];
