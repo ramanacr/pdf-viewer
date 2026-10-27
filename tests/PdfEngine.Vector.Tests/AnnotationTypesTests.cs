@@ -168,7 +168,69 @@ public class AnnotationTypesTests
     {
         var reply = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(10, 10, 20, 20), InReplyToName = "nobody" };
         var (doc, _) = await Write(Blank(), e => e.Add(reply));
-        using (doc) Assert.Equal(0, PdfAnnotationReader.Read(doc, 1).Single().InReplyTo);
+        using (doc)
+        {
+            Assert.Equal(0, PdfAnnotationReader.Read(doc, 1).Single().InReplyTo);
+            Assert.NotEqual(string.Empty, Appearance(doc, 0)); // a note, drawn as one
+        }
+    }
+
+    [Fact]
+    public async Task AFilesReply_ThatIsChanged_IsStillDrawnAsANote()
+    {
+        // A reader that treats every note alike (the desktop viewer) changes a reply from the file.
+        var bytes = PageWith(
+            "<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] /NM (q) >>",
+            "<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] /IRT 4 0 R /C [1 0 0] >>");
+        using var doc = await PdfVectorDocument.OpenAsync(bytes);
+        var reply = PdfAnnotationReader.Read(doc, 1)[1];
+        reply.Contents = "Changed";
+        using var changed = await PdfVectorDocument.OpenAsync(PdfAnnotationEditor.Apply(doc, bytes, e => e.Modify(reply)));
+        Assert.Equal(4, PdfAnnotationReader.Read(changed, 1)[1].InReplyTo);
+        Assert.Contains("1 0 0 rg", Appearance(changed, 1));
+    }
+
+    [Fact]
+    public async Task DeletingAParent_WithoutItsReplies_MakesThemNotesOfTheirOwn()
+    {
+        var parent = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(50, 300, 20, 20), Name = "p1" };
+        var reply = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = parent.Rect, Name = "r1", InReplyToName = "p1", Contents = "Kept" };
+        var (doc, bytes) = await Write(Blank(), e => { e.Add(parent); e.Add(reply); });
+        using (doc)
+        {
+            Assert.Equal(string.Empty, Appearance(doc, 1));
+            using var after = await PdfVectorDocument.OpenAsync(PdfAnnotationEditor.Apply(doc, bytes, e => e.Delete(1, 0, cascadeReplies: false)));
+            var left = PdfAnnotationReader.Read(after, 1).Single();
+            Assert.Equal(("Kept", 0), (left.Contents, left.InReplyTo));
+            Assert.NotEqual(string.Empty, Appearance(after, 0));
+        }
+    }
+
+    [Fact]
+    public async Task AReplyToAParentWrittenDirectlyInAnnots_MakesTheParentAnObject()
+    {
+        var b = new VectorPdfBuilder();
+        Assert.Equal(3, b.AddStream(string.Empty, string.Empty));
+        b.AddPageObject($"<< /Type /Page /Parent {VectorPdfBuilder.PagesObject} 0 R /MediaBox [0 0 400 400] /Contents 3 0 R /Annots [<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] /NM (direct) >>] >>");
+        var original = b.Build();
+        var reply = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(10, 10, 20, 20), InReplyToName = "direct" };
+        var (doc, _) = await Write(original, e => e.Add(reply));
+        using (doc)
+        {
+            var read = PdfAnnotationReader.Read(doc, 1);
+            Assert.True(read[0].ObjectNumber > 0);
+            Assert.Equal(read[0].ObjectNumber, read[1].InReplyTo);
+        }
+    }
+
+    [Fact]
+    public void XfdfExport_NamesAParentWithoutNm_SoTheReplyKeepsItsThread()
+    {
+        var parent = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), ObjectNumber = 7 };
+        var reply = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), InReplyTo = 7 };
+        var back = PdfAnnotationXfdf.Import(PdfAnnotationXfdf.Export([parent, reply]));
+        Assert.Equal("obj-7", back[0].Name);
+        Assert.Equal("obj-7", back[1].InReplyToName);
     }
 
     // ------------------------------------------------------------------ XFDF

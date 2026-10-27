@@ -85,10 +85,46 @@ public sealed class PdfAnnotationEditor
     private int FindByName(PageState page, string name)
     {
         if (_addedNames.TryGetValue(name, out int added)) return added;
-        foreach (var item in page.Items)
-            if (item is PdfIndirectRef r && Resolved(item) is { } d && PdfTextStrings.Decode(_update.Resolve(d["NM"])) == name) return r.ObjectNumber;
+        for (int i = 0; i < page.Items.Count; i++)
+        {
+            if (Resolved(page.Items[i]) is not { } d || PdfTextStrings.Decode(_update.Resolve(d["NM"])) != name) continue;
+            // /IRT must be an indirect reference: a parent written directly in /Annots becomes an object.
+            return MakeIndirect(page, i);
+        }
         return 0;
     }
+
+    /// <summary>
+    /// The object number of the annotation at <paramref name="index"/>; an annotation written
+    /// directly in /Annots is made an object of its own first, so a reply's /IRT can refer to it.
+    /// </summary>
+    public int MakeIndirect(int pageNumber, int index)
+    {
+        var page = State(pageNumber);
+        if (index < 0 || index >= page.Items.Count || page.Items[index] is null)
+            throw new ArgumentOutOfRangeException(nameof(index), $"Page {pageNumber} has no annotation at position {index}.");
+        return MakeIndirect(page, index);
+    }
+
+    private int MakeIndirect(PageState page, int index)
+    {
+        var item = page.Items[index]!;
+        if (item is PdfIndirectRef r) return r.ObjectNumber;
+        var dict = Resolved(item) ?? throw new InvalidOperationException("The annotation cannot be read.");
+        int number = _update.Add(dict);
+        page.Items[index] = new PdfIndirectRef(number);
+        page.Changed = true;
+        return number;
+    }
+
+    /// <summary>The annotation <paramref name="number"/> is on the page (as read, or added by this editor) and not removed.</summary>
+    private static bool OnPage(PageState page, int number) =>
+        number > 0 && (page.Items.Any(i => i is PdfIndirectRef r && r.ObjectNumber == number)
+                       || page.Added.Any(i => i is PdfIndirectRef r && r.ObjectNumber == number));
+
+    /// <summary>The annotation's normal appearance draws nothing (a reply's, as this editor writes them).</summary>
+    private bool HasEmptyAppearance(PdfDictionary annotation) =>
+        _update.Resolve(annotation["AP"]) is PdfDictionary ap && _update.Resolve(ap["N"]) is PdfStream n && n.GetRawBytes().Length == 0;
 
     /// <summary>Replaces the managed entries of the annotation at <see cref="PdfAnnotation.Index"/> on its page and draws it again.</summary>
     public void Modify(PdfAnnotation annotation)
@@ -148,10 +184,30 @@ public sealed class PdfAnnotationEditor
                 var od = Resolved(other);
                 bool isPopup = number > 0 && number == popup
                     || self > 0 && od?.GetName("Subtype") == "Popup" && od["Parent"] is PdfIndirectRef parent && parent.ObjectNumber == self;
-                bool isReply = cascadeReplies && self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
-                if (isPopup || isReply) pending.Push(i);
+                bool isReply = self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
+                if (isPopup || isReply && cascadeReplies) pending.Push(i);
+                else if (isReply && od != null) Detach(page, i, od);
             }
         }
+    }
+
+    /// <summary>
+    /// A reply whose parent is removed while its replies stay becomes a note of its own: without
+    /// /IRT and /RT, and drawn again, so a reply's empty appearance does not leave it unseen.
+    /// </summary>
+    private void Detach(PageState page, int index, PdfDictionary reply)
+    {
+        var e = new Dictionary<string, PdfObject>(reply.Entries);
+        e.Remove("IRT");
+        e.Remove("RT");
+        if (PdfAnnotationAppearances.Generate(new PdfDictionary(e), _update.Resolver, o => _update.Add(o)) is { } form)
+        {
+            e["AP"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = _update.AddRef(form) });
+            e.Remove("AS");
+        }
+        if (page.Items[index] is PdfIndirectRef r) _update.Set(r.ObjectNumber, new PdfDictionary(e));
+        else page.Items[index] = new PdfDictionary(e);
+        page.Changed = true;
     }
 
     // ------------------------------------------------------------------ building
@@ -253,8 +309,11 @@ public sealed class PdfAnnotationEditor
         }
 
         // A reply note belongs in the comments list, not on the page: its appearance is empty, so
-        // no reader draws a second note icon over the annotation it answers.
-        if (a.Subtype == "Text" && PdfAnnotationThreads.IsReply(a))
+        // no reader draws a second note icon over the annotation it answers. Only a new reply
+        // whose parent is on the page gets one, or a changed reply that had one; any other reply
+        // (a file's own, or one whose parent is gone) keeps being drawn as a note.
+        if (a.Subtype == "Text" && PdfAnnotationThreads.IsReply(a) && OnPage(page, a.InReplyTo)
+            && (existing == null || HasEmptyAppearance(existing)))
         {
             e["AP"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["N"] = _update.AddRef(EmptyForm(rect)) });
             e.Remove("AS");

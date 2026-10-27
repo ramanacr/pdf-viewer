@@ -187,6 +187,47 @@ public class EmbedAnnotationTypesTests
     }
 
     [Fact]
+    public void XfdfImport_LinksRepliesBeforeTheirParents_AndKeepsOtherInReplyToAnnotations()
+    {
+        var read = PdfAnnotationXfdf.Import("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"a\" inreplyto=\"q\"><contents>A</contents></text>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"q\"><contents>Q</contents></text>" +
+            "<highlight page=\"0\" rect=\"10,10,30,30\" name=\"g\" inreplyto=\"q\" replyType=\"group\"/>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"lost\" inreplyto=\"nobody\"><contents>L</contents></text>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"taken\" inreplyto=\"existing\"/>" +
+            "</annots></xfdf>");
+        var ids = new HashSet<string>(StringComparer.Ordinal) { "existing", "q" };
+        var list = ViewerAnnotationPdf.FromXfdf(read, ids);
+        Assert.Equal(5, list.Count);
+        // "q" is in use: it gets a new id, and its reply follows it.
+        var q = list.Single(a => a.Contents == "Q");
+        Assert.NotEqual("q", q.Id);
+        var a = list.Single(x => x.Contents == "A");
+        Assert.Equal((ViewerAnnotationKind.Reply, q.Id), (a.Kind, a.InReplyTo));
+        Assert.True(list.IndexOf(q) < list.IndexOf(a));
+        Assert.Equal(ViewerAnnotationKind.Highlight, list.Single(x => x.Id == "g").Kind);
+        Assert.Equal(ViewerAnnotationKind.Note, list.Single(x => x.Id == "lost").Kind);
+        Assert.Equal("existing", list.Single(x => x.Id == "taken").InReplyTo);
+    }
+
+    [Fact]
+    public async Task AReplyToAFilesDirectAnnotation_IsWrittenWithIrt()
+    {
+        var b = new VectorPdfBuilder();
+        Assert.Equal(3, b.AddStream(string.Empty, string.Empty));
+        b.AddPageObject($"<< /Type /Page /Parent {VectorPdfBuilder.PagesObject} 0 R /MediaBox [0 0 612 792] /Contents 3 0 R /Annots [<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] >>] >>");
+        await using var doc = await ViewerDocument.OpenAsync(b.Build());
+        var fromFile = await doc.ReadAnnotationsAsync();
+        var store = new ViewerAnnotationStore(doc.Geometry, fromFile);
+        store.Add(Call("addAnnotations", "[[" + Reply("r", fromFile.Single().Id, "Hi") + "]]").Annotations);
+        await doc.ApplyEditsAsync(store.FromFile, store.Current, []);
+        using var vector = await PdfVectorDocument.OpenAsync(doc.Bytes);
+        var read = PdfAnnotationReader.Read(vector, 1);
+        Assert.True(read[0].ObjectNumber > 0);
+        Assert.Equal(read[0].ObjectNumber, read[1].InReplyTo);
+    }
+
+    [Fact]
     public async Task Xfdf_KeepsTheNewTypes_AndTheirThreads()
     {
         await using var doc = await ViewerDocument.OpenAsync(OnePage());

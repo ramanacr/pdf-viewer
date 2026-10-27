@@ -447,14 +447,23 @@ function finishDrawing() {
     app.invokeMethodAsync('OnToolStroke', tool, d.page, points);
 }
 
-/** A polygon or polyline tool: a click adds a point; the second click of a double-click, or Enter, ends it. */
+let lastPolyClick = null;   // { time, x, y } of the last press, to tell a double-click
+
+/**
+ * A polygon or polyline tool: a click adds a point; the second press of a double-click, or
+ * Enter, ends it. The presses are counted here: a pointerdown's detail is 0 in some browsers.
+ */
 function polyClick(el, e) {
+    const last = lastPolyClick;
+    lastPolyClick = { time: e.timeStamp, x: e.clientX, y: e.clientY };
+    const double = last !== null && e.timeStamp - last.time < 400 && Math.abs(e.clientX - last.x) + Math.abs(e.clientY - last.y) < 8;
     if (drawing && drawing.el !== el) cancelDrawing();
     if (!drawing) {
         startDrawing(el, e);
         return;
     }
-    if (e.detail >= 2) {
+    if (double) {
+        lastPolyClick = null;
         finishDrawing();
         return;
     }

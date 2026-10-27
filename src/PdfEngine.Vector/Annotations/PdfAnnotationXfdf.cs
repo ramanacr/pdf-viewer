@@ -68,10 +68,16 @@ public static class PdfAnnotationXfdf
     {
         ArgumentNullException.ThrowIfNull(annotations);
         var list = annotations.ToList();
-        // inreplyto names the parent: its /NM, found by the object number /IRT gives.
+        // inreplyto names the parent: its /NM, found by the object number /IRT gives. A parent
+        // without /NM is named after its object number here, so the reply keeps its thread.
+        var replied = list.Where(a => a.InReplyTo > 0).Select(a => a.InReplyTo).ToHashSet();
         var names = new Dictionary<int, string>();
         foreach (var a in list)
-            if (a.ObjectNumber > 0 && !string.IsNullOrEmpty(a.Name)) names.TryAdd(a.ObjectNumber, a.Name);
+        {
+            if (a.ObjectNumber <= 0) continue;
+            if (!string.IsNullOrEmpty(a.Name)) names.TryAdd(a.ObjectNumber, a.Name);
+            else if (replied.Contains(a.ObjectNumber)) names.TryAdd(a.ObjectNumber, "obj-" + a.ObjectNumber.ToString(CultureInfo.InvariantCulture));
+        }
         var annots = new XElement(Ns + "annots");
         foreach (var a in list)
         {
@@ -84,7 +90,8 @@ public static class PdfAnnotationXfdf
             if (a.Opacity < 1) e.Add(new XAttribute("opacity", Number(a.Opacity)));
             if (!string.IsNullOrEmpty(a.Author)) e.Add(new XAttribute("title", a.Author));
             if (!string.IsNullOrEmpty(a.Subject)) e.Add(new XAttribute("subject", a.Subject));
-            if (!string.IsNullOrEmpty(a.Name)) e.Add(new XAttribute("name", a.Name));
+            if ((string.IsNullOrEmpty(a.Name) && a.ObjectNumber > 0 ? names.GetValueOrDefault(a.ObjectNumber) : a.Name) is { Length: > 0 } nm)
+                e.Add(new XAttribute("name", nm));
             if (!string.IsNullOrEmpty(a.ModifiedDate)) e.Add(new XAttribute("date", a.ModifiedDate));
             if (!string.IsNullOrEmpty(a.CreationDate)) e.Add(new XAttribute("creationdate", a.CreationDate));
             string flags = string.Join(",", FlagNames.Where(f => (a.Flags & f.Bit) != 0).Select(f => f.Name));

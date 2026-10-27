@@ -534,7 +534,10 @@ does not refuse the whole import. A dash pattern must have 1 to 16 numbers, none
 not all zero, else it is `[3]`. Lines, polygons and polylines need finite points (a polygon or
 polyline with more than 10 000 vertices is skipped, not cut); a line ending name that is not
 in Table 179 is read as `None`. A reply's `inreplyto` names the annotation it answers: one of
-the same import, else one the document has; a reply whose parent is in neither is skipped.
+the same import (before or after it), else one the document has. A reply whose parent is in
+neither, and an annotation with `inreplyto` that is not a note reply (a group member, for
+example), is added on its own. `exportXfdf` names a parent that has no `/NM` (`obj-<number>`),
+so its replies keep their thread.
 
 The file's annotations of these types are managed with `includePDFAnnotations` (not hidden
 ones or other types: links, carets, file attachments, form fields and the like stay as they

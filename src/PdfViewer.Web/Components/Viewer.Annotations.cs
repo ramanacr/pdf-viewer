@@ -741,8 +741,12 @@ public sealed partial class Viewer
         };
         _replyTo = null;
         _replyText = "";
-        Change(() => _store!.Add([reply]));
-        _status = "Reply added";
+        // The status says so only when the store took it; a refusal leaves Change's message.
+        Change(() =>
+        {
+            _store!.Add([reply]);
+            _status = "Reply added";
+        });
     }
 
     // ---------------------------------------------------------------- the host page's annotation manager
@@ -835,20 +839,8 @@ public sealed partial class Viewer
                         return EmbedProtocol.Error(id, EmbedErrors.InvalidArgument, "importXfdf: " + ex.Message);
                     }
                     var ids = store.Current.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
-                    // An XFDF name in use gets a new id; a reply (inreplyto) answers the annotation of
-                    // that name as imported, else one the document has. Parents come before replies.
-                    var renamed = new Dictionary<string, string>(StringComparer.Ordinal);
-                    var list = new List<ViewerAnnotation>();
-                    foreach (var p in read.OrderBy(p => p.InReplyToName == null ? 0 : 1))
-                    {
-                        string? parent = p.InReplyToName is { } n ? renamed.GetValueOrDefault(n) ?? (ids.Contains(n) ? n : null) : null;
-                        if (ViewerAnnotationPdf.FromPdf(p, "", parent) is not { } a) continue;
-                        string name = a.Id;
-                        if (!ids.Add(a.Id)) a = a with { Id = ViewerAnnotationStore.NewId() };
-                        ids.Add(a.Id);
-                        if (name.Length > 0) renamed.TryAdd(name, a.Id);
-                        list.Add(Defaults(a, now, null) with { SourceIndex = -1 });
-                    }
+                    // Names in use get new ids; replies are linked to their parents, or added on their own.
+                    var list = ViewerAnnotationPdf.FromXfdf(read, ids).Select(a => Defaults(a, now, null)).ToList();
                     var added = store.Add(list);
                     if (added.Count > 0) _ = CommitEditsAsync();
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(added, Source));

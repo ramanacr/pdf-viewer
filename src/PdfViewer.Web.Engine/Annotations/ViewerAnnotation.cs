@@ -541,14 +541,64 @@ public static class ViewerAnnotationPdf
             foreach (var a in current.Where(a => !a.FromFile).OrderBy(a => Depth(a, now)))
             {
                 var p = ToPdf(a, null);
+                // (one written directly in /Annots is made an object first, so /IRT can refer to it).
                 if (a.Kind == ViewerAnnotationKind.Reply && now.TryGetValue(a.InReplyTo, out var parent) && parent.FromFile
-                    && Basis(parent) is { ObjectNumber: > 0 } fileParent)
-                    p.InReplyTo = fileParent.ObjectNumber;
+                    && Basis(parent) is { } fileParent)
+                    p.InReplyTo = fileParent.ObjectNumber > 0 ? fileParent.ObjectNumber : editor.MakeIndirect(parent.Page, fileParent.Index);
                 editor.Add(p);
                 changed = true;
             }
         });
         return changed ? result : null;
+    }
+
+    /// <summary>
+    /// The viewer's annotations for XFDF annotations being imported into a document whose ids are
+    /// <paramref name="ids"/> (added to as ids are given). An XFDF name in use gets a new id. A
+    /// reply (inreplyto) answers the annotation of that name in the same import, before or after
+    /// it, else one the document has; a reply whose parent is neither, or that the viewer does not
+    /// manage as a reply (a group member, a highlight with inreplyto), is added on its own, as an
+    /// import without replies would. Parents come before their replies in the result.
+    /// </summary>
+    public static List<ViewerAnnotation> FromXfdf(IReadOnlyList<PdfAnnotation> read, HashSet<string> ids)
+    {
+        var result = new List<ViewerAnnotation>();
+        var renamed = new Dictionary<string, string>(StringComparer.Ordinal);
+        void Take(ViewerAnnotation? a)
+        {
+            if (a == null) return;
+            string name = a.Id;
+            if (!ids.Add(a.Id)) a = a with { Id = ViewerAnnotationStore.NewId() };
+            ids.Add(a.Id);
+            if (name.Length > 0) renamed.TryAdd(name, a.Id);
+            result.Add(a with { SourceIndex = -1 });
+        }
+        ViewerAnnotation? Alone(PdfAnnotation p)
+        {
+            p.InReplyToName = null;
+            p.ReplyType = null;
+            return FromPdf(p, "");
+        }
+        var pending = read.ToList();
+        // A level of replies per pass; what is left after the depth limit, or a pass that places nothing, goes on its own.
+        for (int pass = 0; pass <= PdfAnnotationLimits.MaxReplyDepth + 1 && pending.Count > 0; pass++)
+        {
+            var waiting = pending.Where(p => p.Name is { Length: > 0 }).Select(p => p.Name!).ToHashSet(StringComparer.Ordinal);
+            var next = new List<PdfAnnotation>();
+            foreach (var p in pending)
+            {
+                if (p.InReplyToName is not { } n) { Take(FromPdf(p, "")); continue; }
+                string? parent = renamed.GetValueOrDefault(n);
+                if (parent == null && waiting.Contains(n) && n != p.Name) { next.Add(p); continue; }
+                parent ??= ids.Contains(n) ? n : null;
+                Take(parent != null && FromPdf(p, "", parent) is { } reply ? reply : Alone(p));
+            }
+            bool stuck = next.Count == pending.Count;
+            pending = next;
+            if (stuck) break;
+        }
+        foreach (var p in pending) Take(Alone(p));
+        return result;
     }
 
     /// <summary>How many replies lie between an annotation and its thread's first one (0 for that one); bounded.</summary>
