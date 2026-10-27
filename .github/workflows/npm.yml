@@ -98,4 +98,5 @@ jobs:
         path: npm
 
     - name: Publish to npmjs.com
-      run: npm publish npm/*.tgz --access public --provenance
+      # ./ keeps npm from reading "npm/<file>" as a GitHub repository shorthand.
+      run: npm publish ./npm/*.tgz --access public --provenance
