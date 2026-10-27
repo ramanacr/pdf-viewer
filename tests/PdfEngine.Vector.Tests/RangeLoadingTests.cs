@@ -279,18 +279,19 @@ public class RangeLoadingTests
         var bytes = LargePdf(20);
         var reader = new MemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024 });
+        using var memory = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        int image = ObjectNumberOfImage(memory, 15);
         // Page 2's operation also reads page 15's image, which page 2's closure does not hold.
         int runs = 0;
         var data = await ranged.RunAsync(2, (d, ct) =>
         {
             runs++;
-            var stream = (PdfStream)d.Resolver.Resolve(ObjectNumberOfImage(d, 15))!;
+            var stream = (PdfStream)d.Resolver.Resolve(image)!;
             return ValueTask.FromResult(stream.GetRawBytes().ToArray());
         });
         Assert.Equal(2, runs);
         Assert.Equal(1, ranged.Retries);
-        using var memory = PdfVectorDocument.Open(new MemoryByteSource(bytes));
-        Assert.Equal(((PdfStream)memory.Resolver.Resolve(ObjectNumberOfImage(memory, 15))!).GetRawBytes().ToArray(), data);
+        Assert.Equal(((PdfStream)memory.Resolver.Resolve(image)!).GetRawBytes().ToArray(), data);
         Assert.False(ranged.IsComplete);
     }
 

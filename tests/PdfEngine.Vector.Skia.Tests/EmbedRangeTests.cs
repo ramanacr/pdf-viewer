@@ -25,7 +25,7 @@ public class EmbedRangeTests
     }
 
     /// <summary>A PDF of <paramref name="pages"/> pages, each with text and its own uncompressed image, written page by page.</summary>
-    internal static byte[] ImagePdf(int pages, int side = 96)
+    internal static byte[] ImagePdf(int pages, int side = 96, Func<int, string>? mediaBox = null)
     {
         var objects = new List<byte[]>();
         int Add(string head, byte[]? data = null)
@@ -52,7 +52,7 @@ public class EmbedRangeTests
             var pixels = new byte[side * side * 3];
             random.NextBytes(pixels);
             int image = Add($"<< /Type /XObject /Subtype /Image /Width {side} /Height {side} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {pixels.Length} >>", pixels);
-            kids.Add(Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {content} 0 R >>"));
+            kids.Add(Add($"<< /Type /Page /Parent 2 0 R /MediaBox {mediaBox?.Invoke(p) ?? "[0 0 612 792]"} /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {content} 0 R >>"));
         }
         objects[1] = Encoding.ASCII.GetBytes($"<< /Type /Pages /Kids [{string.Join(" ", kids.Select(k => $"{k} 0 R"))}] /Count {pages} >>");
         objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"u8.ToArray();
@@ -292,6 +292,140 @@ public class EmbedRangeTests
         await using var whole = await ViewerDocument.OpenAsync(file);
         var expected = await whole.RenderPageAsync(1, 0.5);
         Assert.Equal(expected.Pixels.ToArray(), first.Pixels.ToArray());
+    }
+
+    [Fact]
+    public async Task RangedDocument_PagesNotReadYet_HaveTheFirstPagesSize_UntilTheyAreRead()
+    {
+        // Page 30 is A4 landscape, the others Letter: until it is read, it is laid out as Letter.
+        var file = ImagePdf(60, mediaBox: p => p == 30 ? "[0 0 842 595]" : "[0 0 612 792]");
+        var (reader, _) = Connect(file);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 16 * 1024 });
+        Assert.Equal(60, doc.PageCount);
+        Assert.Equal(new ViewerPage(30, 612, 792), doc.Pages[29]);
+        // Opening read the end of the file and page 1's dictionary, not every page's.
+        long opened = reader.BytesReceived;
+        Assert.True(opened < file.Length / 20, $"{opened} of {file.Length} bytes to open");
+
+        int changes = 0;
+        doc.PagesChanged += () => changes++;
+        await doc.EnsurePageSizeAsync(30);
+        Assert.Equal(new ViewerPage(30, 842, 595), doc.Pages[29]);
+        Assert.Equal(842, doc.Geometry[29].MediaBox.Width);
+        Assert.Equal(1, changes);
+        await doc.RenderPageAsync(30, 0.25);
+        await doc.RenderPageAsync(31, 0.25);   // the same size as the first: nothing changes
+        Assert.Equal(1, changes);
+
+        await doc.EnsureCompleteAsync();
+        Assert.Equal(new ViewerPage(30, 842, 595), doc.Pages[29]);
+        await using var whole = await ViewerDocument.OpenAsync(file);
+        Assert.Equal(whole.Pages, doc.Pages);
+    }
+
+    [Fact]
+    public async Task RangedDocument_PageCountFromALyingTree_IsCorrected()
+    {
+        // The root claims 12 pages and has 10 kids: the tree is read whole at once, and the count is the real one.
+        var file = ImagePdf(10);
+        string latin = Encoding.Latin1.GetString(file);
+        var lying = Encoding.Latin1.GetBytes(latin.Replace("/Count 10 >>", "/Count 12 >>"));
+        var (reader, _) = Connect(lying);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 4096 });
+        Assert.Equal(10, doc.PageCount);
+        Assert.False(doc.IsComplete);
+        var text = await doc.GetTextLayoutAsync(10);
+        Assert.Contains("Page 10 of 10", text.GetText(0, text.Length));
+    }
+
+    /// <summary>
+    /// Objects 1..n in number order (1 is the catalog, its /Pages is object 3), each followed by
+    /// <paramref name="padding"/> bytes of comment. A body "page:T" is a page whose text is T
+    /// (its content stream is written as the next object).
+    /// </summary>
+    private static byte[] TreePdf(IReadOnlyList<string> objects, int padding = 2048)
+    {
+        var bodies = new List<string>();
+        var numbers = new Dictionary<int, int>();   // given number -> written number
+        // Pages take two numbers (page, content): renumber references after them.
+        int next = 1;
+        for (int i = 0; i < objects.Count; i++)
+        {
+            numbers[i + 1] = next;
+            next += objects[i].StartsWith("page:", StringComparison.Ordinal) ? 2 : 1;
+        }
+        string Renumber(string s) => System.Text.RegularExpressions.Regex.Replace(s, @"(\d+) 0 R", m => $"{numbers[int.Parse(m.Groups[1].Value)]} 0 R");
+        foreach (var o in objects)
+        {
+            if (o.StartsWith("page:", StringComparison.Ordinal))
+            {
+                string ops = $"BT /F1 24 Tf 72 720 Td ({o[5..]}) Tj ET";
+                bodies.Add($"<< /Type /Page /MediaBox [0 0 612 792] /Resources << /Font << /F1 2 0 R >> >> /Contents {bodies.Count + 2} 0 R >>");
+                bodies.Add($"<< /Length {ops.Length} >>\nstream\n{ops}\nendstream");
+            }
+            else
+            {
+                bodies.Add(Renumber(o));
+            }
+        }
+        var pdf = new MemoryStream();
+        void W(string s) => pdf.Write(Encoding.ASCII.GetBytes(s));
+        W("%PDF-1.7\n");
+        var offsets = new long[bodies.Count];
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            offsets[i] = pdf.Position;
+            W($"{i + 1} 0 obj\n{bodies[i]}\nendobj\n%{new string('x', padding)}\n");
+        }
+        long xref = pdf.Position;
+        W($"xref\n0 {bodies.Count + 1}\n0000000000 65535 f \n");
+        foreach (long at in offsets) W($"{at:D10} 00000 n \n");
+        W($"trailer\n<< /Size {bodies.Count + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return pdf.ToArray();
+    }
+
+    private const string Catalog = "<< /Type /Catalog /Pages 3 0 R >>";
+    private const string Font = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+    [Fact]
+    public async Task RangedDocument_APageThatShrinksTheCount_ChangesThePages_EvenWhenItFails()
+    {
+        // The root has 10 kids and /Count 10, but only kids 1 and 2 are pages (the full walk skips
+        // the others): page 1 is found lazily, page 5 shows the lie.
+        var objects = new List<string> { Catalog, Font, "<< /Type /Pages /Kids [4 0 R 5 0 R 6 0 R 7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R] /Count 10 >>", "page:One", "page:Two" };
+        for (int i = 6; i <= 13; i++) objects.Add("0");
+        var file = TreePdf(objects);
+        var (reader, _) = Connect(file);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 4096 });
+        Assert.Equal(10, doc.PageCount);
+        int changes = 0;
+        doc.PagesChanged += () => changes++;
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => doc.RenderPageAsync(5, 0.25));
+        Assert.Equal(1, changes);
+        Assert.Equal(2, doc.PageCount);
+        Assert.Equal(2, doc.Geometry.Count);
+        Assert.False(doc.IsComplete);
+    }
+
+    [Fact]
+    public async Task RangedDocument_APageDrawnFromAMisleadingTree_IsReportedWhenTheFileIsComplete()
+    {
+        // Root /Count 3 with 3 kids: X (a node of 2 pages), "Three" and a non-node. The counts add
+        // up, but the shortcut (as many kids as pages) takes kid 2 for page 2: it shows "Three"
+        // until the whole file is read, where page 2 is X's second page.
+        var file = TreePdf([Catalog, Font, "<< /Type /Pages /Kids [4 0 R 7 0 R 8 0 R] /Count 3 >>",
+            "<< /Type /Pages /Kids [5 0 R 6 0 R] /Count 2 >>", "page:One", "page:Two", "page:Three", "0"]);
+        var (reader, _) = Connect(file);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 4096 });
+        var before = await doc.GetTextLayoutAsync(2);
+        Assert.Contains("Three", before.GetText(0, before.Length));
+        int changes = 0;
+        doc.PagesChanged += () => changes++;
+        await doc.EnsureCompleteAsync();
+        Assert.Equal(1, changes);   // the viewer draws its pages again
+        Assert.Equal(3, doc.PageCount);
+        var after = await doc.GetTextLayoutAsync(2);
+        Assert.Contains("Two", after.GetText(0, after.Length));
     }
 
     [Fact]

@@ -360,6 +360,8 @@ public sealed partial class Viewer : IAsyncDisposable
             _outline = [];
             _docReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             doc.Completed += () => _ = InvokeAsync(() => OnDocumentCompletedAsync(doc));
+            // Pages not read yet are laid out at the first page's size; one read at another size moves the layout.
+            doc.PagesChanged += () => _ = InvokeAsync(() => OnPagesChanged(doc));
         }
         _query = _query.Trim();
         _loading = false;
@@ -419,6 +421,22 @@ public sealed partial class Viewer : IAsyncDisposable
             _noticeIsFonts = false;
             _notice = restriction;
         }
+    }
+
+    /// <summary>A ranged document's page sizes (or, for a damaged page tree, its page count) changed: the pages are laid out again.</summary>
+    private void OnPagesChanged(ViewerDocument doc)
+    {
+        if (_doc != doc) return;
+        _currentPage = Math.Clamp(_currentPage, 1, Math.Max(1, doc.PageCount));
+        // Bitmaps drawn before may be of another size, or of another page: all are drawn again.
+        foreach (var page in _drawn.Keys) CanvasInterop.ClearPage(page);
+        _cache.Clear();
+        _drawn.Clear();
+        _failed.Clear();
+        _thumbsDrawn.Clear();
+        _layoutChanged = true;
+        StateHasChanged();
+        _ = PumpAsync();
     }
 
     /// <summary>A ranged document is complete: everything that waited for the whole file is read now.</summary>
