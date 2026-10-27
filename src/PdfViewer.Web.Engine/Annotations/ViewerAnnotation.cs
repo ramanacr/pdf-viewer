@@ -1,12 +1,16 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Annotations;
 using PdfEngine.Vector.Services;
 
 namespace PdfViewer.Web.Engine.Annotations;
 
-/// <summary>The annotation types the viewer creates, shows in its comments panel and lets a host page manage.</summary>
-public enum ViewerAnnotationKind { Highlight, Underline, StrikeOut, Note, FreeText, Ink, Square, Circle }
+/// <summary>
+/// The annotation types the viewer creates, shows in its comments panel and lets a host page
+/// manage. A reply is a note (/Subtype /Text) that answers another annotation (/IRT, /RT /R).
+/// </summary>
+public enum ViewerAnnotationKind { Highlight, Underline, StrikeOut, Note, FreeText, Ink, Square, Circle, Line, Polygon, PolyLine, Stamp, Reply }
 
 /// <summary>A rectangle in PDF user space (points, y up): (X1, Y1) its lower-left corner, (X2, Y2) its upper-right.</summary>
 public readonly record struct ViewerBox(double X1, double Y1, double X2, double Y2)
@@ -61,6 +65,19 @@ public sealed record ViewerAnnotation
     /// <summary>Ink: the strokes, each x, y, x, y, ….</summary>
     public IReadOnlyList<IReadOnlyList<double>> InkList { get; init; } = [];
 
+    /// <summary>A line's two points (/L: x1, y1, x2, y2), or a polygon's or polyline's points (/Vertices: x, y, x, y, …).</summary>
+    public IReadOnlyList<double> Vertices { get; init; } = [];
+
+    /// <summary>The line endings (/LE, ISO 32000-2 Table 179) at the first and the last point of a line or polyline.</summary>
+    public string StartEnding { get; init; } = "None";
+    public string EndEnding { get; init; } = "None";
+
+    /// <summary>A stamp's /Name (Approved, Draft, Confidential, …).</summary>
+    public string StampName { get; init; } = "";
+
+    /// <summary>A reply: the id of the annotation it answers. Empty for every other kind.</summary>
+    public string InReplyTo { get; init; } = "";
+
     /// <summary>The line (or text, for free text) colour.</summary>
     public string Color { get; init; } = "#FFD400";
 
@@ -93,21 +110,29 @@ public sealed record ViewerAnnotation
         Box = Box.Offset(dx, dy),
         QuadPoints = QuadPoints.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray(),
         InkList = InkList.Select(s => (IReadOnlyList<double>)s.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray()).ToArray(),
+        Vertices = Vertices.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray(),
     };
 
-    /// <summary>The kinds' names in the host page's JSON (target.selector.subtype).</summary>
-    public static readonly string[] SubtypeNames = ["highlight", "underline", "strikeout", "note", "freetext", "ink", "square", "circle"];
+    /// <summary>The kinds' names in the host page's JSON (target.selector.subtype); a reply has motivation "replying" instead.</summary>
+    public static readonly string[] SubtypeNames = ["highlight", "underline", "strikeout", "note", "freetext", "ink", "square", "circle", "line", "polygon", "polyline", "stamp", "reply"];
 
     public static string SubtypeName(ViewerAnnotationKind kind) => SubtypeNames[(int)kind];
 
+    /// <summary>The kind of a target.selector.subtype; null for an unknown name and for "reply" (a reply has no selector).</summary>
     public static ViewerAnnotationKind? ParseSubtype(string? name)
     {
         int i = Array.IndexOf(SubtypeNames, name);
-        return i < 0 ? null : (ViewerAnnotationKind)i;
+        return i < 0 || (ViewerAnnotationKind)i == ViewerAnnotationKind.Reply ? null : (ViewerAnnotationKind)i;
     }
 
     /// <summary>Text markup (motivation "highlighting"); the others are comments.</summary>
     public bool IsMarkup => Kind is ViewerAnnotationKind.Highlight or ViewerAnnotationKind.Underline or ViewerAnnotationKind.StrikeOut;
+
+    /// <summary>A line, polygon or polyline: its geometry is <see cref="Vertices"/>.</summary>
+    public bool HasVertices => Kind is ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine;
+
+    /// <summary>A line or polyline, which may have line endings.</summary>
+    public bool HasEndings => Kind is ViewerAnnotationKind.Line or ViewerAnnotationKind.PolyLine;
 }
 
 /// <summary>
@@ -195,21 +220,44 @@ public static class ViewerAnnotationPdf
         ["Ink"] = ViewerAnnotationKind.Ink,
         ["Square"] = ViewerAnnotationKind.Square,
         ["Circle"] = ViewerAnnotationKind.Circle,
+        ["Line"] = ViewerAnnotationKind.Line,
+        ["Polygon"] = ViewerAnnotationKind.Polygon,
+        ["PolyLine"] = ViewerAnnotationKind.PolyLine,
+        ["Stamp"] = ViewerAnnotationKind.Stamp,
     };
 
-    private static readonly string[] Subtypes = ["Highlight", "Underline", "StrikeOut", "Text", "FreeText", "Ink", "Square", "Circle"];
+    private static readonly string[] Subtypes = ["Highlight", "Underline", "StrikeOut", "Text", "FreeText", "Ink", "Square", "Circle", "Line", "Polygon", "PolyLine", "Stamp", "Text"];
 
     public static string Subtype(ViewerAnnotationKind kind) => Subtypes[(int)kind];
 
     /// <summary>
     /// The viewer's model of an annotation read from a file, or null for a type it does not
-    /// manage, a reply (/IRT) or a hidden annotation. <paramref name="id"/> is used when it has no
-    /// usable /NM.
+    /// manage or a hidden annotation. <paramref name="id"/> is used when it has no usable /NM. A
+    /// reply (/IRT) is managed when <paramref name="parentId"/> gives the id of the annotation
+    /// it answers and it is a note; any other reply, and a group member (/RT /Group), is not.
     /// </summary>
-    public static ViewerAnnotation? FromPdf(PdfAnnotation p, string id)
+    public static ViewerAnnotation? FromPdf(PdfAnnotation p, string id, string? parentId = null)
     {
-        if (!Kinds.TryGetValue(p.Subtype, out var kind) || p.InReplyTo > 0 || (p.Flags & (2 | 32)) != 0) return null;
+        if (!Kinds.TryGetValue(p.Subtype, out var kind) || (p.Flags & (2 | 32)) != 0) return null;
+        if (p.InReplyTo > 0 || !string.IsNullOrEmpty(p.InReplyToName))
+        {
+            if (kind != ViewerAnnotationKind.Note || p.ReplyType is not (null or "R") || string.IsNullOrEmpty(parentId)) return null;
+            kind = ViewerAnnotationKind.Reply;
+        }
         if (!double.IsFinite(p.Rect.X) || !double.IsFinite(p.Rect.Y) || p.Rect.Width < 0 || p.Rect.Height < 0) return null;
+        // A shape needs its points: a line its /L, a polygon at least three and a polyline two vertices, all finite.
+        double[] vertices = kind switch
+        {
+            ViewerAnnotationKind.Line => p.Line ?? [],
+            ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine => p.Vertices.SelectMany(v => new[] { v.X, v.Y }).ToArray(),
+            _ => [],
+        };
+        if (kind == ViewerAnnotationKind.Line && vertices.Length != 4
+            || kind == ViewerAnnotationKind.Polygon && vertices.Length < 6
+            || kind == ViewerAnnotationKind.PolyLine && vertices.Length < 4
+            || vertices.Length > 2 * PdfAnnotationLimits.MaxVertices || !vertices.All(double.IsFinite)) return null;
+        string Ending(int i) => p.LineEndings is { Length: 2 } le && PdfAnnotationLimits.LineEndings.Contains(le[i]) ? le[i] : "None";
+        bool endings = kind is ViewerAnnotationKind.Line or ViewerAnnotationKind.PolyLine;
         string? textColor = null;
         double fontSize = 12;
         if (kind == ViewerAnnotationKind.FreeText) (textColor, fontSize) = ReadDefaultAppearance(p.DefaultAppearance);
@@ -217,7 +265,8 @@ public static class ViewerAnnotationPdf
         string? fill = kind switch
         {
             ViewerAnnotationKind.FreeText => Hex(p.InteriorColor ?? p.Color),
-            ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle => Hex(p.InteriorColor),
+            ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon
+                or ViewerAnnotationKind.PolyLine => Hex(p.InteriorColor),
             _ => null,
         };
         return new ViewerAnnotation
@@ -228,6 +277,11 @@ public static class ViewerAnnotationPdf
             Box = new ViewerBox(p.Rect.Left, p.Rect.Top, p.Rect.Right, p.Rect.Bottom),
             QuadPoints = p.QuadPoints.SelectMany(q => q).ToArray(),
             InkList = p.InkList.Select(s => (IReadOnlyList<double>)s.SelectMany(pt => new[] { pt.X, pt.Y }).ToArray()).ToArray(),
+            Vertices = vertices,
+            StartEnding = endings ? Ending(0) : "None",
+            EndEnding = endings ? Ending(1) : "None",
+            StampName = kind == ViewerAnnotationKind.Stamp ? StampNameOf(p.Icon) : "",
+            InReplyTo = kind == ViewerAnnotationKind.Reply ? parentId! : "",
             Color = color,
             FillColor = fill,
             Opacity = p.Opacity,
@@ -243,11 +297,17 @@ public static class ViewerAnnotationPdf
 
     public static string DefaultColor(ViewerAnnotationKind kind) => kind switch
     {
-        ViewerAnnotationKind.Highlight or ViewerAnnotationKind.Note => "#FFD400",
+        ViewerAnnotationKind.Highlight or ViewerAnnotationKind.Note or ViewerAnnotationKind.Reply => "#FFD400",
         ViewerAnnotationKind.Underline => "#1F9D55",
         ViewerAnnotationKind.FreeText => "#000000",
+        ViewerAnnotationKind.Stamp => "#1F3399",
         _ => "#E5484D",
     };
+
+    /// <summary>A stamp name this viewer writes: 1 to 64 ASCII letters and digits (a file's other names are shown as Draft).</summary>
+    public static bool IsStampName(string? name) => name is { Length: > 0 and <= 64 } && name.All(char.IsAsciiLetterOrDigit);
+
+    private static string StampNameOf(string? icon) => IsStampName(icon) ? icon! : "Draft";
 
     /// <summary>
     /// The annotation for the engine's editor. <paramref name="basis"/> is the annotation as read
@@ -290,6 +350,30 @@ public static class ViewerAnnotationPdf
             case ViewerAnnotationKind.Note:
                 p.Color = Rgb(a.Color);
                 p.Icon ??= "Note";
+                break;
+            case ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine:
+                p.Color = Rgb(a.Color);
+                p.InteriorColor = a.FillColor is { } inside ? Rgb(inside) : null;
+                p.BorderWidth = a.StrokeWidth;
+                var v = a.Vertices;
+                p.Line = a.Kind == ViewerAnnotationKind.Line && v.Count == 4 ? [v[0], v[1], v[2], v[3]] : null;
+                p.Vertices = a.Kind == ViewerAnnotationKind.Line ? new List<PdfPoint>()
+                    : Enumerable.Range(0, v.Count / 2).Select(i => new PdfPoint(v[2 * i], v[2 * i + 1])).ToList();
+                p.LineEndings = a.HasEndings && (a.StartEnding != "None" || a.EndEnding != "None") ? [a.StartEnding, a.EndEnding] : null;
+                break;
+            case ViewerAnnotationKind.Stamp:
+                // A stamp is drawn in the colour of its kind (green for Approved, red for Confidential);
+                // a file's stamp keeps its own appearance and a /Name this viewer does not write.
+                if (basis == null || IsStampName(basis.Icon)) p.Icon = a.StampName;
+                p.Color = basis?.Color;
+                break;
+            case ViewerAnnotationKind.Reply:
+                p.Color = Rgb(a.Color);
+                p.Icon ??= "Comment";
+                p.ReplyType = null;
+                // The parent's object number is known for a parent from the file; Write sets it, else /NM finds it.
+                p.InReplyToName = a.InReplyTo;
+                p.Flags = basis?.Flags ?? (4 | 8 | 16); // Print, NoZoom, NoRotate, as Acrobat writes replies
                 break;
             default:
                 p.Color = Rgb(a.Color);
@@ -370,33 +454,54 @@ public static class ViewerAnnotationPdf
     /// <summary>The annotations of every page that the viewer manages, in page and /Annots order.</summary>
     public static List<ViewerAnnotation> ReadAll(PdfEngine.Vector.Document.PdfVectorDocument document)
     {
-        var result = new List<ViewerAnnotation>();
-        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var all = new List<PdfAnnotation>();
         for (int page = 1; page <= document.PageCount; page++)
         {
-            IReadOnlyList<PdfAnnotation> read;
             try
             {
-                read = PdfAnnotationReader.Read(document, page);
+                all.AddRange(PdfAnnotationReader.Read(document, page));
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
             {
-                continue; // a damaged /Annots: that page's annotations are not managed
-            }
-            foreach (var p in read)
-            {
-                string fallback = $"pdf-{page}-{p.Index}";
-                if (FromPdf(p, fallback) is not { } a) continue;
-                // Two annotations with the same /NM: the second is named by its place.
-                if (!ids.Add(a.Id))
-                {
-                    a = a with { Id = fallback };
-                    if (!ids.Add(a.Id)) continue;
-                }
-                result.Add(a);
+                // a damaged /Annots: that page's annotations are not managed
             }
         }
-        return result;
+        // Replies whose /IRT chain reaches a thread's first annotation (no loops, within the depth limit).
+        var roots = PdfAnnotationThreads.Roots(all);
+        var result = new List<ViewerAnnotation>();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var idOf = new Dictionary<int, string>();
+        bool Take(PdfAnnotation p, string? parentId)
+        {
+            string fallback = $"pdf-{p.PageNumber}-{p.Index}";
+            if (FromPdf(p, fallback, parentId) is not { } a) return false;
+            // Two annotations with the same /NM: the second is named by its place.
+            if (!ids.Add(a.Id))
+            {
+                a = a with { Id = fallback };
+                if (!ids.Add(a.Id)) return false;
+            }
+            if (p.ObjectNumber > 0) idOf.TryAdd(p.ObjectNumber, a.Id);
+            result.Add(a);
+            return true;
+        }
+        foreach (var p in all)
+            if (p.InReplyTo == 0) Take(p, null);
+        // Then the replies, a level at a time: a reply is managed when the annotation it answers is.
+        var pending = all.Where(p => p.InReplyTo > 0 && roots.ContainsKey(p.ObjectNumber)).ToList();
+        for (int level = 0; level < PdfAnnotationLimits.MaxReplyDepth && pending.Count > 0; level++)
+        {
+            var next = new List<PdfAnnotation>();
+            foreach (var p in pending)
+            {
+                if (idOf.TryGetValue(p.InReplyTo, out var parentId)) Take(p, parentId);
+                else next.Add(p);
+            }
+            if (next.Count == pending.Count) break;
+            pending = next;
+        }
+        // Page order, as the store keeps its list (OrderBy is stable: replies stay after their parents).
+        return result.OrderBy(a => a.Page).ToList();
     }
 
     /// <summary>
@@ -431,12 +536,80 @@ public static class ViewerAnnotationPdf
                 }
                 changed = true;
             }
-            foreach (var a in current.Where(a => !a.FromFile))
+            // New annotations before new replies, and each reply after the one it answers, so the
+            // editor can find a new parent by its /NM; a parent from the file is given by its object number.
+            foreach (var a in current.Where(a => !a.FromFile).OrderBy(a => Depth(a, now)))
             {
-                editor.Add(ToPdf(a, null));
+                var p = ToPdf(a, null);
+                // (one written directly in /Annots is made an object first, so /IRT can refer to it).
+                if (a.Kind == ViewerAnnotationKind.Reply && now.TryGetValue(a.InReplyTo, out var parent) && parent.FromFile
+                    && Basis(parent) is { } fileParent)
+                    p.InReplyTo = fileParent.ObjectNumber > 0 ? fileParent.ObjectNumber : editor.MakeIndirect(parent.Page, fileParent.Index);
+                editor.Add(p);
                 changed = true;
             }
         });
         return changed ? result : null;
+    }
+
+    /// <summary>
+    /// The viewer's annotations for XFDF annotations being imported into a document whose ids are
+    /// <paramref name="ids"/> (added to as ids are given). An XFDF name in use gets a new id. A
+    /// reply (inreplyto) answers the annotation of that name in the same import, before or after
+    /// it, else one the document has; a reply whose parent is neither, or that the viewer does not
+    /// manage as a reply (a group member, a highlight with inreplyto), is added on its own, as an
+    /// import without replies would. Parents come before their replies in the result.
+    /// </summary>
+    public static List<ViewerAnnotation> FromXfdf(IReadOnlyList<PdfAnnotation> read, HashSet<string> ids)
+    {
+        var result = new List<ViewerAnnotation>();
+        var renamed = new Dictionary<string, string>(StringComparer.Ordinal);
+        void Take(ViewerAnnotation? a)
+        {
+            if (a == null) return;
+            string name = a.Id;
+            if (!ids.Add(a.Id)) a = a with { Id = ViewerAnnotationStore.NewId() };
+            ids.Add(a.Id);
+            if (name.Length > 0) renamed.TryAdd(name, a.Id);
+            result.Add(a with { SourceIndex = -1 });
+        }
+        ViewerAnnotation? Alone(PdfAnnotation p)
+        {
+            p.InReplyToName = null;
+            p.ReplyType = null;
+            return FromPdf(p, "");
+        }
+        var pending = read.ToList();
+        // A level of replies per pass; what is left after the depth limit, or a pass that places nothing, goes on its own.
+        for (int pass = 0; pass <= PdfAnnotationLimits.MaxReplyDepth + 1 && pending.Count > 0; pass++)
+        {
+            var waiting = pending.Where(p => p.Name is { Length: > 0 }).Select(p => p.Name!).ToHashSet(StringComparer.Ordinal);
+            var next = new List<PdfAnnotation>();
+            foreach (var p in pending)
+            {
+                if (p.InReplyToName is not { } n) { Take(FromPdf(p, "")); continue; }
+                string? parent = renamed.GetValueOrDefault(n);
+                if (parent == null && waiting.Contains(n) && n != p.Name) { next.Add(p); continue; }
+                parent ??= ids.Contains(n) ? n : null;
+                Take(parent != null && FromPdf(p, "", parent) is { } reply ? reply : Alone(p));
+            }
+            bool stuck = next.Count == pending.Count;
+            pending = next;
+            if (stuck) break;
+        }
+        foreach (var p in pending) Take(Alone(p));
+        return result;
+    }
+
+    /// <summary>How many replies lie between an annotation and its thread's first one (0 for that one); bounded.</summary>
+    public static int Depth(ViewerAnnotation a, IReadOnlyDictionary<string, ViewerAnnotation> byId)
+    {
+        int depth = 0;
+        while (a.Kind == ViewerAnnotationKind.Reply && depth <= PdfAnnotationLimits.MaxReplyDepth && byId.TryGetValue(a.InReplyTo, out var parent))
+        {
+            depth++;
+            a = parent;
+        }
+        return depth;
     }
 }

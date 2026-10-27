@@ -218,7 +218,7 @@ public class EmbedSafetyTests
         // Unknown elements anywhere (with deep content) are skipped; the annotations around them are read.
         string deep = string.Concat(Enumerable.Repeat("<y>", 500)) + string.Concat(Enumerable.Repeat("</y>", 500));
         var list = PdfAnnotationXfdf.Import("<?xml version=\"1.0\"?><!-- c --><xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><f href=\"a.pdf\"/><fields><field name=\"x\"><value>1</value></field></fields><annots>" +
-            $"<stamp page=\"0\" rect=\"0,0,10,10\">{deep}</stamp>" +
+            $"<caret page=\"0\" rect=\"0,0,10,10\">{deep}</caret>" +
             $"<square page=\"0\" rect=\"10,20,30,40\"><unknown>{deep}</unknown><contents>Box<b>bold</b> end</contents><popup rect=\"1,2,3,4\" open=\"yes\"/></square>" +
             "<ink page=\"0\" rect=\"0,0,50,50\"><inklist><gesture>1,1;2,2;3,3</gesture><other/><gesture>4,4</gesture></inklist></ink>" + End);
         Assert.Equal(2, list.Count);

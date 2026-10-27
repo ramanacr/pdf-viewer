@@ -85,6 +85,12 @@ public sealed class PdfAnnotation
 
     /// <summary>/IRT (the object this replies to, 0 when none), /RT, /State and /StateModel.</summary>
     public int InReplyTo { get; set; }
+    /// <summary>
+    /// For a reply being added whose parent has no object number yet (it is added in the same
+    /// edit, or comes from XFDF): the parent's /NM. <see cref="PdfAnnotationEditor.Add"/> finds
+    /// the parent by it and writes /IRT. Ignored when <see cref="InReplyTo"/> is set.
+    /// </summary>
+    public string? InReplyToName { get; set; }
     public string? ReplyType { get; set; }
     public string? State { get; set; }
     public string? StateModel { get; set; }
@@ -180,7 +186,7 @@ public static class PdfAnnotationReader
             CreationDate = Text("CreationDate"),
             ModifiedDate = Text("M"),
             Flags = (int)(r.Resolve(d["F"]) is { } f && f.TryGetInteger(out long fl) ? fl : 0),
-            Line = Numbers("L") is { Length: >= 4 } l ? l[..4] : null,
+            Line = Numbers("L") is { Length: >= 4 } l && l.Take(4).All(double.IsFinite) ? l[..4] : null,
             Icon = r.Resolve(d["Name"]) is PdfName icon ? icon.Value : null,
             DefaultAppearance = Text("DA"),
             Justification = (int)(r.Resolve(d["Q"]) is { } q && q.TryGetInteger(out long qv) ? qv : 0),
@@ -227,8 +233,10 @@ public static class PdfAnnotationReader
             }
         }
 
-        if (Numbers("Vertices") is { } vertices)
-            for (int k = 0; k + 1 < vertices.Length; k += 2) a.Vertices.Add(new PdfPoint(vertices[k], vertices[k + 1]));
+        // A hostile list is cut to the limit; a list with a value that is not a finite number is not read.
+        if (Numbers("Vertices") is { } vertices && vertices.All(double.IsFinite))
+            for (int k = 0; k + 1 < vertices.Length && a.Vertices.Count < Annotations.PdfAnnotationLimits.MaxVertices; k += 2)
+                a.Vertices.Add(new PdfPoint(vertices[k], vertices[k + 1]));
 
         if (r.Resolve(d["Popup"]) is PdfDictionary popup)
         {

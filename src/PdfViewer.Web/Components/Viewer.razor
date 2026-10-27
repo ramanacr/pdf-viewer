@@ -121,6 +121,15 @@
                     var t = tool;
                     <button type="button" class="icon-button" title="@label" aria-label="@label" aria-pressed="@(_tool == t ? "true" : "false")" @onclick="() => SetTool(t)"><Icon Name="@icon" /></button>
                 }
+                @if (_tool == Tool.Stamp)
+                {
+                    <select aria-label="Stamp" @bind="_stampName">
+                        @foreach (var stamp in PdfEngine.Vector.Annotations.PdfStamps.Standard)
+                        {
+                            <option value="@stamp.Name">@stamp.Label</option>
+                        }
+                    </select>
+                }
             </div>
             <div class="group swatches" role="group" aria-label="Colour">
                 @foreach (var colour in Palette)
@@ -135,7 +144,7 @@
                 <button type="button" class="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled="@(_store?.CanRedo != true)" @onclick="Redo"><Icon Name="redo" /></button>
                 @if (Selected is { } sel)
                 {
-                    @if (sel.Kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText)
+                    @if (sel.Kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText or ViewerAnnotationKind.Reply)
                     {
                         <button type="button" class="icon-button" title="Edit the text" aria-label="Edit the text" @onclick="() => StartEditing(sel, isNew: false)"><Icon Name="text" /></button>
                     }
@@ -208,17 +217,31 @@
                         else
                         {
                             <ol class="results comments">
-                                @foreach (var annotation in _store.Current.Take(2000))
+                                @foreach (var (annotation, level) in Threads().Take(2000))
                                 {
                                     var a = annotation;
-                                    <li>
+                                    <li style="@(level > 0 ? $"margin-left:{Math.Min(level, 6) * 14}px;border-left:2px solid var(--border)" : null)">
                                         <button type="button" class="result@(a.Id == _selectedId ? " current" : "")" aria-current="@(a.Id == _selectedId ? "true" : null)" @onclick="() => SelectFromPanel(a)">
-                                            <span class="result-page"><span class="dot" style="background:@a.Color"></span>@KindLabel(a.Kind), page @a.Page@(a.Author.Length > 0 ? $", {a.Author}" : "")</span>
+                                            <span class="result-page"><span class="dot" style="background:@a.Color"></span>@KindLabel(a.Kind)@(level == 0 ? $", page {a.Page}" : "")@(a.Author.Length > 0 ? $", {a.Author}" : "")</span>
                                             @if (a.Contents.Length > 0)
                                             {
                                                 <span class="result-text">@(a.Contents.Length > 200 ? a.Contents[..200] + "…" : a.Contents)</span>
                                             }
                                         </button>
+                                        @if (a.Id == _selectedId && CanEditAnnotations)
+                                        {
+                                            @if (_replyTo == a.Id)
+                                            {
+                                                <div class="reply-form">
+                                                    <textarea rows="2" aria-label="Reply" placeholder="Write a reply" maxlength="@ViewerAnnotationStore.MaxContentsLength" @bind="_replyText" @bind:event="oninput"></textarea>
+                                                    <button type="button" class="button primary" disabled="@(_replyText.Trim().Length == 0)" @onclick="SendReply">Reply</button>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div class="reply-form"><button type="button" class="button" @onclick="() => StartReply(a)">Reply</button></div>
+                                            }
+                                        }
                                     </li>
                                 }
                             </ol>
@@ -343,7 +366,7 @@
                         }
                         @if (AnnotationsClickable)
                         {
-                            @foreach (var a in AnnotationsByPage[pv.Number])
+                            @foreach (var a in AnnotationsByPage[pv.Number].Where(a => a.Kind != ViewerAnnotationKind.Reply))
                             {
                                 var r = _doc.Geometry[pv.Number - 1].ToShown(a.Box);
                                 <span class="annot-hit@(a.Id == _selectedId ? " selected" : "")" data-annot="@a.Id" title="@(a.Contents.Length > 0 ? a.Contents : KindLabel(a.Kind))"

@@ -182,7 +182,7 @@ public class EmbedAnnotationTests
     [InlineData("addAnnotations", "[[{}]]")]
     [InlineData("addAnnotations", "[[]]")]
     [InlineData("addAnnotations", "[[\"x\"]]")]
-    [InlineData("addAnnotations", "[[{\"target\":{\"selector\":{\"node\":{\"index\":0},\"subtype\":\"stamp\",\"boundingBox\":[0,0,1,1]}}}]]")]
+    [InlineData("addAnnotations", "[[{\"target\":{\"selector\":{\"node\":{\"index\":0},\"subtype\":\"caret\",\"boundingBox\":[0,0,1,1]}}}]]")]
     [InlineData("addAnnotations", "[[{\"target\":{\"selector\":{\"node\":{\"index\":-1},\"subtype\":\"note\",\"boundingBox\":[0,0,1,1]}}}]]")]
     [InlineData("addAnnotations", "[[{\"target\":{\"selector\":{\"node\":{\"index\":0},\"subtype\":\"note\",\"boundingBox\":[0,0,1]}}}]]")]
     [InlineData("addAnnotations", "[[{\"target\":{\"selector\":{\"node\":{\"index\":0},\"subtype\":\"note\",\"boundingBox\":[0,0,1,1e9]}}}]]")]
@@ -337,7 +337,7 @@ public class EmbedAnnotationTests
     public void Xfdf_SkipsUnknownAndBrokenElements()
     {
         var list = PdfAnnotationXfdf.Import("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +
-            "<stamp page=\"0\" rect=\"0,0,10,10\"/><text page=\"x\" rect=\"0,0,1,1\"/><text page=\"0\" rect=\"NaN,0,1,1\"/>" +
+            "<caret page=\"0\" rect=\"0,0,10,10\"/><text page=\"x\" rect=\"0,0,1,1\"/><text page=\"0\" rect=\"NaN,0,1,1\"/>" +
             "<square page=\"1\" rect=\"10,20,30,40\" color=\"#FF0000\" width=\"2\"><contents>Box</contents></square></annots></xfdf>");
         var a = Assert.Single(list);
         Assert.Equal(("Square", 2, "Box", 2.0), (a.Subtype, a.PageNumber, a.Contents, a.BorderWidth));

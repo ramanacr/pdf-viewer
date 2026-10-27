@@ -409,10 +409,15 @@ With `showAnnotationTools` (full window and light box), a second toolbar shows t
 | Text box (free text) | Click, or drag a box, then type. An empty new text box is not kept. |
 | Pen (ink) | Draw with the mouse or a pen. Each stroke is one annotation. |
 | Rectangle, ellipse | Drag the shape. |
+| Line, arrow | Drag from the start to the end. The arrow has an open arrowhead at its end. |
+| Polygon, connected lines | Click each point. Double-click or press `Enter` to end; `Esc` cancels. |
+| Stamp | Pick a stamp (Approved, Draft, Confidential and the other standard ones) and click where it goes. |
 
-The colour buttons set the colour of the next annotation, or change the selected one. Undo and
-redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation change, the host page's too. The side
-panel's **Comments** tab lists the annotations; click one to go to it.
+The colour buttons set the colour of the next annotation, or change the selected one (a stamp
+keeps the colour of its kind). Undo and redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation
+change, the host page's too. The side panel's **Comments** tab lists the annotations as
+threads: each reply is under the comment it answers. Click one to go to it; with a comment
+selected, **Reply** adds a reply. Deleting a comment deletes its replies, as in Acrobat.
 
 Every change is written into the document by the engine (the same `PdfAnnotationEditor` as the
 Windows viewer): real annotation dictionaries with appearance streams, as an incremental update
@@ -462,13 +467,17 @@ Close to the Adobe PDF Embed API's format (W3C Web Annotation style):
     source: 'report-q3',             // metaData.id, else the file name (written by the viewer)
     selector: {
       node: { index: 0 },            // the page, counted from 0
-      subtype: 'highlight',          // highlight, underline, strikeout, note, freetext, ink, square, circle
+      subtype: 'highlight',          // highlight, underline, strikeout, note, freetext, ink, square, circle,
+                                     // line, polygon, polyline, stamp
       boundingBox: [x1, y1, x2, y2], // the annotation's /Rect
       quadPoints: [x1, y1, x2, y2, x3, y3, x4, y4, …],  // text markup: 8 numbers per line
       inkList: [[x, y, x, y, …], …], // ink: one array per stroke
+      vertices: [x1, y1, x2, y2, …], // line: its two points (/L); polygon (3 or more), polyline (2 or more): /Vertices
+      lineEndings: ['None', 'OpenArrow'],  // line and polyline: the start and end (/LE, see below)
+      stampName: 'Approved',         // stamp: its /Name (see below)
       strokeColor: '#FFD400',        // the line colour; the text colour of free text
-      fillColor: '#CCE5FF',          // square and circle inside, free text background (optional)
-      strokeWidth: 2,                // ink, square, circle, the free text border (0 to 100)
+      fillColor: '#CCE5FF',          // inside of square, circle and polygon; closed line endings; free text background (optional)
+      strokeWidth: 2,                // ink, square, circle, line, polygon, polyline, the free text border (0 to 100)
       opacity: 1,                    // 0 to 1
       fontSize: 12,                  // free text, 4 to 144
     },
@@ -484,13 +493,36 @@ the page's coordinate system (usually the lower-left corner of the page) and y g
 the PDF file and in Adobe's API. The page's `/Rotate` is not applied. (`gotoLocation` takes
 points from the top-left of the page as shown.) `quadPoints` give each quadrilateral as
 upper-left, upper-right, lower-left, lower-right. For markup, `boundingBox` can be left out
-(the box around `quadPoints`); for ink too (the box around the strokes).
+(the box around `quadPoints`); for ink too (the box around the strokes), and for lines,
+polygons and polylines (the box around `vertices`, grown to hold the line endings and cut to
+the page).
+
+`lineEndings` are names of ISO 32000-2 Table 179: `None`, `Square`, `Circle`, `Diamond`,
+`OpenArrow`, `ClosedArrow`, `Butt`, `ROpenArrow`, `RClosedArrow`, `Slash`. `stampName` is one
+of `Approved`, `SBCompleted`, `Confidential`, `Draft`, `Final`, `ForComment`, `ForPublicRelease`,
+`SBInformationOnly`, `NotApproved`, `NotForPublicRelease`, `SBPreliminaryResults`, `Received`,
+`SBReviewed`, `SBRevised`, `SBVoid`, `Expired`, `TopSecret`, `AsIs`, `Experimental`, `Sold`,
+`Departmental`; the engine draws the stamp with its label in the colour of its kind.
+
+A **reply** answers another annotation (a note with `/IRT`, ISO 32000-2 12.5.6.4). It has no
+selector: its `target` is the `id` of the annotation it answers, and it takes that one's page:
+
+```js
+{ id: 'r1', type: 'Annotation', motivation: 'replying', bodyValue: 'Agreed.',
+  target: 'b1c3…', creator: { type: 'Person', name: 'Bo' }, created, modified }
+```
+
+A reply can answer a reply, up to 64 levels. What a reply answers cannot change with
+`updateAnnotation`. `deleteAnnotations` deletes the replies of every annotation it deletes,
+and resolves with them too. A reply is written with an empty appearance, so other readers list
+it in their comments and do not draw a second note on the page.
 
 Every value is checked: types, string lengths, colours (`#RRGGBB`), finite numbers, and the
 geometry: on a page of the document and inside its media box (2 points of tolerance plus the
 line width). Limits: 1000 annotations per call, 10 000 per document, 1000 quadrilaterals per
-markup, 100 strokes and 10 000 points per stroke (50 000 points) per ink annotation, and
-**1 000 000 ink and quadrilateral points per document** (a quadrilateral has 4), counted when
+markup, 100 strokes and 10 000 points per stroke (50 000 points) per ink annotation, 10 000
+vertices per polygon or polyline, and **1 000 000 ink, quadrilateral and vertex points per
+document** (a quadrilateral has 4), counted when
 annotations are added and when an update makes one larger: past it, `INVALID_ARGUMENT`. Texts:
 `bodyValue` 10 000 characters, `creator.name` 256.
 
@@ -499,12 +531,21 @@ XFDF (`importXfdf`) is read as a stream: no DTD, no external entities, at most 8
 elements are skipped without being built. Its texts are cut to the same limits as the
 annotation JSON (title, subject and name 256 characters, contents 10 000), so one long field
 does not refuse the whole import. A dash pattern must have 1 to 16 numbers, none negative and
-not all zero, else it is `[3]`.
+not all zero, else it is `[3]`. Lines, polygons and polylines need finite points (a polygon or
+polyline with more than 10 000 vertices is skipped, not cut); a line ending name that is not
+in Table 179 is read as `None`. A reply's `inreplyto` names the annotation it answers: one of
+the same import (before or after it), else one the document has. A reply whose parent is in
+neither, and an annotation with `inreplyto` that is not a note reply (a group member, for
+example), is added on its own. `exportXfdf` names a parent that has no `/NM` (`obj-<number>`),
+so its replies keep their thread.
 
-The file's annotations of these types are managed with `includePDFAnnotations` (not replies,
-hidden ones or other types: links, stamps, form fields and the like stay as they are). Their
-`id` is their `/NM`, or `pdf-<page>-<index>` when they have none. New and changed annotations
-are written with `/NM` set to their `id`, so ids survive a save.
+The file's annotations of these types are managed with `includePDFAnnotations` (not hidden
+ones or other types: links, carets, file attachments, form fields and the like stay as they
+are). Replies are managed when they are notes and their `/IRT` chain reaches a managed
+annotation within 64 levels; a chain that loops, a group member (`/RT /Group`) and a reply of
+another type stay as they are. A stamp from the file keeps its own appearance when it is moved.
+Their `id` is their `/NM`, or `pdf-<page>-<index>` when they have none. New and changed
+annotations are written with `/NM` set to their `id`, so ids survive a save.
 
 ### Annotation events
 
@@ -725,7 +766,7 @@ Firefox and Safari are not tested yet.
 | Pages | Drawn one at a time on the main thread, in strips; a heavy page's interpretation still blocks the viewer for a moment (see [responsiveness](#responsiveness)). |
 | Loading | By ranges when the server allows it (see [large files](#large-files)); otherwise the whole file is read before the first page shows. While a ranged file loads, calls that need all of it wait. |
 | Selection | One page at a time; dragging does not scroll. |
-| Annotations | The eight types above; no replies, stamps, lines, polygons or callouts yet. Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
+| Annotations | The types above and replies; no callouts, carets, file attachments, custom stamps or reply states (/State) yet, and a line or polygon is moved as a whole (its points have no handles yet). Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
 | Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. No API to set form values from the host page yet. Simplified field notation nested deeper than 64 levels is not calculated. |
 | Language | The viewer is in English. |
 
@@ -789,4 +830,4 @@ const view = new PdfViewer.View({ divId: 'viewer', renderInWorker: true });
 ## Planned
 
 - Rendering in a worker by default, once it is checked in Safari and on phones.
-- Later: more annotation types (replies, stamps, lines and polygons), comment threads.
+- Later: handles for the points of lines and polygons, reply states (accepted, rejected), callouts and custom stamps.

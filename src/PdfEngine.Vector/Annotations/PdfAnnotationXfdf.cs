@@ -17,7 +17,8 @@ public sealed record PdfXfdfImport(List<PdfAnnotation> Annotations, int Skipped)
 /// <summary>
 /// Annotations as XFDF (ISO 19444-1, the <c>&lt;annots&gt;</c> element), in PDF user space: the
 /// markup and comment types a reader makes (highlight, underline, strike-out, squiggly, note, free
-/// text, ink, square, circle, line). Export writes <see cref="PdfAnnotation"/>s; import reads them
+/// text, ink, square, circle, line, polygon, polyline, stamp) and replies (inreplyto, the parent's
+/// name). Export writes <see cref="PdfAnnotation"/>s; import reads them
 /// back, ready for <see cref="Services.PdfAnnotationEditor.Add"/>. Imported XML is untrusted: no DTD,
 /// no external entities, a size limit, an element limit, finite numbers only, and elements of other
 /// types skipped.
@@ -48,6 +49,7 @@ public static class PdfAnnotationXfdf
     {
         ["Highlight"] = "highlight", ["Underline"] = "underline", ["StrikeOut"] = "strikeout", ["Squiggly"] = "squiggly",
         ["Text"] = "text", ["FreeText"] = "freetext", ["Ink"] = "ink", ["Square"] = "square", ["Circle"] = "circle", ["Line"] = "line",
+        ["Polygon"] = "polygon", ["PolyLine"] = "polyline", ["Stamp"] = "stamp",
     };
 
     private static readonly Dictionary<string, string> SubtypeForElement =
@@ -65,8 +67,19 @@ public static class PdfAnnotationXfdf
     public static string Export(IEnumerable<PdfAnnotation> annotations, string? href = null)
     {
         ArgumentNullException.ThrowIfNull(annotations);
+        var list = annotations.ToList();
+        // inreplyto names the parent: its /NM, found by the object number /IRT gives. A parent
+        // without /NM is named after its object number here, so the reply keeps its thread.
+        var replied = list.Where(a => a.InReplyTo > 0).Select(a => a.InReplyTo).ToHashSet();
+        var names = new Dictionary<int, string>();
+        foreach (var a in list)
+        {
+            if (a.ObjectNumber <= 0) continue;
+            if (!string.IsNullOrEmpty(a.Name)) names.TryAdd(a.ObjectNumber, a.Name);
+            else if (replied.Contains(a.ObjectNumber)) names.TryAdd(a.ObjectNumber, "obj-" + a.ObjectNumber.ToString(CultureInfo.InvariantCulture));
+        }
         var annots = new XElement(Ns + "annots");
-        foreach (var a in annotations)
+        foreach (var a in list)
         {
             if (!ElementForSubtype.TryGetValue(a.Subtype, out var name)) continue;
             var e = new XElement(Ns + name,
@@ -77,7 +90,8 @@ public static class PdfAnnotationXfdf
             if (a.Opacity < 1) e.Add(new XAttribute("opacity", Number(a.Opacity)));
             if (!string.IsNullOrEmpty(a.Author)) e.Add(new XAttribute("title", a.Author));
             if (!string.IsNullOrEmpty(a.Subject)) e.Add(new XAttribute("subject", a.Subject));
-            if (!string.IsNullOrEmpty(a.Name)) e.Add(new XAttribute("name", a.Name));
+            if ((string.IsNullOrEmpty(a.Name) && a.ObjectNumber > 0 ? names.GetValueOrDefault(a.ObjectNumber) : a.Name) is { Length: > 0 } nm)
+                e.Add(new XAttribute("name", nm));
             if (!string.IsNullOrEmpty(a.ModifiedDate)) e.Add(new XAttribute("date", a.ModifiedDate));
             if (!string.IsNullOrEmpty(a.CreationDate)) e.Add(new XAttribute("creationdate", a.CreationDate));
             string flags = string.Join(",", FlagNames.Where(f => (a.Flags & f.Bit) != 0).Select(f => f.Name));
@@ -85,14 +99,27 @@ public static class PdfAnnotationXfdf
             if (a.BorderWidth is double w) e.Add(new XAttribute("width", Number(w)));
             if (a.BorderDash is { Length: > 0 } dash) e.Add(new XAttribute("style", "dash"), new XAttribute("dashes", Join(dash)));
             if (a.QuadPoints.Count > 0) e.Add(new XAttribute("coords", Join(a.QuadPoints.SelectMany(q => q).ToArray())));
-            if (a.Subtype == "Text" && !string.IsNullOrEmpty(a.Icon)) e.Add(new XAttribute("icon", a.Icon));
+            if (a.Subtype is "Text" or "Stamp" && !string.IsNullOrEmpty(a.Icon)) e.Add(new XAttribute("icon", a.Icon));
             if (a.Subtype == "Line" && a.Line is { Length: 4 } l)
                 e.Add(new XAttribute("start", Join(l[0], l[1])), new XAttribute("end", Join(l[2], l[3])));
+            if (a.Subtype is "Line" or "PolyLine" && a.LineEndings is { Length: 2 } ends)
+            {
+                if (ends[0] != "None") e.Add(new XAttribute("head", ends[0]));
+                if (ends[1] != "None") e.Add(new XAttribute("tail", ends[1]));
+            }
+            string? parentName = a.InReplyTo > 0 && names.TryGetValue(a.InReplyTo, out var n) ? n : a.InReplyToName;
+            if (!string.IsNullOrEmpty(parentName))
+            {
+                e.Add(new XAttribute("inreplyto", parentName));
+                if (a.ReplyType == "Group") e.Add(new XAttribute("replyType", "group"));
+            }
             if (a.Subtype == "FreeText" && a.Justification is 1 or 2) e.Add(new XAttribute("justification", a.Justification == 1 ? "centered" : "right"));
             if (!string.IsNullOrEmpty(a.Contents)) e.Add(new XElement(Ns + "contents", a.Contents));
             if (a.Subtype == "FreeText" && !string.IsNullOrEmpty(a.DefaultAppearance)) e.Add(new XElement(Ns + "defaultappearance", a.DefaultAppearance));
             if (a.Subtype == "Ink" && a.InkList.Count > 0)
                 e.Add(new XElement(Ns + "inklist", a.InkList.Select(s => new XElement(Ns + "gesture", string.Join(";", s.Select(p => Join(p.X, p.Y)))))));
+            if (a.Subtype is "Polygon" or "PolyLine" && a.Vertices.Count > 0)
+                e.Add(new XElement(Ns + "vertices", string.Join(";", a.Vertices.Select(p => Join(p.X, p.Y)))));
             if (a.PopupRect is { } popup)
                 e.Add(new XElement(Ns + "popup", new XAttribute("rect", Join(popup.Left, popup.Top, popup.Right, popup.Bottom)), new XAttribute("open", a.PopupOpen ? "yes" : "no")));
             annots.Add(e);
@@ -234,7 +261,7 @@ public static class PdfAnnotationXfdf
     private sealed class XfdfElement
     {
         public readonly Dictionary<string, string> Attributes = new(StringComparer.Ordinal);
-        public string? Contents, DefaultAppearance;
+        public string? Contents, DefaultAppearance, Vertices;
         public readonly List<string> Gestures = new();
         public Dictionary<string, string>? Popup;
         public bool TooLarge;
@@ -279,6 +306,11 @@ public static class PdfAnnotationXfdf
                         if (g.LocalName == "gesture" && e.Gestures.Count < MaxInkStrokes) e.Gestures.Add(Text(g, counter, MaxCharacters));
                         else g.Skip();
                     });
+                    break;
+                case "vertices" when e.Vertices == null && subtype is "Polygon" or "PolyLine":
+                    e.Vertices = Text(c, counter, MaxCharacters);
+                    // More points than the limit: skipped, not cut (a cut polygon has another shape).
+                    if (CountNumbers(e.Vertices.Replace(';', ',')) > 2 * PdfAnnotationLimits.MaxVertices) e.TooLarge = true;
                     break;
                 case "popup" when e.Popup == null:
                     e.Popup = Attributes(c);
@@ -327,8 +359,24 @@ public static class PdfAnnotationXfdf
         if (Numbers(e["coords"]) is { Length: >= 8 } coords)
             for (int k = 0; k + 7 < coords.Length && a.QuadPoints.Count < PdfAnnotationLimits.MaxQuads; k += 8) a.QuadPoints.Add(coords[k..(k + 8)]);
         if (subtype == "Text") a.Icon = Limit(e["icon"], 64) is { Length: > 0 } icon && icon.All(char.IsAsciiLetterOrDigit) ? icon : "Note";
-        if (subtype == "Line" && Numbers(e["start"]) is { Length: 2 } s && Numbers(e["end"]) is { Length: 2 } t)
+        if (subtype == "Stamp") a.Icon = Limit(e["icon"], 64) is { Length: > 0 } stamp && stamp.All(char.IsAsciiLetterOrDigit) ? stamp : "Draft";
+        if (subtype == "Line")
+        {
+            if (Numbers(e["start"]) is not { Length: 2 } s || Numbers(e["end"]) is not { Length: 2 } t) return null;
             a.Line = new[] { s[0], s[1], t[0], t[1] };
+        }
+        if (subtype is "Line" or "PolyLine" && (e["head"] != null || e["tail"] != null))
+            a.LineEndings = new[] { Ending(e["head"]), Ending(e["tail"]) };
+        if (subtype is "Polygon" or "PolyLine")
+        {
+            if (Numbers(e.Vertices?.Replace(';', ',')) is not { Length: >= 4 } v || v.Length % 2 != 0) return null;
+            for (int k = 0; k + 1 < v.Length; k += 2) a.Vertices.Add(new PdfPoint(v[k], v[k + 1]));
+        }
+        if (Limit(e["inreplyto"], PdfAnnotationLimits.MaxTextLength) is { Length: > 0 } parent && parent != a.Name)
+        {
+            a.InReplyToName = parent;
+            a.ReplyType = string.Equals(e["replyType"], "group", StringComparison.OrdinalIgnoreCase) ? "Group" : null;
+        }
         if (subtype == "FreeText")
         {
             a.DefaultAppearance = e.DefaultAppearance ?? Limit(e["defaultappearance"], 1000);
@@ -368,6 +416,9 @@ public static class PdfAnnotationXfdf
     /// <summary>A dash pattern: 1 to <see cref="MaxDashes"/> numbers, none negative, not all zero; else the default [3].</summary>
     internal static double[] Dashes(string? text) =>
         Numbers(text) is { Length: > 0 and <= MaxDashes } dashes && dashes.All(d => d >= 0) && dashes.Sum() > 0 ? dashes : new[] { 3.0 };
+
+    /// <summary>A line ending name of Table 179, else None.</summary>
+    private static string Ending(string? name) => name != null && PdfAnnotationLimits.LineEndings.Contains(name) ? name : "None";
 
     private static string? Limit(string? s, int max) => s == null ? null : s.Length <= max ? s : s[..max];
 

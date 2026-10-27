@@ -20,9 +20,16 @@ namespace PdfViewer.Web.Components;
 /// </summary>
 public sealed partial class Viewer
 {
-    private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Ink, Square, Circle }
+    private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Ink, Square, Circle, Line, Arrow, Polygon, PolyLine, Stamp }
 
-    private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "ink", "square", "circle"];
+    private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "ink", "square", "circle", "line", "arrow", "polygon", "polyline", "stamp"];
+
+    /// <summary>The stamp the stamp tool places (a /Name of <see cref="PdfStamps.Standard"/>).</summary>
+    private string _stampName = "Approved";
+
+    // A reply being written in the comments panel: the annotation it answers and its text.
+    private string? _replyTo;
+    private string _replyText = "";
 
     /// <summary>The colours offered in the annotation toolbar.</summary>
     private static readonly string[] Palette = ["#FFD400", "#22A06B", "#E5484D", "#2563EB", "#000000"];
@@ -76,6 +83,10 @@ public sealed partial class Viewer
         Tool.Ink => ViewerAnnotationKind.Ink,
         Tool.Square => ViewerAnnotationKind.Square,
         Tool.Circle => ViewerAnnotationKind.Circle,
+        Tool.Line or Tool.Arrow => ViewerAnnotationKind.Line,
+        Tool.Polygon => ViewerAnnotationKind.Polygon,
+        Tool.PolyLine => ViewerAnnotationKind.PolyLine,
+        Tool.Stamp => ViewerAnnotationKind.Stamp,
         _ => null,
     };
 
@@ -92,6 +103,11 @@ public sealed partial class Viewer
         (Tool.Ink, "pen", "Draw"),
         (Tool.Square, "square", "Draw a rectangle"),
         (Tool.Circle, "circle", "Draw an ellipse"),
+        (Tool.Line, "line", "Draw a line"),
+        (Tool.Arrow, "arrow", "Draw an arrow"),
+        (Tool.Polygon, "polygon", "Draw a polygon (double-click to end)"),
+        (Tool.PolyLine, "polyline", "Draw connected lines (double-click to end)"),
+        (Tool.Stamp, "stamp", "Place a stamp"),
     ];
 
     private Task SaveFromButton() => SaveAsync("button");
@@ -183,7 +199,7 @@ public sealed partial class Viewer
             {
                 int version = _edits.EditVersion;
                 var store = _store;
-                if (store.Current.Any(a => a.Kind == ViewerAnnotationKind.FreeText)) await EnsureAppearanceFontsAsync();
+                if (store.Current.Any(a => a.Kind is ViewerAnnotationKind.FreeText or ViewerAnnotationKind.Stamp)) await EnsureAppearanceFontsAsync();
                 var values = _formValues.Select(p => (p.Key, p.Value)).ToList();
                 try
                 {
@@ -374,6 +390,9 @@ public sealed partial class Viewer
             Tool.Note => "Click where the note goes.",
             Tool.FreeText => "Click or drag where the text goes.",
             Tool.Ink => "Draw on the page.",
+            Tool.Line or Tool.Arrow => "Drag from where the line starts to where it ends.",
+            Tool.Polygon or Tool.PolyLine => "Click each point; double-click or press Enter to end, Esc to cancel.",
+            Tool.Stamp => "Click where the stamp goes.",
             _ => "Drag on the page to draw the shape.",
         };
     }
@@ -382,7 +401,9 @@ public sealed partial class Viewer
     {
         if (Selected is { } a && CanEditAnnotations)
         {
-            Change(() => _store!.Update(a with { Color = color, Modified = DateTimeOffset.UtcNow }));
+            // A stamp is drawn in the colour of its kind.
+            if (a.Kind != ViewerAnnotationKind.Stamp)
+                Change(() => _store!.Update(a with { Color = color, Modified = DateTimeOffset.UtcNow }));
             return;
         }
         if (_tool != Tool.Select) _toolColors[_tool] = color;
@@ -433,7 +454,13 @@ public sealed partial class Viewer
             Author = _authorName,
             Created = now,
             Modified = now,
-            StrokeWidth = kind switch { ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle => 2, ViewerAnnotationKind.FreeText => 0, _ => 1 },
+            StrokeWidth = kind switch
+            {
+                ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.Line
+                    or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine => 2,
+                ViewerAnnotationKind.FreeText => 0,
+                _ => 1,
+            },
         };
     }
 
@@ -476,6 +503,40 @@ public sealed partial class Viewer
                 var (sx, sy) = Shown(0);
                 var box = g.ToUser(new ViewerRect(Math.Min(sx, width - 20), Math.Min(sy, height - 20), 20, 20));
                 a = NewAnnotation(kind, page, ClampBox(box, g));
+                break;
+            }
+            case ViewerAnnotationKind.Stamp:
+            {
+                // The stamp's usual size, centred on the click and kept on the page.
+                var stamp = PdfStamps.Standard.FirstOrDefault(s => s.Name == _stampName) ?? PdfStamps.Standard[0];
+                var (sw, sh) = PdfStamps.DefaultSize(stamp.Label, dynamic: false);
+                var (sx, sy) = Shown(0);
+                sw = Math.Min(sw, width);
+                sh = Math.Min(sh, height);
+                var rect = new ViewerRect(Math.Clamp(sx - sw / 2, 0, width - sw), Math.Clamp(sy - sh / 2, 0, height - sh), sw, sh);
+                a = NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g)) with { StampName = stamp.Name, Color = ViewerAnnotationPdf.DefaultColor(kind) };
+                break;
+            }
+            case ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine:
+            {
+                // The points in user space, without repeats (a double-click gives its point twice).
+                var user = new List<double>();
+                (double X, double Y)? last = null;
+                for (int i = 0; i + 1 < points.Length && user.Count < 2 * ViewerAnnotationStore.MaxVertices; i += 2)
+                {
+                    var (sx, sy) = Shown(i);
+                    if (last is (var lx, var ly) && Math.Abs(sx - lx) + Math.Abs(sy - ly) < 2) continue;
+                    last = (sx, sy);
+                    var (ux, uy) = g.ToUser(sx, sy);
+                    user.Add(ux);
+                    user.Add(uy);
+                }
+                int least = kind == ViewerAnnotationKind.Polygon ? 3 : 2;
+                if (user.Count / 2 < least) return;
+                if (kind == ViewerAnnotationKind.Line) user = [user[0], user[1], user[^2], user[^1]];
+                var shape = NewAnnotation(kind, page, default) with { Vertices = user.ToArray(), EndEnding = _tool == Tool.Arrow ? "OpenArrow" : "None" };
+                bool endings = shape.EndEnding != "None";
+                a = shape with { Box = ClampBox(ViewerBox.Around(user, ViewerAnnotationStore.ShapeMargin(shape.StrokeWidth, endings)), g) };
                 break;
             }
             default:
@@ -632,8 +693,61 @@ public sealed partial class Viewer
         ViewerAnnotationKind.FreeText => "Text box",
         ViewerAnnotationKind.Ink => "Drawing",
         ViewerAnnotationKind.Square => "Rectangle",
-        _ => "Ellipse",
+        ViewerAnnotationKind.Circle => "Ellipse",
+        ViewerAnnotationKind.Line => "Line",
+        ViewerAnnotationKind.Polygon => "Polygon",
+        ViewerAnnotationKind.PolyLine => "Connected lines",
+        ViewerAnnotationKind.Stamp => "Stamp",
+        _ => "Reply",
     };
+
+    // ---------------------------------------------------------------- comment threads
+
+    /// <summary>The comments panel's list: each annotation that starts a thread, then its replies with their level.</summary>
+    private List<(ViewerAnnotation Annotation, int Level)> Threads()
+    {
+        var list = _store?.Current ?? [];
+        var replies = list.Where(a => a.Kind == ViewerAnnotationKind.Reply).ToLookup(a => a.InReplyTo);
+        var result = new List<(ViewerAnnotation, int)>();
+        void Add(ViewerAnnotation a, int level)
+        {
+            result.Add((a, level));
+            // The store keeps threads within the depth limit; the level check is a second guard.
+            if (level < ViewerAnnotationStore.MaxReplyDepth)
+                foreach (var r in replies[a.Id]) Add(r, level + 1);
+        }
+        foreach (var a in list.Where(a => a.Kind != ViewerAnnotationKind.Reply)) Add(a, 0);
+        return result;
+    }
+
+    private void StartReply(ViewerAnnotation a)
+    {
+        if (!CanEditAnnotations) return;
+        _replyTo = a.Id;
+        _replyText = "";
+    }
+
+    private void SendReply()
+    {
+        if (_replyTo == null || _store?.Find(_replyTo) is null || !CanEditAnnotations) return;
+        string text = _replyText.Trim();
+        if (text.Length > ViewerAnnotationStore.MaxContentsLength) text = text[..ViewerAnnotationStore.MaxContentsLength];
+        if (text.Length == 0) return;
+        var now = DateTimeOffset.UtcNow;
+        var reply = new ViewerAnnotation
+        {
+            Id = ViewerAnnotationStore.NewId(), Page = 1, Kind = ViewerAnnotationKind.Reply, Box = default, InReplyTo = _replyTo,
+            Color = ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Reply), Contents = text, Author = _authorName, Created = now, Modified = now,
+        };
+        _replyTo = null;
+        _replyText = "";
+        // The status says so only when the store took it; a refusal leaves Change's message.
+        Change(() =>
+        {
+            _store!.Add([reply]);
+            _status = "Reply added";
+        });
+    }
 
     // ---------------------------------------------------------------- the host page's annotation manager
 
@@ -725,10 +839,8 @@ public sealed partial class Viewer
                         return EmbedProtocol.Error(id, EmbedErrors.InvalidArgument, "importXfdf: " + ex.Message);
                     }
                     var ids = store.Current.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
-                    var list = read.Select(p => ViewerAnnotationPdf.FromPdf(p, ""))
-                        .OfType<ViewerAnnotation>()
-                        .Select(a => Defaults(ids.Add(a.Id) ? a : a with { Id = "" }, now, null) with { SourceIndex = -1 })
-                        .ToList();
+                    // Names in use get new ids; replies are linked to their parents, or added on their own.
+                    var list = ViewerAnnotationPdf.FromXfdf(read, ids).Select(a => Defaults(a, now, null)).ToList();
                     var added = store.Add(list);
                     if (added.Count > 0) _ = CommitEditsAsync();
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(added, Source));
