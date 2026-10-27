@@ -179,6 +179,12 @@ public sealed class PdfObjectClosure
 
     public PdfClosureKind Kind { get; }
 
+    /// <summary>
+    /// For <see cref="PdfClosureKind.Structure"/>: false to stop at the root of the page tree (its
+    /// /Kids are not read), for a document whose page tree is lazy (<see cref="PdfEngine.Vector.Document.PdfPageTree.IsLazy"/>).
+    /// </summary>
+    public bool FollowKids { get; init; } = true;
+
     /// <summary>The most objects visited (default 20 000).</summary>
     public int MaxObjects { get; init; } = 20_000;
 
@@ -310,6 +316,7 @@ public sealed class PdfObjectClosure
         {
             if (Kind == PdfClosureKind.Page && PageExcluded.Contains(k)) continue;
             if (Kind == PdfClosureKind.Structure && !StructureWalked.Contains(k) && k is not ("Resources" or "Info")) continue;
+            if (Kind == PdfClosureKind.Structure && !FollowKids && k == "Kids") continue;
             Walk(v, k, rule, depth + 1);
         }
     }

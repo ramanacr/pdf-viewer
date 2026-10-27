@@ -25,7 +25,7 @@ public class EmbedRangeTests
     }
 
     /// <summary>A PDF of <paramref name="pages"/> pages, each with text and its own uncompressed image, written page by page.</summary>
-    internal static byte[] ImagePdf(int pages, int side = 96)
+    internal static byte[] ImagePdf(int pages, int side = 96, Func<int, string>? mediaBox = null)
     {
         var objects = new List<byte[]>();
         int Add(string head, byte[]? data = null)
@@ -52,7 +52,7 @@ public class EmbedRangeTests
             var pixels = new byte[side * side * 3];
             random.NextBytes(pixels);
             int image = Add($"<< /Type /XObject /Subtype /Image /Width {side} /Height {side} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {pixels.Length} >>", pixels);
-            kids.Add(Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {content} 0 R >>"));
+            kids.Add(Add($"<< /Type /Page /Parent 2 0 R /MediaBox {mediaBox?.Invoke(p) ?? "[0 0 612 792]"} /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {content} 0 R >>"));
         }
         objects[1] = Encoding.ASCII.GetBytes($"<< /Type /Pages /Kids [{string.Join(" ", kids.Select(k => $"{k} 0 R"))}] /Count {pages} >>");
         objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"u8.ToArray();
@@ -292,6 +292,50 @@ public class EmbedRangeTests
         await using var whole = await ViewerDocument.OpenAsync(file);
         var expected = await whole.RenderPageAsync(1, 0.5);
         Assert.Equal(expected.Pixels.ToArray(), first.Pixels.ToArray());
+    }
+
+    [Fact]
+    public async Task RangedDocument_PagesNotReadYet_HaveTheFirstPagesSize_UntilTheyAreRead()
+    {
+        // Page 30 is A4 landscape, the others Letter: until it is read, it is laid out as Letter.
+        var file = ImagePdf(60, mediaBox: p => p == 30 ? "[0 0 842 595]" : "[0 0 612 792]");
+        var (reader, _) = Connect(file);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 16 * 1024 });
+        Assert.Equal(60, doc.PageCount);
+        Assert.Equal(new ViewerPage(30, 612, 792), doc.Pages[29]);
+        // Opening read the end of the file and page 1's dictionary, not every page's.
+        long opened = reader.BytesReceived;
+        Assert.True(opened < file.Length / 20, $"{opened} of {file.Length} bytes to open");
+
+        int changes = 0;
+        doc.PagesChanged += () => changes++;
+        await doc.EnsurePageSizeAsync(30);
+        Assert.Equal(new ViewerPage(30, 842, 595), doc.Pages[29]);
+        Assert.Equal(842, doc.Geometry[29].MediaBox.Width);
+        Assert.Equal(1, changes);
+        await doc.RenderPageAsync(30, 0.25);
+        await doc.RenderPageAsync(31, 0.25);   // the same size as the first: nothing changes
+        Assert.Equal(1, changes);
+
+        await doc.EnsureCompleteAsync();
+        Assert.Equal(new ViewerPage(30, 842, 595), doc.Pages[29]);
+        await using var whole = await ViewerDocument.OpenAsync(file);
+        Assert.Equal(whole.Pages, doc.Pages);
+    }
+
+    [Fact]
+    public async Task RangedDocument_PageCountFromALyingTree_IsCorrected()
+    {
+        // The root claims 12 pages and has 10 kids: the tree is read whole at once, and the count is the real one.
+        var file = ImagePdf(10);
+        string latin = Encoding.Latin1.GetString(file);
+        var lying = Encoding.Latin1.GetBytes(latin.Replace("/Count 10 >>", "/Count 12 >>"));
+        var (reader, _) = Connect(lying);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 4096 });
+        Assert.Equal(10, doc.PageCount);
+        Assert.False(doc.IsComplete);
+        var text = await doc.GetTextLayoutAsync(10);
+        Assert.Contains("Page 10 of 10", text.GetText(0, text.Length));
     }
 
     [Fact]

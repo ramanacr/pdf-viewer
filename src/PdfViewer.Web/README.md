@@ -438,8 +438,7 @@ and serve the folder with `node eng/webdemo/serve.mjs <folder> --base /pdf-viewe
    above) is opt-in for now. Still to do before it is the default: files read by ranges and
    encrypted files, device fonts, thumbnails and print in the worker, and one copy of the
    document instead of two.
-2. **A lazy page tree** for files read by ranges (docs/sdk, "Large files").
-3. **Fonts**: bold Noto weights, and Noto Serif for serif text.
-4. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
+2. **Fonts**: bold Noto weights, and Noto Serif for serif text.
+3. **AOT** for the engine assembly only, to cut interpretation time, if the size cost is
    acceptable.
-5. **Tiles** for deep zoom, selection across pages, annotations display.
+4. **Tiles** for deep zoom, selection across pages, annotations display.

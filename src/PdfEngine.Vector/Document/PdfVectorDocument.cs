@@ -135,9 +135,11 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     /// <summary>
     /// <see cref="Open"/> for a document read by ranges (<see cref="PdfRangedDocument"/>): pages'
     /// content streams are resolved when first used, so opening reads only the page dictionaries.
+    /// With <paramref name="lazyPages"/>, the page tree is lazy (<see cref="PdfPageTree.IsLazy"/>):
+    /// opening reads only its root, and each page is found when it is first asked for.
     /// </summary>
-    internal static PdfVectorDocument OpenDeferred(IPdfByteSource source, string filePath, PdfSecurityLimits? limits, string? password) =>
-        OpenCore(source, filePath, limits, password, null, deferContents: true);
+    internal static PdfVectorDocument OpenDeferred(IPdfByteSource source, string filePath, PdfSecurityLimits? limits, string? password, bool lazyPages = false) =>
+        OpenCore(source, filePath, limits, password, null, deferContents: true, lazyPages);
 
     private static PdfVectorDocument OpenCore(
         IPdfByteSource source,
@@ -145,11 +147,12 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         PdfSecurityLimits? limits,
         string? password,
         IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates,
-        bool deferContents = false)
+        bool deferContents = false,
+        bool lazyPages = false)
     {
         try
         {
-            return OpenCoreUnchecked(source, filePath, limits, password, certificates, deferContents);
+            return OpenCoreUnchecked(source, filePath, limits, password, certificates, deferContents, lazyPages);
         }
         catch (Exception ex) when (ex is InvalidDataException or FormatException or OverflowException
                                        or ArgumentOutOfRangeException or IndexOutOfRangeException)
@@ -165,7 +168,8 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         PdfSecurityLimits? limits,
         string? password,
         IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates,
-        bool deferContents)
+        bool deferContents,
+        bool lazyPages)
     {
         limits ??= PdfSecurityLimits.Default;
         var xref = new PdfXrefTable(limits);
@@ -207,7 +211,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
             throw new PdfSyntaxException("PDF document has no resolvable /Root catalog.");
         }
 
-        var pageTree = new PdfPageTree(resolver, limits) { DeferContents = deferContents };
+        var pageTree = new PdfPageTree(resolver, limits) { DeferContents = deferContents, IsLazy = lazyPages, MaxLazyPages = xref.Entries.Count };
         pageTree.Load(catalog);
 
         // Resolve basic metadata
@@ -266,7 +270,8 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         };
         _displayListCache = new DisplayListCache(limits.MaxCachedDisplayListCommands);
 
-        for (int i = 0; i < pageTree.Pages.Count; i++)
+        // A lazy tree finds its pages when they are asked for: none are read here.
+        for (int i = 0; !pageTree.IsLazy && i < pageTree.Pages.Count; i++)
         {
             _pageDictToNumber[pageTree.Pages[i].Dictionary] = i + 1;
         }

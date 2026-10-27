@@ -179,7 +179,8 @@ An unknown key is ignored. A known key with a wrong value rejects the Promise wi
 
 A large file does not have to arrive whole before its first page shows. The viewer asks your
 page for the byte ranges it needs, as Adobe's and pdf.js's viewers do: the end of the file (the
-cross-reference table), the page tree, then the objects of each page when it is drawn. The rest
+cross-reference table), the catalog and the root of the page tree, the tree nodes on the path to
+page 1, then the objects of each page when it is drawn. The rest
 of the file follows in the background, one request at a time, after the first page is on screen.
 
 ### With a URL
@@ -272,6 +273,10 @@ inclusive, `bufferList`) are this SDK's and were not tested against Adobe's view
 - An object whose bytes, by the cross-reference table, would pass a cap (one page needs more than
   256 MB, the document's structure or one round of missing bytes more than 32 MB): the cap is
   checked before the bytes are asked for, and the viewer reads the whole file instead.
+- A page tree whose `/Count` values do not match their kids, that has a loop, or that is too deep
+  to walk lazily (a page not found after 12 rounds): the viewer reads the whole page tree, as
+  before this change, and stays on range requests. If the real page count differs from the
+  root's `/Count`, the page list is corrected.
 - Two files opened one after the other: only the second shows, even when the first finishes last;
   the first `previewFile` rejects with `CLOSED`.
 
@@ -288,6 +293,19 @@ parsed and drawn synchronously from the cache. A read of a block that is not the
 miss; the operation is repeated on a fresh parse after the missing bytes arrive. Documents
 opened from memory or from a file do not use any of this.
 
+The page tree is lazy (`PdfPageTree.IsLazy`, `PdfRangedOptions.LazyPageTree`). The page count is
+the root's `/Count`, checked against the number of objects in the file before anything is sized
+by it. A page is found when it is first needed: from the root, the engine goes down to the kid
+whose `/Count` holds the page, one level per round of requests. A node with one kid per page
+goes straight to the kid; in other nodes every kid is read (at most 64 more per round), and the
+kids' pages must add up to the node's `/Count`. A loop, a tree deeper than
+`PdfSecurityLimits.MaxPageTreeDepth` or a count that does not add up turns the lazy tree off (see
+fallbacks). Pages not read yet are laid out at the first page's size. When a page of another
+size is read (before it is drawn) or when the whole file is in, the layout is corrected
+(`ViewerDocument.PagesChanged`). Below a node, the engine checks only the counts on the path to
+a page. A wrong `/Count` in a node beside that path can put pages in the wrong order until the
+whole file is read.
+
 ### Measured
 
 A generated file of 320 pages, each with a 224 × 224 image stored uncompressed (46.2 MB, not
@@ -297,16 +315,21 @@ viewer's own start, about 1 s), three runs:
 
 | File | Network | Whole file | By ranges | Read before the first page |
 | --- | --- | --- | --- | --- |
-| Page objects spread through the file | loopback | 2.4 to 3.1 s | 3.0 to 3.3 s | 2.4 MB (5 %), 318 requests |
-| The same | 50 Mbit/s, 40 ms | 9.9 to 10.9 s | 5.8 to 7.4 s | 2.4 MB (5 %), 318 requests |
+| Page objects spread through the file | loopback | 2.4 to 3.1 s | 1.6 to 1.7 s | 1.2 MB (2.5 %), 6 requests |
+| The same | 50 Mbit/s, 40 ms (`serve.mjs`) | 10.7 to 10.9 s | 2.4 to 2.7 s | 1.2 MB (2.5 %), 6 requests |
+| The same | 50 Mbit/s, 40 ms (in the page) | | 1.5 to 1.6 s | 1.2 MB (2.5 %), 4 requests |
 | The same, with object streams (`PdfOptimizer`) | loopback | 1.5 to 2.3 s | 1.5 to 2.3 s | 1.2 MB (2.5 %), 5 requests |
 | The same, with object streams | 50 Mbit/s, 40 ms | 9.3 to 10.4 s | 2.9 to 3.1 s | 1.2 MB (2.5 %), 5 requests |
 
-A file whose page dictionaries are spread through it needs one request per page to open, because
-the viewer reads every page's size before it lays the pages out; a file with object streams (many
-files saved by current applications, and every file the engine's optimizer writes) opens in a
-few requests. On a fast local network, reading the whole file is as fast. The
-[large-file example](examples/large-file.html) repeats the measurement in your browser.
+Before the lazy page tree, the file with spread-out page objects needed one request per page to
+open (2.4 MB in 318 requests): 2.5 to 2.9 s on loopback, 21.4 to 21.6 s at 50 Mbit/s and 40 ms
+through `serve.mjs` (Chrome sent the requests for the same URL almost one at a time), and 5.1
+to 5.4 s with the network simulated in the page. Now the first page needs the end of the file,
+page 1's dictionary and page 1's objects, whatever the number of pages. The object-stream rows
+were measured before the change; such files open in a few requests either way. The spread-out
+rows were measured on 2026-10-27 with warm browser caches (the viewer itself was not
+downloaded again). The [large-file example](examples/large-file.html) repeats the measurement
+in your browser.
 
 ## Events
 
@@ -766,6 +789,4 @@ const view = new PdfViewer.View({ divId: 'viewer', renderInWorker: true });
 ## Planned
 
 - Rendering in a worker by default, once it is checked in Safari and on phones.
-- A lazy page tree for files read by ranges, so that a file whose page dictionaries are spread
-  through it opens without reading every page's dictionary.
 - Later: more annotation types (replies, stamps, lines and polygons), comment threads.

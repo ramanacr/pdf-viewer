@@ -142,10 +142,10 @@ public sealed class ViewerDocument : IAsyncDisposable
         _original = _document = document;
         _originalBytes = _bytes = bytes;
         _password = password;
-        Geometry = document.PageTree.Pages.Select(p => new Annotations.ViewerPageGeometry(p.MediaBox, p.CropBox, p.RotationDegrees)).ToList();
+        _geometry = document.PageTree.Pages.Select(p => new Annotations.ViewerPageGeometry(p.MediaBox, p.CropBox, p.RotationDegrees)).ToArray();
         _fileSize = fileSize;
         _options = options;
-        Pages = pages;
+        _pages = pages.ToArray();
         _fonts = options.Fonts;
         _renderer = new SkiaVectorRenderer(options.ImageCacheBytes, _fonts);
         _signed = PdfEngine.Vector.Signatures.PdfSignatureValidator.ReadSignedState(document);
@@ -153,16 +153,15 @@ public sealed class ViewerDocument : IAsyncDisposable
     }
 
     /// <summary>A document opened by ranges, before the whole file is in memory: only its pages can be drawn.</summary>
-    private ViewerDocument(PdfRangedDocument ranged, string? password, ViewerOptions options, IReadOnlyList<ViewerPage> pages)
+    private ViewerDocument(PdfRangedDocument ranged, string? password, ViewerOptions options)
     {
         _ranged = ranged;
         _original = _document = ranged.Document;
         _originalBytes = _bytes = [];
         _password = password;
-        Geometry = ranged.Document.PageTree.Pages.Select(p => new Annotations.ViewerPageGeometry(p.MediaBox, p.CropBox, p.RotationDegrees)).ToList();
+        (_pages, _geometry) = LayoutOf(ranged.Document.PageTree);
         _fileSize = ranged.Length;
         _options = options;
-        Pages = pages;
         _fonts = options.Fonts;
         _renderer = new SkiaVectorRenderer(options.ImageCacheBytes, _fonts);
         // Known once the file is complete (they read the form fields and the whole file).
@@ -202,12 +201,95 @@ public sealed class ViewerDocument : IAsyncDisposable
     /// <summary>The document now: the ranged one's current parse until it is complete.</summary>
     private PdfVectorDocument Doc => _ranged?.Document ?? _document;
 
-    public int PageCount => Pages.Count;
+    public int PageCount => _pages.Length;
 
-    public IReadOnlyList<ViewerPage> Pages { get; }
+    /// <summary>
+    /// Each page's size as shown. For a document opened by ranges, a page not read yet has the
+    /// size of the first page until it is read (when it is drawn, or when the file is complete);
+    /// <see cref="PagesChanged"/> tells when a size (or, for a damaged page tree, the page count) changes.
+    /// </summary>
+    public IReadOnlyList<ViewerPage> Pages => _pages;
+    private ViewerPage[] _pages;
 
-    /// <summary>Each page's boxes and rotation: how its user space maps to the page as shown.</summary>
-    public IReadOnlyList<Annotations.ViewerPageGeometry> Geometry { get; }
+    /// <summary>Each page's boxes and rotation: how its user space maps to the page as shown (for a ranged document, as <see cref="Pages"/>).</summary>
+    public IReadOnlyList<Annotations.ViewerPageGeometry> Geometry => _geometry;
+    private Annotations.ViewerPageGeometry[] _geometry;
+
+    /// <summary>
+    /// Raised when <see cref="Pages"/> changed for a document opened by ranges: a page read for
+    /// the first time is not the size of the first page, or the whole file showed other sizes or
+    /// another page count. The host lays the pages out again.
+    /// </summary>
+    public event Action? PagesChanged;
+
+    /// <summary>
+    /// The layout of a ranged document's pages: each page read so far as it is, the others the
+    /// size of the first page (or US Letter when no page is read), so that the layout moves only
+    /// where a page differs from the first.
+    /// </summary>
+    private static (ViewerPage[] Pages, Annotations.ViewerPageGeometry[] Geometry) LayoutOf(PdfPageTree tree)
+    {
+        var pages = new ViewerPage[tree.Count];
+        var geometry = new Annotations.ViewerPageGeometry[tree.Count];
+        var first = tree.LoadedPage(0);
+        var letter = new PdfEngine.Geometry.PdfRect(0, 0, 612, 792);
+        for (int i = 0; i < pages.Length; i++)
+        {
+            var node = tree.LoadedPage(i) ?? first;
+            pages[i] = node != null ? new ViewerPage(i + 1, node.PageSize.Width, node.PageSize.Height) : new ViewerPage(i + 1, 612, 792);
+            geometry[i] = node != null ? new Annotations.ViewerPageGeometry(node.MediaBox, node.CropBox, node.RotationDegrees) : new Annotations.ViewerPageGeometry(letter, letter, 0);
+        }
+        return (pages, geometry);
+    }
+
+    /// <summary>After a ranged operation on <paramref name="page"/>: its size as read. True when the layout changed.</summary>
+    private bool SyncRangedPage(PdfRangedDocument ranged, int page)
+    {
+        var tree = ranged.Document.PageTree;
+        if (tree.Count != _pages.Length)
+        {
+            // The lazy tree did not match the file and was read whole: another page count.
+            if (tree.Count == 0) return false;
+            (_pages, _geometry) = LayoutOf(tree);
+            return true;
+        }
+        return page >= 1 && page <= tree.Count && tree.LoadedPage(page - 1) is { } node && SetPage(page - 1, node);
+    }
+
+    private bool SetPage(int index, PdfPageNode node)
+    {
+        var shown = new ViewerPage(index + 1, node.PageSize.Width, node.PageSize.Height);
+        var geometry = new Annotations.ViewerPageGeometry(node.MediaBox, node.CropBox, node.RotationDegrees);
+        if (_pages[index] == shown && _geometry[index] == geometry) return false;
+        _pages[index] = shown;
+        _geometry[index] = geometry;
+        return true;
+    }
+
+    /// <summary>
+    /// For a document opened by ranges: reads page <paramref name="page"/>'s size (the page-tree
+    /// nodes above it, not its contents) so that it is drawn at its own size. Raises
+    /// <see cref="PagesChanged"/> when it differs from the size shown so far.
+    /// </summary>
+    public async Task EnsurePageSizeAsync(int page, CancellationToken cancellationToken = default)
+    {
+        if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        if (_ranged == null) return;
+        bool changed = false;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_ranged is not { } ranged) return;
+            if (ranged.Document.PageTree.LoadedPage(page - 1) == null) await ranged.FindPageAsync(page, cancellationToken).ConfigureAwait(false);
+            changed = SyncRangedPage(ranged, page);
+        }
+        finally
+        {
+            _gate.Release();
+            if (changed) PagesChanged?.Invoke();
+        }
+    }
 
     /// <summary>The bytes the document was opened from. Throws until the document <see cref="IsComplete"/>.</summary>
     public byte[] OriginalBytes => IsComplete ? _originalBytes : throw new InvalidOperationException("The file is still loading.");
@@ -372,23 +454,12 @@ public sealed class ViewerDocument : IAsyncDisposable
         }
     }
 
-    private static ViewerPage[] PagesOf(PdfVectorDocument document)
-    {
-        var pages = new ViewerPage[document.PageCount];
-        for (int i = 0; i < pages.Length; i++)
-        {
-            var info = document.GetPageInfoAsync(i + 1).AsTask().GetAwaiter().GetResult();
-            pages[i] = new ViewerPage(i + 1, info.WidthPoints, info.HeightPoints);
-        }
-        if (pages.Length == 0)
-            throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF has no pages.");
-        return pages;
-    }
-
     /// <summary>
     /// Opens a document from a range reader (a file on a web server, read by HTTP range requests
-    /// through the host page) without reading the whole file first: the end of the file, the page
-    /// tree, then each page's objects when it is drawn (<see cref="PdfRangedDocument"/>). The
+    /// through the host page) without reading the whole file first: the end of the file, the root
+    /// of the page tree and the path to page 1, then each page's objects when it is drawn
+    /// (<see cref="PdfRangedDocument"/>). Pages not read yet have the first page's size in
+    /// <see cref="Pages"/> until they are read (<see cref="PagesChanged"/>). The
     /// document is not <see cref="IsComplete"/> at first; call <see cref="EnsureCompleteAsync"/>
     /// (for example after the first page is drawn) to read the rest in the background. A file whose
     /// cross-reference data is damaged is read whole at once and opened as by <see cref="OpenAsync"/>
@@ -429,7 +500,10 @@ public sealed class ViewerDocument : IAsyncDisposable
         }
         try
         {
-            return new ViewerDocument(ranged, password, options, PagesOf(ranged.Document));
+            // The page count is the page tree's /Count; pages not read yet are laid out at the first page's size.
+            if (ranged.Document.PageCount == 0)
+                throw new ViewerOpenException(ViewerOpenFailure.NotReadable, "This PDF has no pages.");
+            return new ViewerDocument(ranged, password, options);
         }
         catch
         {
@@ -475,6 +549,7 @@ public sealed class ViewerDocument : IAsyncDisposable
             throw failure;
         }
         var document = await ParseAsync(bytes, _password, _options, token).ConfigureAwait(false);
+        bool changed = false;
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
@@ -482,6 +557,16 @@ public sealed class ViewerDocument : IAsyncDisposable
             {
                 document.Dispose();
                 return;
+            }
+            // Every page's own size now (pages not drawn were laid out at the first page's size).
+            if (document.PageCount != _pages.Length)
+            {
+                (_pages, _geometry) = LayoutOf(document.PageTree);
+                changed = true;
+            }
+            else
+            {
+                for (int i = 0; i < _pages.Length; i++) changed |= SetPage(i, document.PageTree.Pages[i]);
             }
             _lastRangeStatistics = ranged.Statistics;
             _original = _document = document;
@@ -496,6 +581,7 @@ public sealed class ViewerDocument : IAsyncDisposable
         {
             _gate.Release();
         }
+        if (changed) PagesChanged?.Invoke();
         Completed?.Invoke();
     }
 
@@ -559,17 +645,23 @@ public sealed class ViewerDocument : IAsyncDisposable
     {
         if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
         if (!(scale > 0) || double.IsInfinity(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
+        bool changed = false;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_ranged is { } ranged)
-                return await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderCoreAsync(d, page, scale, night, ct)), cancellationToken).ConfigureAwait(false);
+            {
+                var bitmap = await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderCoreAsync(d, page, scale, night, ct)), cancellationToken).ConfigureAwait(false);
+                changed = SyncRangedPage(ranged, page);
+                return bitmap;
+            }
             return await RenderCoreAsync(asOpened ? _original : _document, page, scale, night, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
+            if (changed) PagesChanged?.Invoke();
         }
     }
 
@@ -621,17 +713,23 @@ public sealed class ViewerDocument : IAsyncDisposable
         if (!(scale > 0) || double.IsInfinity(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
         if (region.Width <= 0 || region.Height <= 0 || (long)region.Width * region.Height > _options.MaxBitmapPixels)
             throw new ArgumentOutOfRangeException(nameof(region));
+        bool changed = false;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_ranged is { } ranged)
-                return await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderRegionCoreAsync(d, page, scale, region, night, ct)), cancellationToken).ConfigureAwait(false);
+            {
+                var bitmap = await ranged.RunAsync(page, (d, ct) => new ValueTask<ViewerBitmap>(RenderRegionCoreAsync(d, page, scale, region, night, ct)), cancellationToken).ConfigureAwait(false);
+                changed = SyncRangedPage(ranged, page);
+                return bitmap;
+            }
             return await RenderRegionCoreAsync(_document, page, scale, region, night, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
+            if (changed) PagesChanged?.Invoke();
         }
     }
 
@@ -670,6 +768,9 @@ public sealed class ViewerDocument : IAsyncDisposable
         if (!(scale > 0) || double.IsInfinity(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
         ArgumentNullException.ThrowIfNull(between);
         stripPixels = Math.Max(16 * 1024, stripPixels);
+        // A ranged page not read yet has the first page's size: read its own before the strips are cut.
+        if (_ranged != null) await EnsurePageSizeAsync(page, cancellationToken).ConfigureAwait(false);
+        if (page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
         var (width, height) = PageTiles.PixelSize(Pages[page - 1], scale);
         if ((long)width * height > _options.MaxBitmapPixels)
         {
@@ -721,17 +822,23 @@ public sealed class ViewerDocument : IAsyncDisposable
     public async Task<ViewerTextLayout> GetTextLayoutAsync(int page, CancellationToken cancellationToken = default)
     {
         if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        bool changed = false;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_ranged is { } ranged)
-                return await ranged.RunAsync(page, (d, ct) => ValueTask.FromResult(ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(d, page, ct))), cancellationToken).ConfigureAwait(false);
+            {
+                var layout = await ranged.RunAsync(page, (d, ct) => ValueTask.FromResult(ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(d, page, ct))), cancellationToken).ConfigureAwait(false);
+                changed = SyncRangedPage(ranged, page);
+                return layout;
+            }
             return ViewerTextLayout.FromPage(PdfTextExtractor.LoadPage(_document, page, cancellationToken));
         }
         finally
         {
             _gate.Release();
+            if (changed) PagesChanged?.Invoke();
         }
     }
 
