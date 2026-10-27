@@ -156,7 +156,12 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
 
             int pw = request.TargetWidthPixels > 0 ? request.TargetWidthPixels : (int)Math.Max(1, Math.Round(wPts * dpi / 72.0));
             int ph = request.TargetHeightPixels > 0 ? request.TargetHeightPixels : (int)Math.Max(1, Math.Round(hPts * dpi / 72.0));
-            return new RenderGeometry(dpi, pw, ph, total, crop.Width, crop.Height);
+
+            // A size in pixels sets the resolution: it is reported, and fallback regions are fetched at it.
+            // When the horizontal and vertical resolutions differ, the larger keeps fallback pixels sharp.
+            double dpiX = request.TargetWidthPixels > 0 && wPts > 0 ? pw * 72.0 / wPts : dpi;
+            double dpiY = request.TargetHeightPixels > 0 && hPts > 0 ? ph * 72.0 / hPts : dpi;
+            return new RenderGeometry(Math.Max(dpiX, dpiY), pw, ph, total, crop.Width, crop.Height);
         }
 
         /// <summary>Unrotated page points (top-left origin) → output pixels.</summary>
