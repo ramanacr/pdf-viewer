@@ -94,6 +94,9 @@ public sealed class ViewerEditSession
     /// <summary>The document's bytes have every edit.</summary>
     public bool IsCurrent => _edits.IsCurrent;
 
+    /// <summary>A save is under way (<see cref="BeginSaveAsync"/> until <see cref="EndSave"/>).</summary>
+    public bool IsSaving => _edits.Saving;
+
     public bool CanUndo => CanAnnotate && Store.CanUndo;
 
     public bool CanRedo => CanAnnotate && Store.CanRedo;
@@ -461,7 +464,18 @@ public sealed class ViewerEditSession
                 }
                 _edits.Applied(version);
                 written = true;
-                if (CanFillForms) Widgets = await Document.GetFormWidgetsAsync(cancellationToken);
+                if (CanFillForms)
+                {
+                    // The bytes have the edit already: a failure to list the fields again keeps the
+                    // last list, and the viewer still draws the pages again.
+                    try
+                    {
+                        Widgets = await Document.GetFormWidgetsAsync(cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException and not OutOfMemoryException)
+                    {
+                    }
+                }
             }
         }
         catch (ObjectDisposedException)

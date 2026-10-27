@@ -300,10 +300,12 @@ public class AndroidEditTests
         var save = await session.BeginSaveAsync();
         Assert.NotNull(save);
         Assert.Single(await ReadBack(save.Bytes));
-        // One save at a time.
+        // One save at a time: the app does not open the save dialog while one runs.
+        Assert.True(session.IsSaving);
         Assert.Null(await session.BeginSaveAsync());
         session.EndSave(save, saved: false);
         Assert.True(session.IsDirty); // the copy was not written
+        Assert.False(session.IsSaving);
         var again = await session.BeginSaveAsync();
         session.EndSave(again!, saved: true);
         Assert.False(session.IsDirty);

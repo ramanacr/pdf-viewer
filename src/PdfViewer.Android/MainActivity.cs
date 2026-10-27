@@ -354,7 +354,7 @@ public sealed partial class MainActivity : Activity
             {
                 case 1: _ = ShowOutlineAsync(); break;
                 case 2: ShowThumbnails(true); break;
-                case 3: Share(); break;
+                case 3: ShareChecked(); break;
                 case 4: _pages.NightPages = !_pages.NightPages; break;
                 case 5: AskRecent(); break;
                 case 6: ShowAnnotationList(); break;
@@ -501,7 +501,7 @@ public sealed partial class MainActivity : Activity
         base.OnActivityResult(requestCode, resultCode, data);
         if (requestCode == SaveCopyRequest)
         {
-            if (resultCode == Result.Ok && data?.Data is { } target) _ = SaveCopyAsync(target);
+            SaveDialogAnswered(resultCode == Result.Ok ? data?.Data : null);
             return;
         }
         if (requestCode == OpenDocumentRequest && resultCode == Result.Ok && data?.Data is { } uri)

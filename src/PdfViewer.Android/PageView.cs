@@ -165,6 +165,13 @@ internal sealed class PageView : SkiaView
         Invalidate();
     }
 
+    /// <summary>One stroke is dropped (it was not kept as a drawing); the others are still being written.</summary>
+    public void DropPendingInk(IReadOnlyList<ViewerPoint> stroke)
+    {
+        _pendingInk.RemoveAll(s => ReferenceEquals(s.Points, stroke));
+        Invalidate();
+    }
+
     /// <summary>Scrolls to an annotation's place.</summary>
     public void GoToAnnotation(ViewerAnnotation a)
     {

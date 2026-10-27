@@ -68,7 +68,7 @@ public sealed partial class MainActivity
         _pages.FieldTapped += OnFieldTapped;
         _pages.AnnotationTapped += OnAnnotationTapped;
         _pages.EmptyTapped += () => Pick(null);
-        _pages.InkDrawn += (page, stroke) => Change(s => s.AddInk(page, stroke) != null, dropInkIfUnchanged: true);
+        _pages.InkDrawn += (page, stroke) => Change(s => s.AddInk(page, stroke) != null, unchanged: () => _pages.DropPendingInk(stroke));
         _pages.NoteRequested += (page, point) =>
         {
             SetTool(PageView.PageTool.Browse);
@@ -149,7 +149,7 @@ public sealed partial class MainActivity
     /// Runs a change of the reader's (true when something changed), then has the engine write it
     /// into the document and the pages drawn again. A refusal is shown as a short message.
     /// </summary>
-    private void Change(Func<ViewerEditSession, bool> change, bool dropInkIfUnchanged = false)
+    private void Change(Func<ViewerEditSession, bool> change, Action? unchanged = null)
     {
         if (_session is not { } session) return;
         bool changed;
@@ -164,7 +164,7 @@ public sealed partial class MainActivity
         }
         if (!changed)
         {
-            if (dropInkIfUnchanged) _pages.DropPendingInk();
+            unchanged?.Invoke();
             UpdateEditButtons();
             return;
         }
@@ -356,28 +356,59 @@ public sealed partial class MainActivity
 
     // ------------------------------------------------------------------ saving
 
+    /// <summary>
+    /// The document whose copy the save dialog was opened for. It is not kept in the saved state:
+    /// after Android ended the process while the dialog was open, the edits are gone, and the
+    /// file the dialog created is removed instead of being written with other bytes.
+    /// </summary>
+    private ViewerDocument? _saveFor;
+
     /// <summary>"Save a copy": the system's save dialog, with the file's name and "(edited)" offered.</summary>
     private void PickSaveCopy()
     {
         if (_doc == null) return;
+        if (_session?.IsSaving == true || _saveFor != null)
+        {
+            Toast.MakeText(this, "A copy is being saved already.", ToastLength.Short)?.Show();
+            return;
+        }
         string name = System.IO.Path.GetFileNameWithoutExtension(_fileName ?? "Document");
         var intent = new Intent(Intent.ActionCreateDocument);
         intent.AddCategory(Intent.CategoryOpenable);
         intent.SetType("application/pdf");
         intent.PutExtra(Intent.ExtraTitle, (name.Length > 0 ? name : "Document") + " (edited).pdf");
+        _saveFor = _doc;
         StartActivityForResult(intent, SaveCopyRequest);
     }
 
-    private async Task SaveCopyAsync(Uri target)
+    /// <summary>The save dialog answered: a file to write, or null when the reader cancelled.</summary>
+    private void SaveDialogAnswered(Uri? target)
     {
-        var doc = _doc;
-        if (doc == null) return;
+        var doc = _saveFor;
+        _saveFor = null;
+        if (target == null) return;
+        if (doc == null || !ReferenceEquals(doc, _doc))
+        {
+            // The process was ended (or the document changed) while the dialog was open.
+            DeleteTarget(target);
+            new AlertDialog.Builder(this).SetTitle("Nothing was saved")!
+                .SetMessage("The changes were lost while the save dialog was open (Android closed the app to free memory). Make them again and save a copy.")!
+                .SetPositiveButton("OK", (_, _) => { })!.Show();
+            return;
+        }
+        _ = SaveCopyAsync(doc, target);
+    }
+
+    private async Task SaveCopyAsync(ViewerDocument doc, Uri target)
+    {
         var session = _session;
         ViewerSave? save = session != null ? await session.BeginSaveAsync() : null;
         byte[]? bytes = session == null ? doc.Bytes : save?.Bytes;
-        if (bytes == null)
+        if (bytes == null || !ReferenceEquals(doc, _doc))
         {
-            Toast.MakeText(this, "The changes could not be written into the document, so nothing was saved.", ToastLength.Long)?.Show();
+            if (save != null) session!.EndSave(save, saved: false);
+            DeleteTarget(target);
+            Toast.MakeText(this, session?.IsSaving == true ? "A copy is being saved already." : "The changes could not be written into the document, so nothing was saved.", ToastLength.Long)?.Show();
             return;
         }
         try
@@ -393,13 +424,47 @@ public sealed partial class MainActivity
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             if (save != null) session!.EndSave(save, saved: false);
-            Toast.MakeText(this, $"The copy could not be saved ({ex.GetType().Name}).", ToastLength.Long)?.Show();
+            // A part-written PDF is worse than none.
+            bool removed = DeleteTarget(target);
+            Toast.MakeText(this, $"The copy could not be saved ({ex.GetType().Name}).{(removed ? " The unfinished file was removed." : "")}", ToastLength.Long)?.Show();
             return;
         }
         if (save != null) session!.EndSave(save, saved: true);
         Toast.MakeText(this, "Copy saved.", ToastLength.Short)?.Show();
     }
 
+    /// <summary>Removes the file the save dialog created (best effort; the provider may not allow it).</summary>
+    private bool DeleteTarget(Uri target)
+    {
+        try
+        {
+            return ContentResolver != null && global::Android.Provider.DocumentsContract.DeleteDocument(ContentResolver, target);
+        }
+        catch (Exception ex) when (ex is Java.Lang.Exception or IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Share sends the file as opened (its own content URI), without edits no save has written:
+    /// with such edits the reader chooses first.
+    /// </summary>
+    private void ShareChecked()
+    {
+        if (_session?.IsDirty != true)
+        {
+            Share();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .SetTitle("Unsaved changes")!
+            .SetMessage("Share sends the file as it was opened, without your changes. To share them, save a copy first and share that file.")!
+            .SetPositiveButton("Save a copy", (_, _) => PickSaveCopy())!
+            .SetNeutralButton("Share without changes", (_, _) => Share())!
+            .SetNegativeButton("Cancel", (_, _) => { })!
+            .Show();
+    }
     /// <summary>Runs <paramref name="then"/> at once, or, with edits no save has written, once the reader chooses to discard them.</summary>
     private void AfterDiscard(Action then)
     {
