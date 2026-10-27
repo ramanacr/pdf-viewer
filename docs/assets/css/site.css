@@ -200,8 +200,7 @@ code, kbd, pre, samp { font-family: var(--font-mono); font-size: 0.9em; }
 .header-cta { margin-left: 8px; }
 .nav-toggle { display: none; }
 
-.theme-toggle .when-dark { display: none; }
-.theme-toggle .when-light, .theme-toggle .when-dark { display: inline-flex; }
+.theme-toggle .when-light { display: inline-flex; }
 .theme-toggle .when-dark { display: none; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .theme-toggle .when-light { display: none; }
