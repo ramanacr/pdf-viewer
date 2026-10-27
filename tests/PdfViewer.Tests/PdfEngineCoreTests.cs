@@ -925,6 +925,27 @@ public class PdfEngineCoreTests
         Assert.Equal(144.0, rendered.Dpi, precision: 1);
     }
 
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRenderReportsTheLargerDpiWhenTheAxesDiffer(string engineName)
+    {
+        // Every engine reports the larger of the two resolutions when a pixel size stretches the page.
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = TestEngines.Create(engineName);
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        // 612 x 792 pt to 1224 x 2376 px => 144 DPI across, 216 DPI down.
+        using var rendered = await engine.Renderer.RenderPageAsync(doc, new RenderRequest
+        {
+            PageNumber = 1,
+            Dpi = 72.0,
+            TargetWidthPixels = 1224,
+            TargetHeightPixels = 2376
+        });
+
+        Assert.Equal(216.0, rendered.Dpi, precision: 1);
+    }
+
 #if PDFIUM_RENDERER
     // PDFium-only until the engine gap closes: the vector renderer fails an oversized render
     // with an arithmetic overflow, not a clear refusal that names the limit.
