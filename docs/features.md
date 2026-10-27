@@ -176,8 +176,9 @@ For the browser demo and the Android proof of concept, see their own READMEs
   - **PowerPoint (.pptx):** a slide for each page, with editable text boxes, tables, pictures and
     shapes.
 - **Export Text** (*File → Export Text*) writes the text layer to a plain text file.
-- **Export to Images** (*File → Export to Images*): PNG or JPEG at 150, 300 or 600 DPI, for all
-  pages, the current page or a range.
+- **Export to Images** (*File → Export to Images*): PNG (the default), JPEG (with a quality
+  setting), TIFF or BMP at 150, 300 or 600 DPI, for all pages, the current page or a range. Files
+  are named `prefix_page_0001.png`, `prefix_page_0002.png` and so on.
 
 ## Printing and print production
 
@@ -277,8 +278,9 @@ The Microsoft Store package has Read Aloud inside it, so it downloads nothing
 ### Export pages as images
 
 1. Select **File → Export to Images**.
-2. Select the output folder, the file prefix, the format (PNG or JPEG), the resolution (150, 300
-   or 600 DPI) and the pages (all, current or a range).
+2. Select the output folder, the file prefix, the format (PNG, JPEG, TIFF or BMP), the resolution
+   (150, 300 or 600 DPI) and the pages (all, current or a range). For JPEG, also select the
+   quality: a higher quality makes larger files.
 3. Click **Export**. The status bar shows the progress.
 
 ### Print

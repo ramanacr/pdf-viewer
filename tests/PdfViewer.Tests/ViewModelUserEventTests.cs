@@ -319,7 +319,7 @@ public class ViewModelUserEventTests : IDisposable
         vm.ShowExportDialogFunc = meta =>
         {
             exportCalled = true;
-            return (true, exportOutDir, "PageExport", 1, 2, "PNG", 150);
+            return (true, exportOutDir, "PageExport", 1, 2, "PNG", 150, 95);
         };
 
         // User triggers export images

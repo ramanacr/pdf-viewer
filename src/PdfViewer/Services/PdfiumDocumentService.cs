@@ -1118,7 +1118,7 @@ public class PdfiumDocumentService : IPdfDocumentService
     }
 
     /// <summary>
-    /// Exports pages to image files (PNG/JPEG).
+    /// Exports pages to image files (PNG, JPEG, TIFF or BMP).
     /// </summary>
     public async Task ExportPagesToImagesAsync(
         string outputDirectory,
@@ -1127,6 +1127,7 @@ public class PdfiumDocumentService : IPdfDocumentService
         int endPage,
         string format = "PNG",
         int dpi = 300,
+        int jpegQuality = PageImageFormats.DefaultJpegQuality,
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
@@ -1137,14 +1138,11 @@ public class PdfiumDocumentService : IPdfDocumentService
                 if (_document == null || _document.IsInvalid)
                     throw new InvalidOperationException("No document is open.");
 
+                string ext = PageImageFormats.Extension(format);
                 Directory.CreateDirectory(outputDirectory);
                 startPage = Math.Max(1, startPage);
                 endPage = Math.Min(PageCount, endPage);
                 int totalToExport = endPage - startPage + 1;
-
-                string ext = format.Equals("JPEG", StringComparison.OrdinalIgnoreCase) || format.Equals("JPG", StringComparison.OrdinalIgnoreCase)
-                    ? "jpg"
-                    : "png";
 
                 for (int p = startPage; p <= endPage; p++)
                 {
@@ -1153,15 +1151,9 @@ public class PdfiumDocumentService : IPdfDocumentService
                     var bitmap = RenderPage(p, dpi, 0);
                     if (bitmap != null)
                     {
-                        string outPath = Path.Combine(outputDirectory, $"{fileNamePrefix}_page_{p:D3}.{ext}");
+                        string outPath = Path.Combine(outputDirectory, $"{fileNamePrefix}_page_{p:D4}.{ext}");
                         using var fileStream = new FileStream(outPath, FileMode.Create, FileAccess.Write);
-
-                        BitmapEncoder encoder = ext == "jpg"
-                            ? new JpegBitmapEncoder { QualityLevel = 95 }
-                            : new PngBitmapEncoder();
-
-                        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-                        encoder.Save(fileStream);
+                        PageImageFormats.Save(bitmap, ext, fileStream, jpegQuality);
                     }
 
                     double pct = (double)(p - startPage + 1) / totalToExport * 100.0;

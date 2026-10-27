@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
 using PdfViewer.Models;
+using PdfViewer.Services;
 
 namespace PdfViewer.Views.Dialogs;
 
@@ -17,6 +18,7 @@ public partial class ExportImagesDialog : Window
     public int EndPage { get; private set; } = 1;
     public string SelectedFormat { get; private set; } = "PNG";
     public int SelectedDpi { get; private set; } = 300;
+    public int SelectedJpegQuality { get; private set; } = PageImageFormats.DefaultJpegQuality;
 
     public ExportImagesDialog(DocumentMetadata metadata, int currentPageNumber)
     {
@@ -68,6 +70,11 @@ public partial class ExportImagesDialog : Window
             SelectedDpi = dpi;
         }
 
+        if (QualityComboBox.SelectedItem is ComboBoxItem qualityItem && int.TryParse(qualityItem.Tag?.ToString(), out int quality))
+        {
+            SelectedJpegQuality = quality;
+        }
+
         if (AllPagesRadio.IsChecked == true)
         {
             StartPage = 1;
@@ -92,6 +99,13 @@ public partial class ExportImagesDialog : Window
 
         DialogResult = true;
         Close();
+    }
+
+    // The quality setting applies to JPEG only.
+    private void FormatComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (QualityComboBox != null)
+            QualityComboBox.IsEnabled = (FormatComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "JPEG";
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
