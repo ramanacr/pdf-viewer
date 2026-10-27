@@ -231,12 +231,80 @@ public class PdfServiceTests : IDisposable
             format: "PNG",
             dpi: 150);
 
-        string page1File = Path.Combine(exportDir, "doc_page_001.png");
-        string page2File = Path.Combine(exportDir, "doc_page_002.png");
+        string page1File = Path.Combine(exportDir, "doc_page_0001.png");
+        string page2File = Path.Combine(exportDir, "doc_page_0002.png");
 
         Assert.True(File.Exists(page1File), "Page 1 exported image should exist");
         Assert.True(File.Exists(page2File), "Page 2 exported image should exist");
         Assert.True(new FileInfo(page1File).Length > 0);
+    }
+
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExportPagesToImagesInEveryFormat(string engineName)
+    {
+        // Issue #77: JPEG, TIFF and BMP besides PNG. Each file must decode, at the page's pixel size,
+        // under the name prefix_page_0001.ext.
+        string pdfPath = CreateSamplePdf("export_formats.pdf", 2);
+        using var service = TestEngines.CreateService(engineName);
+        await service.OpenDocumentAsync(pdfPath);
+        var expected = (await service.RenderPageAsync(1, 72, 0))!;
+
+        foreach (var (format, ext, decoderType) in new[]
+        {
+            ("PNG", "png", typeof(System.Windows.Media.Imaging.PngBitmapDecoder)),
+            ("JPEG", "jpg", typeof(System.Windows.Media.Imaging.JpegBitmapDecoder)),
+            ("jpg", "jpg", typeof(System.Windows.Media.Imaging.JpegBitmapDecoder)),
+            ("TIFF", "tiff", typeof(System.Windows.Media.Imaging.TiffBitmapDecoder)),
+            ("BMP", "bmp", typeof(System.Windows.Media.Imaging.BmpBitmapDecoder)),
+        })
+        {
+            string exportDir = Path.Combine(_testDir, $"formats_{format}");
+            await service.ExportPagesToImagesAsync(exportDir, "doc", 1, 2, format, 72);
+
+            for (int page = 1; page <= 2; page++)
+            {
+                string file = Path.Combine(exportDir, $"doc_page_{page:D4}.{ext}");
+                Assert.True(File.Exists(file), $"{format}: {file} was not written");
+                using var stream = File.OpenRead(file);
+                var decoder = System.Windows.Media.Imaging.BitmapDecoder.Create(stream,
+                    System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                Assert.IsType(decoderType, decoder);
+                Assert.Equal(expected.PixelWidth, decoder.Frames[0].PixelWidth);
+                Assert.Equal(expected.PixelHeight, decoder.Frames[0].PixelHeight);
+            }
+            Assert.Equal(2, Directory.GetFiles(exportDir).Length);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExportPagesToJpegHonoursTheQuality(string engineName)
+    {
+        string pdfPath = CreateSamplePdf("export_quality.pdf", 1);
+        using var service = TestEngines.CreateService(engineName);
+        await service.OpenDocumentAsync(pdfPath);
+
+        string low = Path.Combine(_testDir, "q_low"), high = Path.Combine(_testDir, "q_high");
+        await service.ExportPagesToImagesAsync(low, "doc", 1, 1, "JPEG", 150, jpegQuality: 10);
+        await service.ExportPagesToImagesAsync(high, "doc", 1, 1, "JPEG", 150, jpegQuality: 100);
+
+        long lowSize = new FileInfo(Path.Combine(low, "doc_page_0001.jpg")).Length;
+        long highSize = new FileInfo(Path.Combine(high, "doc_page_0001.jpg")).Length;
+        Assert.True(lowSize < highSize, $"quality 10 wrote {lowSize} bytes, quality 100 wrote {highSize}");
+    }
+
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestExportPagesToImagesRefusesAnUnknownFormat(string engineName)
+    {
+        string pdfPath = CreateSamplePdf("export_unknown.pdf", 1);
+        using var service = TestEngines.CreateService(engineName);
+        await service.OpenDocumentAsync(pdfPath);
+
+        string exportDir = Path.Combine(_testDir, "unknown");
+        await Assert.ThrowsAsync<NotSupportedException>(() => service.ExportPagesToImagesAsync(exportDir, "doc", 1, 1, "GIF", 72));
+        Assert.False(Directory.Exists(exportDir) && Directory.GetFiles(exportDir).Length > 0, "nothing is written for an unknown format");
     }
 
     [Theory]

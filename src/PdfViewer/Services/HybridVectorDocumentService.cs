@@ -1174,7 +1174,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return list;
     }
 
-    /// <summary>Pages as PNG or JPEG files, drawn by the same renderer as the screen (PDFium only in PDFium mode).</summary>
+    /// <summary>Pages as PNG, JPEG, TIFF or BMP files, drawn by the same renderer as the screen (PDFium only in PDFium mode).</summary>
     public async Task ExportPagesToImagesAsync(
         string outputDirectory,
         string fileNamePrefix,
@@ -1182,30 +1182,28 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         int endPage,
         string format = "PNG",
         int dpi = 300,
+        int jpegQuality = PageImageFormats.DefaultJpegQuality,
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
         if (!IsDocumentLoaded)
             throw new InvalidOperationException("No document is open.");
+        string ext = PageImageFormats.Extension(format);
         System.IO.Directory.CreateDirectory(outputDirectory);
         startPage = Math.Max(1, startPage);
         endPage = Math.Min(PageCount, endPage);
         int total = Math.Max(1, endPage - startPage + 1);
-        bool jpeg = format.Equals("JPEG", StringComparison.OrdinalIgnoreCase) || format.Equals("JPG", StringComparison.OrdinalIgnoreCase);
-        string ext = jpeg ? "jpg" : "png";
         for (int p = startPage; p <= endPage; p++)
         {
             ct.ThrowIfCancellationRequested();
             var bitmap = await RenderPageAsync(p, dpi, 0, ct).ConfigureAwait(false);
             if (bitmap != null)
             {
-                string outPath = System.IO.Path.Combine(outputDirectory, $"{fileNamePrefix}_page_{p:D3}.{ext}");
+                string outPath = System.IO.Path.Combine(outputDirectory, $"{fileNamePrefix}_page_{p:D4}.{ext}");
                 await Task.Run(() =>
                 {
-                    BitmapEncoder encoder = jpeg ? new JpegBitmapEncoder { QualityLevel = 95 } : new PngBitmapEncoder();
-                    encoder.Frames.Add(BitmapFrame.Create(bitmap));
                     using var file = new System.IO.FileStream(outPath, System.IO.FileMode.Create, System.IO.FileAccess.Write);
-                    encoder.Save(file);
+                    PageImageFormats.Save(bitmap, ext, file, jpegQuality);
                 }, ct).ConfigureAwait(false);
             }
             progress?.Report((double)(p - startPage + 1) / total * 100.0);

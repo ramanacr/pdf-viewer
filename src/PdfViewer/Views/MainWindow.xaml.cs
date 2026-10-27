@@ -411,7 +411,7 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
-    private (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi) ShowExportImagesDialog(DocumentMetadata metadata)
+    private (bool Confirmed, string OutDir, string Prefix, int Start, int End, string Format, int Dpi, int JpegQuality) ShowExportImagesDialog(DocumentMetadata metadata)
     {
         var dialog = new ExportImagesDialog(metadata, _vm.CurrentPageNumber)
         {
@@ -420,10 +420,10 @@ public partial class MainWindow : Window
 
         if (dialog.ShowDialog() == true)
         {
-            return (true, dialog.OutputDirectory, dialog.FileNamePrefix, dialog.StartPage, dialog.EndPage, dialog.SelectedFormat, dialog.SelectedDpi);
+            return (true, dialog.OutputDirectory, dialog.FileNamePrefix, dialog.StartPage, dialog.EndPage, dialog.SelectedFormat, dialog.SelectedDpi, dialog.SelectedJpegQuality);
         }
 
-        return (false, string.Empty, string.Empty, 1, 1, "PNG", 300);
+        return (false, string.Empty, string.Empty, 1, 1, "PNG", 300, PageImageFormats.DefaultJpegQuality);
     }
 
     private PrintRequest? ShowPrintPreviewDialog(IPdfDocumentService docService, int currentPage)
