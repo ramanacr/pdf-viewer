@@ -835,7 +835,11 @@ internal readonly record struct PageGeometry(double Dpi, int PixelWidth, int Pix
         double wPts = sideways ? crop.Height : crop.Width, hPts = sideways ? crop.Width : crop.Height;
         int pw = request.TargetWidthPixels > 0 ? request.TargetWidthPixels : (int)Math.Max(1, Math.Round(wPts * dpi / 72.0));
         int ph = request.TargetHeightPixels > 0 ? request.TargetHeightPixels : (int)Math.Max(1, Math.Round(hPts * dpi / 72.0));
-        return new PageGeometry(dpi, pw, ph, total, crop);
+        // A size in pixels sets the resolution: it is reported, and fallback regions are fetched at it.
+        // When the horizontal and vertical resolutions differ, the larger keeps fallback pixels sharp.
+        double dpiX = request.TargetWidthPixels > 0 && wPts > 0 ? pw * 72.0 / wPts : dpi;
+        double dpiY = request.TargetHeightPixels > 0 && hPts > 0 ? ph * 72.0 / hPts : dpi;
+        return new PageGeometry(Math.Max(dpiX, dpiY), pw, ph, total, crop);
     }
 
     /// <summary>Unrotated top-left page points → output pixels.</summary>

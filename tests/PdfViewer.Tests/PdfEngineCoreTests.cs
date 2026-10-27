@@ -902,31 +902,49 @@ public class PdfEngineCoreTests
         }
     }
 
-#if PDFIUM_RENDERER
-    // PDFium-only until the engine gap closes: the vector renderer reports the requested DPI,
-    // not the effective one, when the raster size is set in pixels.
-    [Fact]
-    public async Task TestRenderReportsEffectiveDpiWhenSizedByPixels()
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRenderReportsEffectiveDpiWhenSizedByPixels(string engineName)
     {
         // Regression test: RenderedPage.Dpi echoed request.Dpi even when the raster size was
         // driven by TargetWidth/HeightPixels, so consumers using it for physical sizing
         // (BitmapSource.Create) rendered at the wrong scale.
         string samplePdf = GetOrCreateSamplePdf();
-        using IPdfEngine engine = new PdfiumEngine();
+        using IPdfEngine engine = TestEngines.Create(engineName);
         await using var doc = await engine.OpenDocumentAsync(samplePdf);
 
-        // 612pt wide page rasterized to 1224px => 144 DPI, regardless of the requested 96.
+        // 612pt wide page rasterized to 1224px => 144 DPI, regardless of the requested 72.
         using var rendered = await engine.Renderer.RenderPageAsync(doc, new RenderRequest
         {
             PageNumber = 1,
-            Dpi = 96.0,
+            Dpi = 72.0,
             TargetWidthPixels = 1224,
             TargetHeightPixels = 1584
         });
 
         Assert.Equal(144.0, rendered.Dpi, precision: 1);
     }
-#endif
+
+    [Theory]
+    [MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]
+    public async Task TestRenderReportsTheLargerDpiWhenTheAxesDiffer(string engineName)
+    {
+        // Every engine reports the larger of the two resolutions when a pixel size stretches the page.
+        string samplePdf = GetOrCreateSamplePdf();
+        using IPdfEngine engine = TestEngines.Create(engineName);
+        await using var doc = await engine.OpenDocumentAsync(samplePdf);
+
+        // 612 x 792 pt to 1224 x 2376 px => 144 DPI across, 216 DPI down.
+        using var rendered = await engine.Renderer.RenderPageAsync(doc, new RenderRequest
+        {
+            PageNumber = 1,
+            Dpi = 72.0,
+            TargetWidthPixels = 1224,
+            TargetHeightPixels = 2376
+        });
+
+        Assert.Equal(216.0, rendered.Dpi, precision: 1);
+    }
 
 #if PDFIUM_RENDERER
     // PDFium-only until the engine gap closes: the vector renderer fails an oversized render

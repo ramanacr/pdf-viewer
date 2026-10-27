@@ -81,7 +81,11 @@ public class RenderedPage : IDisposable
     public int HeightPixels { get; }
     /// <summary>The number of bytes per pixel row (at least 4 x <see cref="WidthPixels"/>).</summary>
     public int Stride { get; }
-    /// <summary>The resolution the page was rendered at.</summary>
+    /// <summary>
+    /// The resolution the page was rendered at. For a request sized in pixels it is the resolution of
+    /// that size, not <see cref="RenderRequest.Dpi"/>; when the horizontal and vertical resolutions
+    /// differ, it is the larger.
+    /// </summary>
     public double Dpi { get; }
     /// <summary>The viewer rotation of the request.</summary>
     public PageRotation Rotation { get; }

@@ -77,9 +77,11 @@ public class RendererBehaviourTests
     private sealed class SolidProvider : IPdfFallbackProvider
     {
         public int Calls;
+        public double LastDpi;
         public ValueTask<RenderedPage?> RenderFallbackRegionAsync(PdfFallbackToken token, double dpi, CancellationToken cancellationToken = default)
         {
             Calls++;
+            LastDpi = dpi;
             int w = (int)Math.Ceiling(token.Bounds.Width * dpi / 72), h = (int)Math.Ceiling(token.Bounds.Height * dpi / 72);
             var buffer = new byte[w * h * 4];
             for (int i = 0; i < buffer.Length; i += 4) { buffer[i] = 0; buffer[i + 1] = 0; buffer[i + 2] = 200; buffer[i + 3] = 255; } // BGRA red
@@ -202,5 +204,29 @@ public class RendererBehaviourTests
         var list = await doc.GetPageDisplayListAsync(1);
         foreach (var request in new[] { new RenderRequest { Dpi = 96 }, new RenderRequest { Dpi = 150, Rotation = PageRotation.Rotate90 }, new RenderRequest { TargetWidthPixels = 300, TargetHeightPixels = 200 } })
             Assert.Equal(Direct2D.Direct2DVectorRenderer.OutputSize(list, request), SkiaVectorRenderer.OutputSize(list, request));
+    }
+
+    [Fact]
+    public async Task PixelSizedRender_ReportsTheDpiOfThePixelSize()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("0 g 0 0 10 10 re f", mediaBox: "[0 0 612 792]");
+        using var doc = await PdfVectorDocument.OpenAsync(b.Build());
+        var list = await doc.GetPageDisplayListAsync(1);
+        var request = new RenderRequest { PageNumber = 1, Dpi = 72, TargetWidthPixels = 1224, TargetHeightPixels = 1584 };
+        using var page = (await Parity.Skia.RenderAsync(list, request, null, null, false, CancellationToken.None)).Page;
+        Assert.Equal(1224, page.WidthPixels);
+        Assert.Equal(144.0, page.Dpi, 6);
+    }
+
+    [Fact]
+    public async Task PixelSizedRender_FetchesFallbackRegionsAtTheLargerDpi()
+    {
+        // A 200 x 200 pt page at 400 x 600 px: 144 dpi across, 216 dpi down.
+        var provider = new SolidProvider();
+        var request = new RenderRequest { PageNumber = 1, Dpi = 72, TargetWidthPixels = 400, TargetHeightPixels = 600 };
+        using var page = (await Parity.Skia.RenderAsync(ListWithFallback(), request, provider, null, false, CancellationToken.None)).Page;
+        Assert.Equal(216.0, provider.LastDpi, 6);
+        Assert.Equal(216.0, page.Dpi, 6);
     }
 }
