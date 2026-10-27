@@ -59,7 +59,8 @@ document. Nothing of this leaves your computer, and deleting that folder removes
   browser's local storage keeps only your theme and side-panel choices. The site is hosted on
   GitHub Pages, which receives your IP address like any web server.
 - **Android app** (proof of concept). It asks for no permission, including no internet access.
-  It opens only the file you choose in the system document picker.
+  It opens only the file you choose in the system document picker, and writes only a copy that you
+  name in the system's save dialog. Annotations and form values stay in the document.
 
 ## Code signing
 

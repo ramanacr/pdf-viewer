@@ -81,7 +81,8 @@ shortcuts are in [docs/features.md](docs/features.md).
   with Arabic and Indic shaping. There are no cookies, no analytics and no third-party requests.
   See [its README](src/PdfViewer.Web/README.md) for features and limits.
 - **Android proof of concept** (`src/PdfViewer.Android`): .NET for Android with the same engine and
-  Skia renderer. It asks for no permission. See [its README](src/PdfViewer.Android/README.md).
+  Skia renderer. It reads, fills forms and annotates (highlight, ink, notes), and saves a copy. It
+  asks for no permission. See [its README](src/PdfViewer.Android/README.md).
 
 All three use the same engine. See [Architecture](docs/architecture.md).
 

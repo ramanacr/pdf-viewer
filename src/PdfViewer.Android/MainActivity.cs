@@ -11,6 +11,7 @@ using Android.Views;
 using Android.Views.InputMethods;
 using Android.Widget;
 using PdfViewer.Web.Engine;
+using PdfViewer.Web.Engine.Annotations;
 using Color = Android.Graphics.Color;
 using Uri = Android.Net.Uri;
 
@@ -20,7 +21,8 @@ namespace PdfViewer.Android;
 /// The reader: a toolbar with a menu, a search bar, a selection bar, the pages and the page grid.
 /// A document comes from the system document picker (Storage Access Framework,
 /// ACTION_OPEN_DOCUMENT), from another app's "Open with" (ACTION_VIEW) or from the recent list;
-/// it is read into memory and never written anywhere. The activity is kept across rotation and
+/// it is read into memory. Edits (annotations, form values; MainActivity.Edits.cs) are saved only as a
+/// copy the reader picks with the system's save dialog. The activity is kept across rotation and
 /// dark-mode switches; when Android ends the process in the background, the saved state reopens
 /// the document at the same place.
 /// </summary>
@@ -28,7 +30,7 @@ namespace PdfViewer.Android;
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.ScreenLayout
                            | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode | ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden)]
 [IntentFilter([Intent.ActionView], Categories = [Intent.CategoryDefault], DataScheme = "content", DataMimeType = "application/pdf")]
-public sealed class MainActivity : Activity
+public sealed partial class MainActivity : Activity
 {
     private const int OpenDocumentRequest = 1;
 
@@ -83,7 +85,7 @@ public sealed class MainActivity : Activity
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);
-        if (intent is { Action: Intent.ActionView, Data: { } uri }) _ = OpenUriAsync(uri, null);
+        if (intent is { Action: Intent.ActionView, Data: { } uri }) AfterDiscard(() => _ = OpenUriAsync(uri, null));
     }
 
     public override void OnConfigurationChanged(Configuration newConfig)
@@ -138,11 +140,13 @@ public sealed class MainActivity : Activity
         _title.SetPadding((int)Dp(8), 0, (int)Dp(8), 0);
         _pageIndicator = ToolButton("", "Go to page", (_, _) => AskPage());
         _searchButton = ToolButton("Search", "Search the document", (_, _) => ShowSearch(true));
-        _menuButton = ToolButton("⋮", "More: outline, pages, share, night pages, recent files", (_, _) => ShowMenu());
+        _annotateButton = ToolButton("✎", "Annotate: draw, notes, undo and redo", (_, _) => ShowAnnotateBar(_annotateBar.Visibility != ViewStates.Visible));
+        _menuButton = ToolButton("⋮", "More: outline, pages, annotations, save a copy, share, night pages, recent files", (_, _) => ShowMenu());
         _toolbar.AddView(_openButton);
         _toolbar.AddView(_title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _toolbar.AddView(_pageIndicator);
         _toolbar.AddView(_searchButton);
+        _toolbar.AddView(_annotateButton);
         _toolbar.AddView(_menuButton);
         root.AddView(_toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
@@ -167,17 +171,19 @@ public sealed class MainActivity : Activity
         _searchBar.AddView(_nextButton);
         _searchBar.AddView(_closeSearchButton);
         root.AddView(_searchBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
+        root.AddView(BuildAnnotateBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
         _selectionBar = Bar();
         _selectionBar.Visibility = ViewStates.Gone;
         _selectionLabel = new TextView(this) { Text = "Text selected" };
         _selectionLabel.SetPadding((int)Dp(8), 0, (int)Dp(8), 0);
         _copyButton = ToolButton("Copy", "Copy the selected text", (_, _) => CopySelection());
-        _selectPageButton = ToolButton("Select page", "Select all text of this page", (_, _) => _pages.SelectPage());
+        _selectPageButton = ToolButton("All", "Select all text of this page", (_, _) => _pages.SelectPage());
         _closeSelectionButton = ToolButton("✕", "End the selection", (_, _) => _pages.ClearSelection());
         _selectionBar.AddView(_selectionLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _selectionBar.AddView(_copyButton);
         _selectionBar.AddView(_selectPageButton);
+        AddMarkupButtons(_selectionBar);
         _selectionBar.AddView(_closeSelectionButton);
 
         var frame = new FrameLayout(this);
@@ -185,6 +191,7 @@ public sealed class MainActivity : Activity
         _pages.PageChanged += (page, count) => _pageIndicator.Text = count > 0 ? $"{page} / {count}" : "";
         _pages.Problem += message => Toast.MakeText(this, message, ToastLength.Short)?.Show();
         _pages.SelectionChanged += active => _selectionBar.Visibility = active ? ViewStates.Visible : ViewStates.Gone;
+        ConnectEdits();
         frame.AddView(_pages, Fill());
         _thumbnails = new ThumbnailView(this) { Visibility = ViewStates.Gone };
         _thumbnails.PageChosen += page =>
@@ -251,11 +258,11 @@ public sealed class MainActivity : Activity
         var bar = dark ? Color.ParseColor("#1B1D21") : Color.ParseColor("#ECEFF3");
         var text = TextColor;
         var accent = AccentColor;
-        foreach (var b in new[] { _toolbar, _searchBar, _selectionBar }) b.SetBackgroundColor(bar);
+        foreach (var b in new[] { _toolbar, _searchBar, _selectionBar, _annotateBar }) b.SetBackgroundColor(bar);
         _empty.SetBackgroundColor(dark ? Color.ParseColor("#121316") : Color.ParseColor("#F7F8FA"));
         foreach (var t in new[] { _title, _searchCount, _searchText, _emptyText, _selectionLabel }) t.SetTextColor(text);
         _searchText.SetHintTextColor(dark ? Color.ParseColor("#8C9199") : Color.ParseColor("#6C717A"));
-        foreach (var b in new[] { _openButton, _pageIndicator, _searchButton, _menuButton, _prevButton, _nextButton, _closeSearchButton, _copyButton, _selectPageButton, _closeSelectionButton })
+        foreach (var b in new[] { _openButton, _pageIndicator, _searchButton, _annotateButton, _menuButton, _prevButton, _nextButton, _closeSearchButton, _copyButton, _selectPageButton, _closeSelectionButton }.Concat(EditButtons))
             b.SetTextColor(accent);
         ShowRecent();
         // Android 15 draws apps edge to edge and ignores bar colours; earlier versions take them.
@@ -280,8 +287,9 @@ public sealed class MainActivity : Activity
         _empty.Visibility = open ? ViewStates.Gone : ViewStates.Visible;
         _pages.Visibility = open ? ViewStates.Visible : ViewStates.Gone;
         if (!open) ShowThumbnails(false);
-        _searchButton.Enabled = _pageIndicator.Enabled = open;
-        _searchButton.Alpha = open ? 1f : 0.4f;
+        _searchButton.Enabled = _pageIndicator.Enabled = _annotateButton.Enabled = open;
+        _searchButton.Alpha = _annotateButton.Alpha = open ? 1f : 0.4f;
+        if (!open) ShowAnnotateBar(false);
         _title.Text = !open ? "PDF Viewer" : _doc!.Title ?? _fileName ?? "Document";
         if (!open)
         {
@@ -317,7 +325,7 @@ public sealed class MainActivity : Activity
             row.Ellipsize = TextUtils.TruncateAt.Middle;
             row.SetMinHeight((int)Dp(44));
             row.Gravity = GravityFlags.CenterVertical;
-            row.Click += (_, _) => OpenRecent(entry);
+            row.Click += (_, _) => AfterDiscard(() => OpenRecent(entry));
             row.LongClick += (_, _) => ForgetRecent(entry.Location);
             _recentList.AddView(row);
         }
@@ -338,15 +346,19 @@ public sealed class MainActivity : Activity
         night.SetChecked(_pages.NightPages);
         night.SetEnabled(open);
         items.Add(0, 5, 5, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
+        items.Add(0, 6, 3, "Annotations")!.SetEnabled(open && _session != null);
+        items.Add(0, 7, 3, "Save a copy")!.SetEnabled(open);
         menu.MenuItemClick += (_, e) =>
         {
             switch (e.Item?.ItemId)
             {
                 case 1: _ = ShowOutlineAsync(); break;
                 case 2: ShowThumbnails(true); break;
-                case 3: Share(); break;
+                case 3: ShareChecked(); break;
                 case 4: _pages.NightPages = !_pages.NightPages; break;
                 case 5: AskRecent(); break;
+                case 6: ShowAnnotationList(); break;
+                case 7: PickSaveCopy(); break;
             }
         };
         menu.Show();
@@ -428,7 +440,7 @@ public sealed class MainActivity : Activity
         if (items.Count == 0) return;
         new AlertDialog.Builder(this)
             .SetTitle("Recent files")!
-            .SetItems(items.Select(d => $"{d.Name}  ·  page {d.Page}").ToArray(), (_, e) => OpenRecent(items[e.Which]))!
+            .SetItems(items.Select(d => $"{d.Name}  ·  page {d.Page}").ToArray(), (_, e) => AfterDiscard(() => OpenRecent(items[e.Which])))!
             .SetNeutralButton("Clear list", (_, _) =>
             {
                 foreach (var d in items) ReleasePermission(d.Location);
@@ -472,7 +484,9 @@ public sealed class MainActivity : Activity
 
     // ------------------------------------------------------------------ opening
 
-    private void PickDocument()
+    private void PickDocument() => AfterDiscard(PickDocumentNow);
+
+    private void PickDocumentNow()
     {
         // The system picker grants this app access to the one file chosen; no storage permission is needed.
         var intent = new Intent(Intent.ActionOpenDocument);
@@ -485,6 +499,11 @@ public sealed class MainActivity : Activity
     protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
     {
         base.OnActivityResult(requestCode, resultCode, data);
+        if (requestCode == SaveCopyRequest)
+        {
+            SaveDialogAnswered(resultCode == Result.Ok ? data?.Data : null);
+            return;
+        }
         if (requestCode == OpenDocumentRequest && resultCode == Result.Ok && data?.Data is { } uri)
         {
             RememberPosition();
@@ -590,6 +609,18 @@ public sealed class MainActivity : Activity
             return;
         }
 
+        // The reader's edits: the file's annotations and, when it allows form filling, its fields.
+        ViewerEditSession? session = null;
+        try
+        {
+            session = await Task.Run(() => ViewerEditSession.StartAsync(opened));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Toast.MakeText(this, $"This document cannot be edited here ({ex.GetType().Name}).", ToastLength.Short)?.Show();
+        }
+        if (session?.Problem is { } problem) Toast.MakeText(this, problem, ToastLength.Short)?.Show();
+
         var previous = _doc;
         _search?.Cancel();
         _hits = new List<ViewerSearchHit>();
@@ -602,6 +633,7 @@ public sealed class MainActivity : Activity
         _uri = uri;
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
+        StartEdits(session);
         if (view is { } v) _pages.RestoreView(v.TopLeft, v.Zoom);
         // Files the app may open again (a persisted grant) go to the top of the recent list.
         if (HasPersistedPermission(uri))
@@ -765,6 +797,16 @@ public sealed class MainActivity : Activity
             ShowSearch(false);
             return;
         }
+        if (_annotateBar.Visibility == ViewStates.Visible)
+        {
+            ShowAnnotateBar(false);
+            return;
+        }
+        if (_session?.IsDirty == true)
+        {
+            AfterDiscard(Finish);
+            return;
+        }
 #pragma warning disable CA1422 // the platform's own back handling, still the behaviour on every supported version
         base.OnBackPressed();
 #pragma warning restore CA1422
@@ -776,6 +818,7 @@ public sealed class MainActivity : Activity
         var doc = _doc;
         _doc = null;
         _pages.SetDocument(null);
+        StartEdits(null);
         _thumbnails.Release();
         if (doc != null) _ = doc.DisposeAsync().AsTask();
         base.OnDestroy();

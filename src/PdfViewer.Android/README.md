@@ -4,14 +4,15 @@ An Android app that runs **the project's own C# PDF engine, `PdfEngine.Vector`, 
 and draws pages with the same portable Skia renderer (`PdfEngine.Vector.Skia`) as the browser
 demo. One pure-C# engine runs on Windows, in the browser and on Android.
 
-Status: **phase 1 of the reader** (a preview, not in a store). It builds, and it has been run on an
-Android 13 emulator (see [what is verified](#what-is-verified)). It has not been run on a physical
-phone yet.
+Status: **phase 2 of the reader** (a preview, not in a store): phase 1 reads, phase 2 fills forms
+and annotates. It builds, and it has been run on an Android 13 emulator (see
+[what is verified](#what-is-verified)). It has not been run on a physical phone yet.
 
 - **No permissions at all.** The manifest has no `INTERNET` permission and no storage
   permission. A document comes through the system document picker, which grants access to the
-  one file the user picks; the app keeps that grant for its recent list. Backups are off
-  (`android:allowBackup="false"`).
+  one file the user picks; the app keeps that grant for its recent list. A copy with edits is
+  written through the system's save dialog, which grants access to the one file the user names.
+  Backups are off (`android:allowBackup="false"`).
 - **No telemetry.** No analytics, no crash reporting, no network code.
 - **Document JavaScript never runs.** The engine has no script interpreter.
 - Messages on screen are written for users or name an exception type. They never quote
@@ -28,8 +29,8 @@ phone yet.
 | Deep zoom | Each page has one bitmap of at most 2.4 megapixels. At a deeper zoom, the part of the page in view is drawn over it in 512 × 512 tiles at the zoom's own scale (`PageTiles`), nearest the centre first, so 8× stays sharp. Tiles are kept in a 48 MB LRU cache (`TileCache`), bitmaps in a 96 MB one; while a pinch runs, the last tiles are stretched. |
 | Outline | **⋮ → Outline**: the document's bookmarks as an indented list; tap one to go to its page. |
 | Pages | **⋮ → Pages**: a grid of page thumbnails, the current page marked; tap one to go to it. |
-| Text selection | Long press selects the word under the finger; two handles extend the selection (on one page); **Copy** puts it on the clipboard, **Select page** takes the whole page. The rules are the desktop viewer's (`ViewerTextLayout`): lines, words, selection bands, line-end hyphens removed. A document that does not allow copying (its permissions, ISO 32000-2 Table 22) selects nothing and says so. |
-| Share | **⋮ → Share**: the system share sheet with the document's own content URI and read access for the chosen app. No file is copied and no permission is needed. |
+| Text selection | Long press selects the word under the finger; two handles extend the selection (on one page); **Copy** puts it on the clipboard, **All** takes the whole page. The rules are the desktop viewer's (`ViewerTextLayout`): lines, words, selection bands, line-end hyphens removed. A document that does not allow copying (its permissions, ISO 32000-2 Table 22) selects nothing and says so. |
+| Share | **⋮ → Share**: the system share sheet with the document's own content URI and read access for the chosen app. No file is copied and no permission is needed. It sends the file **as opened**: with unsaved edits the app says so first and offers to save a copy (share that copy to send the edits). |
 | Recent files | The empty screen and **⋮ → Recent files** list up to 12 documents with their last page; long press removes one. The app keeps the picker's grant (`takePersistableUriPermission`) and gives it back when a file leaves the list. The list (`files/recent.json`) holds locations, file names and positions only: no document text, no passwords. A file opened with `ACTION_VIEW` has no grant to keep and is not listed. |
 | Restore | When Android ends the process in the background, the saved state reopens the document at the same page, place and zoom (a password is asked again; it is never stored). |
 | Page indicator | "3 / 24" in the toolbar. Tap it to go to a page. |
@@ -39,6 +40,15 @@ phone yet.
 | Dark mode | The toolbar follows the system's dark theme, also when it switches while the app is open. |
 | Rotation | The document stays open; the page at the top of the view stays there. |
 | CMYK images | CMYK and YCCK JPEG images are decoded (the Skia backend's managed decoder) and drawn as on Windows. |
+| Existing annotations and fields | The engine draws each annotation's and widget's appearance into the page. Fillable fields are tinted light blue (read-only ones are not). |
+| Form filling | Tap a field. A text field opens a dialog with the soft keyboard: one line or several, hidden for a password field, at most the field's `/MaxLen` characters. A check box or radio button switches at once. A combo box or list box offers its options (several for a multi-select list; an editable combo box also takes typed text). Read-only fields say so and do not change. After each value the engine writes it with a new appearance and recalculates calculated fields (formats, ranges and simple sums, the desktop's rules, **without** running the document's JavaScript); a value that a field's rule refuses goes back and the rule's message is shown. |
+| Markup | Select text (long press, handles), then **Highlight**, **Underline** or **Strike** in the selection bar. |
+| Ink and notes | **✎** opens the annotation bar. **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. |
+| Choose, edit, delete | Tap an annotation to choose it (outlined); a note (or any annotation with text) opens its comment to read or change. **Delete** removes the chosen one with its replies. |
+| Undo and redo | **↶** and **↷** in the annotation bar, for every annotation change (the store keeps 100 steps). |
+| Annotation list | **⋮ → Annotations**: every annotation with its page, kind and the start of its text, replies under the annotation they answer; tap one to go to it. |
+| Save a copy | **⋮ → Save a copy** opens the system's save dialog (`ACTION_CREATE_DOCUMENT`) with "*name* (edited).pdf". The bytes are the file as opened plus one incremental update with the edits (a damaged file is written whole, as on the web). Opening another file or leaving with unsaved edits asks first: save a copy, discard, or cancel. If writing fails, the unfinished file is removed. If Android ends the app while the save dialog is open, the edits are gone: the file the dialog created is removed and the reader is told, never written with other bytes. |
+| Signed and certified files | The web viewer's rules (Acrobat's): a certification that allows no changes allows no edits, one for form filling allows only that, and a signed file is changed only by an incremental update, so its signatures stay valid. Before the first change the reader is told that changes are added as a new revision. A document whose permissions do not allow annotations or form filling is not changed. |
 
 ## Architecture
 
@@ -46,8 +56,10 @@ phone yet.
  Android app (PdfViewer.Android, net9.0-android)
  ┌───────────────────────────────────────────────────────────────────────────┐
  │ MainActivity     toolbar, menu, search and selection bars, document       │
- │                  picker, outline, share, recent files, saved state       │
- │ PageView         gestures, selection handles, render loop, tiles          │
+ │                  picker, outline, share, recent files, saved state;       │
+ │                  .Edits: fields, markup, ink, notes, list, save a copy    │
+ │ PageView         gestures, selection handles, render loop, tiles,         │
+ │                  field tint, ink strokes, taps on fields and annotations  │
  │ ThumbnailView    page grid                                                │
  │ SkiaView         a View that Skia draws into (Android bitmap pixels)      │
  ├───────────────────────────────────────────────────────────────────────────┤
@@ -58,6 +70,7 @@ phone yet.
  │   PageImageCache<T>     rendered pages within a byte budget               │
  │   ViewerTextLayout      selection geometry and copied text                │
  │   ThumbnailGridLayout, ViewerOutline, RecentDocuments                     │
+ │   ViewerEditSession     edits, their rules, writing, undo (shared store)  │
  ├───────────────────────────────────────────────────────────────────────────┤
  │ PdfEngine.Vector        parser, content interpreter → display list, text  │
  │ PdfEngine.Vector.Skia   Skia replay of the display list                   │
@@ -183,6 +196,9 @@ and one encrypted without the copy permission). Screenshots were taken, not comm
 | Night pages, dark mode, rotation | Pages are inverted; dark mode and landscape keep the document open (proof of concept run). |
 | Permissions | The merged manifest has no `uses-permission` element (also checked by CI); `dumpsys package` lists no runtime permission. |
 | Logs | No crash, no unhandled exception and no SELinux denial for the app in `logcat` during the run. |
+| Form filling (phase 2) | With a test form written in code: a tap on the name field opens the dialog with the soft keyboard; "Ada Lovelace" is drawn into the field. The comb field with `/MaxLen 5` takes only "12345" of nine typed digits. The check box and a radio button switch on a tap; the combo box changes from Paris to Rome; the list box selects Banana. Fields are tinted. |
+| Save a copy (phase 2) | **⋮ → Save a copy** offers "form (edited).pdf" in the system's save dialog. The saved file starts with the original bytes unchanged and adds one incremental update. After saving, opening another file does not ask about unsaved changes. With the app ended (`am kill`) while the save dialog was open, **Save** leaves no file behind and the reader is told the changes were lost. With unsaved edits, **Share** first says that it sends the file as opened. |
+| Annotations (phase 2) | A long press and **Highlight** or **Strike** mark a word; **Draw** draws a stroke with one finger; **Note** and a tap place a note after its text is typed. A tap on the drawing outlines it; **Delete** removes it and **↶** brings it back. **⋮ → Annotations** lists "Highlight", "Strike-through", "Drawing" and "Note · Check this". With unsaved changes, **Open** asks to save a copy, discard or cancel. |
 
 The runs found these bugs, all fixed: the soft keyboard service was asked for under the wrong
 name (`InputService` instead of `InputMethodService`), which crashed the search bar; SELinux
@@ -195,7 +211,8 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 
 1. **A physical phone.** Only the x86_64 emulator was used. The arm64 code is built but has not
    run.
-2. **Pinch zoom**, and with it the stretched tiles while a pinch runs. `adb` cannot send a
+2. **Pinch zoom**, and with it the stretched tiles while a pinch runs and the two-finger zoom
+   while the draw tool is on. `adb` cannot send a
    two-finger gesture. The pinch code uses Android's `ScaleGestureDetector`; the zoom-anchoring
    math and the tile geometry are unit-tested.
 3. **"Open with" (`ACTION_VIEW`)** from another app, sharing and restoring such a file (its grant
@@ -217,9 +234,15 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
    images are not decoded, and small text has slightly less ink than Direct2D draws.
 3. **Selection** is on one page at a time, and the view does not scroll by itself while a handle
    is dragged to the edge. No floating copy toolbar: the bar over the pages holds the actions.
-4. **Not in the app:** annotations, forms, printing, a document properties view.
+4. **Not in the app:** printing, a document properties view, and these annotation tools of the web
+   viewer: free text, shapes, lines, stamps, replies, moving an annotation, colours, XFDF.
 5. **Recent files** lists only files with a persistable grant (the document picker gives one);
    a file another app handed over with `ACTION_VIEW` is opened but not listed.
+6. **Edits are not kept when Android ends the process** in the background (only the view is); a
+   copy must be saved first. Saving over the opened file itself is not offered, only a copy.
+7. **Markup needs a text selection**, so a document that does not allow copying cannot be
+   highlighted. A note's icon is 20 points, a small target at fit width. With the draw tool on,
+   one finger only draws: scrolling needs the tool off.
 
 ## Tests
 
@@ -235,4 +258,10 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
   edges, stretched during a pinch, stitched tiles equal to the whole page), the tile cache, word
   selection and handles, the copy permission, the outline list, the thumbnail grid, the recent
   list (order, capacity, a restart, damaged files) and a saved view restored in a new size.
+- `tests/PdfEngine.Vector.Skia.Tests/AndroidEditTests.cs`: touches mapped to page points (gaps and
+  margins on no page, zoomed and scrolled), the form value rules (/MaxLen, line breaks, read-only,
+  options, states), fields written, drawn and saved as an incremental update, a value refused by the
+  field's rule, certified documents (no changes; form filling only, with the notice once), notes, ink
+  and highlights made from touches and read back from the saved file, editing and deleting a file's
+  own annotation, undo and redo, the annotation list, and one save at a time.
 - `tests/PdfEngine.Vector.Skia.Tests/CmykJpegTests.cs`: the CMYK and YCCK JPEG decoder.
