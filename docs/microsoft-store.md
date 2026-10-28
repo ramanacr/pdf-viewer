@@ -68,7 +68,7 @@ number to be 0.
 
 | | Installer build | Store build |
 | --- | --- | --- |
-| Updates | The application can check GitHub (only if you allow it) and run the new installer. | The Store updates the application. **Help** > **Check for Updates** and the update question on first start are not shown. |
+| Updates | The application can check GitHub (only if you allow it) and run the new installer. | The Store updates the application. **Help** > **Check for Updates**, **Help** > **View Releases** and the update question on first start are not shown. **About** says that updates come from the Microsoft Store. |
 | .pdf association | The installer (or `PdfViewer.exe --register`) writes keys under `HKCU\Software\Classes`. | The package manifest declares it. Windows adds it on install and removes it on uninstall. `--register` and `--unregister` do nothing. Choose the default PDF app in **Settings** > **Apps** > **Default apps**. |
 | Read Aloud | An optional download, checked against a pinned SHA-256. | Inside the package. Nothing is downloaded: the package folder is read-only, so a component cannot be added beside the application. The build checks the file against the same pinned hash. |
 | .NET runtime | Uses the .NET 9 Desktop Runtime installed on the machine. | Self-contained: the runtime is inside the package. |

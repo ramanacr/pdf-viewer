@@ -20,6 +20,17 @@ public partial class UpdateDialog : Window
 
         Loaded += async (s, e) =>
         {
+            // The Store updates a packaged install: say so instead of asking GitHub.
+            if (!UpdateService.IsGitHubUpdateCheckAvailable(PackagedApp.IsPackaged))
+            {
+                ShowPanel(ErrorPanel);
+                ErrorTitleText.Text = "Updates come from the Microsoft Store";
+                ErrorMessageText.Text = UpdateService.StoreUpdatesMessage;
+                PrimaryActionButton.Visibility = Visibility.Collapsed;
+                CancelActionButton.Content = "Close";
+                return;
+            }
+
             if (_updateInfo != null)
             {
                 DisplayUpdateInfo(_updateInfo);

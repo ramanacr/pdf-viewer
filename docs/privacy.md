@@ -28,7 +28,8 @@ The application connects to the network only in these cases, each started by you
 1. **Update check.** Off until you allow it when the application first starts; you can switch
    it on or off at any time under **Help → Privacy & Safety**. It asks this project's public
    GitHub releases page whether a newer version exists. It sends nothing about you or your
-   documents; like any web request, GitHub receives your IP address.
+   documents; like any web request, GitHub receives your IP address. The Microsoft Store app
+   has no update check: the Store installs its updates.
 2. **Optional components.** When you ask to download an optional component (for example Read
    Aloud), it is fetched from this project's GitHub release assets and checked against a
    SHA-256 hash built into the application. It is never downloaded without your request.

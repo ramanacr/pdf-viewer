@@ -87,7 +87,8 @@ does. The release gates (payload size, cold start, PDFium-free) are in
 `scripts/build_msix.ps1` makes an MSIX package from the same app. It is self-contained and has
 Read Aloud inside it. The Store signs and updates the package, so this version has no update
 check, and its package manifest declares the .pdf association. The Store identity is in
-`eng/msix/identity.json`. The Store listing is not live yet.
+`eng/msix/identity.json`. The Store listing is live:
+[apps.microsoft.com/detail/9N6QDM774R62](https://apps.microsoft.com/detail/9N6QDM774R62).
 
 ```powershell
 pwsh -File .\scripts\build_msix.ps1                # with the identity in eng/msix/identity.json

@@ -219,8 +219,9 @@ When a PDF names a font but does not embed it, the app draws the text with an in
   "Open with" or Default apps. The app registers Explorer preview metadata.
 - **Command line:** `PdfViewer.exe --thumbnail <input.pdf> <output.png> [dpi]` draws a page without
   a window. `PdfViewer.exe --register` and `--unregister` add or remove the file association.
-- **Updates.** The app can check GitHub for a newer release and run the new installer. The check
-  is off until you allow it (*Help → Privacy & Safety*). From version 4.1.1, the download uses the
+- **Updates.** The Microsoft Store installs updates for the Store app, so it has no update check.
+  The GitHub build (installer or portable app) can check GitHub for a newer release and run the
+  new installer. The check is off until you allow it (*Help → Privacy & Safety*). From version 4.1.1, the download uses the
   first GitHub server address that answers. If you have 4.0.1 or 4.1.0, download
   `PdfViewerSetup.exe` once from the releases page.
 - **Software bill of materials.** Every release has CycloneDX 1.6 (`sbom.cyclonedx.json`) and

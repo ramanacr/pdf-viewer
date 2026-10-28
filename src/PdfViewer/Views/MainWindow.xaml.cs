@@ -341,18 +341,21 @@ public partial class MainWindow : Window
         {
             CheckForUpdatesMenuItem.Visibility = Visibility.Collapsed;
             CheckForUpdatesSeparator.Visibility = Visibility.Collapsed;
+            ViewReleasesMenuItem.Visibility = Visibility.Collapsed;
             ReadAloudMenuItem.ToolTip = "Reads the document from the current page.";
             return;
         }
 
         // The first launch asks before anything touches the network; afterwards the stored
         // answer is honoured. A privacy-first reader must not phone home unasked.
-        if (Services.PrivacySettings.AutomaticUpdateChecksEnabled is null)
+        var action = Services.UpdateService.DecideStartupAction(false, Services.PrivacySettings.AutomaticUpdateChecksEnabled);
+        if (action == Services.UpdateService.StartupUpdateAction.AskConsent)
         {
             ShowPrivacyDialog();
+            action = Services.UpdateService.DecideStartupAction(false, Services.PrivacySettings.AutomaticUpdateChecksEnabled);
         }
 
-        if (Services.PrivacySettings.AutomaticUpdateChecksEnabled == true)
+        if (action == Services.UpdateService.StartupUpdateAction.Check)
         {
             CheckForUpdatesOnStartup();
         }

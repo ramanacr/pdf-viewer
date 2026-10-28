@@ -159,6 +159,12 @@
                         Foreground="{DynamicResource AccentBrush}"
                         FontWeight="SemiBold"
                         Click="CheckForUpdates_Click" />
+                <TextBlock x:Name="StoreUpdatesText"
+                           Visibility="Collapsed"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           Text="Updates come from the Microsoft Store." />
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

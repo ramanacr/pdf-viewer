@@ -70,6 +70,36 @@ public class PackagedAppTests : IDisposable
         Assert.Contains(installed, g => g.Claim == "Optional parts are downloaded only if you ask.");
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void APackagedInstallNeverAsksOrChecksGitHubOnStartup(bool? userAllowsChecks)
+    {
+        Assert.Equal(UpdateService.StartupUpdateAction.None, UpdateService.DecideStartupAction(true, userAllowsChecks));
+        Assert.False(UpdateService.IsGitHubUpdateCheckAvailable(true));
+    }
+
+    [Theory]
+    [InlineData(null, UpdateService.StartupUpdateAction.AskConsent)]
+    [InlineData(true, UpdateService.StartupUpdateAction.Check)]
+    [InlineData(false, UpdateService.StartupUpdateAction.None)]
+    public void AnUnpackagedInstallChecksOnlyAfterTheUserAllowsIt(bool? userAllowsChecks, UpdateService.StartupUpdateAction expected)
+    {
+        Assert.Equal(expected, UpdateService.DecideStartupAction(false, userAllowsChecks));
+        Assert.True(UpdateService.IsGitHubUpdateCheckAvailable(false));
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task APackagedInstallRefusesTheGitHubCheckBeforeAnyRequest()
+    {
+        PackagedApp.SetIsPackagedForTests(true);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => UpdateService.CheckForUpdatesAsync());
+        Assert.Equal(UpdateService.StoreUpdatesMessage, ex.Message);
+        Assert.Contains("Microsoft Store", ex.Message, StringComparison.Ordinal);
+        Assert.StartsWith("https://apps.microsoft.com/", UpdateService.MicrosoftStoreListingUrl, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheManifestTemplateDeclaresADesktopAppWithThePdfAssociation()
     {

@@ -13,11 +13,11 @@ open-source PDF engine. This page tells you where to get each part.
 
 | Where | How |
 | --- | --- |
-| [Microsoft Store]({{ site.links.store }}) | Install it from the Store. The Store updates it. |
-| [GitHub releases]({{ site.links.releases }}) | `PdfViewerSetup.exe` (installer) or `PdfViewer.exe` (portable). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). |
+| [Microsoft Store]({{ site.links.store }}) | Recommended. Install it from the Store. Microsoft signs the package, and the Store updates it. |
+| [GitHub releases]({{ site.links.releases }}) | For a machine without the Store: `PdfViewer.exe` (portable app) or `PdfViewerSetup.exe` (installer). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). |
 
-Release binaries are Authenticode-signed with the project's own self-signed certificate, so
-Windows can show "unknown publisher". Each release states the certificate thumbprint. See the
+GitHub release binaries are Authenticode-signed with the project's own self-signed certificate,
+so Windows can show "unknown publisher" and SmartScreen can show a warning. Each release states the certificate thumbprint. See the
 [code signing policy]({{ site.links.repo }}/blob/main/CODE_SIGNING_POLICY.md).
 
 Then read the [features and user guide](features.md).
