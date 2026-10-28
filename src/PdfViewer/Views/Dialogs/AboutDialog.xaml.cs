@@ -13,7 +13,12 @@ public partial class AboutDialog : Window
         InitializeComponent();
 
         // The Store updates a packaged install.
-        if (PackagedApp.IsPackaged) CheckForUpdatesButton.Visibility = Visibility.Collapsed;
+        if (PackagedApp.IsPackaged)
+        {
+            CheckForUpdatesButton.Visibility = Visibility.Collapsed;
+            StoreUpdatesText.Visibility = Visibility.Visible;
+            StoreUpdatesText.ToolTip = UpdateService.StoreUpdatesMessage;
+        }
 
         var asm = typeof(AboutDialog).Assembly;
         var version = asm.GetName().Version;

@@ -7,7 +7,8 @@ The engine, `PdfEngine.Vector`, is pure C# (.NET 9). On Windows, Direct2D draws 
 same engine also runs in a web browser and on Android, and you can use it as a NuGet library.
 The published app contains no PDFium.
 
-**[Download for Windows](https://github.com/ramanacr/pdf-viewer/releases/latest)** ·
+**[Get it from Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62)** ·
+**[Portable app or installer](https://github.com/ramanacr/pdf-viewer/releases/latest)** ·
 **[Try it in your browser](https://ramanacr.github.io/pdf-viewer/demo/)** ·
 **[Use the engine as a library](docs/developers.md)** ·
 **[Features](docs/features.md)**
@@ -18,8 +19,8 @@ The published app contains no PDFium.
 
 | Platform | Status | How |
 | --- | --- | --- |
-| **Windows app** | Released (latest: [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases/latest)) | `PdfViewerSetup.exe` (installer) or `PdfViewer.exe` (portable). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). |
-| **Microsoft Store** | Released | [Get it from Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62) (Store ID 9N6QDM774R62). Updates come through the Store. See [Microsoft Store build](docs/microsoft-store.md). |
+| **Windows app** | Released on the Microsoft Store | [Get it from Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62) (Store ID 9N6QDM774R62). Microsoft signs the package, and the Store installs updates. See [Microsoft Store build](docs/microsoft-store.md). |
+| **Windows, without the Store** | Released (latest: [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases/latest)) | For a machine without the Store: `PdfViewer.exe` (portable app) or `PdfViewerSetup.exe` (installer). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). The files are signed with the project's self-signed certificate, so SmartScreen can show a warning. See the [code signing policy](CODE_SIGNING_POLICY.md). |
 | **Web demo** | Live | [ramanacr.github.io/pdf-viewer/demo/](https://ramanacr.github.io/pdf-viewer/demo/). Runs in the tab as WebAssembly; nothing is uploaded. |
 | **Android** | Proof of concept | Build from source, or take the APK artifact of the `android.yml` workflow. See [its README](src/PdfViewer.Android/README.md). |
 | **NuGet packages** | Preview (`0.1.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). |

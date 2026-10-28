@@ -21,6 +21,42 @@ public static class UpdateService
     public const string GitHubReleasesUrl = "https://github.com/ramanacr/pdf-viewer/releases";
     public const string GitHubApiLatestReleaseUrl = "https://api.github.com/repos/ramanacr/pdf-viewer/releases/latest";
 
+    /// <summary>The Microsoft Store listing. The Store installs and updates a packaged copy.</summary>
+    public const string MicrosoftStoreListingUrl = "https://apps.microsoft.com/detail/9N6QDM774R62";
+
+    /// <summary>What a packaged (Store) install says in place of the GitHub update check.</summary>
+    public const string StoreUpdatesMessage =
+        "This copy is from the Microsoft Store. The Store installs updates, so the application does not check GitHub for them.";
+
+    /// <summary>What the application does about updates when it starts.</summary>
+    public enum StartupUpdateAction
+    {
+        /// <summary>No question and no network request.</summary>
+        None,
+        /// <summary>Ask the user first (the privacy dialog). Nothing is sent before the answer.</summary>
+        AskConsent,
+        /// <summary>The user allowed it: check GitHub in the background.</summary>
+        Check,
+    }
+
+    /// <summary>
+    /// The startup decision. A packaged (Store) install never asks and never checks, because
+    /// the Store updates it. An unpackaged install checks only after the user allows it.
+    /// </summary>
+    public static StartupUpdateAction DecideStartupAction(bool isPackaged, bool? userAllowsChecks)
+    {
+        if (isPackaged) return StartupUpdateAction.None;
+        return userAllowsChecks switch
+        {
+            null => StartupUpdateAction.AskConsent,
+            true => StartupUpdateAction.Check,
+            false => StartupUpdateAction.None,
+        };
+    }
+
+    /// <summary>True when this install may ask GitHub for a new version (not a Store install).</summary>
+    public static bool IsGitHubUpdateCheckAvailable(bool isPackaged) => !isPackaged;
+
     private static readonly HttpClient HttpClient;
 
     // The installer is about 10 MB: the 15-second limit of the release check would fail it on a
@@ -74,6 +110,10 @@ public static class UpdateService
     /// </summary>
     public static async Task<UpdateInfo> CheckForUpdatesAsync(CancellationToken ct = default)
     {
+        // The Store updates a packaged install: GitHub is never asked from one.
+        if (!IsGitHubUpdateCheckAvailable(PackagedApp.IsPackaged))
+            throw new InvalidOperationException(StoreUpdatesMessage);
+
         var asm = typeof(UpdateService).Assembly;
         var currentVersion = asm.GetName().Version ?? new Version(1, 0, 0);
 

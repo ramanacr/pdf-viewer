@@ -200,7 +200,7 @@
                             Padding="12"
                             Margin="0,0,0,8">
                         <StackPanel>
-                            <TextBlock Text="Unable to check for updates" FontWeight="Bold" FontSize="14" Foreground="#D83B01" />
+                            <TextBlock x:Name="ErrorTitleText" Text="Unable to check for updates" FontWeight="Bold" FontSize="14" Foreground="#D83B01" />
                             <TextBlock x:Name="ErrorMessageText"
                                        Text="Please verify your internet connection or check the GitHub repository."
                                        TextWrapping="Wrap"

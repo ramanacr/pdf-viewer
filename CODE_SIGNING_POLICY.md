@@ -9,9 +9,12 @@ projects publish them and are not signed with this project's certificate.
 
 Other distributions:
 
-- **Microsoft Store package** (not live yet): built by `.github/workflows/msix.yml` or
-  `scripts/build_msix.ps1` from tagged source. The Microsoft Store signs it when it is submitted;
-  this project's certificate is not used.
+- **Microsoft Store package** (live:
+  [apps.microsoft.com/detail/9N6QDM774R62](https://apps.microsoft.com/detail/9N6QDM774R62)):
+  built by `.github/workflows/msix.yml` or `scripts/build_msix.ps1` from tagged source. Microsoft
+  signs the package when it is published through the Store; this project's certificate is not
+  used. The Store installs its updates, so the Store package has no GitHub update check. For most
+  users the Store is the recommended way to get the Windows app.
 - **NuGet packages** (`PdfEngine.Abstractions`, `PdfEngine.Vector`, `PdfEngine.Vector.Skia`):
   built and pushed to nuget.org only by `.github/workflows/packages.yml`, from an `engine-v*` tag
   or a manual run of that workflow, through nuget.org Trusted Publishing (no stored API key).
@@ -19,7 +22,7 @@ Other distributions:
 
 ## Certificate
 
-Releases are signed today with the project's own **self-signed** release certificate, so Windows
+GitHub release binaries are signed today with the project's own **self-signed** release certificate, so Windows
 shows the publisher as unknown. Each release states the certificate's thumbprint and attaches its
 public part (`PdfViewer-codesign.cer`) so a download can be checked:
 
@@ -28,8 +31,10 @@ public part (`PdfViewer-codesign.cer`) so a download can be checked:
 ```
 
 The certificate is self-signed, so Windows reports the publisher as unknown and SmartScreen can
-show a warning. A certificate from a public certification authority will replace it later; this
-policy will name that authority when it does.
+show a warning. To avoid the warning, install the app from the
+[Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62), where Microsoft signs the
+package. A certificate from a public certification authority will replace the self-signed one
+later; this policy will name that authority when it does.
 
 ## Team roles
 
@@ -46,7 +51,8 @@ requested by the user or the person installing or operating it.
 
 In detail: it has no analytics, telemetry or account, and never uploads documents. It makes a
 network request only when the user asks for one: the update check (off until the user allows it
-on first start, and switchable in Help > Privacy & Safety), downloading an optional component,
+on first start, and switchable in Help > Privacy & Safety; the Microsoft Store package has no
+update check, because the Store updates it), downloading an optional component,
 and, when signing or validating signatures, contacting the timestamp server or certificate
 authorities the user chooses. The full policy is at
 https://ramanacr.github.io/pdf-viewer/privacy/ and in the in-app privacy statement.
