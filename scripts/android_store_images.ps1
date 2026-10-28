@@ -9,7 +9,8 @@
 #   3. The feature graphic, 1024 x 500, 24-bit RGB (fastlane/metadata/android/en-US/images/featureGraphic.png).
 #   4. The phone screenshots in images/phoneScreenshots, flattened to 24-bit RGB.
 # Google Play and F-Droid both read the fastlane folder (docs/android-release.md,
-# docs/android-fdroid.md). Run it again when the app icon changes; the outputs are committed.
+# docs/android-fdroid.md). scripts/convert_icons.ps1 renders assets/app_icon.png from the SVG
+# master (original project art) and runs this script; the outputs are committed.
 # =====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -57,27 +58,25 @@ try {
         $bitmap.Dispose()
     }
 
-    # 2. Store icon: a full square (the stores round the corners themselves), the app's light
-    #    chrome colour behind the icon, which takes 80 % of the side.
+    # 2. Store icon: a full square (the stores round the corners themselves), so the icon's red
+    #    tile is drawn edge to edge on its own colour, which fills the tile's rounded corners.
     $bitmap, $g = New-Canvas 512 512
     try {
-        $g.Clear([System.Drawing.ColorTranslator]::FromHtml('#ECEFF3'))
-        Draw-Icon $g $Icon 51 51 410
+        $g.Clear([System.Drawing.ColorTranslator]::FromHtml('#C8102E'))
+        Draw-Icon $g $Icon 0 0 512
     } finally { $g.Dispose() }
     $bitmap.Save((Join-Path $Images 'icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
     $bitmap.Dispose()
 
-    # 3. Feature graphic: the app's accent colour, the icon on the left, the name and one line.
+    # 3. Feature graphic: the dark colour of the icon's pen, the icon on the left, the name and
+    #    two lines.
     #    Play takes a JPEG or a 24-bit PNG without alpha here (only the 512 icon may be 32-bit).
     $bitmap, $g = New-Canvas 1024 500 ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     try {
-        $g.Clear([System.Drawing.ColorTranslator]::FromHtml('#1F5FA8'))
-        $plate = [System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml('#ECEFF3'))
-        $g.FillEllipse($plate, 70, 90, 320, 320)
-        $plate.Dispose()
-        Draw-Icon $g $Icon 110 130 240
+        $g.Clear([System.Drawing.ColorTranslator]::FromHtml('#1F2328'))
+        Draw-Icon $g $Icon 100 110 280
         $white = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
-        $soft = [System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml('#DCE8F7'))
+        $soft = [System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml('#F4C3CB'))
         $title = [System.Drawing.Font]::new('Segoe UI Semibold', 64, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
         $line = [System.Drawing.Font]::new('Segoe UI', 30, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
         $g.DrawString('PDF Viewer', $title, $white, 440, 160)

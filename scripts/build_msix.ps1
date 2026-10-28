@@ -198,7 +198,9 @@ if (-not $NoGate) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Logos, generated from assets/app_icon.png and assets/pdf_file.png.
+# 5. Logos, generated from assets/app_icon.png and assets/pdf_file.png, and the target sizes
+#    taken from assets/app_icon.ico and assets/pdf_file.ico (all made by scripts/convert_icons.ps1
+#    from the SVG masters in assets/).
 # ---------------------------------------------------------------------------
 Write-Host "`n[2/5] Generating the package logos..." -ForegroundColor Yellow
 Add-Type -AssemblyName System.Drawing
@@ -259,11 +261,33 @@ try {
 
     # The .pdf file type logo (uap:Logo of the file type association).
     $FileLogos = @(@("PdfFile.scale-100.png", 44), @("PdfFile.scale-200.png", 88), @("PdfFile.scale-400.png", 176))
-    foreach ($size in 16, 32, 48, 256) { $FileLogos += , @("PdfFile.targetsize-$size.png", $size) }
+    foreach ($size in 16, 24, 32, 48, 256) { $FileLogos += , @("PdfFile.targetsize-$size.png", $size) }
     foreach ($logo in $FileLogos) { New-Logo $FileIcon $logo[0] $logo[1] $logo[1] 1.0 }
 } finally {
     $AppIcon.Dispose()
     $FileIcon.Dispose()
+}
+
+# The target sizes are the .ico frames as they are: scripts/convert_icons.ps1 draws each one from
+# its SVG at that size, and the 16 and 24 px frames from the small variants (no pen, no letters),
+# which a scaled-down 512 px image would not give.
+function Save-IcoFrame([string]$ico, [int]$size, [string]$name) {
+    $bytes = [System.IO.File]::ReadAllBytes($ico)
+    for ($i = 0; $i -lt [BitConverter]::ToUInt16($bytes, 4); $i++) {
+        $entry = 6 + 16 * $i
+        $side = if ($bytes[$entry] -eq 0) { 256 } else { [int]$bytes[$entry] }
+        if ($side -ne $size) { continue }
+        $length = [BitConverter]::ToUInt32($bytes, $entry + 8)
+        $offset = [BitConverter]::ToUInt32($bytes, $entry + 12)
+        [System.IO.File]::WriteAllBytes((Join-Path $AssetsDir $name), $bytes[$offset..($offset + $length - 1)])
+        return
+    }
+    Write-Error "$ico has no $size px frame (run scripts/convert_icons.ps1)."
+}
+foreach ($size in 16, 24, 32, 48, 256) {
+    Save-IcoFrame (Join-Path $RootDir "assets\app_icon.ico") $size "Square44x44Logo.targetsize-$size.png"
+    Save-IcoFrame (Join-Path $RootDir "assets\app_icon.ico") $size "Square44x44Logo.targetsize-${size}_altform-unplated.png"
+    Save-IcoFrame (Join-Path $RootDir "assets\pdf_file.ico") $size "PdfFile.targetsize-$size.png"
 }
 Write-Host "   - $((Get-ChildItem $AssetsDir).Count) logo files" -ForegroundColor Gray
 

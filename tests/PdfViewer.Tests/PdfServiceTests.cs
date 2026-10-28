@@ -346,11 +346,14 @@ public class PdfServiceTests : IDisposable
         Assert.True(new FileInfo(samplePath).Length > 0);
     }
 
+    /// <summary>
+    /// The committed icons are the ones scripts/convert_icons.ps1 renders from the SVG masters in
+    /// assets/: a 512 px PNG and an ICO with a PNG frame of each size, and the desktop app and the
+    /// installer embed the same bytes.
+    /// </summary>
     [Fact]
     public void TestGenerateApplicationIcons()
     {
-        IconBuilder.BuildIcon();
-
         var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
         string rootDir = AppDomain.CurrentDomain.BaseDirectory;
         while (dir != null)
@@ -375,6 +378,40 @@ public class PdfServiceTests : IDisposable
 
         Assert.True(new FileInfo(appIco).Length > 1000);
         Assert.True(new FileInfo(pdfIco).Length > 1000);
+
+        static (int Width, int Height) PngSize(byte[] png, int offset = 0)
+        {
+            Assert.Equal(0x89, png[offset]);
+            Assert.Equal((byte)'P', png[offset + 1]);
+            int Read(int at) => (png[at] << 24) | (png[at + 1] << 16) | (png[at + 2] << 8) | png[at + 3];
+            return (Read(offset + 16), Read(offset + 20));
+        }
+
+        foreach (string name in new[] { "app_icon", "pdf_file" })
+        {
+            Assert.True(File.Exists(Path.Combine(rootDir, "assets", name + ".svg")));
+            Assert.True(File.Exists(Path.Combine(rootDir, "assets", name + "_small.svg")));
+            Assert.Equal((512, 512), PngSize(File.ReadAllBytes(Path.Combine(rootDir, "assets", name + ".png"))));
+
+            byte[] ico = File.ReadAllBytes(Path.Combine(rootDir, "assets", name + ".ico"));
+            Assert.Equal(1, BitConverter.ToUInt16(ico, 2)); // an icon, not a cursor
+            var sizes = new List<int>();
+            for (int i = 0; i < BitConverter.ToUInt16(ico, 4); i++)
+            {
+                int entry = 6 + 16 * i;
+                int side = ico[entry] == 0 ? 256 : ico[entry];
+                Assert.Equal((side, side), PngSize(ico, (int)BitConverter.ToUInt32(ico, entry + 12)));
+                sizes.Add(side);
+            }
+            Assert.Equal(new[] { 16, 24, 32, 48, 64, 256 }, sizes);
+
+            foreach (string ext in new[] { ".ico", ".png" })
+            {
+                byte[] master = File.ReadAllBytes(Path.Combine(rootDir, "assets", name + ext));
+                Assert.Equal(master, File.ReadAllBytes(Path.Combine(rootDir, "src", "PdfViewer", "assets", name + ext)));
+                Assert.Equal(master, File.ReadAllBytes(Path.Combine(rootDir, "src", "Installer", "assets", name + ext)));
+            }
+        }
     }
 
     [Fact]

@@ -65,10 +65,12 @@ if (Test-Path $PayloadZip) {
 
 New-Item -ItemType Directory -Path $AppStagingDir -Force | Out-Null
 
-# Ensure asset directories have all the latest icons
-if (Test-Path "$RootDir\assets") {
-    Copy-Item -Path "$RootDir\assets\*" -Destination "$RootDir\src\PdfViewer\assets" -Force -ErrorAction SilentlyContinue
-    Copy-Item -Path "$RootDir\assets\*" -Destination "$RootDir\src\Installer\assets" -Force -ErrorAction SilentlyContinue
+# Ensure asset directories have all the latest icons. Only the four files the app uses at run time:
+# assets/ also holds the SVG masters and their brief, which scripts/convert_icons.ps1 renders.
+$RuntimeIcons = 'app_icon.ico', 'app_icon.png', 'pdf_file.ico', 'pdf_file.png'
+foreach ($icon in $RuntimeIcons) {
+    Copy-Item -Path "$RootDir\assets\$icon" -Destination "$RootDir\src\PdfViewer\assets" -Force
+    Copy-Item -Path "$RootDir\assets\$icon" -Destination "$RootDir\src\Installer\assets" -Force
 }
 
 # 3. Publish the main WPF application
@@ -107,9 +109,8 @@ if ($Sign) {
 }
 
 # Copy assets folder into AppStagingDir so the installer delivers them to the user directory
-if (Test-Path "$RootDir\assets") {
-    Copy-Item -Path "$RootDir\assets" -Destination "$AppStagingDir\assets" -Recurse -Force
-}
+New-Item -ItemType Directory -Path "$AppStagingDir\assets" -Force | Out-Null
+foreach ($icon in $RuntimeIcons) { Copy-Item -Path "$RootDir\assets\$icon" -Destination "$AppStagingDir\assets" -Force }
 
 # ---------------------------------------------------------------------------
 # Optional components.
@@ -240,9 +241,8 @@ if (Test-Path "$RootDir\samples\SampleDocument.pdf") {
 }
 
 # Copy icons to publish directory
-if (Test-Path "$RootDir\assets") {
-    Copy-Item -Path "$RootDir\assets" -Destination "$PublishDir\assets" -Recurse -Force
-}
+New-Item -ItemType Directory -Path "$PublishDir\assets" -Force | Out-Null
+foreach ($icon in $RuntimeIcons) { Copy-Item -Path "$RootDir\assets\$icon" -Destination "$PublishDir\assets" -Force }
 
 # Copy third party notices
 if (Test-Path "$RootDir\THIRD_PARTY_NOTICES.md") {

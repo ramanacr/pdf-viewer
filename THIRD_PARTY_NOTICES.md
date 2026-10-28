@@ -4,6 +4,9 @@ PDF Viewer opens, draws, searches, edits and saves PDF documents with its own en
 (PdfEngine.Vector, part of this product and under its MIT licence). It contains the third-party
 software listed below and nothing else from outside this project.
 
+The app icon and the PDF file icon are original art of this project, under its MIT licence
+(SVG masters and brief in `assets/`). They contain no third-party artwork or fonts.
+
 ## MIT License
 The MIT-licensed components below are distributed under these terms, with the copyright notice
 given in each component's section.

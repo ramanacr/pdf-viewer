@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PDF Viewer app icon, master. Original project art (assets/app_icon.brief.md), MIT.
+       Used at 32 px and up; assets/app_icon_small.svg is the 16-24 px variant.
+       Derived files: scripts/convert_icons.ps1. -->
+  <title>PDF Viewer</title>
+  <rect width="512" height="512" rx="112" fill="#c8102e"/>
+  <path d="M144 96h128l72 72v232a16 16 0 0 1-16 16H144a16 16 0 0 1-16-16V112a16 16 0 0 1 16-16z" fill="#fff"/>
+  <path d="M272 96v56a16 16 0 0 0 16 16h56z" fill="#f4c3cb"/>
+  <rect x="172" y="220" width="112" height="18" rx="9" fill="#c8102e"/>
+  <rect x="172" y="264" width="112" height="18" rx="9" fill="#c8102e" opacity=".55"/>
+  <rect x="172" y="308" width="72" height="18" rx="9" fill="#c8102e" opacity=".55"/>
+  <g transform="rotate(45 336 336)">
+    <rect x="312" y="196" width="48" height="176" rx="10" fill="#1f2328" stroke="#c8102e" stroke-width="10"/>
+    <path d="M312 372h48l-24 52z" fill="#fff" stroke="#c8102e" stroke-width="10" stroke-linejoin="round"/>
+    <rect x="312" y="196" width="48" height="30" rx="10" fill="#f4c3cb" stroke="#c8102e" stroke-width="10"/>
+  </g>
+</svg>
