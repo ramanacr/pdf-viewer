@@ -12,7 +12,7 @@ This folder holds the Play Console settings that are not in that layout. How to 
 | App name (30) | `PDF Viewer - Fill & Annotate` (28) | `fastlane/.../title.txt` |
 | Short description (80) | 75 characters | `fastlane/.../short_description.txt` |
 | Full description (4000) | about 2150 characters | `fastlane/.../full_description.txt` |
-| App icon, 512 × 512 PNG | `images/icon.png` | made from `assets/app_icon.png` by `scripts/android_store_images.ps1` |
+| App icon, 512 × 512 PNG | `images/icon.png` | made from `assets/app_icon.png` (rendered from `assets/app_icon.svg`, original project art) by `scripts/android_store_images.ps1` |
 | Feature graphic, 1024 × 500 PNG, 24-bit RGB (no alpha) | `images/featureGraphic.png` | the same script |
 | Phone screenshots (2 to 8) | `images/phoneScreenshots/01…06.png`, 1080 × 2160, 24-bit RGB | Android 13 emulator (Pixel 3a), lossless PNG |
 | Release notes, 0.1 (500) | `changelogs/1.txt` (versionCode 1) | |
@@ -57,10 +57,6 @@ section.
 
 ## Before the first upload, check
 
-1. The icon. `assets/app_icon.png` came in as "Flaticon 4649604" (commit 4ee2289), and
-   `THIRD_PARTY_NOTICES.md` has no entry for it. Confirm that its licence allows use as an app
-   icon in a store (Flaticon's free licence asks for attribution), and add the notice or replace
-   the icon. The same icon is already used by the Microsoft Store package.
-2. The launcher label in the app is still "PDF Viewer (preview)". Play shows the store name above;
+1. The launcher label in the app is still "PDF Viewer (preview)". Play shows the store name above;
    the label on the phone is set in `PdfViewer.Android.csproj` (`ApplicationTitle`) and
    `AndroidManifest.xml`.

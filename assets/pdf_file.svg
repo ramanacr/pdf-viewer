@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PDF file-type icon (.pdf files in File Explorer), master. The page of assets/app_icon.svg
+       without the tile, with a red "PDF" band. The letters are drawn strokes, not a font.
+       Used at 32 px and up; assets/pdf_file_small.svg is the 16-24 px variant.
+       Original project art (assets/app_icon.brief.md), MIT. Derived files: scripts/convert_icons.ps1. -->
+  <title>PDF document</title>
+  <path d="M120 40h200l96 96v320a16 16 0 0 1-16 16H120a16 16 0 0 1-16-16V56a16 16 0 0 1 16-16z" fill="#fff" stroke="#8c939d" stroke-width="16" stroke-linejoin="round"/>
+  <path d="M320 40v80a16 16 0 0 0 16 16h80z" fill="#f4c3cb" stroke="#8c939d" stroke-width="16" stroke-linejoin="round"/>
+  <rect x="160" y="168" width="128" height="24" rx="12" fill="#c8102e"/>
+  <rect x="160" y="216" width="192" height="24" rx="12" fill="#c8102e" opacity=".55"/>
+  <rect x="64" y="280" width="384" height="136" rx="24" fill="#c8102e"/>
+  <g fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round">
+    <path d="M148 400V316h24a22 22 0 0 1 0 44h-24"/>
+    <path d="M238 316h16a36 36 0 0 1 0 72h-16z"/>
+    <path d="M376 316h-42v84M334 356h34"/>
+  </g>
+</svg>

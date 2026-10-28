@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PDF file-type icon, small variant for 16-24 px: no letters (they cannot be read below
+       32 px), a solid red band and two lines instead. The shapes sit on the 16 px grid
+       (32 units a pixel); the grey outline is one pixel wide. Original project art, MIT. -->
+  <title>PDF document</title>
+  <path d="M112 48h208l96 96v320H112z" fill="#fff" stroke="#8c939d" stroke-width="32" stroke-linejoin="miter"/>
+  <path d="M320 48v96h96z" fill="#f4c3cb" stroke="#8c939d" stroke-width="32"/>
+  <rect x="160" y="160" width="128" height="32" fill="#c8102e"/>
+  <rect x="160" y="224" width="192" height="32" fill="#c8102e"/>
+  <rect x="64" y="288" width="384" height="128" fill="#c8102e"/>
+</svg>

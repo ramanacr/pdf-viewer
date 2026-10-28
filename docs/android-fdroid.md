@@ -44,10 +44,6 @@ a GitHub release needs. So if either policy changes, little work is left.
    answer is shown.
 4. **Other prebuilt parts.** `SkiaSharp.NativeAssets.Android` brings a prebuilt `libSkiaSharp.so`
    from nuget.org. F-Droid would also need it built from the Skia and SkiaSharp sources.
-5. **The icon's licence is not recorded.** `assets/app_icon.png` came from Flaticon (commit
-   4ee2289) and has no entry in `THIRD_PARTY_NOTICES.md`. A non-free icon gets the
-   [NonFreeAssets](https://f-droid.org/docs/Anti-Features/) anti-feature on F-Droid. Record its
-   licence or replace it with a freely licensed icon, for every route.
 
 The [Build Metadata Reference](https://f-droid.org/docs/Build_Metadata_Reference/) has the means
 (`sudo` to install packages, `srclibs`, `prebuild`, `build`), so the blocker is policy and the

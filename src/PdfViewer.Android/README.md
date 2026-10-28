@@ -170,7 +170,8 @@ adb install -r src/PdfViewer.Android/bin/Release/net10.0-android/io.github.raman
   store listing in `fastlane/metadata/android/en-US/` is within the stores' length limits.
 - **Store images.** `scripts/android_store_images.ps1` makes the launcher icons
   (`Resources/mipmap-*`), the 512 × 512 store icon and the 1024 × 500 feature graphic from
-  `assets/app_icon.png`.
+  `assets/app_icon.png`. `scripts/convert_icons.ps1` renders that file from the SVG master
+  `assets/app_icon.svg` (original project art) and runs the store-images script.
 
 ### Size
 
