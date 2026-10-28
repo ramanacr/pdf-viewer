@@ -7,7 +7,14 @@
       web demo, through the same engine layer (PdfViewer.Web.Engine). Building it needs the android
       workload. No INTERNET permission, no telemetry.
     -->
-    <TargetFramework>net9.0-android</TargetFramework>
+    <!--
+      net10.0-android targets Android 16 (API level 36), which Google Play requires of new apps and
+      updates since 31 August 2026 (docs/android-release.md). The .NET 9 workload stops at API 35.
+      -p:AndroidNet9=true builds with the .NET 9 workload instead (API 35: fine for adb and the
+      emulator, refused by Play).
+    -->
+    <TargetFramework>net10.0-android</TargetFramework>
+    <TargetFramework Condition="'$(AndroidNet9)' == 'true'">net9.0-android</TargetFramework>
     <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
@@ -16,11 +23,17 @@
     <AssemblyName>PdfViewer.Android</AssemblyName>
     <ApplicationId>io.github.ramanacr.pdfviewer</ApplicationId>
     <ApplicationTitle>PDF Viewer (preview)</ApplicationTitle>
+    <!-- The Play release workflow sets the version code (-p:ApplicationVersion) from its tag. -->
     <ApplicationVersion>1</ApplicationVersion>
     <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
 
-    <!-- An APK (not an app bundle) to install with adb; phones (arm64) and the x86-64 emulator only. -->
-    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <!--
+      Release builds an Android App Bundle (.aab), the format Google Play takes. Debug, and any
+      build with -p:AndroidPackageFormat=apk (the CI test artifact), builds an APK to install with
+      adb. Phones (arm64) and the x86-64 emulator only.
+    -->
+    <AndroidPackageFormat Condition="'$(AndroidPackageFormat)' == '' And '$(Configuration)' == 'Release'">aab</AndroidPackageFormat>
+    <AndroidPackageFormat Condition="'$(AndroidPackageFormat)' == ''">apk</AndroidPackageFormat>
     <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
     <!-- The engine formats with the invariant culture: no ICU data in the package. -->
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -29,7 +42,8 @@
     <DebuggerSupport Condition="'$(Configuration)' == 'Release'">false</DebuggerSupport>
     <!--
       Signing: a build signs with the SDK's per-user debug key (outside the repository), which is
-      what `adb install` needs. No keystore is kept here; a store release would pass its own.
+      what `adb install` needs. No keystore is kept here. The Play release workflow
+      (.github/workflows/android-release.yml) passes the upload key from GitHub secrets.
     -->
   </PropertyGroup>
 

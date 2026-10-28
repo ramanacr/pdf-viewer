@@ -1,0 +1,36 @@
+PDF Viewer reads, fills in and annotates PDF documents on your phone. It runs its own PDF engine, written in C#, on the device. It is open source (MIT licence) and is an early preview (version 0.1).
+
+PRIVATE BY DESIGN
+• No permissions at all: no internet access, no storage access.
+• No account, no ads, no analytics, no crash reporting.
+• You open a file through the system document picker, which gives the app access to that one file only.
+• Edits are saved as a copy that you name in the system's save dialog.
+• JavaScript in documents never runs.
+
+READ
+• Continuous vertical scrolling, pinch zoom and double-tap zoom up to 8×, with sharp text at deep zoom.
+• Outline (bookmarks) and a grid of page thumbnails.
+• Search with highlighted matches, and go to a page by number.
+• Select text with a long press and copy it. Documents that do not allow copying are respected.
+• Night pages (inverted colours) and a dark toolbar that follows the system theme.
+• Password-protected (encrypted) PDFs.
+• Recent files, reopened at the page where you stopped.
+• Open PDFs from other apps ("Open with"), and share the document through the system share sheet.
+
+FILL IN FORMS
+• Text fields, check boxes, radio buttons, combo boxes and list boxes.
+• Field length limits and simple calculated fields (formats, ranges and sums) work without running the document's JavaScript.
+
+ANNOTATE
+• Highlight, underline and strike out selected text.
+• Draw with your finger, and add sticky notes.
+• Choose, edit and delete annotations, with undo and redo.
+• A list of all annotations; tap one to go to it.
+• Save a copy: your edits are added as an incremental update, so the original content and any signatures stay intact. Certified documents only allow the changes that their certification permits.
+
+LIMITS OF THIS PREVIEW
+• There is no printing, no free text, shapes or stamps, and you cannot move an annotation yet.
+• Edits that you have not saved are lost if Android closes the app in the background.
+• It has been tested on the Android emulator; feedback from real phones is welcome.
+
+Source code, issues and the privacy policy: https://github.com/ramanacr/pdf-viewer

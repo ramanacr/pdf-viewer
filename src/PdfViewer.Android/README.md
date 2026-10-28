@@ -4,7 +4,7 @@ An Android app that runs **the project's own C# PDF engine, `PdfEngine.Vector`, 
 and draws pages with the same portable Skia renderer (`PdfEngine.Vector.Skia`) as the browser
 demo. One pure-C# engine runs on Windows, in the browser and on Android.
 
-Status: **phase 2 of the reader** (a preview, not in a store): phase 1 reads, phase 2 fills forms
+Status: **phase 2 of the reader** (a preview, prepared for Google Play: docs/android-release.md): phase 1 reads, phase 2 fills forms
 and annotates. It builds, and it has been run on an Android 13 emulator (see
 [what is verified](#what-is-verified)). It has not been run on a physical phone yet.
 
@@ -53,7 +53,7 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 ## Architecture
 
 ```
- Android app (PdfViewer.Android, net9.0-android)
+ Android app (PdfViewer.Android, net10.0-android)
  ┌───────────────────────────────────────────────────────────────────────────┐
  │ MainActivity     toolbar, menu, search and selection bars, document       │
  │                  picker, outline, share, recent files, saved state;       │
@@ -139,28 +139,38 @@ without them (browser WebAssembly).
 
 ## Build and install
 
-Prerequisites: the .NET 9 SDK, its `android` workload, the Android SDK with platform 35, and
-JDK 17 or later.
+Prerequisites: the .NET 10 SDK, its `android` workload, the Android SDK with platform 36, and
+JDK 17 or 21. The app targets API level 36 (`net10.0-android`), which Google Play requires
+(docs/android-release.md).
 
 ```powershell
 dotnet workload install android
-dotnet build src/PdfViewer.Android -f net9.0-android -c Release `
+dotnet build src/PdfViewer.Android -f net10.0-android -c Release -p:AndroidPackageFormat=apk `
   -p:AndroidSdkDirectory="<Android SDK>" -p:JavaSdkDirectory="<JDK>"
-adb install -r src/PdfViewer.Android/bin/Release/net9.0-android/io.github.ramanacr.pdfviewer-Signed.apk
+adb install -r src/PdfViewer.Android/bin/Release/net10.0-android/io.github.ramanacr.pdfviewer-Signed.apk
 ```
 
-- **SDK 9.** If SDK 10 is also installed, pin SDK 9 (a `global.json` that you do not commit), so
-  that the net9.0-android workload is used. CI does this too.
-- **Signing.** The build signs the APK with the .NET SDK's per-user debug key, which is outside
-  the repository. That is what `adb install` needs. The repository holds no keystore. A store
-  release would need its own key.
+- **Package format.** A Release build makes an Android App Bundle (`.aab`) for Google Play;
+  `-p:AndroidPackageFormat=apk` makes an APK to install with `adb`. Debug builds make an APK.
+- **SDK 10.** If several SDKs are installed, pin SDK 10 (a `global.json` that you do not commit),
+  so that the net10.0-android workload is used. CI does this too. Without the SDK 10 workload,
+  `-p:AndroidNet9=true` builds `net9.0-android` with the .NET 9 workload (API 35): fine for the
+  emulator and `adb`, refused by Play.
+- **Signing.** The build signs the package with the .NET SDK's per-user debug key, which is outside
+  the repository. That is what `adb install` needs. The repository holds no keystore. The store
+  release (`.github/workflows/android-release.yml`) signs with the upload key from GitHub secrets;
+  see docs/android-release.md.
 - **Windows path length.** The Release build compiles the startup code ahead of time (Mono AOT).
   From a very deep checkout path, that step fails with `Precompiling failed … condition 'corlib'
   not met`. Build from a short path (for example `subst P: <checkout>`).
 - **CI.** `.github/workflows/android.yml` builds the APK on Ubuntu, checks that the manifest
   asks for no permission, and uploads the APK as the `pdf-viewer-android-apk` artifact. It is a
   separate workflow that runs only when the app or the code it is built from changes, so the
-  main CI job is not slowed down.
+  main CI job is not slowed down. It also checks that the target API level is 36 and that the
+  store listing in `fastlane/metadata/android/en-US/` is within the stores' length limits.
+- **Store images.** `scripts/android_store_images.ps1` makes the launcher icons
+  (`Resources/mipmap-*`), the 512 × 512 store icon and the 1024 × 500 feature graphic from
+  `assets/app_icon.png`.
 
 ### Size
 
@@ -174,7 +184,9 @@ proof of concept: `libSkiaSharp.so` about 9 MB, the .NET assemblies about 5.2 MB
 On the development machine (Windows 11), with the Android 13 emulator image (Pixel 3a, API 33,
 x86_64, 1080 × 2220), the Release APK was installed with `adb` and driven with `adb shell input`.
 The test PDFs were written in code (6 pages with an outline, a CMYK JPEG, bold and 2 pt text;
-and one encrypted without the copy permission). Screenshots were taken, not committed.
+and one encrypted without the copy permission). Screenshots were taken, not committed. The store
+screenshots (`fastlane/metadata/android/en-US/images/phoneScreenshots/`, 28 October 2026) come
+from a later run on the same emulator image.
 
 | Checked | Result |
 |---|---|

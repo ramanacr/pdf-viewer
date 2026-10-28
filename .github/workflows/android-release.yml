@@ -1,0 +1,194 @@
+name: Android release (Google Play bundle)
+
+# Builds the signed release of the Android app (src/PdfViewer.Android) for Google Play and for
+# GitHub releases: an Android App Bundle (.aab) to upload to Play Console by hand, and a universal
+# APK for a GitHub release (IzzyOnDroid, sideloading). Both are signed with the UPLOAD key from the
+# `play` environment's secrets. The keystore exists only in the runner's temporary folder during the
+# job and is deleted at the end. Nothing is uploaded to Google Play; see docs/android-release.md.
+#
+# Versions:
+#   versionName (ApplicationDisplayVersion) = the tag without "android-v": android-v0.1 -> 0.1.
+#     A manual run takes it from the version_name input.
+#   versionCode (ApplicationVersion) = the version_code input when given, else the highest N of
+#     fastlane/metadata/android/en-US/changelogs/N.txt. The run fails if changelogs/<code>.txt is
+#     missing. Play refuses a code it has seen before: add N+1.txt for each new release.
+
+on:
+  push:
+    tags: [ "android-v*" ]
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "versionName, for example 0.1"
+        required: true
+        default: "0.1"
+      version_code:
+        description: "versionCode (a whole number larger than the last upload, with changelogs/<code>.txt); empty = highest changelog number"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Protected environment: its secrets are given only to this job, after the reviewers that the
+    # owner sets on the environment approve the run.
+    environment: play
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Work out the version
+      id: version
+      shell: bash
+      env:
+        INPUT_NAME: ${{ github.event.inputs.version_name }}
+        INPUT_CODE: ${{ github.event.inputs.version_code }}
+      run: |
+        if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+          name="${GITHUB_REF_NAME#android-v}"
+        else
+          name="$INPUT_NAME"
+        fi
+        if [[ ! "$name" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+          echo "::error::versionName '$name' is not like 0.1 or 1.2.3"; exit 1
+        fi
+        # A manual version_code must be a positive whole number (no sign, no leading zero, no
+        # spaces); an empty input falls back to the run number.
+        if [ -n "$INPUT_CODE" ] && [[ ! "$INPUT_CODE" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::version_code '$INPUT_CODE' is not a positive whole number"; exit 1
+        fi
+        # Default: the highest N among changelogs/N.txt, so the code always has its notes.
+        latest=$(ls fastlane/metadata/android/en-US/changelogs/ | sed -n 's/^\([1-9][0-9]*\)\.txt$/\1/p' | sort -n | tail -1)
+        code="${INPUT_CODE:-$latest}"
+        if [[ ! "$code" =~ ^[1-9][0-9]{0,9}$ ]] || [ "$code" -gt 2100000000 ]; then
+          echo "::error::versionCode '$code' must be 1 to 2100000000"; exit 1
+        fi
+        # The release notes for this versionCode must exist: Play, F-Droid and IzzyOnDroid read
+        # them from here, and a missing file means the code and the notes do not match.
+        notes="fastlane/metadata/android/en-US/changelogs/$code.txt"
+        if [ ! -s "$notes" ]; then
+          echo "::error::$notes is missing: add the release notes for versionCode $code (or run with version_code set to the code that has notes)"; exit 1
+        fi
+        echo "name=$name" >> "$GITHUB_OUTPUT"
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "versionName $name, versionCode $code"
+
+    - name: Setup .NET 10.0 SDK
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      with:
+        dotnet-version: '10.0.x'
+
+    # net10.0-android (API level 36, which Play requires) needs the .NET 10 SDK's android workload.
+    - name: Pin the .NET 10 SDK
+      shell: bash
+      run: |
+        sdk=$(dotnet --list-sdks | awk '/^10\./ {print $1}' | sort -V | tail -1)
+        test -n "$sdk"
+        echo "{ \"sdk\": { \"version\": \"$sdk\", \"rollForward\": \"latestPatch\" } }" > global.json
+        dotnet --version
+
+    - name: Install the android workload
+      run: dotnet workload install android
+
+    - name: Write the upload keystore to the runner's temporary folder
+      shell: bash
+      env:
+        KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      run: |
+        if [ -z "$KEYSTORE_BASE64" ]; then echo "::error::ANDROID_UPLOAD_KEYSTORE_BASE64 is not set in the play environment"; exit 1; fi
+        umask 077
+        printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.keystore"
+        test -s "$RUNNER_TEMP/upload.keystore"
+
+    - name: Build the signed bundle and APK
+      shell: bash
+      env:
+        # Read by the build through the "env:" prefix, so the passwords are never on a command line.
+        ANDROID_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+        ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+        VERSION_NAME: ${{ steps.version.outputs.name }}
+        VERSION_CODE: ${{ steps.version.outputs.code }}
+      run: |
+        common=(
+          src/PdfViewer.Android/PdfViewer.Android.csproj -f net10.0-android -c Release
+          -p:AndroidSdkDirectory="$ANDROID_SDK_ROOT" -p:JavaSdkDirectory="$JAVA_HOME_21_X64"
+          -p:ApplicationVersion="$VERSION_CODE" -p:ApplicationDisplayVersion="$VERSION_NAME"
+          -p:AndroidKeyStore=true
+          -p:AndroidSigningKeyStore="$RUNNER_TEMP/upload.keystore"
+          -p:AndroidSigningKeyAlias="$ANDROID_UPLOAD_KEY_ALIAS"
+          -p:AndroidSigningStorePass=env:ANDROID_UPLOAD_KEYSTORE_PASSWORD
+          -p:AndroidSigningKeyPass=env:ANDROID_UPLOAD_KEY_PASSWORD
+        )
+        dotnet publish "${common[@]}" -p:AndroidPackageFormat=aab -o "$RUNNER_TEMP/out/aab"
+        dotnet publish "${common[@]}" -p:AndroidPackageFormat=apk -o "$RUNNER_TEMP/out/apk"
+
+    - name: Delete the keystore
+      if: always()
+      shell: bash
+      run: rm -f "$RUNNER_TEMP/upload.keystore"
+
+    - name: Check the packages
+      shell: bash
+      env:
+        VERSION_NAME: ${{ steps.version.outputs.name }}
+        VERSION_CODE: ${{ steps.version.outputs.code }}
+      run: |
+        manifest=src/PdfViewer.Android/obj/Release/net10.0-android/android/AndroidManifest.xml
+        # No permission at all; Play's target API level (36); the version given above.
+        if grep -q "uses-permission" "$manifest"; then grep "uses-permission" "$manifest"; exit 1; fi
+        grep -q 'android:targetSdkVersion="36"' "$manifest" || { grep "uses-sdk" "$manifest"; exit 1; }
+        grep -q "android:versionCode=\"$VERSION_CODE\"" "$manifest"
+        grep -q "android:versionName=\"$VERSION_NAME\"" "$manifest"
+        if grep -q 'android:debuggable="true"' "$manifest"; then echo "::error::debuggable"; exit 1; fi
+
+        aab=$(ls "$RUNNER_TEMP"/out/aab/*-Signed.aab)
+        apk=$(ls "$RUNNER_TEMP"/out/apk/*-Signed.apk)
+        apksigner=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)apksigner
+        # Both signed, and with the upload key, not a debug key. jarsigner exits 0 for an unsigned
+        # jar ("jar is unsigned."), so its output must say exactly "jar verified.". Not -strict:
+        # an upload key is self-signed, which -strict counts as an error (exit 4, "jar verified,
+        # with signer errors."); Play expects a self-signed upload certificate.
+        "$JAVA_HOME_21_X64/bin/jarsigner" -verify -verbose -certs "$aab" > "$RUNNER_TEMP/aab-certs.txt"
+        grep -q "^jar verified\.$" "$RUNNER_TEMP/aab-certs.txt" || { tail -5 "$RUNNER_TEMP/aab-certs.txt"; echo "::error::the bundle is not signed"; exit 1; }
+        if grep -qi "CN=Android Debug" "$RUNNER_TEMP/aab-certs.txt"; then echo "::error::the bundle is signed with a debug key"; exit 1; fi
+        "$apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+        if grep -qi "CN=Android Debug" "$RUNNER_TEMP/certs.txt"; then echo "::error::the APK is signed with a debug key"; exit 1; fi
+
+        mkdir -p "$RUNNER_TEMP/dist"
+        cp "$aab" "$RUNNER_TEMP/dist/pdf-viewer-$VERSION_NAME-$VERSION_CODE.aab"
+        cp "$apk" "$RUNNER_TEMP/dist/pdf-viewer-$VERSION_NAME-$VERSION_CODE.apk"
+        (cd "$RUNNER_TEMP/dist" && sha256sum * > SHA256SUMS.txt)
+        {
+          echo "### Android release $VERSION_NAME (versionCode $VERSION_CODE)"
+          echo "| File | Size |"
+          echo "|---|---|"
+          for f in "$RUNNER_TEMP"/dist/*.aab "$RUNNER_TEMP"/dist/*.apk; do
+            echo "| $(basename "$f") | $(du -h --apparent-size "$f" | cut -f1) |"
+          done
+          echo
+          echo "Target API level 36, no permissions. Upload certificate SHA-256:"
+          echo '```'
+          grep "SHA-256" "$RUNNER_TEMP/certs.txt" || true
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the bundle and the APK
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: pdf-viewer-android-${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}
+        path: ${{ runner.temp }}/dist/
+        if-no-files-found: error
+        retention-days: 30

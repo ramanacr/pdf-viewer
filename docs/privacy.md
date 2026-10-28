@@ -5,12 +5,14 @@ permalink: /privacy/
 
 # Privacy Policy
 
-*PDF Viewer — last updated 25 October 2026*
+*PDF Viewer — last updated 28 October 2026*
 
-PDF Viewer is a desktop application for Windows. It does not collect, store or transmit
-personal data, and it does not transfer any information to other networked systems unless the
-person using, installing or operating it asks for that. The same applies to the web demo and the
-Android app (see [other versions](#other-versions)).
+PDF Viewer is a PDF reader and editor with three versions: a desktop application for Windows
+(also from the Microsoft Store), a web demo that runs in the browser, and an Android app. None of
+them collects personal data or sends it anywhere, and none transfers any information to other
+networked systems unless the person using, installing or operating it asks for that. The Android
+app has no internet access at all. The sections below describe the Windows application first;
+[other versions](#other-versions) gives what differs for the web demo and the Android app.
 
 ## What the application does not do
 
@@ -59,9 +61,14 @@ document. Nothing of this leaves your computer, and deleting that folder removes
   cookies and no third-party requests: the app and its fonts come from the demo's own site. The
   browser's local storage keeps only your theme and side-panel choices. The site is hosted on
   GitHub Pages, which receives your IP address like any web server.
-- **Android app** (proof of concept). It asks for no permission, including no internet access.
-  It opens only the file you choose in the system document picker, and writes only a copy that you
-  name in the system's save dialog. Annotations and form values stay in the document.
+- **Android app** (preview). It asks for no permission, including no internet
+  access, so it cannot send anything. It opens only the file you choose in the system document
+  picker (or that another app hands to it), and writes only a copy that you name in the system's
+  save dialog. Annotations and form values stay in the document. Its recent files list (file
+  names, locations and last pages, never document text or passwords) is kept in the app's private
+  storage on the phone; Android's cloud backup is off for the app, and uninstalling it removes the
+  list. When you use **Share**, the system share sheet sends the file to the app that you choose.
+  Google Play, if you install from it, is a Google service.
 
 ## Code signing
 
