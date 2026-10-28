@@ -3,7 +3,8 @@ name: Android (proof of concept)
 # Builds the Android viewer (src/PdfViewer.Android) and uploads the APK as an artifact. A separate
 # workflow so the main CI job is not slowed down; it runs only when the app or the code it is built
 # from changes. The APK is signed with the runner's throwaway debug key (no keystore in the
-# repository): install it with `adb install`, it is not a store release.
+# repository): install it with `adb install`, it is not a store release. The signed store release
+# is .github/workflows/android-release.yml (docs/android-release.md).
 
 on:
   push:
@@ -16,6 +17,7 @@ on:
       - "src/PdfEngine.Abstractions/**"
       - "Directory.Build.props"
       - ".github/workflows/android.yml"
+      - "fastlane/**"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -26,6 +28,8 @@ on:
       - "src/PdfEngine.Abstractions/**"
       - "Directory.Build.props"
       - ".github/workflows/android.yml"
+      - ".github/workflows/android-release.yml"
+      - "fastlane/**"
   workflow_dispatch:
 
 permissions:
@@ -37,7 +41,7 @@ concurrency:
 
 jobs:
   build:
-    # Ubuntu runners come with the Android SDK and JDK 17 installed.
+    # Ubuntu runners come with the Android SDK and JDKs installed.
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
@@ -47,16 +51,17 @@ jobs:
       with:
         fetch-depth: 0   # the version comes from the latest release tag (Directory.Build.props)
 
-    - name: Setup .NET 9.0 SDK
+    - name: Setup .NET 10.0 SDK
       uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
       with:
-        dotnet-version: '9.0.x'
+        dotnet-version: '10.0.x'
 
-    # Runners also have SDK 10, which would pick the net10 android workload; the app is net9.0-android.
-    - name: Pin the .NET 9 SDK
+    # The app is net10.0-android (API level 36, Google Play's target API level). Pin SDK 10, so that
+    # its android workload is the one installed and used.
+    - name: Pin the .NET 10 SDK
       shell: bash
       run: |
-        sdk=$(dotnet --list-sdks | awk '/^9\./ {print $1}' | sort -V | tail -1)
+        sdk=$(dotnet --list-sdks | awk '/^10\./ {print $1}' | sort -V | tail -1)
         test -n "$sdk"
         echo "{ \"sdk\": { \"version\": \"$sdk\", \"rollForward\": \"latestPatch\" } }" > global.json
         dotnet --version
@@ -64,31 +69,46 @@ jobs:
     - name: Install the android workload
       run: dotnet workload install android
 
+    # Release builds an app bundle by default; the test artifact is an APK to install with adb.
     - name: Build the APK
       shell: bash
       run: |
-        dotnet build src/PdfViewer.Android/PdfViewer.Android.csproj -f net9.0-android -c Release \
-          -p:AndroidSdkDirectory="$ANDROID_SDK_ROOT" -p:JavaSdkDirectory="$JAVA_HOME_17_X64"
+        dotnet build src/PdfViewer.Android/PdfViewer.Android.csproj -f net10.0-android -c Release \
+          -p:AndroidPackageFormat=apk \
+          -p:AndroidSdkDirectory="$ANDROID_SDK_ROOT" -p:JavaSdkDirectory="$JAVA_HOME_21_X64"
 
-    - name: Check the package
+    - name: Check the package and the store listing
       shell: bash
       run: |
-        apk=$(ls src/PdfViewer.Android/bin/Release/net9.0-android/*-Signed.apk)
-        manifest=src/PdfViewer.Android/obj/Release/net9.0-android/android/AndroidManifest.xml
+        apk=$(ls src/PdfViewer.Android/bin/Release/net10.0-android/*-Signed.apk)
+        manifest=src/PdfViewer.Android/obj/Release/net10.0-android/android/AndroidManifest.xml
         # The app asks for no permission at all: no INTERNET, no storage.
         if grep -q "uses-permission" "$manifest"; then grep "uses-permission" "$manifest"; exit 1; fi
+        # Google Play's target API level for new apps and updates (docs/android-release.md).
+        grep -q 'android:targetSdkVersion="36"' "$manifest" || { grep "uses-sdk" "$manifest"; exit 1; }
+        # The listing text that Google Play and F-Droid read, within the stores' limits.
+        meta=fastlane/metadata/android/en-US
+        check() {
+          n=$(tr -d '\n' < "$1" | wc -m)
+          if [ "$n" -gt "$2" ]; then echo "::error::$1 has $n characters, more than $2"; exit 1; fi
+        }
+        check "$meta/title.txt" 30
+        check "$meta/short_description.txt" 80
+        check "$meta/full_description.txt" 4000
+        for f in "$meta"/changelogs/*.txt; do check "$f" 500; done
         {
           echo "### Android APK"
           echo "| | |"
           echo "|---|---|"
           echo "| APK (arm64 and x86-64) | $(du -h --apparent-size "$apk" | cut -f1) |"
           echo "| Permissions | none |"
+          echo "| Target API level | 36 |"
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload the APK
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: pdf-viewer-android-apk
-        path: src/PdfViewer.Android/bin/Release/net9.0-android/*-Signed.apk
+        path: src/PdfViewer.Android/bin/Release/net10.0-android/*-Signed.apk
         if-no-files-found: error
         retention-days: 14

@@ -2,11 +2,13 @@
 <!--
   No permissions at all: no INTERNET (nothing is sent anywhere) and no storage permission (a file
   comes through the system document picker, which grants access to the one file the user picks).
-  Backups are off, so nothing about opened documents leaves the device.
+  Backups are off, so nothing about opened documents leaves the device. The launcher icon is the
+  project's app icon (assets/app_icon.png), scaled per density by scripts/android_store_images.ps1.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <application
       android:label="PDF Viewer (preview)"
+      android:icon="@mipmap/ic_launcher"
       android:theme="@style/AppTheme"
       android:allowBackup="false"
       android:supportsRtl="true"
