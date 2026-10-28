@@ -6,7 +6,8 @@
 # third-party art is added:
 #   1. The launcher icon of the app, per density (src/PdfViewer.Android/Resources/mipmap-*).
 #   2. The store icon, 512 x 512 (fastlane/metadata/android/en-US/images/icon.png).
-#   3. The feature graphic, 1024 x 500 (fastlane/metadata/android/en-US/images/featureGraphic.png).
+#   3. The feature graphic, 1024 x 500, 24-bit RGB (fastlane/metadata/android/en-US/images/featureGraphic.png).
+#   4. The phone screenshots in images/phoneScreenshots, flattened to 24-bit RGB.
 # Google Play and F-Droid both read the fastlane folder (docs/android-release.md,
 # docs/android-fdroid.md). Run it again when the app icon changes; the outputs are committed.
 # =====================================================================
@@ -18,8 +19,9 @@ $RootDir = Split-Path -Parent $PSScriptRoot
 $Images = Join-Path $RootDir 'fastlane\metadata\android\en-US\images'
 New-Item -ItemType Directory -Path $Images -Force | Out-Null
 
-function New-Canvas([int]$width, [int]$height) {
-    $bitmap = [System.Drawing.Bitmap]::new($width, $height, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+function New-Canvas([int]$width, [int]$height,
+        [System.Drawing.Imaging.PixelFormat]$format = [System.Drawing.Imaging.PixelFormat]::Format32bppArgb) {
+    $bitmap = [System.Drawing.Bitmap]::new($width, $height, $format)
     $bitmap.SetResolution(96, 96)
     $g = [System.Drawing.Graphics]::FromImage($bitmap)
     $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
@@ -66,7 +68,8 @@ try {
     $bitmap.Dispose()
 
     # 3. Feature graphic: the app's accent colour, the icon on the left, the name and one line.
-    $bitmap, $g = New-Canvas 1024 500
+    #    Play takes a JPEG or a 24-bit PNG without alpha here (only the 512 icon may be 32-bit).
+    $bitmap, $g = New-Canvas 1024 500 ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     try {
         $g.Clear([System.Drawing.ColorTranslator]::FromHtml('#1F5FA8'))
         $plate = [System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml('#ECEFF3'))
@@ -85,5 +88,30 @@ try {
     $bitmap.Save((Join-Path $Images 'featureGraphic.png'), [System.Drawing.Imaging.ImageFormat]::Png)
     $bitmap.Dispose()
 } finally { $Icon.Dispose() }
+
+# 4. Phone screenshots (taken with `adb exec-out screencap -p`, which writes RGBA): flattened on
+#    white into 24-bit RGB, because Play refuses screenshots with an alpha channel.
+foreach ($file in Get-ChildItem (Join-Path $Images 'phoneScreenshots') -Filter *.png -ErrorAction SilentlyContinue) {
+    $source = [System.Drawing.Image]::FromFile($file.FullName)
+    try {
+        $bitmap, $g = New-Canvas $source.Width $source.Height ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        try {
+            $g.Clear([System.Drawing.Color]::White)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+            $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+            $g.DrawImage($source, 0, 0, $source.Width, $source.Height)
+        } finally { $g.Dispose() }
+    } finally { $source.Dispose() }
+    $bitmap.Save($file.FullName, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Dispose()
+}
+
+# PNG colour type in the IHDR chunk (byte 25): 2 = RGB, 6 = RGBA. Play needs 2 for the feature
+# graphic and the screenshots.
+$rgb = @(Join-Path $Images 'featureGraphic.png') + @(Get-ChildItem (Join-Path $Images 'phoneScreenshots') -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object FullName)
+foreach ($path in $rgb) {
+    $type = [System.IO.File]::ReadAllBytes($path)[25]
+    if ($type -ne 2) { throw "$path has PNG colour type $type, not 2 (RGB)" }
+}
 
 Write-Host "Android images written."

@@ -9,7 +9,7 @@ call or a library.
 
 | Fact | Evidence |
 |---|---|
-| No permission at all | `src/PdfViewer.Android/AndroidManifest.xml` has no `uses-permission`. The merged manifest of a Release build (`obj/Release/net9.0-android/android/AndroidManifest.xml`, built on 28 October 2026) has no `uses-permission` element. CI (`android.yml`) and the release workflow fail if one appears. |
+| No permission at all | `src/PdfViewer.Android/AndroidManifest.xml` has no `uses-permission`. The `net10.0-android` Release APK built by CI for PR #136 (`android.yml`, run 40671291592, 28 October 2026) was checked with `aapt dump permissions` and `aapt dump badging` (build-tools 36.0.0): no permission, `targetSdkVersion:'36'`, `sdkVersion:'24'`, `versionCode='1'`, not debuggable. CI (`android.yml`) and the release workflow fail if one appears. |
 | No network use | Without `android.permission.INTERNET` the app cannot open a socket. There is no `HttpClient`, `WebRequest`, `Socket` or `TcpClient` in `src/PdfViewer.Android`, `src/PdfViewer.Web.Engine`, `src/PdfEngine.Vector`, `src/PdfEngine.Vector.Skia` or `src/PdfEngine.Abstractions`. `android:usesCleartextTraffic="false"`. |
 | No analytics, ads, crash reporting or third-party SDK | Package references: `SkiaSharp.NativeAssets.Android` (drawing) and the project's own engine libraries only. `EventSourceSupport` is off. |
 | Files | Opened through the system picker (`ACTION_OPEN_DOCUMENT`) or handed over by another app (`ACTION_VIEW`); a copy is written only through the system save dialog (`ACTION_CREATE_DOCUMENT`). |

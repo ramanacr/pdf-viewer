@@ -9,8 +9,9 @@ name: Android release (Google Play bundle)
 # Versions:
 #   versionName (ApplicationDisplayVersion) = the tag without "android-v": android-v0.1 -> 0.1.
 #     A manual run takes it from the version_name input.
-#   versionCode (ApplicationVersion) = the version_code input when given, else the run number of
-#     this workflow (github.run_number), which only grows. Play refuses a code it has seen before.
+#   versionCode (ApplicationVersion) = the version_code input when given, else the highest N of
+#     fastlane/metadata/android/en-US/changelogs/N.txt. The run fails if changelogs/<code>.txt is
+#     missing. Play refuses a code it has seen before: add N+1.txt for each new release.
 
 on:
   push:
@@ -22,7 +23,7 @@ on:
         required: true
         default: "0.1"
       version_code:
-        description: "versionCode (a whole number larger than the last upload); empty = run number"
+        description: "versionCode (a whole number larger than the last upload, with changelogs/<code>.txt); empty = highest changelog number"
         required: false
         default: ""
 
@@ -54,16 +55,32 @@ jobs:
       env:
         INPUT_NAME: ${{ github.event.inputs.version_name }}
         INPUT_CODE: ${{ github.event.inputs.version_code }}
-        RUN_NUMBER: ${{ github.run_number }}
       run: |
         if [ "$GITHUB_EVENT_NAME" = "push" ]; then
           name="${GITHUB_REF_NAME#android-v}"
         else
           name="$INPUT_NAME"
         fi
-        code="${INPUT_CODE:-$RUN_NUMBER}"
-        [[ "$name" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]] || { echo "::error::versionName '$name' is not like 0.1 or 1.2.3"; exit 1; }
-        [[ "$code" =~ ^[1-9][0-9]{0,9}$ ]] && [ "$code" -le 2100000000 ] || { echo "::error::versionCode '$code' must be 1 to 2100000000"; exit 1; }
+        if [[ ! "$name" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+          echo "::error::versionName '$name' is not like 0.1 or 1.2.3"; exit 1
+        fi
+        # A manual version_code must be a positive whole number (no sign, no leading zero, no
+        # spaces); an empty input falls back to the run number.
+        if [ -n "$INPUT_CODE" ] && [[ ! "$INPUT_CODE" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::version_code '$INPUT_CODE' is not a positive whole number"; exit 1
+        fi
+        # Default: the highest N among changelogs/N.txt, so the code always has its notes.
+        latest=$(ls fastlane/metadata/android/en-US/changelogs/ | sed -n 's/^\([1-9][0-9]*\)\.txt$/\1/p' | sort -n | tail -1)
+        code="${INPUT_CODE:-$latest}"
+        if [[ ! "$code" =~ ^[1-9][0-9]{0,9}$ ]] || [ "$code" -gt 2100000000 ]; then
+          echo "::error::versionCode '$code' must be 1 to 2100000000"; exit 1
+        fi
+        # The release notes for this versionCode must exist: Play, F-Droid and IzzyOnDroid read
+        # them from here, and a missing file means the code and the notes do not match.
+        notes="fastlane/metadata/android/en-US/changelogs/$code.txt"
+        if [ ! -s "$notes" ]; then
+          echo "::error::$notes is missing: add the release notes for versionCode $code (or run with version_code set to the code that has notes)"; exit 1
+        fi
         echo "name=$name" >> "$GITHUB_OUTPUT"
         echo "code=$code" >> "$GITHUB_OUTPUT"
         echo "versionName $name, versionCode $code"
@@ -140,10 +157,15 @@ jobs:
         aab=$(ls "$RUNNER_TEMP"/out/aab/*-Signed.aab)
         apk=$(ls "$RUNNER_TEMP"/out/apk/*-Signed.apk)
         apksigner=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)apksigner
-        # Signed with the upload key, not a debug key.
-        "$JAVA_HOME_21_X64/bin/jarsigner" -verify "$aab" > /dev/null
+        # Both signed, and with the upload key, not a debug key. jarsigner exits 0 for an unsigned
+        # jar ("jar is unsigned."), so its output must say exactly "jar verified.". Not -strict:
+        # an upload key is self-signed, which -strict counts as an error (exit 4, "jar verified,
+        # with signer errors."); Play expects a self-signed upload certificate.
+        "$JAVA_HOME_21_X64/bin/jarsigner" -verify -verbose -certs "$aab" > "$RUNNER_TEMP/aab-certs.txt"
+        grep -q "^jar verified\.$" "$RUNNER_TEMP/aab-certs.txt" || { tail -5 "$RUNNER_TEMP/aab-certs.txt"; echo "::error::the bundle is not signed"; exit 1; }
+        if grep -qi "CN=Android Debug" "$RUNNER_TEMP/aab-certs.txt"; then echo "::error::the bundle is signed with a debug key"; exit 1; fi
         "$apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
-        if grep -qi "CN=Android Debug" "$RUNNER_TEMP/certs.txt"; then echo "::error::signed with a debug key"; exit 1; fi
+        if grep -qi "CN=Android Debug" "$RUNNER_TEMP/certs.txt"; then echo "::error::the APK is signed with a debug key"; exit 1; fi
 
         mkdir -p "$RUNNER_TEMP/dist"
         cp "$aab" "$RUNNER_TEMP/dist/pdf-viewer-$VERSION_NAME-$VERSION_CODE.aab"

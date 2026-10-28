@@ -141,8 +141,8 @@ Whatever route is used (IzzyOnDroid, Obtainium, an own repository, sideloading):
 2. The **signed release APK** from the `android-release.yml` artifact
    (`pdf-viewer-<versionName>-<versionCode>.apk`), attached to a GitHub release on that tag, and
    `SHA256SUMS.txt`. Never a debug-signed APK from `android.yml`.
-3. A **versionCode that is larger** than in every earlier release (the workflow uses the run
-   number or the `version_code` input), and `changelogs/<versionCode>.txt` in the repository.
+3. A **versionCode that is larger** than in every earlier release (the workflow takes the highest
+   `changelogs/N.txt` or the `version_code` input), and `changelogs/<versionCode>.txt` in the repository.
 4. The **same signing key** every time. A different key makes Android refuse the update and makes
    IzzyOnDroid hold the release.
 

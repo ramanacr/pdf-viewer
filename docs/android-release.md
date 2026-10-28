@@ -33,22 +33,21 @@ To build on your own computer, install the workload for SDK 10 once (`dotnet wor
 android` with the .NET 10 SDK selected). Until you do, `-p:AndroidNet9=true` builds with the .NET 9
 workload (API 35): good for `adb install` and the emulator, but Play refuses it.
 
-Play also requires native libraries aligned for 16 KB memory pages. In a local bundle built with
-the .NET 9 workload, every native library (SkiaSharp 3.116.1 included) has 16 KB aligned
-segments. The .NET 10 bundle was not built locally: after the first upload, check the
-"16 KB" line in Play Console's **App bundle explorer**.
+Play also requires native libraries aligned for 16 KB memory pages. In the `net10.0-android` APK
+from this branch's CI run (and in a local `net9.0-android` bundle), all 126 native libraries,
+SkiaSharp 3.116.1 included, have 16 KB aligned segments. After the first upload, Play Console's
+**App bundle explorer** shows the same check.
 
 ### Version numbers
 
 | Value | Where it comes from |
 |---|---|
 | `versionName` (`ApplicationDisplayVersion`) | The tag without `android-v`: tag `android-v0.1` gives `0.1`. A manual run takes the `version_name` input. |
-| `versionCode` (`ApplicationVersion`) | The `version_code` input of a manual run, if given; otherwise the workflow's run number (`github.run_number`), which only grows. |
+| `versionCode` (`ApplicationVersion`) | The `version_code` input of a manual run, if given (a positive whole number); otherwise the highest `N` of `fastlane/metadata/android/en-US/changelogs/N.txt`. |
 
-Play refuses a `versionCode` that it has seen before, and F-Droid and IzzyOnDroid need it to grow
-too. The release notes file for a version is `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`:
-add one before each release (the first one is `1.txt`; rename it if the first build gets another
-code).
+The run fails if `changelogs/<versionCode>.txt` does not exist, so a code always has its release
+notes. Play refuses a `versionCode` that it has seen before, and F-Droid and IzzyOnDroid need it to
+grow too. So for each release, add the next file (`2.txt`, `3.txt`, ...) with its notes, then tag.
 
 ## Steps for the owner
 
@@ -138,7 +137,7 @@ stay opted in for at least 14 days in a row** before it can apply for production
 5. After approval: **Production → Create new release**, upload the bundle (or promote the tested
    release).
 
-For each later release: add `changelogs/<newCode>.txt`, update the description if features changed,
+For each later release: add `changelogs/<next code>.txt`, update the description if features changed,
 push a new tag (`android-v0.2`), approve the run, upload the new `.aab`.
 
 ### If the upload key is lost or leaked

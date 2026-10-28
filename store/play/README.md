@@ -13,12 +13,14 @@ This folder holds the Play Console settings that are not in that layout. How to 
 | Short description (80) | 75 characters | `fastlane/.../short_description.txt` |
 | Full description (4000) | about 2150 characters | `fastlane/.../full_description.txt` |
 | App icon, 512 × 512 PNG | `images/icon.png` | made from `assets/app_icon.png` by `scripts/android_store_images.ps1` |
-| Feature graphic, 1024 × 500 PNG | `images/featureGraphic.png` | the same script |
-| Phone screenshots (2 to 8) | `images/phoneScreenshots/01…06.png`, 1080 × 2160 | Android 13 emulator (Pixel 3a), lossless PNG |
+| Feature graphic, 1024 × 500 PNG, 24-bit RGB (no alpha) | `images/featureGraphic.png` | the same script |
+| Phone screenshots (2 to 8) | `images/phoneScreenshots/01…06.png`, 1080 × 2160, 24-bit RGB | Android 13 emulator (Pixel 3a), lossless PNG |
 | Release notes, 0.1 (500) | `changelogs/1.txt` (versionCode 1) | |
 
 The screenshots were taken at the emulator's 1080 × 2220 and cut to 1080 × 2160 (the bottom 60
-pixels, the gesture bar), because Play allows at most 2:1 between the long and the short side. The
+pixels, the gesture bar), because Play allows at most 2:1 between the long and the short side, and flattened to 24-bit RGB
+(`scripts/android_store_images.ps1`), because Play refuses an alpha channel in screenshots and the
+feature graphic (only the 512 icon may be 32-bit). The
 document in them was written in code for the screenshots.
 
 ## Store settings
