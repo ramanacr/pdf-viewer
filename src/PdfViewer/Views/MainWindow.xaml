@@ -1686,15 +1686,17 @@
                                                             </Border>
 
                                                             <!-- Rectangle Shape -->
-                                                            <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                    BorderThickness="{Binding StrokeThickness}"
-                                                                    Background="Transparent"
-                                                                    Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}" />
+                                                            <Rectangle Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                       StrokeThickness="{Binding StrokeThickness}"
+                                                                       StrokeDashArray="{Binding StrokeDashArray}"
+                                                                       Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                       Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}" />
 
                                                             <!-- Ellipse Shape -->
                                                             <Ellipse Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                      StrokeThickness="{Binding StrokeThickness}"
-                                                                     Fill="Transparent"
+                                                                     StrokeDashArray="{Binding StrokeDashArray}"
+                                                                     Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}" />
 
                                                             <!-- Freehand Ink. Without this the pen tool stored a stroke
@@ -1727,11 +1729,12 @@
                                                                 <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                                       Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                       StrokeThickness="{Binding StrokeThickness}"
+                                                                      StrokeDashArray="{Binding StrokeDashArray}"
                                                                       Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                       Opacity="{Binding Opacity}"
                                                                       Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
                                                                     <Path.Data>
-                                                                        <MultiBinding Converter="{StaticResource ShapeGeometryConverter}">
+                                                                        <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Body">
                                                                             <Binding />
                                                                             <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Grid}" />
                                                                             <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Grid}" />
@@ -1739,6 +1742,31 @@
                                                                             <Binding Path="StrokeThickness" />
                                                                             <Binding Path="Width" />
                                                                             <Binding Path="Height" />
+                                                                            <Binding Path="LineEndings" />
+                                                                            <Binding Path="InteriorColorHex" />
+                                                                            <Binding Path="Type" />
+                                                                        </MultiBinding>
+                                                                    </Path.Data>
+                                                                </Path>
+                                                                <!-- The line endings: drawn solid, as the engine draws them on a dashed line -->
+                                                                <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      StrokeThickness="{Binding StrokeThickness}"
+                                                                      Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Opacity="{Binding Opacity}"
+                                                                      Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Path.Data>
+                                                                        <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Ends">
+                                                                            <Binding />
+                                                                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                            <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                            <Binding Path="Vertices" />
+                                                                            <Binding Path="StrokeThickness" />
+                                                                            <Binding Path="Width" />
+                                                                            <Binding Path="Height" />
+                                                                            <Binding Path="LineEndings" />
+                                                                            <Binding Path="InteriorColorHex" />
+                                                                            <Binding Path="Type" />
                                                                         </MultiBinding>
                                                                     </Path.Data>
                                                                 </Path>
@@ -2056,15 +2084,17 @@
                                                 </Border>
 
                                                 <!-- Rectangle Shape -->
-                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                        BorderThickness="{Binding StrokeThickness}"
-                                                        Background="Transparent"
-                                                        Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}" />
+                                                <Rectangle Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                           StrokeThickness="{Binding StrokeThickness}"
+                                                           StrokeDashArray="{Binding StrokeDashArray}"
+                                                           Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                           Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}" />
 
                                                 <!-- Ellipse Shape -->
                                                 <Ellipse Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                          StrokeThickness="{Binding StrokeThickness}"
-                                                         Fill="Transparent"
+                                                         StrokeDashArray="{Binding StrokeDashArray}"
+                                                         Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                          Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}" />
 
                                                 <!-- Freehand Ink -->
@@ -2096,11 +2126,12 @@
                                                     <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                           Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                           StrokeThickness="{Binding StrokeThickness}"
+                                                          StrokeDashArray="{Binding StrokeDashArray}"
                                                           Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                           Opacity="{Binding Opacity}"
                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
                                                         <Path.Data>
-                                                            <MultiBinding Converter="{StaticResource ShapeGeometryConverter}">
+                                                            <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Body">
                                                                 <Binding />
                                                                 <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Grid}" />
                                                                 <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Grid}" />
@@ -2108,6 +2139,31 @@
                                                                 <Binding Path="StrokeThickness" />
                                                                 <Binding Path="Width" />
                                                                 <Binding Path="Height" />
+                                                                <Binding Path="LineEndings" />
+                                                                <Binding Path="InteriorColorHex" />
+                                                                <Binding Path="Type" />
+                                                            </MultiBinding>
+                                                        </Path.Data>
+                                                    </Path>
+                                                    <!-- The line endings: drawn solid, as the engine draws them on a dashed line -->
+                                                    <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          StrokeThickness="{Binding StrokeThickness}"
+                                                          Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Opacity="{Binding Opacity}"
+                                                          Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Path.Data>
+                                                            <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Ends">
+                                                                <Binding />
+                                                                <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                <Binding Path="Vertices" />
+                                                                <Binding Path="StrokeThickness" />
+                                                                <Binding Path="Width" />
+                                                                <Binding Path="Height" />
+                                                                <Binding Path="LineEndings" />
+                                                                <Binding Path="InteriorColorHex" />
+                                                                <Binding Path="Type" />
                                                             </MultiBinding>
                                                         </Path.Data>
                                                     </Path>

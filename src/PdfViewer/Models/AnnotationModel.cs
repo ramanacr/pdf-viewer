@@ -168,54 +168,177 @@ public partial class AnnotationModel : ObservableObject
     private List<Point> _vertices = new();
 
     /// <summary>A line's or connected lines' /LE: the start and end styles ("None", "OpenArrow"...); null for none.</summary>
-    public string[]? LineEndings { get; set; }
+    public string[]? LineEndings
+    {
+        get => _lineEndings;
+        set
+        {
+            _lineEndings = value;
+            OnPropertyChanged();
+        }
+    }
+    private string[]? _lineEndings;
 
-    /// <summary>A loaded polygon's or line's /IC: the fill of a polygon and of closed line endings; null for none.</summary>
-    public string? InteriorColorHex { get; set; }
+    /// <summary>The /IC fill of a rectangle, ellipse or polygon, and of closed line endings; null for none.</summary>
+    public string? InteriorColorHex
+    {
+        get => _interiorColorHex;
+        set
+        {
+            _interiorColorHex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(FillColorHex));
+        }
+    }
+    private string? _interiorColorHex;
+
+    /// <summary>The fill drawn on screen: the /IC, or transparent when there is none.</summary>
+    public string FillColorHex => _interiorColorHex ?? "#00000000";
+
+    /// <summary>The dash of the border (/BS /S /D) in points, as dash and gap lengths; null for a solid line.</summary>
+    public double[]? BorderDash
+    {
+        get => _borderDash;
+        set
+        {
+            _borderDash = value is { Length: > 0 } ? value : null;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StrokeDashArray));
+        }
+    }
+    private double[]? _borderDash;
+
+    /// <summary>
+    /// The dash on screen: WPF counts dashes in line widths, the PDF in points, and an odd PDF
+    /// array repeats (so [3] is 3 on, 3 off).
+    /// </summary>
+    public System.Windows.Media.DoubleCollection? StrokeDashArray =>
+        _borderDash == null ? null
+        : new System.Windows.Media.DoubleCollection((_borderDash.Length % 2 == 1 ? _borderDash.Concat(_borderDash) : _borderDash).Select(d => d / Math.Max(StrokeThickness, 0.1)));
+
+    partial void OnStrokeThicknessChanged(double value) => OnPropertyChanged(nameof(StrokeDashArray));
+
+    /// <summary>The line ending styles of PDF (Table 179), in the order the style editor lists them.</summary>
+    public static IReadOnlyList<string> LineEndingStyles { get; } = new[]
+    {
+        "None", "OpenArrow", "ClosedArrow", "Circle", "Square", "Diamond", "Butt", "ROpenArrow", "RClosedArrow", "Slash",
+    };
+
+    /// <summary>The dash presets of the style editor: dash and gap lengths in points (null is solid).</summary>
+    public static IReadOnlyList<(string Name, double[]? Dash)> DashStyles { get; } = new (string, double[]?)[]
+    {
+        ("Solid", null), ("Dashed", new[] { 4.0, 3.0 }), ("Dotted", new[] { 1.0, 2.0 }),
+    };
+
+    /// <summary>A rectangle, ellipse, line, arrow, polygon or connected lines: a shape whose fill, endings or dash can be chosen.</summary>
+    public bool IsStyledShape => IsVertexShape || Type is AnnotationType.Rectangle or AnnotationType.Ellipse;
+
+    /// <summary>A line, arrow or connected lines: a shape with line endings.</summary>
+    public bool HasLineEndings => Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.PolyLine;
+
+    /// <summary>The start ending ("None" when there is none; a single name, which is not a valid /LE for a line, draws none, as in the engine).</summary>
+    public string StartEnding => _lineEndings is { Length: >= 2 } e ? e[0] : "None";
+
+    /// <summary>The end ending ("None" when there is none).</summary>
+    public string EndEnding => _lineEndings is { Length: >= 2 } e ? e[1] : "None";
+
+    /// <summary>
+    /// Sets both line endings. A line becomes an arrow when either end has an ending, and an
+    /// arrow a line when neither has, so the tool shown is the one the saved file reopens as.
+    /// </summary>
+    public void SetLineEndings(string start, string end)
+    {
+        if (!HasLineEndings) return;
+        LineEndings = new[] { start, end };
+        if (Type is AnnotationType.Line or AnnotationType.Arrow)
+            Type = start != "None" || end != "None" ? AnnotationType.Arrow : AnnotationType.Line;
+    }
 
     /// <summary>A line, arrow, polygon or connected lines: a shape drawn from its <see cref="Vertices"/>.</summary>
     public bool IsVertexShape => Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.Polygon or AnnotationType.PolyLine;
 
-    partial void OnTypeChanged(AnnotationType value) => OnPropertyChanged(nameof(IsVertexShape));
+    partial void OnTypeChanged(AnnotationType value)
+    {
+        OnPropertyChanged(nameof(IsVertexShape));
+        OnPropertyChanged(nameof(IsStyledShape));
+        OnPropertyChanged(nameof(HasLineEndings));
+    }
 
     /// <summary>
     /// A line, arrow, polygon or connected lines in the coordinates of its box drawn
-    /// <paramref name="width"/> by <paramref name="height"/> pixels, with its arrow heads drawn at
-    /// the size the engine draws them (nine line widths long at 30 degrees). Null when it has too
-    /// few points.
+    /// <paramref name="width"/> by <paramref name="height"/> pixels, with its line endings drawn at
+    /// the size the engine draws them (arrows nine line widths long at 30 degrees, other shapes
+    /// six line widths across). <paramref name="body"/> and <paramref name="ends"/> choose the
+    /// parts: the engine dashes the lines but draws the endings solid. Null when it has too few points.
     /// </summary>
-    public System.Windows.Media.Geometry? ShapeGeometry(double width, double height)
+    public System.Windows.Media.Geometry? ShapeGeometry(double width, double height, bool body = true, bool ends = true)
     {
         if (!IsVertexShape || _vertices.Count < 2 || Width <= 0 || Height <= 0 || width <= 0 || height <= 0) return null;
         Point Local(Point p) => new((p.X - X) / Width * width, (p.Y - Y) / Height * height);
         var points = _vertices.Select(Local).ToList();
         var path = new System.Windows.Media.PathGeometry();
         bool filled = InteriorColorHex != null;
-        var figure = new System.Windows.Media.PathFigure { StartPoint = points[0], IsClosed = Type == AnnotationType.Polygon, IsFilled = filled && Type == AnnotationType.Polygon };
-        foreach (var p in points.Skip(1)) figure.Segments.Add(new System.Windows.Media.LineSegment(p, true));
-        path.Figures.Add(figure);
-        if (Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.PolyLine && LineEndings is { Length: 2 } ends)
+        if (body)
         {
-            Arrow(path, ends[0], points[0], points[0] - points[1], filled);
-            Arrow(path, ends[1], points[^1], points[^1] - points[^2], filled);
+            var figure = new System.Windows.Media.PathFigure { StartPoint = points[0], IsClosed = Type == AnnotationType.Polygon, IsFilled = filled && Type == AnnotationType.Polygon };
+            foreach (var p in points.Skip(1)) figure.Segments.Add(new System.Windows.Media.LineSegment(p, true));
+            path.Figures.Add(figure);
+        }
+        if (ends && HasLineEndings)
+        {
+            Ending(path, StartEnding, points[0], points[0] - points[1], filled);
+            Ending(path, EndEnding, points[^1], points[^1] - points[^2], filled);
         }
         path.Freeze();
         return path;
     }
 
-    /// <summary>An arrow head at <paramref name="tip"/> pointing along <paramref name="outward"/> (open or closed, a closed one filled with /IC; other endings are left out on screen).</summary>
-    private void Arrow(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward, bool filled)
+    /// <summary>
+    /// A line ending at <paramref name="tip"/>, <paramref name="outward"/> pointing away from the
+    /// line, as the engine draws it (a closed one filled with /IC). The screen's y axis points
+    /// down, so the side vector is turned the other way to match the page.
+    /// </summary>
+    private void Ending(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward, bool filled)
     {
-        if (style is not ("OpenArrow" or "ClosedArrow") || outward.Length < 1e-9) return;
+        if (style == "None" || outward.Length < 1e-9) return;
         outward.Normalize();
-        var normal = new Vector(-outward.Y, outward.X);
-        double length = 9 * Math.Max(StrokeThickness, 1);
-        var back = outward * (length * Math.Cos(Math.PI / 6));
-        var side = normal * (length * Math.Sin(Math.PI / 6));
-        var head = new System.Windows.Media.PathFigure { StartPoint = tip - back + side, IsClosed = style == "ClosedArrow", IsFilled = filled && style == "ClosedArrow" };
-        head.Segments.Add(new System.Windows.Media.LineSegment(tip, true));
-        head.Segments.Add(new System.Windows.Media.LineSegment(tip - back - side, true));
-        path.Figures.Add(head);
+        var d = outward;
+        var n = new Vector(d.Y, -d.X);
+        double s = Math.Max(StrokeThickness, 1);
+        double half = 3 * s, arrow = 9 * s;
+        var back = d * (arrow * Math.Cos(Math.PI / 6));
+        var side = n * (arrow * Math.Sin(Math.PI / 6));
+        void Figure(bool closed, params Point[] pts)
+        {
+            var f = new System.Windows.Media.PathFigure { StartPoint = pts[0], IsClosed = closed, IsFilled = filled && closed };
+            foreach (var p in pts.Skip(1)) f.Segments.Add(new System.Windows.Media.LineSegment(p, true));
+            path.Figures.Add(f);
+        }
+        switch (style)
+        {
+            case "OpenArrow": Figure(false, tip - back + side, tip, tip - back - side); break;
+            case "ClosedArrow": Figure(true, tip - back + side, tip, tip - back - side); break;
+            case "ROpenArrow": Figure(false, tip + back + side, tip, tip + back - side); break;
+            case "RClosedArrow": Figure(true, tip + back + side, tip, tip + back - side); break;
+            case "Square": Figure(true, tip + d * half + n * half, tip - d * half + n * half, tip - d * half - n * half, tip + d * half - n * half); break;
+            case "Diamond": Figure(true, tip + d * half, tip + n * half, tip - d * half, tip - n * half); break;
+            case "Butt": Figure(false, tip + n * half, tip - n * half); break;
+            case "Slash":
+            {
+                var v = d * Math.Cos(Math.PI / 3) + n * Math.Sin(Math.PI / 3);
+                Figure(false, tip + v * (arrow / 2), tip - v * (arrow / 2));
+                break;
+            }
+            case "Circle":
+            {
+                var radius = new Size(half, half);
+                var f = new System.Windows.Media.PathFigure { StartPoint = tip + new Vector(half, 0), IsClosed = true, IsFilled = filled };
+                f.Segments.Add(new System.Windows.Media.ArcSegment(tip - new Vector(half, 0), radius, 0, false, System.Windows.Media.SweepDirection.Clockwise, true));
+                f.Segments.Add(new System.Windows.Media.ArcSegment(tip + new Vector(half, 0), radius, 0, false, System.Windows.Media.SweepDirection.Clockwise, true));
+                path.Figures.Add(f);
+                break;
+            }
+        }
     }
 
     /// <summary>What a measurement measures.</summary>
