@@ -116,7 +116,42 @@ public sealed class ViewerAnnotationStore
     /// How far a line's, polygon's or polyline's box reaches past its points: half the line, or
     /// with line endings their size (the engine draws arrows nine line widths long, shapes three across).
     /// </summary>
-    public static double ShapeMargin(double strokeWidth, bool endings) => endings ? 5 * Math.Max(strokeWidth, 1) + 1 : strokeWidth / 2 + 1;
+    public static double ShapeMargin(double strokeWidth, bool endings) =>
+        endings ? Reach("OpenArrow", strokeWidth) : Reach("None", strokeWidth);
+
+    /// <summary><see cref="ShapeMargin(double, bool)"/> for these endings.</summary>
+    public static double ShapeMargin(double strokeWidth, string start, string end) =>
+        Math.Max(Reach(start, strokeWidth), Reach(end, strokeWidth));
+
+    /// <summary>
+    /// How far an ending (as PdfAnnotationAppearances draws it, s = max(width, 1)) can reach from
+    /// its point along either axis, with the line's half width and its joins: an arrow's wings are
+    /// 9 s long at 30 degrees to the line (on a line at 30 or 60 degrees a wing lies along an axis)
+    /// and its tip's mitre adds up to a line width; a square's corner is 3 s √2 away, a slash's
+    /// end 4.5 s; mitred corners add up to a line width. One point more for anti-aliasing.
+    /// </summary>
+    private static double Reach(string ending, double width)
+    {
+        double s = Math.Max(width, 1);
+        return ending switch
+        {
+            "None" => width / 2 + 1,
+            "OpenArrow" or "ClosedArrow" or "ROpenArrow" or "RClosedArrow" => 9 * s + width + 1,
+            _ => 4.5 * s + width + 1, // Square, Circle, Diamond, Butt, Slash (and a name the store refuses)
+        };
+    }
+
+    /// <summary>
+    /// A line's or polyline's box grown to hold its points and endings, never smaller than it was
+    /// (cut to the page when the store takes it).
+    /// </summary>
+    public static ViewerBox GrownForEndings(ViewerAnnotation a)
+    {
+        var around = ViewerBox.Around(a.Vertices, a.HasEndings ? ShapeMargin(a.StrokeWidth, a.StartEnding, a.EndEnding) : ShapeMargin(a.StrokeWidth, false));
+        var b = a.Box;
+        return a.Vertices.Count == 0 ? b
+            : new ViewerBox(Math.Min(b.X1, around.X1), Math.Min(b.Y1, around.Y1), Math.Max(b.X2, around.X2), Math.Max(b.Y2, around.Y2));
+    }
 
     /// <summary>A shape's box grown around its points may reach past the page: it is cut to the page (its points are checked).</summary>
     private ViewerAnnotation Fit(ViewerAnnotation a)
@@ -163,6 +198,10 @@ public sealed class ViewerAnnotationStore
         if (old.Kind != annotation.Kind) throw new ViewerAnnotationException("An annotation's subtype cannot change.");
         if (old.InReplyTo != annotation.InReplyTo) throw new ViewerAnnotationException("What a reply answers cannot change.");
         if (old.Kind == ViewerAnnotationKind.Reply) annotation = annotation with { Page = old.Page, Box = old.Box };
+        // A measurement stays one, and keeps its fill, dash and line endings (values given for them are ignored).
+        annotation = old.IsMeasurement
+            ? annotation with { IsMeasurement = true, FillColor = old.FillColor, Dash = old.Dash, StartEnding = old.StartEnding, EndEnding = old.EndEnding }
+            : annotation with { IsMeasurement = false };
         // Moved to another page, a file's annotation is written as a new one there (and removed from its page).
         var updated = Fit(annotation with { SourceIndex = annotation.Page == old.Page ? old.SourceIndex : -1 });
         Check(updated);
@@ -294,6 +333,8 @@ public sealed class ViewerAnnotationStore
         bool endings = a.StartEnding != "None" || a.EndEnding != "None";
         if (endings && (!a.HasEndings || !PdfAnnotationLimits.LineEndings.Contains(a.StartEnding) || !PdfAnnotationLimits.LineEndings.Contains(a.EndEnding)))
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": lineEndings are for lines and polylines, each one of {string.Join(", ", PdfAnnotationLimits.LineEndings)}.");
+        if (a.Dash != null && (!a.IsShape || !ViewerAnnotationPdf.IsValidDash(a.Dash)))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": dashPattern is for squares, circles, lines, polygons and polylines: 1 to {ViewerAnnotationPdf.MaxDashCount} numbers from 0 to {ViewerAnnotationPdf.MaxDashLength}, not all 0.");
         if (a.Kind == ViewerAnnotationKind.Stamp ? !ViewerAnnotationPdf.IsStampName(a.StampName) : a.StampName.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a stamp needs a stampName, such as Approved or Draft.");
         if (a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo.Length is 0 or > MaxIdLength || a.InReplyTo == a.Id : a.InReplyTo.Length > 0)

@@ -414,7 +414,26 @@ With `showAnnotationTools` (full window and light box), a second toolbar shows t
 | Stamp | Pick a stamp (Approved, Draft, Confidential and the other standard ones) and click where it goes. |
 
 The colour buttons set the colour of the next annotation, or change the selected one (a stamp
-keeps the colour of its kind). Undo and redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation
+keeps the colour of its kind).
+
+For a rectangle, ellipse, line, arrow, polygon or connected lines, lists next to the colour
+buttons set the **shape style** of the next shape of that tool, or change the selected shape:
+
+- **Fill** (`/IC`): none, or one of the toolbar colours. It fills a rectangle, ellipse or
+  polygon, and the closed line endings. A fill from the file that is not in the list shows as
+  "Current fill".
+- **Line style** (`/BS` with `/S /D` and `/D`): solid, dashed (`[4 3]`) or dotted (`[1 2]`).
+  Another dash from the file shows as "Current dash".
+- **Line start** and **Line end** (lines and connected lines, `/LE`): the ten endings of
+  ISO 32000-2 Table 179. The arrow tool starts with an open arrow at the end. The shape's
+  box grows to hold new endings.
+
+Each change is one undo step. A shape from the file keeps its own fill, dash, line endings and
+`/BS` until that value is changed: no defaults are added to it. A measurement (an annotation
+with `/Measure`) shows no shape style and keeps its own. A file's shape moved to another page
+(with `updateAnnotation`) is written there as a new annotation with its own entries, its
+`/Measure` too. While a list has the focus, it keeps its letters, arrow keys and `Delete`;
+`Ctrl`+`Z` and `Ctrl`+`Y` still undo and redo. Undo and redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation
 change, the host page's too. The side panel's **Comments** tab lists the annotations as
 threads: each reply is under the comment it answers. Click one to go to it; with a comment
 selected, **Reply** adds a reply. Deleting a comment deletes its replies, as in Acrobat.
@@ -477,6 +496,7 @@ Close to the Adobe PDF Embed API's format (W3C Web Annotation style):
       stampName: 'Approved',         // stamp: its /Name (see below)
       strokeColor: '#FFD400',        // the line colour; the text colour of free text
       fillColor: '#CCE5FF',          // inside of square, circle and polygon; closed line endings; free text background (optional)
+      dashPattern: [4, 3],           // square, circle, line, polygon, polyline: dash and gap lengths in points (optional, see below)
       strokeWidth: 2,                // ink, square, circle, line, polygon, polyline, the free text border (0 to 100)
       opacity: 1,                    // 0 to 1
       fontSize: 12,                  // free text, 4 to 144
@@ -503,6 +523,21 @@ of `Approved`, `SBCompleted`, `Confidential`, `Draft`, `Final`, `ForComment`, `F
 `SBInformationOnly`, `NotApproved`, `NotForPublicRelease`, `SBPreliminaryResults`, `Received`,
 `SBReviewed`, `SBRevised`, `SBVoid`, `Expired`, `TopSecret`, `AsIs`, `Experimental`, `Sold`,
 `Departmental`; the engine draws the stamp with its label in the colour of its kind.
+
+`dashPattern` makes the line of a square, circle, line, polygon or polyline dashed (`/BS /S /D`
+with this `/D`): 1 to 16 numbers from 0 to 1000, not all 0. The toolbar's presets are `[4, 3]`
+(dashed) and `[1, 2]` (dotted). The viewer gives it only for a dashed shape, with the file's
+numbers as they are (not rounded).
+
+- `addAnnotations`: leave it out, or give `null` or `[]`, for a solid line.
+- `updateAnnotation`: **leave it out to keep the shape's dash** (so a page written before
+  `dashPattern` existed does not change it). Give `null` or `[]` to make the line solid. A dash
+  within 0.1 % of the current one is not a change: a file's shape then keeps its own `/D`.
+  `updateAnnotation` replaces the other values, so give the `fillColor` and `lineEndings` that the
+  shape should keep.
+- A measurement (`/Measure`) keeps its fill, dash and line endings: values given for them are
+  ignored, and no error is returned.
+- A polygon has no line endings: `lineEndings` given for one are ignored.
 
 A **reply** answers another annotation (a note with `/IRT`, ISO 32000-2 12.5.6.4). It has no
 selector: its `target` is the `id` of the annotation it answers, and it takes that one's page:

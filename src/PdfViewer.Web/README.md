@@ -33,7 +33,7 @@ Status: a demo, and the viewer of the [web embed SDK](#embed-sdk) (`wwwroot/pdfv
 | Outline | The document's bookmarks, with the current page marked. |
 | Thumbnails | The "Pages" tab of the side panel. Only thumbnails near its view are drawn, after the pages in view. |
 | Text selection and copy | Drag with the mouse or a pen, double-click for a word, `Ctrl`+`A` for the page, `Ctrl`+`C` to copy (when the document allows it). One page at a time, with the engine's text layout (`ViewerTextLayout`, shared with the Android app). |
-| Annotations | Highlight, underline, strike-through, note, free text, ink, rectangle and ellipse; select, move, delete, undo and redo; a comments panel. Written by the engine's `PdfAnnotationEditor` as an incremental update with appearance streams (`ViewerAnnotationStore`, `ViewerDocument.ApplyEditsAsync`). |
+| Annotations | Highlight, underline, strike-through, note, free text, ink, rectangle, ellipse, line, arrow, polygon, connected lines and stamps; select, move, delete, undo and redo; a comments panel. Shapes have a fill, a dash (solid, dashed, dotted) and, for lines, the ten line endings. Written by the engine's `PdfAnnotationEditor` as an incremental update with appearance streams (`ViewerAnnotationStore`, `ViewerDocument.ApplyEditsAsync`). |
 | Forms | Text, check box, radio, combo and list fields filled over the page; values, formats and calculations by the engine (`PdfNativeFormService.Fill`), without running document JavaScript. |
 | Download | The document with its annotations and form data as a Blob download (`Ctrl`+`S`); embedded, the bytes as given unless `downloadWithAnnotations`. |
 | Print | Pages rendered at 150 dpi and printed as images through a hidden iframe. Up to 500 pages. |
@@ -393,7 +393,9 @@ longer, and the first page of a session pays the interpreter's warm-up.
   arguments, the replies; document metadata; mouse selection between two carets);
   `EmbedRangeTests` (range loading: the fetchRange request and range reply checked both ways,
   the reader with a fake host page, a document drawn before the rest arrives, the fallback for a
-  damaged file); `ViewerStripRenderTests` (pages drawn in strips).
+  damaged file); `ViewerStripRenderTests` (pages drawn in strips); `WebShapeStyleTests` (shape
+  fill, dash and line endings: written with appearances and read back, a file's shapes keep what
+  is not changed, measurements keep their style, undo, the API's `dashPattern`).
 - `tests/PdfEngine.Vector.Tests`: `RangeLoadingTests` (the chunk cache, the planner, opening and
   drawing by ranges, object streams, encryption, the fallback for a damaged cross-reference table).
 - `tests/sdk/embed-range.test.mjs` (`node --test`): the SDK script's range sources (URL and

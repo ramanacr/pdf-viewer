@@ -28,7 +28,7 @@ public sealed record EmbedSaveOptions(bool Enabled, int AutoSaveSeconds, bool Fo
 /// { id, type: "Annotation", motivation: "commenting" | "highlighting", bodyValue,
 ///   target: { source, selector: { node: { index }, subtype, boundingBox: [x1, y1, x2, y2],
 ///             quadPoints, inkList, vertices, lineEndings, stampName, strokeColor, fillColor,
-///             strokeWidth, opacity, fontSize } },
+///             dashPattern, strokeWidth, opacity, fontSize } },
 ///   creator: { type: "Person", name }, created, modified }
 /// </code>
 /// A reply is <c>{ id, type, motivation: "replying", bodyValue, target: "&lt;id it answers&gt;", creator, created, modified }</c>.
@@ -129,7 +129,8 @@ public static class EmbedAnnotationJson
             int least = kind switch { ViewerAnnotationKind.Polygon => 6, _ => 4 };
             if (vertices.Length % 2 != 0 || vertices.Length < least || kind == ViewerAnnotationKind.Line && vertices.Length != 4)
                 throw Bad(requestId, $"{w}.vertices must be x, y pairs: two points for a line, {least / 2} or more for a {subtypeName}.");
-            if (selector.TryGetProperty("lineEndings", out var le) && le.ValueKind != JsonValueKind.Null)
+            // A polygon is closed: it has no line endings, and lineEndings given for it are ignored.
+            if (kind != ViewerAnnotationKind.Polygon && selector.TryGetProperty("lineEndings", out var le) && le.ValueKind != JsonValueKind.Null)
             {
                 if (le.ValueKind != JsonValueKind.Array || le.GetArrayLength() != 2 || le.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String))
                     throw Bad(requestId, $"{w}.lineEndings must be two names, [start, end].");
@@ -151,10 +152,12 @@ public static class EmbedAnnotationJson
         else if (bb != null) throw Bad(requestId, $"{w}.boundingBox must be [x1, y1, x2, y2].");
         else if (quads != null) box = ViewerBox.Around(quads);
         else if (ink != null) box = ViewerBox.Around(ink.SelectMany(s => s), strokeWidth / 2 + 1);
-        else if (vertices != null) box = ViewerBox.Around(vertices, ViewerAnnotationStore.ShapeMargin(strokeWidth, start != "None" || end != "None"));
+        else if (vertices != null) box = ViewerBox.Around(vertices, ViewerAnnotationStore.ShapeMargin(strokeWidth, start, end));
         else throw Bad(requestId, $"{w}: boundingBox is required.");
 
         string color = ColourValue(selector, "strokeColor", w, requestId) ?? ViewerAnnotationPdf.DefaultColor(kind);
+        // dashPattern: dash and gap lengths in points; left out, null or [] is a solid line (the store checks the values).
+        var dash = Numbers(selector, "dashPattern", ViewerAnnotationPdf.MaxDashCount, w, requestId);
         return new ViewerAnnotation
         {
             Id = id,
@@ -170,6 +173,7 @@ public static class EmbedAnnotationJson
             Color = color.ToUpperInvariant(),
             FillColor = ColourValue(selector, "fillColor", w, requestId)?.ToUpperInvariant(),
             Opacity = Number(selector, "opacity", 0, 1, w, requestId) ?? 1,
+            Dash = dash is { Length: > 0 } ? dash : null,
             StrokeWidth = strokeWidth,
             FontSize = Number(selector, "fontSize", ViewerAnnotationStore.MinFontSize, ViewerAnnotationStore.MaxFontSize, w, requestId) ?? 12,
             Contents = contents,
@@ -178,6 +182,11 @@ public static class EmbedAnnotationJson
             Modified = modified,
         };
     }
+
+    /// <summary>The annotation's target.selector has a dashPattern property (null and [] included).</summary>
+    public static bool HasDashPattern(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty("target", out var t) && t.ValueKind == JsonValueKind.Object
+        && t.TryGetProperty("selector", out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty("dashPattern", out _);
 
     /// <summary>A filter: { annotationIds: [...], pageRange: { startPage, endPage } } (pages from 1); null or {} is every annotation.</summary>
     public static ViewerAnnotationFilter ParseFilter(JsonElement e, int requestId, string method)
@@ -290,6 +299,13 @@ public static class EmbedAnnotationJson
         if (a.Kind == ViewerAnnotationKind.Stamp) w.WriteString("stampName", a.StampName);
         w.WriteString("strokeColor", a.Color);
         if (a.FillColor != null) w.WriteString("fillColor", a.FillColor);
+        if (a.Dash != null)
+        {
+            // Not rounded: given back, a file's dash is the same dash.
+            w.WriteStartArray("dashPattern");
+            foreach (double v in a.Dash) w.WriteNumberValue(v);
+            w.WriteEndArray();
+        }
         if (a.Kind is ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.FreeText || a.HasVertices)
             w.WriteNumber("strokeWidth", Round(a.StrokeWidth));
         if (a.Kind == ViewerAnnotationKind.FreeText) w.WriteNumber("fontSize", Round(a.FontSize));

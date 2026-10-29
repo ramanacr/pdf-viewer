@@ -160,6 +160,9 @@ public sealed record EmbedCall(int RequestId, int Document, EmbedMethod Method) 
     /// <summary>addAnnotations: the annotations; updateAnnotation: the one annotation.</summary>
     public IReadOnlyList<Annotations.ViewerAnnotation> Annotations { get; init; } = [];
 
+    /// <summary>updateAnnotation without a dashPattern property: the annotation keeps its dash (pages written before dashPattern existed).</summary>
+    public bool KeepsDash { get; init; }
+
     /// <summary>getAnnotations and deleteAnnotations.</summary>
     public Annotations.ViewerAnnotationFilter? Filter { get; init; }
 
@@ -403,7 +406,11 @@ public static class EmbedProtocol
             EmbedMethod.Search => call with { Term = Term(Arg(0)) },
             EmbedMethod.SearchNext or EmbedMethod.SearchPrevious or EmbedMethod.SearchClear => call with { SearchId = Integer(Arg(0), "searchId", 1, int.MaxValue) },
             EmbedMethod.AddAnnotations => call with { Annotations = EmbedAnnotationJson.ParseList(Arg(0), requestId, "", default) },
-            EmbedMethod.UpdateAnnotation => call with { Annotations = [EmbedAnnotationJson.Parse(Arg(0), requestId, "", default, requireId: true)] },
+            EmbedMethod.UpdateAnnotation => call with
+            {
+                Annotations = [EmbedAnnotationJson.Parse(Arg(0), requestId, "", default, requireId: true)],
+                KeepsDash = !EmbedAnnotationJson.HasDashPattern(Arg(0)),
+            },
             EmbedMethod.GetAnnotations => call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) },
             EmbedMethod.DeleteAnnotations => Arg(0).ValueKind == JsonValueKind.Object
                 ? call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) }
