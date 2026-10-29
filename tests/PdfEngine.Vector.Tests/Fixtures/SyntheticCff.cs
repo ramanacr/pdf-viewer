@@ -46,8 +46,8 @@ internal static class SyntheticCff
         }), fdArray: null, new[] { priv }, new[] { subrs });
     }
 
-    /// <summary>A CID-keyed font (ROS Adobe-Identity-0) with an FDArray and a format 0 FDSelect.</summary>
-    public static byte[] CidKeyed(double[]? topMatrix, IReadOnlyList<FontDict> fds, IReadOnlyList<CidGlyph> glyphs)
+    /// <summary>A CID-keyed font (ROS Adobe-Identity-0) with an FDArray, a format 0 FDSelect and optional global subroutines.</summary>
+    public static byte[] CidKeyed(double[]? topMatrix, IReadOnlyList<FontDict> fds, IReadOnlyList<CidGlyph> glyphs, IReadOnlyList<byte[]>? globalSubrs = null)
     {
         var custom = new List<string> { "Adobe", "Identity" }; // SIDs 391 and 392
         var charStrings = new List<byte[]> { new byte[] { 14 } };
@@ -90,7 +90,7 @@ internal static class SyntheticCff
                 }));
             }
             return dicts;
-        }, privs, ListOf(fds));
+        }, privs, ListOf(fds), globalSubrs);
     }
 
     private static IReadOnlyList<byte[]>?[] ListOf(IReadOnlyList<FontDict> fds)
@@ -103,11 +103,12 @@ internal static class SyntheticCff
     private sealed record Offsets(int Charset, int FdSelect, int CharStrings, int FdArray, int[] Privates);
 
     private static byte[] Assemble(List<string> strings, byte[] charset, byte[]? fdSelect, IReadOnlyList<byte[]> charStrings,
-        Func<Offsets, byte[]> top, Func<Offsets, List<byte[]>>? fdArray, IReadOnlyList<byte[]> privates, IReadOnlyList<IReadOnlyList<byte[]>?> subrs)
+        Func<Offsets, byte[]> top, Func<Offsets, List<byte[]>>? fdArray, IReadOnlyList<byte[]> privates, IReadOnlyList<IReadOnlyList<byte[]>?> subrs,
+        IReadOnlyList<byte[]>? globalSubrs = null)
     {
         byte[] nameIndex = Index(new[] { Encoding.ASCII.GetBytes("Synthetic") });
         byte[] stringIndex = Index(strings.ConvertAll(s => Encoding.ASCII.GetBytes(s)));
-        byte[] gsubrs = Index(Array.Empty<byte[]>());
+        byte[] gsubrs = Index(globalSubrs ?? Array.Empty<byte[]>());
         byte[] csIndex = Index(charStrings);
         var subrIndexes = new List<byte[]>();
         foreach (var s in subrs) subrIndexes.Add(s is { Count: > 0 } ? Index(s) : Array.Empty<byte>());

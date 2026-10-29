@@ -646,25 +646,34 @@ internal static class CffWriter
         return ms.ToArray();
     }
 
-    private static byte[] Index(IReadOnlyList<byte[]> items)
+    internal static byte[] Index(IReadOnlyList<byte[]> items)
     {
         using var ms = new MemoryStream();
         BigEndian.W16(ms, items.Count);
         if (items.Count == 0)
             return ms.ToArray();
-        ms.WriteByte(4); // offSize
+        // The smallest offSize that holds the last offset: a subset has an entry for every subroutine, used or not.
+        long last = 1;
+        foreach (var it in items) last += it.Length;
+        int offSize = last <= 0xFF ? 1 : last <= 0xFFFF ? 2 : last <= 0xFFFFFF ? 3 : 4;
+        ms.WriteByte((byte)offSize);
         uint off = 1;
-        BigEndian.W32(ms, off);
+        WriteOffset(off);
         foreach (var it in items)
         {
             off += (uint)it.Length;
-            BigEndian.W32(ms, off);
+            WriteOffset(off);
         }
         foreach (var it in items) ms.Write(it);
         return ms.ToArray();
+
+        void WriteOffset(uint value)
+        {
+            for (int shift = (offSize - 1) * 8; shift >= 0; shift -= 8) ms.WriteByte((byte)(value >> shift));
+        }
     }
 
-    private sealed class DictWriter
+    internal sealed class DictWriter
     {
         public readonly MemoryStream S = new();
         public void Op(int op) => S.WriteByte((byte)op);
@@ -678,9 +687,13 @@ internal static class CffWriter
             else if (v is >= short.MinValue and <= short.MaxValue) { S.WriteByte(28); BigEndian.W16(S, v); }
             else Int5(v);
         }
-        public void Real(double v)
+        public void Real(double v) => Real(v.ToString("0.#########", CultureInfo.InvariantCulture));
+
+        /// <summary>A real with every digit of the double (a FontMatrix copied from another font).</summary>
+        public void RealExact(double v) => Real(v.ToString("R", CultureInfo.InvariantCulture));
+
+        private void Real(string s)
         {
-            string s = v.ToString("0.#########", CultureInfo.InvariantCulture);
             var nibbles = new List<int>();
             for (int i = 0; i < s.Length; i++)
             {
@@ -700,7 +713,7 @@ internal static class CffWriter
         }
     }
 
-    private static byte[] Dict(Action<DictWriter> build)
+    internal static byte[] Dict(Action<DictWriter> build)
     {
         var w = new DictWriter();
         build(w);

@@ -106,14 +106,15 @@ public static class PdfAnnotationAppearances
     /// /Rect height that shows them all, and the characters no font can draw (left out of the
     /// appearance). Null when no font can be loaded.
     /// </summary>
-    internal static PdfFreeTextLayout? MeasureFreeText(string text, string? daFontName, double size, double rectWidth, double borderWidth = 0)
+    /// <param name="fonts">The fonts to lay out with; null uses <see cref="Fonts"/> (the installed fonts when that is null).</param>
+    internal static PdfFreeTextLayout? MeasureFreeText(string text, string? daFontName, double size, double rectWidth, double borderWidth = 0, SystemFontCatalog? fonts = null)
     {
         ArgumentNullException.ThrowIfNull(text);
         if (!(size > 0) || !double.IsFinite(rectWidth)) throw new ArgumentOutOfRangeException(nameof(size));
         double pad = Painter.FreeTextPadding(borderWidth);
         double boxW = rectWidth - 2 * pad;
         if (boxW <= 0) return null;
-        if (Painter.LayOut(new FontSet(), text, daFontName, size, boxW, double.MaxValue) is not { } layout) return null;
+        if (Painter.LayOut(new FontSet(fonts), text, daFontName, size, boxW, double.MaxValue) is not { } layout) return null;
         int lines = Math.Max(1, layout.Lines.Count);
         // Each line takes one leading, at least its ascent plus descent: n leadings hold n lines.
         return new PdfFreeTextLayout(lines, layout.Leading, lines * layout.Leading + 2 * pad, layout.Missing);
@@ -1668,9 +1669,11 @@ public static class PdfAnnotationAppearances
     /// </summary>
     private sealed class FontSet
     {
-        private readonly SystemFontCatalog _catalog = PdfAnnotationAppearances.Fonts ?? SystemFontCatalog.Installed;
+        private readonly SystemFontCatalog _catalog;
         private readonly Dictionary<(string, int), EmbeddedFontBuilder?> _builders = new();
         private readonly List<EmbeddedFontBuilder> _order = new();
+
+        public FontSet(SystemFontCatalog? catalog = null) => _catalog = catalog ?? PdfAnnotationAppearances.Fonts ?? SystemFontCatalog.Installed;
 
         public IEnumerable<EmbeddedFontBuilder> Used => _order.Where(b => b.IsUsed);
 

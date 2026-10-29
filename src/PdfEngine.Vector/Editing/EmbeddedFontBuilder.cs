@@ -10,7 +10,9 @@ namespace PdfEngine.Vector.Editing;
 /// <summary>
 /// A system font embedded for new text: a Type0 font (Identity-H, CID = glyph id; Identity-V for
 /// vertical writing) over a CIDFontType2 whose program is the TrueType font subset to the glyphs
-/// used, with widths and a ToUnicode map so the text can be searched and copied.
+/// used, with widths and a ToUnicode map so the text can be searched and copied. A font with CFF
+/// outlines is a CIDFontType0 instead, its program a CID-keyed CFF subset whose CIDs are the glyph
+/// ids (FontFile3 /CIDFontType0C, no CIDToGIDMap).
 /// </summary>
 internal sealed class EmbeddedFontBuilder
 {
@@ -45,10 +47,11 @@ internal sealed class EmbeddedFontBuilder
         string baseFont = tag + "+" + Font.PostScriptName;
 
         byte[] program = Font.Subset(_used.Keys);
+        bool cff = Font.IsCff;
         objects[file] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
         {
             ["Filter"] = new PdfName("FlateDecode"),
-            ["Length1"] = new PdfInteger(program.Length),
+            [cff ? "Subtype" : "Length1"] = cff ? new PdfName("CIDFontType0C") : new PdfInteger(program.Length),
         }, Redaction.ContentRedactor.Deflate(program));
 
         double k = 1000.0 / Font.UnitsPerEm;
@@ -69,7 +72,7 @@ internal sealed class EmbeddedFontBuilder
             ["CapHeight"] = new PdfInteger((long)Math.Round(Font.CapHeight * k)),
             ["StemV"] = new PdfInteger(Font.IsBold ? 140 : 80),
             ["FontWeight"] = new PdfInteger(Font.Weight),
-            ["FontFile2"] = new PdfIndirectRef(file),
+            [cff ? "FontFile3" : "FontFile2"] = new PdfIndirectRef(file),
         });
 
         // /W: runs of consecutive glyph ids with their widths.
@@ -89,10 +92,10 @@ internal sealed class EmbeddedFontBuilder
             w.Add(new PdfArray(widths));
             i = j;
         }
-        objects[cidFont] = new PdfDictionary(new Dictionary<string, PdfObject>
+        var cidFontEntries = new Dictionary<string, PdfObject>
         {
             ["Type"] = new PdfName("Font"),
-            ["Subtype"] = new PdfName("CIDFontType2"),
+            ["Subtype"] = new PdfName(cff ? "CIDFontType0" : "CIDFontType2"),
             ["BaseFont"] = new PdfName(baseFont),
             ["CIDSystemInfo"] = new PdfDictionary(new Dictionary<string, PdfObject>
             {
@@ -101,8 +104,10 @@ internal sealed class EmbeddedFontBuilder
             ["FontDescriptor"] = new PdfIndirectRef(descriptor),
             ["DW"] = new PdfInteger(1000),
             ["W"] = new PdfArray(w),
-            ["CIDToGIDMap"] = new PdfName("Identity"),
-        });
+        };
+        // CIDFontType0 maps CIDs to glyphs through the CFF charset; CIDToGIDMap is for CIDFontType2 only.
+        if (!cff) cidFontEntries["CIDToGIDMap"] = new PdfName("Identity");
+        objects[cidFont] = new PdfDictionary(cidFontEntries);
         objects[toUnicode] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject> { ["Filter"] = new PdfName("FlateDecode") },
             Redaction.ContentRedactor.Deflate(Encoding.ASCII.GetBytes(ToUnicodeCMap(_used))));
         objects[type0] = new PdfDictionary(new Dictionary<string, PdfObject>
