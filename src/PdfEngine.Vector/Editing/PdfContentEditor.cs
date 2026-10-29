@@ -429,7 +429,7 @@ internal sealed class PageSession
         bool May(SystemFontFace face) => characters == null || characters.All(cp => _catalog.MayHave(face, cp));
         if (_catalog.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false) is { } match && May(match) && Builder(match, vertical) is { } b) yield return b;
         foreach (var face in _catalog.Fallbacks(bold, italic))
-            if (May(face) && Builder(face, vertical) is { } fb) yield return fb;
+            if ((characters == null || characters.All(cp => _catalog.MayHaveAsFallback(face, cp))) && Builder(face, vertical) is { } fb) yield return fb;
     }
 
     /// <summary>
@@ -532,7 +532,7 @@ internal sealed class PageSession
     public (byte[] Code, double Width0, GlyphStyle Style)? EncodeWithInstalled(string element, GlyphStyle style, bool bold, bool italic, bool vertical = false)
     {
         int cp = char.ConvertToUtf32(element, 0);
-        foreach (var builder in Chain(style.Font, bold, italic, vertical))
+        foreach (var builder in Chain(style.Font, bold, italic, vertical, characters: new[] { cp }))
         {
             int gid = builder.Font.GlyphFor(cp);
             if (gid <= 0) continue;
@@ -555,7 +555,7 @@ internal sealed class PageSession
     /// </summary>
     public (List<(byte[] Code, double Width0)> Glyphs, GlyphStyle Style)? EncodeUnitWithInstalled(string run, GlyphStyle style, bool bold, bool italic)
     {
-        foreach (var builder in Chain(style.Font, bold, italic))
+        foreach (var builder in Chain(style.Font, bold, italic, characters: run.Select(c => (int)c).ToArray()))
         {
             var glyphs = run.Select(c => new ShapingGlyph { Gid = builder.Font.GlyphFor(c), Text = c.ToString() }).ToList();
             if (glyphs.Any(g => g.Gid <= 0)) continue;

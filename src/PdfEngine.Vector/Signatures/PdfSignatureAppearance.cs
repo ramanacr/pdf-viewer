@@ -296,7 +296,7 @@ internal static class PdfSignatureAppearanceBuilder
                 var (face, builder, tried) = _fallbacks[i];
                 if (!tried)
                 {
-                    if (!_catalog.MayHave(face, cp)) continue;
+                    if (!_catalog.MayHaveAsFallback(face, cp)) continue;
                     if (_catalog.Load(face) is { } file && !_chain.Exists(b => ReferenceEquals(b.Font, file)))
                         _chain.Add(builder = new EmbeddedFontBuilder(file, "SigF" + (_chain.Count + 1)));
                     _fallbacks[i] = (face, builder, true);

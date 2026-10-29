@@ -135,6 +135,78 @@ public sealed class DesktopCffFontTests
         Assert.True(wpfShaping.IsCff);
     }
 
+    [Fact]
+    public void OtherCffFamilies_DrawNoPrivateUseCharacters_NoEmptyGlyphs_AndNoIconFonts()
+    {
+        using var folder = new TempFolder();
+        File.Copy(Path.Combine(WindowsFonts, "arial.ttf"), Path.Combine(folder.Path, "arial.ttf"));
+        // A text font that also has a private-use code (as converted Symbol text, U+F0B7, would find).
+        folder.Add("Han.otf", CffOpenTypeFont.Font(family: Family, postScriptName: "SyntheticHanSans-Regular", map: new[] { (0x41, 1), (0x4E2D, 2), (0xF0B7, 2) }));
+        // An icon font, by its name.
+        folder.Add("Icons.otf", CffOpenTypeFont.Font(family: "Synthetic Icons", postScriptName: "SyntheticIcons", map: new[] { (0x4E8C, 2) }));
+        // A blank font (as Adobe Blank): its glyph for the character has no outline.
+        folder.Add("Empty.otf", CffOpenTypeFont.Font(family: "Synthetic Empty Sans", postScriptName: "SyntheticEmptySans", map: new[] { (0x4E09, 3) }));
+        // A font with a symbol character map only.
+        folder.Add("Legacy.otf", CffOpenTypeFont.Font(family: "Synthetic Legacy Sans", postScriptName: "SyntheticLegacySans", map: new[] { (0x4E5D, 2), (0xF04E, 2) }, symbol: true));
+        var catalog = SystemFontCatalog.ForDirectory(folder.Path);
+        Assert.Equal(5, catalog.Faces.Count);
+        Assert.DoesNotContain("Synthetic Icons", catalog.Fallbacks(false, false).Select(f => f.Family));
+
+        int Missing(string text) => PdfEngine.Vector.Annotations.PdfAnnotationAppearances.MeasureFreeText(text, "Helv", 12, 400, fonts: catalog)!.Value.Missing;
+        Assert.Equal(0, Missing("中"));
+        Assert.Equal(1, Missing(""));
+        Assert.Equal(1, Missing("二"));
+        Assert.Equal(1, Missing("三"));
+        Assert.Equal(1, Missing("九"));
+        Assert.Equal(1, Missing("\U000F0001"));
+        Assert.True(SystemFontCatalog.IsPrivateUse(0xE000) && SystemFontCatalog.IsPrivateUse(0x10FFFD) && !SystemFontCatalog.IsPrivateUse(0x4E2D));
+
+        // A text document reports nothing missing for 中 and leaves the private-use character out (no CFF face for it).
+        using var ms = new MemoryStream();
+        PdfEngine.Vector.Create.PdfTextDocument.Write("", ms, new PdfEngine.Vector.Create.PdfTextLayoutOptions { FontFamily = "Arial" }, catalog: catalog);
+        Assert.DoesNotContain("/FontFile3", System.Text.Encoding.Latin1.GetString(ms.ToArray()));
+    }
+
+    [Fact]
+    public void Cff2OnlyFont_IsNotCatalogued()
+    {
+        // A variable CFF font cannot be loaded for new text; matching must not choose it.
+        byte[] data = CffOpenTypeFont.Font(family: "Synthetic Variable Sans", postScriptName: "SyntheticVariableSans");
+        int tables = data[4] << 8 | data[5];
+        for (int i = 0; i < tables; i++)
+            if (data.AsSpan(12 + i * 16, 4).SequenceEqual("CFF "u8)) "CFF2"u8.CopyTo(data.AsSpan(12 + i * 16));
+        using var folder = new TempFolder();
+        folder.Add("Variable.otf", data);
+        Assert.Empty(SystemFontCatalog.ForDirectory(folder.Path).Faces);
+    }
+
+    [Fact]
+    public async Task EditedText_LoadsOnlyTheFallbacksWhoseCharacterMapsHaveTheCharacter()
+    {
+        using var folder = new TempFolder();
+        File.Copy(Path.Combine(WindowsFonts, "arial.ttf"), Path.Combine(folder.Path, "arial.ttf"));
+        // Before the Han font by name, without 中.
+        folder.Add("Alpha.otf", CffOpenTypeFont.Font(family: "Synthetic Alpha Sans", postScriptName: "SyntheticAlphaSans", map: new[] { (0x41, 1) }));
+        folder.Add("Han.otf", CffOpenTypeFont.Font(family: Family, postScriptName: "SyntheticHanSans-Regular"));
+        var catalog = SystemFontCatalog.ForDirectory(folder.Path);
+        var alpha = catalog.Faces.Single(f => f.Family == "Synthetic Alpha Sans");
+        var han = catalog.Faces.Single(f => f.Family == Family);
+        Assert.Equal(new[] { "Arial", "Synthetic Alpha Sans", Family }, catalog.Fallbacks(false, false).Select(f => f.Family));
+
+        var b = new VectorPdfBuilder();
+        int helv = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+        b.AddPage("BT /F1 24 Tf 40 200 Td (AB) Tj ET", $"<< /Font << /F1 {helv} 0 R >> >>", mediaBox: "[0 0 400 400]");
+        byte[] pdf = b.Build();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var text = Assert.Single(PdfContentEditor.Read(doc, 1).Texts);
+        var result = PdfContentEditor.Apply(doc, pdf, new PdfContentEdit[] { new PdfReplaceText(1, text.Id, "A中B") }, new PdfContentEditOptions { Fonts = catalog });
+        Assert.Empty(result.Warnings);
+        Assert.True(catalog.IsLoaded(han));
+        Assert.False(catalog.IsLoaded(alpha));
+        using var after = await PdfVectorDocument.OpenAsync(result.Bytes);
+        Assert.Contains("A中B", PdfTextExtractor.LoadPage(after, 1).Text);
+    }
+
     /// <summary>Adds the text in Arial at 100 pt to an empty page; the saved file and, per glyph, its character and font program format.</summary>
     private static async Task<(byte[] Pdf, (string, PdfFontProgramFormat)[] Formats)> AddText(SystemFontCatalog catalog, string text)
     {

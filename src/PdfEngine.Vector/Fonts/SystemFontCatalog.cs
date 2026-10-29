@@ -43,6 +43,7 @@ public sealed class SystemFontCatalog
             foreach (var (family, standIns) in aliases) _aliases[Squash(family)] = standIns;
         }
         _otherCffFamilies = new Lazy<string[]>(OtherCffFamilies);
+        _otherCffFamilySet = new Lazy<HashSet<string>>(() => new HashSet<string>(_otherCffFamilies.Value, StringComparer.OrdinalIgnoreCase));
         _byFamily = new Lazy<Dictionary<string, List<(SystemFontFace, bool)>>>(() =>
         {
             var map = new Dictionary<string, List<(SystemFontFace, bool)>>(StringComparer.Ordinal);
@@ -236,17 +237,53 @@ public sealed class SystemFontCatalog
     internal bool MayHave(SystemFontFace face, int codePoint)
     {
         if (_loaded.TryGetValue((face.Path, face.Index), out var font)) return font != null && font.GlyphFor(codePoint) != 0;
-        var cmap = _cmaps.GetOrAdd((face.Path, face.Index), key =>
-        {
-            try
-            {
-                using var stream = new FileStream(key.Item1, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-                return TrueTypeFontFile.ReadCharacterMap(stream, key.Item2, openTypeCff: true, TablesOf(key.Item1));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        });
-        return cmap != null && TrueTypeFontFile.Maps(cmap, codePoint);
+        return CharacterMap(face) is { } cmap && TrueTypeFontFile.Maps(cmap, codePoint);
     }
+
+    /// <summary>The face's character map, read alone (once) without loading the face.</summary>
+    private TrueTypeCmap? CharacterMap(SystemFontFace face) => _cmaps.GetOrAdd((face.Path, face.Index), key =>
+    {
+        try
+        {
+            using var stream = new FileStream(key.Item1, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+            return TrueTypeFontFile.ReadCharacterMap(stream, key.Item2, openTypeCff: true, TablesOf(key.Item1));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    });
+
+    /// <summary>
+    /// Whether <paramref name="face"/>, one of <see cref="Fallbacks"/>, may draw <paramref name="codePoint"/>
+    /// for a font that lacks it: <see cref="MayHave"/>, and for the other CFF families at the end of the
+    /// fallbacks (fonts the user installed, chosen by nothing but their character map) also:
+    /// not a Private Use Area character (icon fonts put their icons there, and text converted from
+    /// Symbol or Wingdings has such codes: a missing character is reported instead of drawing an
+    /// icon); not a face with a symbol character map only (3,0); and a glyph with an outline for a
+    /// character that is not white space (Adobe Blank maps every character to an empty glyph).
+    /// Families whose names say they are icon, symbol or blank fonts are not fallbacks at all
+    /// (<see cref="IsUnsuitableFallbackFamily"/>).
+    /// </summary>
+    internal bool MayHaveAsFallback(SystemFontFace face, int codePoint)
+    {
+        if (!MayHave(face, codePoint)) return false;
+        if (!face.OpenTypeCff || !_otherCffFamilySet.Value.Contains(face.Family)) return true;
+        if (IsPrivateUse(codePoint)) return false;
+        if (CharacterMap(face) is not { } cmap || !cmap.Subtables.Any(s => s.Platform == 0 || s.Platform == 3 && s.Encoding is 1 or 10)) return false;
+        if (System.Text.Rune.TryCreate(codePoint, out var rune) && System.Text.Rune.IsWhiteSpace(rune)) return true;
+        return Load(face) is { } font && font.GlyphFor(codePoint) is > 0 and var gid && font.HasOutline(gid);
+    }
+
+    /// <summary>Whether the face was loaded (tests: a walk through the fallbacks loads only the faces it needs).</summary>
+    internal bool IsLoaded(SystemFontFace face) => _loaded.ContainsKey((face.Path, face.Index));
+
+    /// <summary>The Private Use Areas: U+E000 to U+F8FF and planes 15 and 16.</summary>
+    internal static bool IsPrivateUse(int codePoint) => codePoint is >= 0xE000 and <= 0xF8FF or >= 0xF0000 and <= 0x10FFFF;
+
+    /// <summary>
+    /// Family names of fonts that are not text fonts (icon, symbol, dingbat and blank fonts: Font
+    /// Awesome, Material Icons, Adobe Blank), left out of the other CFF fallback families.
+    /// </summary>
+    internal static bool IsUnsuitableFallbackFamily(string family) =>
+        Has(family, "Icon", "Awesome", "Symbol", "Dingbat", "Wingding", "Webding", "Blank", "Emoji", "Glyphicon", "Fontello", "Ornament");
 
     /// <summary>The face of <paramref name="family"/> nearest to the weight and slant asked for.</summary>
     public SystemFontFace? FindFamily(string family, bool bold, bool italic) => FindFamily(family, bold ? 700 : 400, italic);
@@ -346,7 +383,8 @@ public sealed class SystemFontCatalog
     /// first (for each family, a TrueType stand-in before a CFF one: "Droid Sans Fallback" before
     /// "Noto Sans CJK"); faces with CFF outlines follow, for the characters only they have: first
     /// those of the families above, then one face of every other family with CFF outlines (fonts the
-    /// user installed, such as Source Han Sans or Adobe fonts), by family name.
+    /// user installed, such as Source Han Sans or Adobe fonts), by family name. Those last ones draw
+    /// only what <see cref="MayHaveAsFallback"/> allows (no Private Use Area characters, no empty glyphs).
     /// </summary>
     public IEnumerable<SystemFontFace> Fallbacks(bool bold, bool italic)
     {
@@ -370,6 +408,7 @@ public sealed class SystemFontCatalog
 
     /// <summary>The families with CFF outlines that <see cref="FallbackFamilies"/> and their aliases do not name, by name.</summary>
     private readonly Lazy<string[]> _otherCffFamilies;
+    private readonly Lazy<HashSet<string>> _otherCffFamilySet;
 
     private string[] OtherCffFamilies()
     {
@@ -377,7 +416,7 @@ public sealed class SystemFontCatalog
         if (_aliases != null)
             foreach (var family in FallbackFamilies)
                 if (_aliases.TryGetValue(Squash(family), out var standIns)) named.UnionWith(standIns.Select(Squash));
-        return Faces.Where(f => f.OpenTypeCff).Select(f => f.Family).Where(f => !named.Contains(Squash(f)))
+        return Faces.Where(f => f.OpenTypeCff).Select(f => f.Family).Where(f => !named.Contains(Squash(f)) && !IsUnsuitableFallbackFamily(f))
             .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 

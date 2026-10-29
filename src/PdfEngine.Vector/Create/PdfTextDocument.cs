@@ -97,7 +97,7 @@ public static class PdfTextDocument
                 // The fallbacks in order; a face whose character map lacks the character is not loaded.
                 fallbackFaces ??= catalog.Fallbacks(false, false).ToList();
                 foreach (var face in fallbackFaces)
-                    if (catalog.MayHave(face, codePoint) && catalog.Load(face) is { } next && next.GlyphFor(codePoint) is int g and not 0)
+                    if (catalog.MayHaveAsFallback(face, codePoint) && catalog.Load(face) is { } next && next.GlyphFor(codePoint) is int g and not 0)
                     {
                         result = (FontIndex(next), g);
                         break;

@@ -1719,7 +1719,7 @@ public static class PdfAnnotationAppearances
                     foreach (var face in _catalog.Fallbacks(bold, italic))
                     {
                         // The character map alone rules a face out, so a character no font has loads none.
-                        if (!_catalog.MayHave(face, cp) || For(face) is not { } fallback) continue;
+                        if (!_catalog.MayHaveAsFallback(face, cp) || For(face) is not { } fallback) continue;
                         int g = fallback.Font.GlyphFor(cp);
                         if (g != 0) { font = fallback; gid = g; break; }
                     }
