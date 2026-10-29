@@ -611,6 +611,75 @@ public class AnnotationAppearanceTests
         Assert.Contains("Look", await FormText(annot));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    [InlineData(-90)]
+    public async Task FreeText_OnATurnedPage_IsDrawnUprightAsShown(int rotate)
+    {
+        // /P's /Rotate is inherited from its /Parent; the box is 40 wide and 160 tall in user space.
+        var parent = D(("Type", N("Pages")), ("Rotate", new PdfInteger(rotate)));
+        var page = D(("Type", N("Page")), ("Parent", parent));
+        var annot = Annot("FreeText", new[] { 20.0, 20, 60, 180 }, ("Contents", S("Upright")), ("DA", S("/Helv 12 Tf 0 g")),
+            ("Border", A(0, 0, 0)), ("P", page));
+        var form = await Generate(annot);
+        Assert.NotNull(form);
+        var bbox = Assert.IsType<PdfArray>(form!.Dictionary["BBox"]).Select(o => o.TryGetNumber(out double v) ? v : double.NaN).ToArray();
+        int turn = ((rotate % 360) + 360) % 360;
+        // The form is the box as shown: on a quarter-turned page 160 wide and 40 tall.
+        Assert.Equal(turn is 90 or 270 ? new[] { 0.0, 0, 160, 40 } : new[] { 0.0, 0, 40, 160 }, bbox);
+        if (turn == 0)
+        {
+            Assert.False(form.Dictionary.Entries.ContainsKey("Matrix"));
+        }
+        else
+        {
+            // Turned counter-clockwise by the page's turn, which the page then turns back clockwise.
+            var m = Assert.IsType<PdfArray>(form.Dictionary["Matrix"]).Select(o => o.TryGetNumber(out double v) ? v : double.NaN).ToArray();
+            double a = turn * Math.PI / 180;
+            Assert.Equal(Math.Cos(a), m[0], 5);
+            Assert.Equal(Math.Sin(a), m[1], 5);
+            Assert.Equal(-Math.Sin(a), m[2], 5);
+            Assert.Equal(Math.Cos(a), m[3], 5);
+        }
+        // It wraps at the shown width: one line at 160 on a quarter-turned page, broken at 40 on the others.
+        int lines = System.Text.RegularExpressions.Regex.Matches(Content(form), @" Tm").Count;
+        if (turn is 90 or 270) Assert.Equal(1, lines);
+        else Assert.True(lines > 1, $"{lines} lines");
+    }
+
+    [Theory]
+    [InlineData("一二三四五六七八九十一二三四五六七八九十一二三四五")]
+    [InlineData("MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM")]
+    [InlineData("Please review the totals on this page before Friday, and check the dates.\nThanks")]
+    [InlineData("iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii")]
+    public async Task FreeText_Measure_GivesTheLinesTheAppearanceDraws_AllInsideTheBox(string text)
+    {
+        var layout = PdfAnnotationAppearances.MeasureFreeText(text, "Helv", 12, 220);
+        Assert.NotNull(layout);
+        Assert.Equal(0, layout.Value.Missing);
+        var annot = Annot("FreeText", new[] { 0.0, 0, 220, layout.Value.Height }, ("Contents", S(text)), ("DA", S("/Helv 12 Tf 0 g")),
+            ("Border", A(0, 0, 0)));
+        var form = await Generate(annot);
+        var baselines = System.Text.RegularExpressions.Regex.Matches(Content(form!), @"1 0 0 1 \S+ (\S+) Tm")
+            .Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        Assert.Equal(layout.Value.Lines, baselines.Count);
+        // The last line's descenders stay in the box (2 points of padding, a descent of at least 0.1 em).
+        Assert.True(baselines.Min() >= 2 + 0.1 * 12, $"the last baseline is at {baselines.Min()}");
+        Assert.Equal(layout.Value.Lines * layout.Value.Leading + 4, layout.Value.Height, 6);
+    }
+
+    [Fact]
+    public void FreeText_Measure_CountsCharactersNoFontHas()
+    {
+        // A supplementary private-use character no installed font has, counted once (not per UTF-16 unit).
+        var layout = PdfAnnotationAppearances.MeasureFreeText("ok \U000F0000 ok", "Helv", 12, 220);
+        Assert.Equal(1, layout!.Value.Missing);
+        Assert.Equal(0, PdfAnnotationAppearances.MeasureFreeText("ok ok", "Helv", 12, 220)!.Value.Missing);
+    }
+
     [Fact]
     public async Task Stamp_ShowsItsNameInARoundedBorder()
     {

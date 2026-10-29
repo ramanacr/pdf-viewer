@@ -191,7 +191,8 @@ public sealed partial class MainActivity
         }
         catch (ViewerAnnotationException ex)
         {
-            Toast.MakeText(this, ex.Message, ToastLength.Short)?.Show();
+            // A longer reason (a text box's missing font) stays up long enough to read.
+            Toast.MakeText(this, ex.Message, ex.Message.Length > 60 ? ToastLength.Long : ToastLength.Short)?.Show();
             changed = false;
         }
         if (!changed)

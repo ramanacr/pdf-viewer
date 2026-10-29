@@ -432,6 +432,98 @@ public class AndroidEditTests
         Assert.Equal(2, session.Store.Current.Count);
     }
 
+    /// <summary>A Letter page turned by <paramref name="rotate"/> (/Rotate).</summary>
+    private static byte[] TurnedPage(int rotate)
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("", mediaBox: "[0 0 612 792]", extra: $"/Rotate {rotate}");
+        return b.Build();
+    }
+
+    /// <summary>Where the glyphs of page <paramref name="page"/>'s annotations start, in shown-page points.</summary>
+    private static async Task<List<(double X, double Y)>> GlyphOrigins(byte[] pdf, int page, ViewerPageGeometry g)
+    {
+        using var doc = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(pdf);
+        var list = await doc.GetPageDisplayListAsync(page);
+        return list.Commands.OfType<PdfEngine.Vector.DrawGlyphRun>()
+            .SelectMany(c => c.Run.Glyphs.Select(gl => c.Run.TextToPage.Transform(gl.OffsetX, gl.OffsetY)))
+            .Select(p => g.ToShown(p.X, p.Y)).ToList();
+    }
+
+    [Theory]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    public async Task TextBoxes_OnTurnedPages_ReadUprightAsShown(int rotate)
+    {
+        byte[] pdf = TurnedPage(rotate);
+        await using var doc = await Open(pdf);
+        var session = await ViewerEditSession.StartAsync(doc);
+        var g = doc.Geometry[0];
+        Assert.Equal(rotate, g.Rotation);
+
+        var box = session.AddFreeText(1, new ViewerPoint(100, 100), "Please review the totals");
+        Assert.NotNull(box);
+        var shown = g.ToShown(box.Box);
+        Assert.Equal(ViewerEditSession.FreeTextWidth, shown.Width, 6);
+        Assert.True(shown.Height < 30, $"one line, {shown.Height} pt tall");
+
+        var save = await session.BeginSaveAsync();
+        Assert.NotNull(save);
+        // The text is one line on the shown page: left to right, on one baseline, inside the box.
+        var origins = await GlyphOrigins(save.Bytes, 1, g);
+        Assert.True(origins.Count >= 20, $"{origins.Count} glyphs");
+        Assert.All(origins, p => Assert.InRange(p.Y, shown.Y, shown.Y + shown.Height));
+        Assert.True(origins.Max(p => p.Y) - origins.Min(p => p.Y) < 0.5, "one baseline");
+        Assert.All(origins, p => Assert.InRange(p.X, shown.X, shown.X + shown.Width));
+        Assert.Equal(origins.OrderBy(p => p.X).ToList(), origins);
+        using (var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(save.Bytes))
+            Assert.Equal(rotate, PdfEngine.Vector.Services.PdfAnnotationReader.Read(vector, 1)[0].AppearanceRotation, 3);
+        session.EndSave(save, saved: true);
+    }
+
+    [Fact]
+    public async Task TextBoxes_FromTheWebViewersStore_ReadUprightOnATurnedPage()
+    {
+        // The web viewer (and the embed API) add annotations to the store and write them with the same engine.
+        await using var doc = await Open(TurnedPage(90));
+        var g = doc.Geometry[0];
+        var store = new ViewerAnnotationStore(doc.Geometry, []);
+        var rect = g.ToUser(new ViewerRect(100, 100, 200, 40));
+        store.Add([new ViewerAnnotation { Id = "t1", Page = 1, Kind = ViewerAnnotationKind.FreeText, Box = rect, Color = "#000000", StrokeWidth = 0, Contents = "Upright on the screen" }]);
+        await doc.ApplyEditsAsync(store.FromFile, store.Current, []);
+        var origins = await GlyphOrigins(doc.Bytes, 1, g);
+        Assert.NotEmpty(origins);
+        Assert.True(origins.Max(p => p.Y) - origins.Min(p => p.Y) < 0.5, "one baseline as shown");
+        Assert.Equal(origins.OrderBy(p => p.X).ToList(), origins);
+    }
+
+    [Fact]
+    public async Task TextBoxes_AreAsTallAsTheirDrawnLines_AndRefuseCharactersNoFontHas()
+    {
+        await using var doc = await Open(TextPage());
+        var session = await ViewerEditSession.StartAsync(doc);
+        var g = doc.Geometry[1];
+        // 25 Chinese characters wrap onto 2 lines at 220 points; 64 capital Ms onto 4 lines.
+        foreach (var (text, lines) in new[] { (string.Concat(Enumerable.Repeat("一二三四五", 5)), 2), (new string('M', 64), 4) })
+        {
+            var a = session.AddFreeText(2, new ViewerPoint(50, 50), text);
+            Assert.NotNull(a);
+            var layout = PdfEngine.Vector.Annotations.PdfAnnotationAppearances.MeasureFreeText(text, "Helv", 12, 220)!.Value;
+            Assert.Equal(lines, layout.Lines);
+            Assert.Equal(layout.Height + 0.5, g.ToShown(a.Box).Height, 6);
+        }
+
+        // A character no font on the device has would be left out of the box: it is refused, nothing is added.
+        int before = session.Store.Current.Count;
+        var ex = Assert.Throws<ViewerAnnotationException>(() => session.AddFreeText(2, new ViewerPoint(50, 300), "Total \U000F0000"));
+        Assert.Contains("no font on this device", ex.Message);
+        Assert.Equal(before, session.Store.Current.Count);
+        var first = session.Store.Current[0];
+        Assert.Throws<ViewerAnnotationException>(() => session.SetContents(first.Id, "\U000F0000"));
+        Assert.NotEqual("\U000F0000", session.Store.Find(first.Id)!.Contents);
+    }
+
     private static async Task<IReadOnlyList<ViewerAnnotation>> ReadBack(byte[] bytes)
     {
         await using var doc = await Open(bytes);

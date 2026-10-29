@@ -1,3 +1,4 @@
+using PdfEngine.Vector.Annotations;
 using PdfEngine.Vector.Forms;
 
 namespace PdfViewer.Web.Engine.Annotations;
@@ -357,17 +358,32 @@ public sealed class ViewerEditSession
         return Add(a with { Box = FreeTextBox(g, OnPage(at, g), text, a.FontSize) });
     }
 
-    /// <summary>A text box's place for its text: wrapped at <see cref="FreeTextWidth"/> (less near the page's right edge), as tall as the lines.</summary>
+    /// <summary>
+    /// A text box's place for its text, on the shown page: wrapped at <see cref="FreeTextWidth"/>
+    /// (less near the page's right edge) and exactly as tall as its lines, measured with the fonts,
+    /// shaping and wrap of the appearance the engine draws (on a turned page the appearance is
+    /// drawn upright as shown, so the shown width is the width the text wraps at). Refused when a
+    /// character has no font on this device: the appearance would leave it out.
+    /// </summary>
     private static ViewerBox FreeTextBox(ViewerPageGeometry g, ViewerPoint topLeft, string text, double size)
     {
         double x = Math.Min(topLeft.X, Math.Max(0, g.ShownWidth - 40));
         double width = Math.Min(FreeTextWidth, g.ShownWidth - x);
-        // An estimate of the wrapped lines (Helvetica's characters are about 0.55 em wide on average; 0.6 leaves room).
-        double perLine = Math.Max(1, (width - 4) / (0.6 * size));
-        int lines = text.Replace("\r\n", "\n").Split('\n').Sum(p => Math.Max(1, (int)Math.Ceiling(p.Length / perLine)));
-        double height = Math.Min(lines * size * 1.25 + 6, g.ShownHeight);
+        double height = Math.Min(MeasureText(text, size, width).Height + 0.5, g.ShownHeight);
         double y = Math.Min(topLeft.Y, g.ShownHeight - height);
         return ClampBox(g.ToUser(new ViewerRect(x, Math.Max(0, y), width, height)), g);
+    }
+
+    /// <summary>The text laid out as the engine draws a text box (/DA /Helv, no border); refused when a font is missing.</summary>
+    private static PdfFreeTextLayout MeasureText(string text, double size, double width)
+    {
+        var layout = PdfAnnotationAppearances.MeasureFreeText(text, "Helv", size, width)
+            ?? throw new ViewerAnnotationException("This device has no font to draw a text box with.");
+        if (layout.Missing > 0)
+            throw new ViewerAnnotationException(layout.Missing == 1
+                ? "One character of this text has no font on this device, so it would not show in the text box. Remove it and try again."
+                : $"{layout.Missing} characters of this text have no font on this device, so they would not show in the text box. Remove them and try again.");
+        return layout;
     }
 
     private static bool Finite(ViewerPoint p) => double.IsFinite(p.X) && double.IsFinite(p.Y);
@@ -396,11 +412,12 @@ public sealed class ViewerEditSession
         if (a.Kind == ViewerAnnotationKind.FreeText && string.IsNullOrWhiteSpace(text)) throw new ViewerAnnotationException("A text box needs text; delete it instead.");
         var changed = a with { Contents = text, Modified = DateTimeOffset.UtcNow };
         // A text box made here fits its new text; one from the file keeps its size.
-        if (a.Kind == ViewerAnnotationKind.FreeText && !a.FromFile)
+        if (a.Kind == ViewerAnnotationKind.FreeText)
         {
             var g = Geometry(a.Page);
             var shown = g.ToShown(a.Box);
-            changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize) };
+            if (!a.FromFile) changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize) };
+            else MeasureText(text, a.FontSize, FreeTextWidth); // its size is kept: only the fonts are checked
         }
         Store.Update(changed);
         _edits.Edit();

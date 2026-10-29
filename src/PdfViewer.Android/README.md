@@ -45,7 +45,7 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 | Markup | Select text (long press, handles), then **Highlight**, **Underline** or **Strike** in the selection bar. |
 | Ink and notes | **✎** opens the annotation bar. Its tools scroll sideways; undo, redo, delete and close stay in place. **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. |
 | Shapes | **Rectangle**, **Ellipse**, **Line** and **Arrow**: drag with one finger from one corner (or end) to the other; two fingers still zoom, and the page does not scroll while the tool is on. A drag shorter than 4 points adds nothing. Red, 2 points wide, as in the web viewer; an arrow is a line with `/LE [/None /OpenArrow]`. |
-| Text boxes | **Text**: tap where the box goes, then type. Black 12-point Helvetica on no background, at most 220 points wide and as tall as its text. Tap the box to change its text; the box fits the new text. |
+| Text boxes | **Text**: tap where the box goes, then type. Black 12-point Helvetica on no background, at most 220 points wide and as tall as its text. The box is sized with the fonts and line wrap that the saved appearance uses, so no line is cut off; on a turned page the text reads upright as shown. Tap the box to change its text; the box fits the new text. Text with a character that no font on the device can draw is refused with a message (see limits). |
 | Choose, edit, delete | Tap an annotation to choose it (outlined); a note (or any annotation with text) opens its comment to read or change. **Delete** removes the chosen one with its replies. |
 | Undo and redo | **↶** and **↷** in the annotation bar, for every annotation change (the store keeps 100 steps). |
 | Annotation list | **⋮ → Annotations**: every annotation with its page, kind and the start of its text, replies under the annotation they answer; tap one to go to it. |
@@ -250,7 +250,9 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 3. **Selection** is on one page at a time, and the view does not scroll by itself while a handle
    is dragged to the edge. No floating copy toolbar: the bar over the pages holds the actions.
 4. **Not in the app:** printing, a document properties view, and these annotation tools of the web
-   viewer: polygons, connected lines, stamps, replies, moving an annotation, colours, XFDF.
+   viewer: polygons, connected lines, stamps, replies, moving an annotation, colours, XFDF. Text
+   boxes cannot use Chinese, Japanese or Korean text yet: the engine embeds only TrueType (glyf)
+   fonts, and Android's CJK font (Noto Sans CJK) is CFF, so such text is refused with a message.
 5. **Recent files** lists only files with a persistable grant (the document picker gives one);
    a file another app handed over with `ACTION_VIEW` is opened but not listed.
 6. **Edits are not kept when Android ends the process** in the background (only the view is); a
