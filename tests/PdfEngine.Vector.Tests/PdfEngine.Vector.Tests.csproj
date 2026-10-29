@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <!-- The package build runs these tests once more against the engine's net10.0 assemblies (SDK 10 only). -->
+    <TargetFramework Condition="'$(EngineTestsNet10)' == 'true'">net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
