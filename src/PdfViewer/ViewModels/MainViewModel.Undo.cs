@@ -185,6 +185,7 @@ public partial class MainViewModel
     /// <summary>Records an edit already made to the annotation's properties; false when nothing changed.</summary>
     private bool RecordInPlaceEdit(AnnotationModel annot, string name)
     {
+        FitShapeBox(annot); // new line endings or a wider line need a bigger box
         var before = _knownAnnotationStates.TryGetValue(annot, out var known) ? known : null;
         var after = AnnotationState.Of(annot);
         if (before != null && before.EqualsIgnoringModified(after)) return false;

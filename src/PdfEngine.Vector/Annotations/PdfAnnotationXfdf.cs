@@ -97,7 +97,7 @@ public static class PdfAnnotationXfdf
             string flags = string.Join(",", FlagNames.Where(f => (a.Flags & f.Bit) != 0).Select(f => f.Name));
             if (flags.Length > 0) e.Add(new XAttribute("flags", flags));
             if (a.BorderWidth is double w) e.Add(new XAttribute("width", Number(w)));
-            if (a.BorderDash is { Length: > 0 } dash) e.Add(new XAttribute("style", "dash"), new XAttribute("dashes", Join(dash)));
+            if (a.BorderDash is { Length: > 0 } dash && a.BorderStyle is null or "D") e.Add(new XAttribute("style", "dash"), new XAttribute("dashes", Join(dash)));
             if (a.QuadPoints.Count > 0) e.Add(new XAttribute("coords", Join(a.QuadPoints.SelectMany(q => q).ToArray())));
             if (a.Subtype is "Text" or "Stamp" && !string.IsNullOrEmpty(a.Icon)) e.Add(new XAttribute("icon", a.Icon));
             if (a.Subtype == "Line" && a.Line is { Length: 4 } l)

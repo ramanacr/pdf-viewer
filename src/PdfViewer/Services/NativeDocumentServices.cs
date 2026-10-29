@@ -278,6 +278,9 @@ internal sealed class NativeDocumentServices
             // The fill and dash as the file gives them, so a save writes them back unchanged.
             model.InteriorColorHex = HexOf(a.InteriorColor);
             model.BorderDash = LoadedDash(a);
+            // The page draws a loaded rectangle or ellipse from its own appearance (with its
+            // opacity, clouds and /RD) until it is changed; only then does the overlay draw it.
+            if (type is AnnotationType.Rectangle or AnnotationType.Ellipse) model.HasOwnAppearance = a.HasAppearance;
         }
         if (type == AnnotationType.Stamp)
         {

@@ -251,7 +251,12 @@ public partial class AnnotationModel : ObservableObject
         if (!HasLineEndings) return;
         LineEndings = new[] { start, end };
         if (Type is AnnotationType.Line or AnnotationType.Arrow)
-            Type = start != "None" || end != "None" ? AnnotationType.Arrow : AnnotationType.Line;
+        {
+            var type = start != "None" || end != "None" ? AnnotationType.Arrow : AnnotationType.Line;
+            // The subject follows the type while it is still the tool's name (the user's own stays).
+            if (Title == Type.ToString()) Title = type.ToString();
+            Type = type;
+        }
     }
 
     /// <summary>A line, arrow, polygon or connected lines: a shape drawn from its <see cref="Vertices"/>.</summary>

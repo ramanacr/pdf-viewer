@@ -38,8 +38,12 @@ public partial class EditCommentDialog : Window
         CommentTextBox.Text = annotation.Contents;
         AuthorTextBox.Text = string.IsNullOrWhiteSpace(annotation.Author) ? System.Environment.UserName : annotation.Author;
 
-        ColorComboBox.ItemsSource = DefaultColors;
-        ColorComboBox.SelectedItem = DefaultColors.Contains(annotation.ColorHex) ? annotation.ColorHex : DefaultColors[0];
+        // A colour the list does not have (one read from the file) is listed too, so it stays
+        // selected and choosing any palette colour, yellow included, is a change.
+        var colors = DefaultColors.ToList();
+        if (!string.IsNullOrEmpty(annotation.ColorHex) && !colors.Contains(annotation.ColorHex)) colors.Add(annotation.ColorHex);
+        ColorComboBox.ItemsSource = colors;
+        ColorComboBox.SelectedItem = string.IsNullOrEmpty(annotation.ColorHex) ? colors[0] : annotation.ColorHex;
         _initialColor = ColorComboBox.SelectedItem as string;
 
         if (annotation.IsStyledShape) ShowShapeStyle(annotation);
@@ -57,7 +61,6 @@ public partial class EditCommentDialog : Window
         Annotation.Contents = CommentTextBox.Text;
         Annotation.Author = AuthorTextBox.Text.Trim();
 
-        // A colour the list does not have (one read from the file) stays unless another is chosen.
         if (ColorComboBox.SelectedItem is string colorHex && colorHex != _initialColor)
         {
             Annotation.ColorHex = colorHex;

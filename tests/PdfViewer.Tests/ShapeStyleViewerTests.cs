@@ -128,10 +128,16 @@ public class ShapeStyleViewerTests : IDisposable
             vm.ChangeAnnotation(ellipse, a => a.InteriorColorHex = "#2979FF", "Change Fill");
 
             // Endings on a line make it an arrow, and undo makes it a line again.
+            var lineBox = new Rect(line.X, line.Y, line.Width, line.Height);
+            Assert.Equal("Line", line.Title);
             vm.ChangeAnnotation(line, a => { a.SetLineEndings("Circle", "ClosedArrow"); a.InteriorColorHex = "#FF5252"; }, "Change Style");
             Assert.Equal(AnnotationType.Arrow, line.Type);
+            Assert.Equal("Arrow", line.Title); // the subject follows the tool's name
+            Assert.True(line.Height > lineBox.Height && line.X < lineBox.X); // the box grew round the endings
             await vm.UndoAsync();
             Assert.Equal(AnnotationType.Line, line.Type);
+            Assert.Equal("Line", line.Title);
+            Assert.Equal(lineBox, new Rect(line.X, line.Y, line.Width, line.Height));
             Assert.Null(line.LineEndings);
             Assert.Null(line.InteriorColorHex);
             await vm.RedoAsync();
@@ -199,7 +205,9 @@ public class ShapeStyleViewerTests : IDisposable
             // Connected lines dashed through /Border.
             "<< /Type /Annot /Subtype /PolyLine /Rect [90 290 310 410] /Vertices [100 300 200 400 300 300] /C [0 0 0] /Border [0 0 1 [5 2]] >>",
             // An ellipse nobody touches.
-            "<< /Type /Annot /Subtype /Circle /Rect [300 600 400 650] /C [0 0 0] /IC [0 1 0] /BS << /W 1 /S /D /D [3 1] >> >>");
+            "<< /Type /Annot /Subtype /Circle /Rect [300 600 400 650] /C [0 0 0] /IC [0 1 0] /BS << /W 1 /S /D /D [3 1] >> >>",
+            // A /D without /S: solid, as the standard and the engine read it.
+            "<< /Type /Annot /Subtype /Polygon /Rect [390 90 510 210] /Vertices [400 100 500 100 450 200] /C [0 0 0] /BS << /W 1 /D [2] >> >>");
 
         using (var vm = await Open(path))
         {
@@ -210,15 +218,20 @@ public class ShapeStyleViewerTests : IDisposable
             Assert.Equal("Square", models[1].StartEnding);
             Assert.Equal(new[] { 5.0, 2.0 }, models[2].BorderDash);
             Assert.Equal(new[] { 3.0, 1.0 }, models[3].BorderDash);
+            Assert.Null(models[4].BorderDash);
 
             vm.ChangeAnnotation(models[0], a => a.BorderDash = new[] { 4.0, 3.0 }, "Change Line Style");
             vm.ChangeAnnotation(models[1], a => a.InteriorColorHex = "#FFFF00", "Change Fill");
             vm.SelectAnnotation(models[2]);
             Assert.True(vm.NudgeSelectedAnnotation(1, 0, large: true));
+            vm.SelectAnnotation(models[4]);
+            Assert.True(vm.NudgeSelectedAnnotation(1, 0, large: true));
             await vm.SaveAsync();
         }
 
         var saved = await ReadSaved(path);
+        Assert.NotEqual("D", saved[4].Annotation.BorderStyle); // a move does not make it dashed
+        Assert.DoesNotContain("[2] 0 d", saved[4].Appearance);
         var square = saved[0].Annotation;
         Assert.Equal("D", square.BorderStyle);
         Assert.Equal(new[] { 4.0, 3.0 }, square.BorderDash);
@@ -241,6 +254,35 @@ public class ShapeStyleViewerTests : IDisposable
         var circle = saved[3].Annotation;
         Assert.Equal(new[] { 0.0, 1, 0 }, circle.InteriorColor);
         Assert.Equal(new[] { 3.0, 1.0 }, circle.BorderDash);
+    }
+
+    [Fact]
+    public async Task AStyleOnlyEdit_IsSaved_WhenAFormFieldChangedToo()
+    {
+        string path = Path.Combine(_dir, "form-style.pdf");
+        File.WriteAllBytes(path, FormPdfFixture.Build());
+        using (var vm = await Open(path))
+        {
+            vm.AddAnnotation(Box(AnnotationType.Rectangle, 100, 100, 100, 50));
+            await vm.SaveAsync();
+        }
+
+        using (var vm = await Open(path))
+        {
+            var rect = vm.AllAnnotations.Single(a => a.Type == AnnotationType.Rectangle);
+            Assert.True(rect.IsDrawnByPage); // unchanged: the page draws it from its appearance
+            var name = vm.AllFormFields.Single(f => f.FullName == "person.name");
+            Assert.True(await vm.CommitFormFieldAsync(name, new PdfEngine.Vector.Forms.PdfFieldChange("person.name", Text: "Grace Hopper")), vm.StatusText);
+            rect.InteriorColorHex = "#00E676";
+            vm.NoteAnnotationEdited(rect);
+            Assert.False(rect.IsDrawnByPage); // changed: the overlay draws it, with its fill
+            await vm.SaveAsync();
+            Assert.False(vm.HasUnsavedChanges);
+        }
+
+        var square = (await ReadSaved(path)).Select(s => s.Annotation).Single(a => a.Subtype == "Square");
+        Assert.NotNull(square.InteriorColor);
+        Assert.Equal(0.902, square.InteriorColor![1], 3);
     }
 
     [Fact]
