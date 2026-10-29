@@ -124,7 +124,7 @@ Serif, Droid Sans Mono, Noto Sans CJK, Noto Sans Symbols and others. On Android:
 4. **CFF fonts are catalogued too** (`.otf` files, and CFF faces in `.ttc` collections such as
    Noto Sans CJK): the Skia backend, the only renderer on Android, loads them itself. On the
    Android 13 emulator the catalog has 218 faces, 41 of them from `.otf` files and 14 Noto CJK
-   faces. The Windows catalog still reads TrueType outlines only.
+   faces. The Windows catalog reads them too (installed `.otf` fonts, drawn by DirectWrite and WPF).
    New text (text boxes, form fields, page text) can use a CFF face too. The engine embeds it as a
    CID-keyed CFF subset (`CIDFontType0`, `FontFile3 /CIDFontType0C`) with only the glyphs used and
    the subroutines they call. When a TrueType face can stand in, it is used first; a CFF face is

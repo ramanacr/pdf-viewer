@@ -220,7 +220,10 @@ internal sealed class D2DResources : IDisposable
         try
         {
             using var file = DWrite.CreateFontFileReference(installed.Path);
-            var type = installed.Path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase) ? FontFaceType.TruetypeCollection : FontFaceType.Truetype;
+            // A collection is one type whatever its faces' outlines (OpenType collection); a single
+            // font with CFF outlines (.otf) is a CFF face to DirectWrite.
+            var type = installed.Path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase) || installed.Path.EndsWith(".otc", StringComparison.OrdinalIgnoreCase) ? FontFaceType.TruetypeCollection
+                : installed.OpenTypeCff ? FontFaceType.Cff : FontFaceType.Truetype;
             result = DWrite.CreateFontFace(type, new[] { file }, (uint)installed.Index, simulations);
             _ = result!.GlyphCount; // force validation now
         }
@@ -238,7 +241,7 @@ internal sealed class D2DResources : IDisposable
     /// <summary>
     /// The substitute's font file as the editing shaper reads it (its cmap, GSUB and GPOS), read once
     /// on first use: from disk for an installed face, else through its loader's stream (a face held
-    /// in memory). Null when the face is not one TrueType-outline file or the file cannot be read.
+    /// in memory). Null when the face is not one TrueType or OpenType (CFF) file or the file cannot be read.
     /// </summary>
     public TrueTypeFontFile? GetShapingFont(IDWriteFontFace face)
     {
@@ -249,7 +252,7 @@ internal sealed class D2DResources : IDisposable
         {
             if (FileBytes(face) is { } bytes)
             {
-                result = TrueTypeFontFile.TryLoad(bytes, (int)face.Index);
+                result = TrueTypeFontFile.TryLoad(bytes, (int)face.Index, openTypeCff: true);
                 // The file must be the one DirectWrite loaded: its glyph ids are drawn with this face.
                 if (result != null && result.GlyphCount != face.GlyphCount) result = null;
             }

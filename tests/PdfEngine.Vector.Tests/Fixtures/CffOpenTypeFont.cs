@@ -45,7 +45,9 @@ internal static class CffOpenTypeFont
 
     /// <summary>The OpenType font (1000 units per em).</summary>
     /// <param name="cff">Another CFF program with five glyphs in place of <see cref="Cff"/>.</param>
-    public static byte[] Font(byte[]? cff = null)
+    /// <param name="family">Another family name in place of <see cref="Family"/> (a font the user installed).</param>
+    /// <param name="postScriptName">Another PostScript name in place of <see cref="PostScriptName"/>.</param>
+    public static byte[] Font(byte[]? cff = null, string family = Family, string postScriptName = PostScriptName)
     {
         int n = Advances.Length;
         var hmtx = new byte[n * 4];
@@ -59,7 +61,7 @@ internal static class CffOpenTypeFont
             ["maxp"] = Sfnt.MaxpCff(n),
             ["cmap"] = Cmap((0x20, 3), (0x41, 1), (0x4E2D, 2)),
             ["OS/2"] = Sfnt.Os2(1000, 900, -200, false, false, 600),
-            ["name"] = Sfnt.Name(Family, PostScriptName, false, false),
+            ["name"] = Sfnt.Name(family, postScriptName, false, false),
             ["post"] = Sfnt.Post(false),
         };
         return Sfnt.Write(Sfnt.OpenTypeCffVersion, tables);

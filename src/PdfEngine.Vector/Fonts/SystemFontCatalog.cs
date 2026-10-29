@@ -16,8 +16,8 @@ public sealed record SystemFontFace(string Path, int Index, string Family, strin
 }
 
 /// <summary>
-/// The TrueType fonts in a font directory (on Android also those with CFF outlines), found by PostScript name or by family and style, with
-/// a fallback chain for characters the chosen font lacks. Only fonts whose licence allows
+/// The fonts in a font directory (TrueType outlines, and OpenType fonts with CFF outlines), found by PostScript name or by
+/// family and style, with a fallback chain for characters the chosen font lacks. Only fonts whose licence allows
 /// embedding are used. Faces with CFF outlines are embedded as CIDFontType0 (FontFile3); where a
 /// TrueType face can stand in, it is preferred (see <see cref="Fallbacks"/>).
 /// </summary>
@@ -42,6 +42,7 @@ public sealed class SystemFontCatalog
             _aliases = new Dictionary<string, string[]>(StringComparer.Ordinal);
             foreach (var (family, standIns) in aliases) _aliases[Squash(family)] = standIns;
         }
+        _otherCffFamilies = new Lazy<string[]>(OtherCffFamilies);
         _byFamily = new Lazy<Dictionary<string, List<(SystemFontFace, bool)>>>(() =>
         {
             var map = new Dictionary<string, List<(SystemFontFace, bool)>>(StringComparer.Ordinal);
@@ -62,13 +63,15 @@ public sealed class SystemFontCatalog
     }
 
     /// <summary>
-    /// The fonts installed for everyone on this machine (Windows\Fonts), read once. On Android,
+    /// The installed fonts, read once: on Windows those installed for everyone (Windows\Fonts) and
+    /// those the user installed for themselves (<c>%LOCALAPPDATA%\Microsoft\Windows\Fonts</c>). On Android,
     /// <c>/system/fonts</c> with <see cref="AndroidFamilyAliases"/> (<see cref="ForAndroid"/>). Empty
     /// in a browser, which has no font folder: a web host passes its own catalog (<see cref="ForDirectory"/>).
     /// </summary>
     public static SystemFontCatalog Installed =>
         PdfEngine.Vector.Diagnostics.PdfPlatform.InstalledFontDirectory is not { } directory ? None
         : PdfEngine.Vector.Diagnostics.PdfPlatform.IsAndroid ? ForAndroid(directory)
+        : PdfEngine.Vector.Diagnostics.PdfPlatform.UserFontDirectory is { } user ? ForDirectories(directory, user)
         : ForDirectory(directory);
 
     private static readonly ConcurrentDictionary<string, SystemFontCatalog> AndroidCatalogs = new(StringComparer.OrdinalIgnoreCase);
@@ -82,7 +85,7 @@ public sealed class SystemFontCatalog
     /// backend, the only renderer on Android, loads them itself.
     /// </summary>
     public static SystemFontCatalog ForAndroid(string directory = PdfEngine.Vector.Diagnostics.PdfPlatform.AndroidFontDirectory) =>
-        AndroidCatalogs.GetOrAdd(directory, d => new SystemFontCatalog(ScanFaces(d, openTypeCff: true), AndroidFamilyAliases));
+        AndroidCatalogs.GetOrAdd(directory, d => new SystemFontCatalog(ScanFaces(new[] { d }), AndroidFamilyAliases));
 
     /// <summary>This catalog's faces, where a missing family is looked up as the families <paramref name="aliases"/> maps it to, in order.</summary>
     public SystemFontCatalog WithFamilyAliases(IReadOnlyDictionary<string, string[]> aliases) => new(Faces, aliases);
@@ -153,17 +156,31 @@ public sealed class SystemFontCatalog
     /// <summary>A catalog without faces.</summary>
     private static readonly SystemFontCatalog None = new(Array.Empty<SystemFontFace>());
 
-    /// <summary>The TrueType fonts (<c>.ttf</c>, <c>.ttc</c>) of a folder, read once per folder.</summary>
-    public static SystemFontCatalog ForDirectory(string directory) => Catalogs.GetOrAdd(directory, d => new SystemFontCatalog(ScanFaces(d, openTypeCff: false)));
+    /// <summary>
+    /// The fonts (<c>.ttf</c>, <c>.ttc</c>, <c>.otf</c>) of a folder, read once per folder. Faces with
+    /// CFF outlines are flagged (<see cref="SystemFontFace.OpenTypeCff"/>): the renderers load them
+    /// as they are, and new text embeds them as CFF.
+    /// </summary>
+    public static SystemFontCatalog ForDirectory(string directory) => ForDirectories(directory);
 
-    /// <param name="openTypeCff">Also <c>.otf</c> files and faces with CFF outlines (a renderer that loads fonts itself draws them; new text embeds them as CFF).</param>
-    private static List<SystemFontFace> ScanFaces(string directory, bool openTypeCff)
+    /// <summary>The fonts of several folders, in the order given (a tie in matching goes to the earlier folder), read once per list.</summary>
+    public static SystemFontCatalog ForDirectories(params string[] directories) =>
+        Catalogs.GetOrAdd(string.Join('|', directories), _ => new SystemFontCatalog(ScanFaces(directories)));
+
+    /// <summary>The faces of the font files in the folders: names only, from each face's table directory and name tables.</summary>
+    private static List<SystemFontFace> ScanFaces(IEnumerable<string> directories)
     {
         var faces = new List<SystemFontFace>();
-        if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
+        var dirs = directories.ToArray();
+        if (dirs.Length > 0)
         {
-            var paths = Directory.EnumerateFiles(directory)
-                .Where(p => System.IO.Path.GetExtension(p).ToLowerInvariant() is ".ttf" or ".ttc" || openTypeCff && System.IO.Path.GetExtension(p).Equals(".otf", StringComparison.OrdinalIgnoreCase))
+            var paths = dirs.Where(d => !string.IsNullOrEmpty(d) && Directory.Exists(d))
+                .SelectMany(d =>
+                {
+                    try { return Directory.EnumerateFiles(d).ToArray(); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Array.Empty<string>(); }
+                })
+                .Where(p => System.IO.Path.GetExtension(p).ToLowerInvariant() is ".ttf" or ".ttc" or ".otf")
                 .ToArray();
             // Names only: the renderer scans this on its first non-embedded font, which the first page
             // waits for. Files are read in parallel (opening each one is most of the cost) and the
@@ -179,7 +196,7 @@ public sealed class SystemFontCatalog
                     using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
                     int count = TrueTypeFontFile.FontCount(stream);
                     for (int f = 0; f < count; f++)
-                        if (TrueTypeFontFile.ReadNames(stream, f, openTypeCff) is { } n && n.Family.Length > 0)
+                        if (TrueTypeFontFile.ReadNames(stream, f, openTypeCff: true) is { } n && n.Family.Length > 0)
                             found.Add(new SystemFontFace(path, f, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily, n.Cff));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
@@ -327,19 +344,41 @@ public sealed class SystemFontCatalog
     /// <summary>
     /// Faces tried, in order, for characters the chosen font does not have. TrueType faces come
     /// first (for each family, a TrueType stand-in before a CFF one: "Droid Sans Fallback" before
-    /// "Noto Sans CJK"); faces with CFF outlines follow, for the characters only they have.
+    /// "Noto Sans CJK"); faces with CFF outlines follow, for the characters only they have: first
+    /// those of the families above, then one face of every other family with CFF outlines (fonts the
+    /// user installed, such as Source Han Sans or Adobe fonts), by family name.
     /// </summary>
     public IEnumerable<SystemFontFace> Fallbacks(bool bold, bool italic)
     {
         int weight = bold ? 700 : 400;
         var cff = new List<SystemFontFace>();
-        foreach (var family in new[] { "Segoe UI", "Arial", "Segoe UI Symbol", "Nirmala UI", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic",
-                     "Microsoft JhengHei", "Ebrima", "Gadugi", "Leelawadee UI", "Segoe UI Historic", "Cambria Math", "Segoe UI Emoji" })
+        foreach (var family in FallbackFamilies)
         {
             if ((FindOwnFamily(family, weight, italic, trueTypeOnly: true) ?? FindAliasedFamily(family, weight, italic, trueTypeOnly: true)) is { } f) yield return f;
             if (FindFamily(family, weight, italic) is { OpenTypeCff: true } c) cff.Add(c);
         }
+        foreach (var family in _otherCffFamilies.Value)
+            if (FindOwnFamily(family, weight, italic) is { OpenTypeCff: true } c) cff.Add(c);
         foreach (var c in cff.Distinct()) yield return c;
+    }
+
+    private static readonly string[] FallbackFamilies =
+    {
+        "Segoe UI", "Arial", "Segoe UI Symbol", "Nirmala UI", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic",
+        "Microsoft JhengHei", "Ebrima", "Gadugi", "Leelawadee UI", "Segoe UI Historic", "Cambria Math", "Segoe UI Emoji",
+    };
+
+    /// <summary>The families with CFF outlines that <see cref="FallbackFamilies"/> and their aliases do not name, by name.</summary>
+    private readonly Lazy<string[]> _otherCffFamilies;
+
+    private string[] OtherCffFamilies()
+    {
+        var named = new HashSet<string>(FallbackFamilies.Select(Squash), StringComparer.Ordinal);
+        if (_aliases != null)
+            foreach (var family in FallbackFamilies)
+                if (_aliases.TryGetValue(Squash(family), out var standIns)) named.UnionWith(standIns.Select(Squash));
+        return Faces.Where(f => f.OpenTypeCff).Select(f => f.Family).Where(f => !named.Contains(Squash(f)))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     /// <summary>Family names to look up, in order: as written, without MT/PS and style words, then the Windows alias.</summary>

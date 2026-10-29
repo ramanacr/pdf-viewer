@@ -58,7 +58,7 @@ internal static class WordMetrics
             if (found == null) return null;
             var font = Files.GetOrAdd((found.Path, found.Index), f =>
             {
-                try { return TrueTypeFontFile.TryLoad(File.ReadAllBytes(f.Item1), f.Item2); }
+                try { return TrueTypeFontFile.TryLoad(File.ReadAllBytes(f.Item1), f.Item2, openTypeCff: true); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
             });
             return font != null ? new Face { Font = font } : null;
