@@ -1,3 +1,4 @@
+using PdfEngine.Vector.Annotations;
 using PdfEngine.Vector.Forms;
 
 namespace PdfViewer.Web.Engine.Annotations;
@@ -34,6 +35,18 @@ public sealed class ViewerEditSession
 
     /// <summary>The line width of a drawing.</summary>
     public const double InkWidth = 2;
+
+    /// <summary>The line width of a rectangle, ellipse, line or arrow (the web viewer's).</summary>
+    public const double ShapeWidth = 2;
+
+    /// <summary>A drag shorter than this (points of the shown page) adds no shape: a rectangle or ellipse needs it both ways.</summary>
+    public const double MinShapeSize = 4;
+
+    /// <summary>The text size of a new text box.</summary>
+    public const double FreeTextSize = 12;
+
+    /// <summary>The widest a new text box is, in points of the shown page; its text wraps at this width.</summary>
+    public const double FreeTextWidth = 220;
 
     private readonly Dictionary<string, IReadOnlyList<string>> _values = new(StringComparer.Ordinal);
     private readonly ViewerEditState _edits = new();
@@ -249,7 +262,14 @@ public sealed class ViewerEditSession
             Author = Author,
             Created = now,
             Modified = now,
-            StrokeWidth = kind == ViewerAnnotationKind.Ink ? InkWidth : 1,
+            StrokeWidth = kind switch
+            {
+                ViewerAnnotationKind.Ink => InkWidth,
+                ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.Line => ShapeWidth,
+                ViewerAnnotationKind.FreeText => 0,
+                _ => 1,
+            },
+            FontSize = kind == ViewerAnnotationKind.FreeText ? FreeTextSize : 12,
         };
     }
 
@@ -290,6 +310,86 @@ public sealed class ViewerEditSession
         return Add(ink with { InkList = [user.ToArray()], Box = ClampBox(ViewerBox.Around(user, ink.StrokeWidth / 2 + 1), g) });
     }
 
+    /// <summary>
+    /// A rectangle or ellipse dragged from <paramref name="from"/> to <paramref name="to"/>
+    /// (shown-page points, kept on the page). Null when the drag is shorter than
+    /// <see cref="MinShapeSize"/> across or down.
+    /// </summary>
+    public ViewerAnnotation? AddShape(ViewerAnnotationKind kind, int page, ViewerPoint from, ViewerPoint to, string? color = null)
+    {
+        if (kind is not (ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle)) throw new ArgumentOutOfRangeException(nameof(kind));
+        var g = Geometry(page);
+        if (!Finite(from) || !Finite(to)) return null;
+        var (a, b) = (OnPage(from, g), OnPage(to, g));
+        var rect = new ViewerRect(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y));
+        if (rect.Width < MinShapeSize || rect.Height < MinShapeSize) return null;
+        return Add(New(kind, page, ClampBox(g.ToUser(rect), g), color));
+    }
+
+    /// <summary>
+    /// A line (with an open arrowhead at its end when <paramref name="arrow"/>: /LE [/None /OpenArrow])
+    /// dragged from <paramref name="from"/> to <paramref name="to"/> (shown-page points, kept on the
+    /// page). Null when it is shorter than <see cref="MinShapeSize"/>.
+    /// </summary>
+    public ViewerAnnotation? AddLine(int page, ViewerPoint from, ViewerPoint to, bool arrow, string? color = null)
+    {
+        var g = Geometry(page);
+        if (!Finite(from) || !Finite(to)) return null;
+        var (a, b) = (OnPage(from, g), OnPage(to, g));
+        if (Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y)) < MinShapeSize) return null;
+        var (x1, y1) = g.ToUser(a.X, a.Y);
+        var (x2, y2) = g.ToUser(b.X, b.Y);
+        double[] points = [x1, y1, x2, y2];
+        var line = New(ViewerAnnotationKind.Line, page, default, color) with { Vertices = points, EndEnding = arrow ? "OpenArrow" : "None" };
+        return Add(line with { Box = ClampBox(ViewerBox.Around(points, ViewerAnnotationStore.ShapeMargin(line.StrokeWidth, arrow)), g) });
+    }
+
+    /// <summary>
+    /// A text box with its top-left corner at a point of the shown page: black <see cref="FreeTextSize"/>
+    /// point text, at most <see cref="FreeTextWidth"/> wide and as tall as its text, kept on the page.
+    /// Null when the text is empty or only spaces.
+    /// </summary>
+    public ViewerAnnotation? AddFreeText(int page, ViewerPoint at, string text, string? color = null)
+    {
+        var g = Geometry(page);
+        text = Clip(text);
+        if (string.IsNullOrWhiteSpace(text) || !Finite(at)) return null;
+        var a = New(ViewerAnnotationKind.FreeText, page, default, color) with { Contents = text };
+        return Add(a with { Box = FreeTextBox(g, OnPage(at, g), text, a.FontSize) });
+    }
+
+    /// <summary>
+    /// A text box's place for its text, on the shown page: wrapped at <see cref="FreeTextWidth"/>
+    /// (less near the page's right edge) and exactly as tall as its lines, measured with the fonts,
+    /// shaping and wrap of the appearance the engine draws (on a turned page the appearance is
+    /// drawn upright as shown, so the shown width is the width the text wraps at). Refused when a
+    /// character has no font on this device: the appearance would leave it out.
+    /// </summary>
+    private static ViewerBox FreeTextBox(ViewerPageGeometry g, ViewerPoint topLeft, string text, double size)
+    {
+        double x = Math.Min(topLeft.X, Math.Max(0, g.ShownWidth - 40));
+        double width = Math.Min(FreeTextWidth, g.ShownWidth - x);
+        double height = Math.Min(MeasureText(text, size, width).Height + 0.5, g.ShownHeight);
+        double y = Math.Min(topLeft.Y, g.ShownHeight - height);
+        return ClampBox(g.ToUser(new ViewerRect(x, Math.Max(0, y), width, height)), g);
+    }
+
+    /// <summary>The text laid out as the engine draws a text box (/DA /Helv, no border); refused when a font is missing.</summary>
+    private static PdfFreeTextLayout MeasureText(string text, double size, double width)
+    {
+        var layout = PdfAnnotationAppearances.MeasureFreeText(text, "Helv", size, width)
+            ?? throw new ViewerAnnotationException("This device has no font to draw a text box with.");
+        if (layout.Missing > 0)
+            throw new ViewerAnnotationException(layout.Missing == 1
+                ? "One character of this text has no font on this device, so it would not show in the text box. Remove it and try again."
+                : $"{layout.Missing} characters of this text have no font on this device, so they would not show in the text box. Remove them and try again.");
+        return layout;
+    }
+
+    private static bool Finite(ViewerPoint p) => double.IsFinite(p.X) && double.IsFinite(p.Y);
+
+    private static ViewerPoint OnPage(ViewerPoint p, ViewerPageGeometry g) => new(Math.Clamp(p.X, 0, g.ShownWidth), Math.Clamp(p.Y, 0, g.ShownHeight));
+
     /// <summary>Highlights, underlines or strikes out the selected text. Null when nothing is selected.</summary>
     public ViewerAnnotation? MarkText(ViewerAnnotationKind kind, ViewerTextSelection selection, string? color = null)
     {
@@ -309,7 +409,17 @@ public sealed class ViewerEditSession
         var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
         text = Clip(text);
         if (text == a.Contents) return false;
-        Store.Update(a with { Contents = text, Modified = DateTimeOffset.UtcNow });
+        if (a.Kind == ViewerAnnotationKind.FreeText && string.IsNullOrWhiteSpace(text)) throw new ViewerAnnotationException("A text box needs text; delete it instead.");
+        var changed = a with { Contents = text, Modified = DateTimeOffset.UtcNow };
+        // A text box made here fits its new text; one from the file keeps its size.
+        if (a.Kind == ViewerAnnotationKind.FreeText)
+        {
+            var g = Geometry(a.Page);
+            var shown = g.ToShown(a.Box);
+            if (!a.FromFile) changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize) };
+            else MeasureText(text, a.FontSize, FreeTextWidth); // its size is kept: only the fonts are checked
+        }
+        Store.Update(changed);
         _edits.Edit();
         return true;
     }

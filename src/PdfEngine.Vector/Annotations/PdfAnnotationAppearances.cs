@@ -48,6 +48,7 @@ public static class PdfAnnotationAppearances
         if (subtype == null) return null;
         var painter = new Painter(annotation, resolver, newObject, subtype == "Stamp" ? stamp : null);
         if (painter.Width < 0 || painter.Height < 0) return null;
+        if (subtype == "FreeText") painter.UprightOnPage();
 
         bool supported = subtype switch
         {
@@ -95,6 +96,29 @@ public static class PdfAnnotationAppearances
     /// <summary>The /DA string: font name, size (0 = auto), fill and stroke colours.</summary>
     private sealed record DefaultAppearance(string? FontName, double Size, double[]? Fill, double[]? Stroke);
 
+    /// <summary>Free text laid out: its lines of glyphs, text size, leading, ascent (em), and how many characters no font has.</summary>
+    private sealed record FreeTextLines(List<List<Glyph>> Lines, double Size, double Leading, double Ascent, int Missing);
+
+    /// <summary>
+    /// How free text is laid out by its appearance (the same fonts, shaping and wrap), for sizing
+    /// a text box to its text: the lines at <paramref name="size"/> points in a /Rect
+    /// <paramref name="rectWidth"/> wide (as the text reads; a turned page's form is upright), the
+    /// /Rect height that shows them all, and the characters no font can draw (left out of the
+    /// appearance). Null when no font can be loaded.
+    /// </summary>
+    internal static PdfFreeTextLayout? MeasureFreeText(string text, string? daFontName, double size, double rectWidth, double borderWidth = 0)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (!(size > 0) || !double.IsFinite(rectWidth)) throw new ArgumentOutOfRangeException(nameof(size));
+        double pad = Painter.FreeTextPadding(borderWidth);
+        double boxW = rectWidth - 2 * pad;
+        if (boxW <= 0) return null;
+        if (Painter.LayOut(new FontSet(), text, daFontName, size, boxW, double.MaxValue) is not { } layout) return null;
+        int lines = Math.Max(1, layout.Lines.Count);
+        // Each line takes one leading, at least its ascent plus descent: n leadings hold n lines.
+        return new PdfFreeTextLayout(lines, layout.Leading, lines * layout.Leading + 2 * pad, layout.Missing);
+    }
+
     private const double Kappa = 0.5522847498307936;
 
     private sealed class Painter
@@ -106,13 +130,13 @@ public static class PdfAnnotationAppearances
         private readonly Dictionary<string, PdfObject> _gstates = new();
         private FontSet? _fonts;
         private readonly PdfStampAppearance? _stamp;
-        /// <summary>The appearance's /Matrix rotation in degrees (a rotated stamp), 0 for none.</summary>
-        private readonly double _rotation;
+        /// <summary>The appearance's /Matrix rotation in degrees (a rotated stamp, free text on a turned page), 0 for none.</summary>
+        private double _rotation;
 
         /// <summary>The lower-left corner of /Rect in page space: the appearance's origin.</summary>
         private readonly double _x0, _y0;
-        public double Width { get; }
-        public double Height { get; }
+        public double Width { get; private set; }
+        public double Height { get; private set; }
 
         public Painter(PdfDictionary annot, PdfObjectResolver resolver, Func<PdfObject, int> newObject, PdfStampAppearance? stamp = null)
         {
@@ -177,7 +201,48 @@ public static class PdfAnnotationAppearances
 
         private double Opacity => Math.Clamp(Number("CA") ?? 1, 0, 1);
 
-        private Pt Local(double x, double y) => new(x - _x0, y - _y0);
+        /// <summary>
+        /// A page point in the appearance's coordinates. With a /Matrix turn (free text on a turned
+        /// page; a stamp has no page points) the point is turned back: 12.5.5 puts the turned
+        /// /BBox's lower-left corner at /Rect's.
+        /// </summary>
+        private Pt Local(double x, double y)
+        {
+            double qx = x - _x0, qy = y - _y0;
+            if (_rotation == 0 || _stamp != null) return new(qx, qy);
+            double a = _rotation * Math.PI / 180, c = Math.Cos(a), s = Math.Sin(a);
+            double minX = Math.Min(Math.Min(0, c * Width), Math.Min(-s * Height, c * Width - s * Height));
+            double minY = Math.Min(Math.Min(0, s * Width), Math.Min(c * Height, s * Width + c * Height));
+            double px = qx + minX, py = qy + minY;
+            return new(c * px + s * py, -s * px + c * py);
+        }
+
+        /// <summary>
+        /// Free text reads upright as the page is shown: on a page with /Rotate (inherited too) the
+        /// form is drawn in the shown orientation, at the shown width and height, and turned by
+        /// /Matrix the other way, as a turned stamp is, so 12.5.5 fits it to /Rect. Acrobat draws
+        /// free text on a turned page the same way.
+        /// </summary>
+        public void UprightOnPage()
+        {
+            int rotate = PageRotation();
+            if (rotate == 0) return;
+            _rotation = rotate;
+            if (rotate is 90 or 270) (Width, Height) = (Height, Width);
+        }
+
+        /// <summary>The /Rotate of the annotation's page (/P, inherited through /Parent), as 0, 90, 180 or 270; 0 without /P.</summary>
+        private int PageRotation()
+        {
+            var node = Get("P") as PdfDictionary;
+            for (int depth = 0; node != null && depth < 64; depth++)
+            {
+                if (_r.Resolve(node["Rotate"]) is { } o && o.TryGetNumber(out double v) && double.IsFinite(v) && Math.Abs(v) < 1e6)
+                    return ((int)Math.Round(v / 90) * 90 % 360 + 360) % 360;
+                node = _r.Resolve(node["Parent"]) as PdfDictionary;
+            }
+            return 0;
+        }
 
         /// <summary>/RD: left, bottom, right, top insets of the drawing inside /Rect.</summary>
         private (double L, double B, double R, double T) Differences()
@@ -1408,41 +1473,14 @@ public static class PdfAnnotationAppearances
                 text = System.Net.WebUtility.HtmlDecode(Regex.Replace(Regex.Replace(rc, @"<\s*(br|/p)\b[^>]*>", "\n", RegexOptions.IgnoreCase), "<[^>]*>", string.Empty)).Trim();
             if (text.Length == 0) return true;
 
-            var (fontName, bold, italic) = FontFor(da.FontName);
-            var font = Fonts.Primary(fontName, bold, italic);
-            if (font == null) return true;
-
             double bwidth = stroke != null ? border.Width : 0;
-            double pad = bwidth + 2;
+            double pad = FreeTextPadding(bwidth);
             double boxX = x + pad, boxY = y + pad, boxW = w - 2 * pad, boxH = h - 2 * pad;
             if (boxW <= 0 || boxH <= 0) return true;
-
-            double ascent = font.Font.ToThousandths(font.Font.Ascender) / 1000;
-            double descent = font.Font.ToThousandths(font.Font.Descender) / 1000;
-            double lineFactor = Math.Max(1, ascent - descent);
-            var paragraphs = text.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\t', ' ').Split('\n')
-                .Select(p => Fonts.Shape(p, font, bold, italic)).ToList();
-
-            double size = da.Size;
-            List<List<Glyph>> lines;
-            if (size > 0)
-            {
-                lines = paragraphs.SelectMany(p => Wrap(p, boxW, size)).ToList();
-            }
-            else
-            {
-                // Auto size: the largest (up to 12 pt) at which the text fits the box.
-                size = 12;
-                while (true)
-                {
-                    lines = paragraphs.SelectMany(p => Wrap(p, boxW, size)).ToList();
-                    if (size <= 4 || lines.Count * size * lineFactor <= boxH) break;
-                    size -= 0.5;
-                }
-            }
+            if (LayOut(Fonts, text, da.FontName, da.Size, boxW, boxH) is not { } layout) return true;
+            var (lines, size, leading, ascent, _) = layout;
 
             int q = (int)(Number("Q") ?? 0);
-            double leading = size * lineFactor;
             Op("q");
             Re(boxX, boxY, boxW, boxH);
             Op("W n");
@@ -1469,6 +1507,51 @@ public static class PdfAnnotationAppearances
             Op("ET");
             Op("Q");
             return true;
+        }
+
+        /// <summary>The space between free text's /Rect (less /RD) and its text: the border and 2 points.</summary>
+        public static double FreeTextPadding(double borderWidth) => Math.Max(0, borderWidth) + 2;
+
+        /// <summary>
+        /// Free text as it is drawn: the paragraphs shaped in the /DA font (with the catalogue's
+        /// fallbacks for characters it lacks), wrapped at <paramref name="boxW"/>; size 0 is auto
+        /// size, the largest up to 12 points at which the lines fit <paramref name="boxH"/>. Null
+        /// when no font can be loaded.
+        /// </summary>
+        public static FreeTextLines? LayOut(FontSet fonts, string text, string? daFont, double size, double boxW, double boxH)
+        {
+            var (fontName, bold, italic) = FontFor(daFont);
+            var font = fonts.Primary(fontName, bold, italic);
+            if (font == null) return null;
+            double ascent = font.Font.ToThousandths(font.Font.Ascender) / 1000;
+            double descent = font.Font.ToThousandths(font.Font.Descender) / 1000;
+            double lineFactor = Math.Max(1, ascent - descent);
+            int missing = 0;
+            var paragraphs = text.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\t', ' ').Split('\n')
+                .Select(p =>
+                {
+                    var glyphs = fonts.Shape(p, font, bold, italic, out int lacking);
+                    missing += lacking;
+                    return glyphs;
+                }).ToList();
+
+            List<List<Glyph>> lines;
+            if (size > 0)
+            {
+                lines = paragraphs.SelectMany(p => Wrap(p, boxW, size)).ToList();
+            }
+            else
+            {
+                // Auto size: the largest (up to 12 pt) at which the text fits the box.
+                size = 12;
+                while (true)
+                {
+                    lines = paragraphs.SelectMany(p => Wrap(p, boxW, size)).ToList();
+                    if (size <= 4 || lines.Count * size * lineFactor <= boxH) break;
+                    size -= 0.5;
+                }
+            }
+            return new FreeTextLines(lines, size, size * lineFactor, ascent, missing);
         }
 
         /// <summary>Greedy word wrap: words move to the next line whole; a word wider than the line is broken by character.</summary>
@@ -1611,8 +1694,12 @@ public static class PdfAnnotationAppearances
             ?? For(_catalog.FindFamily("Arial", bold, italic))
             ?? _catalog.Fallbacks(bold, italic).Select(For).FirstOrDefault(b => b != null);
 
-        public List<Glyph> Shape(string text, EmbeddedFontBuilder primary, bool bold, bool italic)
+        public List<Glyph> Shape(string text, EmbeddedFontBuilder primary, bool bold, bool italic) => Shape(text, primary, bold, italic, out _);
+
+        /// <summary>The glyphs of <paramref name="text"/>; <paramref name="missing"/> counts the characters (not spaces or controls) no face has, which are left out.</summary>
+        public List<Glyph> Shape(string text, EmbeddedFontBuilder primary, bool bold, bool italic, out int missing)
         {
+            missing = 0;
             var glyphs = new List<Glyph>();
             foreach (var rune in text.EnumerateRunes())
             {
@@ -1632,10 +1719,17 @@ public static class PdfAnnotationAppearances
                         if (g != 0) { font = fallback; gid = g; break; }
                     }
                 }
-                if (gid == 0) continue;
+                if (gid == 0)
+                {
+                    if (!space) missing++;
+                    continue;
+                }
                 glyphs.Add(new Glyph(font, gid, space ? " " : s, font.Font.Advance(gid), space));
             }
             return glyphs;
         }
     }
 }
+
+/// <summary>Free text as its appearance lays it out: its lines, their leading, the /Rect height that shows them all, and the characters no font can draw.</summary>
+internal readonly record struct PdfFreeTextLayout(int Lines, double Leading, double Height, int Missing);

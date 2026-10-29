@@ -11,9 +11,9 @@ namespace PdfViewer.Android;
 
 /// <summary>
 /// Edits: form filling (a tap on a field; text with the soft keyboard, check boxes, radio buttons,
-/// choices), highlight, underline and strike-out on a text selection, freehand ink, sticky notes,
-/// delete, undo and redo, the annotation list, and "Save a copy". The rules and the writing are
-/// the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
+/// choices), highlight, underline and strike-out on a text selection, freehand ink, rectangles,
+/// ellipses, lines and arrows (a drag), sticky notes and text boxes (a tap), delete, undo and
+/// redo, the annotation list, and "Save a copy". The rules and the writing are the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
 /// fields, /MaxLen and signed or certified documents); after each change the engine writes the
 /// edits into the document as an incremental update and the pages are drawn again from it. A copy
 /// is saved with the system's save dialog (ACTION_CREATE_DOCUMENT), which grants access to the
@@ -25,28 +25,43 @@ public sealed partial class MainActivity
 
     private ViewerEditSession? _session;
     private LinearLayout _annotateBar = null!;
-    private TextView _annotateButton = null!, _drawButton = null!, _noteButton = null!, _undoButton = null!, _redoButton = null!, _deleteButton = null!, _closeAnnotateButton = null!;
+    private TextView _annotateButton = null!, _undoButton = null!, _redoButton = null!, _deleteButton = null!, _closeAnnotateButton = null!;
     private TextView _highlightButton = null!, _underlineButton = null!, _strikeButton = null!;
+    private (TextView Button, PageView.PageTool Tool)[] _toolButtons = [];
     private bool _noticeShown;
 
     private IEnumerable<TextView> EditButtons =>
-        [_drawButton, _noteButton, _undoButton, _redoButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton];
+        _toolButtons.Select(t => t.Button).Concat([_undoButton, _redoButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
 
     private bool CanAnnotate => _session?.CanAnnotate == true;
 
+    /// <summary>
+    /// The annotate bar: the tools in a strip that scrolls sideways (a phone is too narrow for
+    /// all of them), then undo, redo, delete and close, which stay in place.
+    /// </summary>
     private View BuildAnnotateBar()
     {
         _annotateBar = Bar();
         _annotateBar.Visibility = ViewStates.Gone;
-        _drawButton = ToolButton("Draw", "Draw with one finger (two fingers zoom)", (_, _) => SetTool(PageView.PageTool.Ink));
-        _noteButton = ToolButton("Note", "Tap where a note goes", (_, _) => SetTool(PageView.PageTool.Note));
+        _toolButtons =
+        [
+            (ToolButton("Draw", "Draw with one finger (two fingers zoom)", (_, _) => SetTool(PageView.PageTool.Ink)), PageView.PageTool.Ink),
+            (ToolButton("Note", "Tap where a note goes", (_, _) => SetTool(PageView.PageTool.Note)), PageView.PageTool.Note),
+            (ToolButton("Text", "Text box: tap where the text goes", (_, _) => SetTool(PageView.PageTool.Text)), PageView.PageTool.Text),
+            (ToolButton("Rectangle", "Rectangle: drag from one corner to the other", (_, _) => SetTool(PageView.PageTool.Rectangle)), PageView.PageTool.Rectangle),
+            (ToolButton("Ellipse", "Ellipse: drag across it from corner to corner", (_, _) => SetTool(PageView.PageTool.Ellipse)), PageView.PageTool.Ellipse),
+            (ToolButton("Line", "Line: drag from one end to the other", (_, _) => SetTool(PageView.PageTool.Line)), PageView.PageTool.Line),
+            (ToolButton("Arrow", "Arrow: drag from its tail to its point", (_, _) => SetTool(PageView.PageTool.Arrow)), PageView.PageTool.Arrow),
+        ];
         _undoButton = ToolButton("↶", "Undo", (_, _) => Change(s => s.Undo()));
         _redoButton = ToolButton("↷", "Redo", (_, _) => Change(s => s.Redo()));
         _deleteButton = ToolButton("Delete", "Delete the chosen annotation", (_, _) => DeletePicked());
         _closeAnnotateButton = ToolButton("✕", "Stop annotating", (_, _) => ShowAnnotateBar(false));
-        _annotateBar.AddView(_drawButton);
-        _annotateBar.AddView(_noteButton);
-        _annotateBar.AddView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        var tools = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
+        foreach (var (button, _) in _toolButtons) tools.AddView(button);
+        var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = false, FillViewport = false };
+        strip.AddView(tools);
+        _annotateBar.AddView(strip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _annotateBar.AddView(_undoButton);
         _annotateBar.AddView(_redoButton);
         _annotateBar.AddView(_deleteButton);
@@ -75,6 +90,20 @@ public sealed partial class MainActivity
             AskText("New note", "", ViewerAnnotationStore.MaxContentsLength, multiline: true, password: false,
                 text => Change(s => s.AddNote(page, point, text) is { } a && Picked(a.Id)));
         };
+        _pages.TextRequested += (page, point) =>
+        {
+            SetTool(PageView.PageTool.Browse);
+            AskText("New text box", "", ViewerAnnotationStore.MaxContentsLength, multiline: true, password: false,
+                text => Change(s => s.AddFreeText(page, point, text) is { } a && Picked(a.Id)));
+        };
+        // A drag shorter than ViewerEditSession.MinShapeSize adds nothing: its outline goes.
+        _pages.ShapeDrawn += (tool, page, from, to, outline) => Change(s => tool switch
+        {
+            PageView.PageTool.Rectangle => s.AddShape(ViewerAnnotationKind.Square, page, from, to),
+            PageView.PageTool.Ellipse => s.AddShape(ViewerAnnotationKind.Circle, page, from, to),
+            PageView.PageTool.Line => s.AddLine(page, from, to, arrow: false),
+            _ => s.AddLine(page, from, to, arrow: true),
+        } != null, unchanged: () => _pages.DropPendingInk(outline));
     }
 
     /// <summary>A new document (or none): its edit session, nothing chosen, the browse tool.</summary>
@@ -107,7 +136,7 @@ public sealed partial class MainActivity
     {
         _pages.Tool = _pages.Tool == tool ? PageView.PageTool.Browse : tool;
         Pick(null);
-        if (_pages.Tool == PageView.PageTool.Ink) Toast.MakeText(this, "Draw with one finger; two fingers zoom.", ToastLength.Short)?.Show();
+        if (PageView.Drags(_pages.Tool)) Toast.MakeText(this, "Draw with one finger; two fingers zoom.", ToastLength.Short)?.Show();
         UpdateEditButtons();
     }
 
@@ -123,8 +152,11 @@ public sealed partial class MainActivity
         Enable(_redoButton, _session?.CanRedo == true);
         Enable(_deleteButton, annotate && _pages.PickedAnnotation != null);
         // The chosen tool is underlined.
-        foreach (var (b, tool) in new[] { (_drawButton, PageView.PageTool.Ink), (_noteButton, PageView.PageTool.Note) })
+        foreach (var (b, tool) in _toolButtons)
+        {
             b.PaintFlags = _pages.Tool == tool ? b.PaintFlags | global::Android.Graphics.PaintFlags.UnderlineText : b.PaintFlags & ~global::Android.Graphics.PaintFlags.UnderlineText;
+            b.Selected = _pages.Tool == tool; // TalkBack says "selected"
+        }
         foreach (var b in new[] { _highlightButton, _underlineButton, _strikeButton })
             b.Visibility = annotate ? ViewStates.Visible : ViewStates.Gone;
         // The selection bar is short of room on a phone when it has the markup buttons.
@@ -159,7 +191,8 @@ public sealed partial class MainActivity
         }
         catch (ViewerAnnotationException ex)
         {
-            Toast.MakeText(this, ex.Message, ToastLength.Short)?.Show();
+            // A longer reason (a text box's missing font) stays up long enough to read.
+            Toast.MakeText(this, ex.Message, ex.Message.Length > 60 ? ToastLength.Long : ToastLength.Short)?.Show();
             changed = false;
         }
         if (!changed)

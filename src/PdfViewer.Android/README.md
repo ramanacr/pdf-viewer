@@ -43,7 +43,9 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 | Existing annotations and fields | The engine draws each annotation's and widget's appearance into the page. Fillable fields are tinted light blue (read-only ones are not). |
 | Form filling | Tap a field. A text field opens a dialog with the soft keyboard: one line or several, hidden for a password field, at most the field's `/MaxLen` characters. A check box or radio button switches at once. A combo box or list box offers its options (several for a multi-select list; an editable combo box also takes typed text). Read-only fields say so and do not change. After each value the engine writes it with a new appearance and recalculates calculated fields (formats, ranges and simple sums, the desktop's rules, **without** running the document's JavaScript); a value that a field's rule refuses goes back and the rule's message is shown. |
 | Markup | Select text (long press, handles), then **Highlight**, **Underline** or **Strike** in the selection bar. |
-| Ink and notes | **✎** opens the annotation bar. **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. |
+| Ink and notes | **✎** opens the annotation bar. Its tools scroll sideways; undo, redo, delete and close stay in place. **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. |
+| Shapes | **Rectangle**, **Ellipse**, **Line** and **Arrow**: drag with one finger from one corner (or end) to the other; two fingers still zoom, and the page does not scroll while the tool is on. A drag shorter than 4 points adds nothing. Red, 2 points wide, as in the web viewer; an arrow is a line with `/LE [/None /OpenArrow]`. |
+| Text boxes | **Text**: tap where the box goes, then type. Black 12-point Helvetica on no background, at most 220 points wide and as tall as its text. The box is sized with the fonts and line wrap that the saved appearance uses, so no line is cut off; on a turned page the text reads upright as shown. Tap the box to change its text; the box fits the new text. Text with a character that no font on the device can draw is refused with a message (see limits). |
 | Choose, edit, delete | Tap an annotation to choose it (outlined); a note (or any annotation with text) opens its comment to read or change. **Delete** removes the chosen one with its replies. |
 | Undo and redo | **↶** and **↷** in the annotation bar, for every annotation change (the store keeps 100 steps). |
 | Annotation list | **⋮ → Annotations**: every annotation with its page, kind and the start of its text, replies under the annotation they answer; tap one to go to it. |
@@ -248,7 +250,9 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 3. **Selection** is on one page at a time, and the view does not scroll by itself while a handle
    is dragged to the edge. No floating copy toolbar: the bar over the pages holds the actions.
 4. **Not in the app:** printing, a document properties view, and these annotation tools of the web
-   viewer: free text, shapes, lines, stamps, replies, moving an annotation, colours, XFDF.
+   viewer: polygons, connected lines, stamps, replies, moving an annotation, colours, XFDF. Text
+   boxes cannot use Chinese, Japanese or Korean text yet: the engine embeds only TrueType (glyf)
+   fonts, and Android's CJK font (Noto Sans CJK) is CFF, so such text is refused with a message.
 5. **Recent files** lists only files with a persistable grant (the document picker gives one);
    a file another app handed over with `ACTION_VIEW` is opened but not listed.
 6. **Edits are not kept when Android ends the process** in the background (only the view is); a
@@ -275,6 +279,7 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
   margins on no page, zoomed and scrolled), the form value rules (/MaxLen, line breaks, read-only,
   options, states), fields written, drawn and saved as an incremental update, a value refused by the
   field's rule, certified documents (no changes; form filling only, with the notice once), notes, ink
-  and highlights made from touches and read back from the saved file, editing and deleting a file's
+  and highlights made from touches and read back from the saved file, rectangles, ellipses,
+  lines, arrows and text boxes saved with their appearance streams (short drags add nothing), editing and deleting a file's
   own annotation, undo and redo, the annotation list, and one save at a time.
 - `tests/PdfEngine.Vector.Skia.Tests/CmykJpegTests.cs`: the CMYK and YCCK JPEG decoder.

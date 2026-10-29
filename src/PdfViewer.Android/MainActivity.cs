@@ -140,7 +140,7 @@ public sealed partial class MainActivity : Activity
         _title.SetPadding((int)Dp(8), 0, (int)Dp(8), 0);
         _pageIndicator = ToolButton("", "Go to page", (_, _) => AskPage());
         _searchButton = ToolButton("Search", "Search the document", (_, _) => ShowSearch(true));
-        _annotateButton = ToolButton("✎", "Annotate: draw, notes, undo and redo", (_, _) => ShowAnnotateBar(_annotateBar.Visibility != ViewStates.Visible));
+        _annotateButton = ToolButton("✎", "Annotate: draw, shapes, notes, text boxes, undo and redo", (_, _) => ShowAnnotateBar(_annotateBar.Visibility != ViewStates.Visible));
         _menuButton = ToolButton("⋮", "More: outline, pages, annotations, save a copy, share, night pages, recent files", (_, _) => ShowMenu());
         _toolbar.AddView(_openButton);
         _toolbar.AddView(_title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
