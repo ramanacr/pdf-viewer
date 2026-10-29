@@ -118,6 +118,33 @@ public sealed class ViewerAnnotationStore
     /// </summary>
     public static double ShapeMargin(double strokeWidth, bool endings) => endings ? 5 * Math.Max(strokeWidth, 1) + 1 : strokeWidth / 2 + 1;
 
+    /// <summary>
+    /// <see cref="ShapeMargin(double, bool)"/> for these endings: a reverse arrow reaches past its
+    /// point by its length (nine line widths at 30 degrees).
+    /// </summary>
+    public static double ShapeMargin(double strokeWidth, string start, string end)
+    {
+        double Reach(string ending) => ending switch
+        {
+            "None" => ShapeMargin(strokeWidth, false),
+            "ROpenArrow" or "RClosedArrow" => 9 * Math.Max(strokeWidth, 1) * Math.Cos(Math.PI / 6) + strokeWidth / 2 + 1,
+            _ => ShapeMargin(strokeWidth, true),
+        };
+        return Math.Max(Reach(start), Reach(end));
+    }
+
+    /// <summary>
+    /// A line's or polyline's box grown to hold its points and endings, never smaller than it was
+    /// (cut to the page when the store takes it).
+    /// </summary>
+    public static ViewerBox GrownForEndings(ViewerAnnotation a)
+    {
+        var around = ViewerBox.Around(a.Vertices, ShapeMargin(a.StrokeWidth, a.StartEnding, a.EndEnding));
+        var b = a.Box;
+        return a.Vertices.Count == 0 ? b
+            : new ViewerBox(Math.Min(b.X1, around.X1), Math.Min(b.Y1, around.Y1), Math.Max(b.X2, around.X2), Math.Max(b.Y2, around.Y2));
+    }
+
     /// <summary>A shape's box grown around its points may reach past the page: it is cut to the page (its points are checked).</summary>
     private ViewerAnnotation Fit(ViewerAnnotation a)
     {
@@ -163,6 +190,11 @@ public sealed class ViewerAnnotationStore
         if (old.Kind != annotation.Kind) throw new ViewerAnnotationException("An annotation's subtype cannot change.");
         if (old.InReplyTo != annotation.InReplyTo) throw new ViewerAnnotationException("What a reply answers cannot change.");
         if (old.Kind == ViewerAnnotationKind.Reply) annotation = annotation with { Page = old.Page, Box = old.Box };
+        // A measurement stays one, and keeps its fill, dash and line endings.
+        if (old.IsMeasurement && (annotation.FillColor != old.FillColor || !ViewerAnnotation.SameDash(annotation.Dash, old.Dash)
+                                  || annotation.StartEnding != old.StartEnding || annotation.EndEnding != old.EndEnding))
+            throw new ViewerAnnotationException($"Annotation \"{old.Id}\" is a measurement: its fillColor, dashPattern and lineEndings cannot change.");
+        annotation = annotation with { IsMeasurement = old.IsMeasurement };
         // Moved to another page, a file's annotation is written as a new one there (and removed from its page).
         var updated = Fit(annotation with { SourceIndex = annotation.Page == old.Page ? old.SourceIndex : -1 });
         Check(updated);
@@ -294,6 +326,8 @@ public sealed class ViewerAnnotationStore
         bool endings = a.StartEnding != "None" || a.EndEnding != "None";
         if (endings && (!a.HasEndings || !PdfAnnotationLimits.LineEndings.Contains(a.StartEnding) || !PdfAnnotationLimits.LineEndings.Contains(a.EndEnding)))
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": lineEndings are for lines and polylines, each one of {string.Join(", ", PdfAnnotationLimits.LineEndings)}.");
+        if (a.Dash != null && (!a.IsShape || !ViewerAnnotationPdf.IsValidDash(a.Dash)))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": dashPattern is for squares, circles, lines, polygons and polylines: 1 to {ViewerAnnotationPdf.MaxDashCount} numbers from 0 to {ViewerAnnotationPdf.MaxDashLength}, not all 0.");
         if (a.Kind == ViewerAnnotationKind.Stamp ? !ViewerAnnotationPdf.IsStampName(a.StampName) : a.StampName.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a stamp needs a stampName, such as Approved or Draft.");
         if (a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo.Length is 0 or > MaxIdLength || a.InReplyTo == a.Id : a.InReplyTo.Length > 0)

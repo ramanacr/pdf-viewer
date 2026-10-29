@@ -412,7 +412,7 @@ kbd {
     background: var(--surface-2); border-bottom: 1px solid var(--border);
 }
 .annot-toolbar .group { display: flex; align-items: center; gap: 2px; }
-.annot-toolbar .swatches { gap: 6px; }
+.annot-toolbar .swatches, .annot-toolbar .shape-style { gap: 6px; }
 .swatch {
     width: 20px; height: 20px; padding: 0; border-radius: 50%;
     border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border); cursor: pointer;

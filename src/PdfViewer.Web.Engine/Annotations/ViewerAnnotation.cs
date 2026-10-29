@@ -86,6 +86,15 @@ public sealed record ViewerAnnotation
 
     public double Opacity { get; init; } = 1;
 
+    /// <summary>
+    /// The dash of a rectangle's, ellipse's, line's, polygon's or polyline's line (/BS /S /D /D:
+    /// dash and gap lengths in points); null for a solid line.
+    /// </summary>
+    public IReadOnlyList<double>? Dash { get; init; }
+
+    /// <summary>A file's annotation with /Measure: its fill, dash and line endings are not changed.</summary>
+    public bool IsMeasurement { get; init; }
+
     /// <summary>The line width of ink, rectangles, ellipses and the border of free text (0: none).</summary>
     public double StrokeWidth { get; init; } = 1;
 
@@ -133,6 +142,20 @@ public sealed record ViewerAnnotation
 
     /// <summary>A line or polyline, which may have line endings.</summary>
     public bool HasEndings => Kind is ViewerAnnotationKind.Line or ViewerAnnotationKind.PolyLine;
+
+    /// <summary>A rectangle, ellipse, line, polygon or polyline: it may have a fill and a dash.</summary>
+    public bool IsShape => Kind is ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle || HasVertices;
+
+    /// <summary>A shape whose fill, dash and line endings the reader may change (not a measurement).</summary>
+    public bool HasShapeStyle => IsShape && !IsMeasurement;
+
+    /// <summary>The dash presets, in points: dashed and dotted.</summary>
+    public static IReadOnlyList<double> Dashed { get; } = [4, 3];
+    public static IReadOnlyList<double> Dotted { get; } = [1, 2];
+
+    /// <summary>Two dashes are the same (null: solid).</summary>
+    public static bool SameDash(IReadOnlyList<double>? a, IReadOnlyList<double>? b) =>
+        a == null ? b == null : b != null && a.SequenceEqual(b);
 }
 
 /// <summary>
@@ -269,6 +292,7 @@ public static class ViewerAnnotationPdf
                 or ViewerAnnotationKind.PolyLine => Hex(p.InteriorColor),
             _ => null,
         };
+        bool shape = kind is ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle || vertices.Length > 0;
         return new ViewerAnnotation
         {
             Id = !string.IsNullOrEmpty(p.Name) && p.Name.Length <= 200 && !p.Name.Any(char.IsControl) ? p.Name : id,
@@ -285,6 +309,8 @@ public static class ViewerAnnotationPdf
             Color = color,
             FillColor = fill,
             Opacity = p.Opacity,
+            Dash = shape ? DashOf(p) : null,
+            IsMeasurement = p.Measure != null,
             StrokeWidth = p.BorderWidth ?? 1,
             FontSize = fontSize,
             Contents = p.Contents ?? "",
@@ -293,6 +319,26 @@ public static class ViewerAnnotationPdf
             Modified = ParseDate(p.ModifiedDate) ?? ParseDate(p.CreationDate) ?? default,
             SourceIndex = p.Index,
         };
+    }
+
+    /// <summary>Most numbers of a dash (/D), and the longest dash or gap (points).</summary>
+    public const int MaxDashCount = 16;
+    public const double MaxDashLength = 1000;
+
+    /// <summary>A dash the viewer keeps: 1 to 16 numbers from 0 to 1000, not all 0.</summary>
+    public static bool IsValidDash(IReadOnlyList<double>? dash) =>
+        dash is { Count: > 0 and <= MaxDashCount } && dash.All(v => v >= 0 && v <= MaxDashLength) && dash.Sum() > 0;
+
+    /// <summary>
+    /// The dash the engine draws: /BS /S /D with its /D (else [3]), or the /Border dash when there
+    /// is no /BS; null for a solid line. A dash outside the viewer's limits is read as [3].
+    /// </summary>
+    private static IReadOnlyList<double>? DashOf(PdfAnnotation p)
+    {
+        bool dashed = p.BorderStyle == "D"
+                      || p.BorderStyle == null && p.BorderDash is { Length: > 0 } d && d.All(v => v >= 0) && d.Sum() > 0;
+        if (!dashed) return null;
+        return IsValidDash(p.BorderDash) ? p.BorderDash! : [3];
     }
 
     public static string DefaultColor(ViewerAnnotationKind kind) => kind switch
@@ -315,6 +361,8 @@ public static class ViewerAnnotationPdf
     /// </summary>
     public static PdfAnnotation ToPdf(ViewerAnnotation a, PdfAnnotation? basis)
     {
+        // A file's shape as read: its fill, dash, endings and width are written only when changed.
+        var was = basis != null && a.IsShape ? FromPdf(basis, a.Id) : null;
         var p = basis ?? new PdfAnnotation { Flags = 4 };
         p.PageNumber = a.Page;
         p.Subtype = Subtype(a.Kind);
@@ -340,8 +388,7 @@ public static class ViewerAnnotationPdf
                 break;
             case ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle:
                 p.Color = Rgb(a.Color);
-                p.InteriorColor = a.FillColor is { } fill ? Rgb(fill) : null;
-                p.BorderWidth = a.StrokeWidth;
+                WriteShapeStyle(a, p, basis, was);
                 break;
             case ViewerAnnotationKind.Ink:
                 p.Color = Rgb(a.Color);
@@ -353,13 +400,13 @@ public static class ViewerAnnotationPdf
                 break;
             case ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine:
                 p.Color = Rgb(a.Color);
-                p.InteriorColor = a.FillColor is { } inside ? Rgb(inside) : null;
-                p.BorderWidth = a.StrokeWidth;
+                WriteShapeStyle(a, p, basis, was);
                 var v = a.Vertices;
                 p.Line = a.Kind == ViewerAnnotationKind.Line && v.Count == 4 ? [v[0], v[1], v[2], v[3]] : null;
                 p.Vertices = a.Kind == ViewerAnnotationKind.Line ? new List<PdfPoint>()
                     : Enumerable.Range(0, v.Count / 2).Select(i => new PdfPoint(v[2 * i], v[2 * i + 1])).ToList();
-                p.LineEndings = a.HasEndings && (a.StartEnding != "None" || a.EndEnding != "None") ? [a.StartEnding, a.EndEnding] : null;
+                bool keepEndings = basis?.Measure != null || was != null && a.StartEnding == was.StartEnding && a.EndEnding == was.EndEnding;
+                if (!keepEndings) p.LineEndings = a.HasEndings && (a.StartEnding != "None" || a.EndEnding != "None") ? [a.StartEnding, a.EndEnding] : null;
                 break;
             case ViewerAnnotationKind.Stamp:
                 // A stamp is drawn in the colour of its kind (green for Approved, red for Confidential);
@@ -380,6 +427,26 @@ public static class ViewerAnnotationPdf
                 break;
         }
         return p;
+    }
+
+    /// <summary>
+    /// A shape's fill (/IC), dash (/BS /S and /D) and width (/BS /W). A file's shape keeps each of
+    /// its own values that the reader did not change, and gets no default it did not have; a
+    /// measurement keeps its fill and dash.
+    /// </summary>
+    private static void WriteShapeStyle(ViewerAnnotation a, PdfAnnotation p, PdfAnnotation? basis, ViewerAnnotation? was)
+    {
+        bool measurement = basis?.Measure != null;
+        if (!measurement && (was == null || a.FillColor != was.FillColor))
+            p.InteriorColor = a.FillColor is { } fill ? Rgb(fill) : null;
+        if (!measurement && (was == null || !ViewerAnnotation.SameDash(a.Dash, was.Dash)))
+        {
+            p.BorderStyle = a.Dash != null ? "D" : "S";
+            p.BorderDash = a.Dash?.ToArray();
+        }
+        // /BS is written for a new shape, when the file has one, or when the width changed.
+        if (was == null || p.BorderWidth != null || p.BorderStyle != null || a.StrokeWidth != was.StrokeWidth)
+            p.BorderWidth = a.StrokeWidth;
     }
 
     private static List<double[]> Quads(IReadOnlyList<double> flat, ViewerBox box)

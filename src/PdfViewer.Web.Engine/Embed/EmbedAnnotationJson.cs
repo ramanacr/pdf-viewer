@@ -28,7 +28,7 @@ public sealed record EmbedSaveOptions(bool Enabled, int AutoSaveSeconds, bool Fo
 /// { id, type: "Annotation", motivation: "commenting" | "highlighting", bodyValue,
 ///   target: { source, selector: { node: { index }, subtype, boundingBox: [x1, y1, x2, y2],
 ///             quadPoints, inkList, vertices, lineEndings, stampName, strokeColor, fillColor,
-///             strokeWidth, opacity, fontSize } },
+///             dashPattern, strokeWidth, opacity, fontSize } },
 ///   creator: { type: "Person", name }, created, modified }
 /// </code>
 /// A reply is <c>{ id, type, motivation: "replying", bodyValue, target: "&lt;id it answers&gt;", creator, created, modified }</c>.
@@ -151,10 +151,12 @@ public static class EmbedAnnotationJson
         else if (bb != null) throw Bad(requestId, $"{w}.boundingBox must be [x1, y1, x2, y2].");
         else if (quads != null) box = ViewerBox.Around(quads);
         else if (ink != null) box = ViewerBox.Around(ink.SelectMany(s => s), strokeWidth / 2 + 1);
-        else if (vertices != null) box = ViewerBox.Around(vertices, ViewerAnnotationStore.ShapeMargin(strokeWidth, start != "None" || end != "None"));
+        else if (vertices != null) box = ViewerBox.Around(vertices, ViewerAnnotationStore.ShapeMargin(strokeWidth, start, end));
         else throw Bad(requestId, $"{w}: boundingBox is required.");
 
         string color = ColourValue(selector, "strokeColor", w, requestId) ?? ViewerAnnotationPdf.DefaultColor(kind);
+        // dashPattern: dash and gap lengths in points; left out, null or [] is a solid line (the store checks the values).
+        var dash = Numbers(selector, "dashPattern", ViewerAnnotationPdf.MaxDashCount, w, requestId);
         return new ViewerAnnotation
         {
             Id = id,
@@ -170,6 +172,7 @@ public static class EmbedAnnotationJson
             Color = color.ToUpperInvariant(),
             FillColor = ColourValue(selector, "fillColor", w, requestId)?.ToUpperInvariant(),
             Opacity = Number(selector, "opacity", 0, 1, w, requestId) ?? 1,
+            Dash = dash is { Length: > 0 } ? dash : null,
             StrokeWidth = strokeWidth,
             FontSize = Number(selector, "fontSize", ViewerAnnotationStore.MinFontSize, ViewerAnnotationStore.MaxFontSize, w, requestId) ?? 12,
             Contents = contents,
@@ -290,6 +293,7 @@ public static class EmbedAnnotationJson
         if (a.Kind == ViewerAnnotationKind.Stamp) w.WriteString("stampName", a.StampName);
         w.WriteString("strokeColor", a.Color);
         if (a.FillColor != null) w.WriteString("fillColor", a.FillColor);
+        if (a.Dash != null) WriteNumbers(w, "dashPattern", a.Dash);
         if (a.Kind is ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.FreeText || a.HasVertices)
             w.WriteNumber("strokeWidth", Round(a.StrokeWidth));
         if (a.Kind == ViewerAnnotationKind.FreeText) w.WriteNumber("fontSize", Round(a.FontSize));

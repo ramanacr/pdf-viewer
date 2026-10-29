@@ -139,6 +139,48 @@
                             aria-pressed="@(string.Equals(CurrentColor, c, StringComparison.OrdinalIgnoreCase) ? "true" : "false")" @onclick="() => PickColor(c)"></button>
                 }
             </div>
+            @if (CurrentShapeStyle is { } style)
+            {
+                var fill = FillValue(style.Fill);
+                var dash = DashValue(style.Dash);
+                <div class="group shape-style" role="group" aria-label="Shape style">
+                    <select aria-label="Fill" title="Fill" value="@fill" @onchange="PickFill">
+                        <option value="none">No fill</option>
+                        @foreach (var (value, label) in PaletteNames)
+                        {
+                            <option value="@value">@($"{label} fill")</option>
+                        }
+                        @if (fill == "current")
+                        {
+                            <option value="current">Current fill</option>
+                        }
+                    </select>
+                    <select aria-label="Line style" title="Line style" value="@dash" @onchange="PickDash">
+                        <option value="solid">Solid</option>
+                        <option value="dashed">Dashed</option>
+                        <option value="dotted">Dotted</option>
+                        @if (dash == "current")
+                        {
+                            <option value="current">Current dash</option>
+                        }
+                    </select>
+                    @if (CurrentHasEndings)
+                    {
+                        <select aria-label="Line start" title="Line start" value="@style.Start" @onchange="e => PickEnding(true, e)">
+                            @foreach (var (name, label) in EndingNames)
+                            {
+                                <option value="@name">@($"Start: {label}")</option>
+                            }
+                        </select>
+                        <select aria-label="Line end" title="Line end" value="@style.End" @onchange="e => PickEnding(false, e)">
+                            @foreach (var (name, label) in EndingNames)
+                            {
+                                <option value="@name">@($"End: {label}")</option>
+                            }
+                        </select>
+                    }
+                </div>
+            }
             <div class="group" role="group" aria-label="Edit">
                 <button type="button" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled="@(_store?.CanUndo != true)" @onclick="Undo"><Icon Name="undo" /></button>
                 <button type="button" class="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled="@(_store?.CanRedo != true)" @onclick="Redo"><Icon Name="redo" /></button>

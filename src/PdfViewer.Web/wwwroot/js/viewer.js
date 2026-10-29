@@ -296,7 +296,8 @@ export async function loadLocalFonts(families, maxBytes) {
 
 function inField(e) {
     const t = e.target;
-    return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t?.isContentEditable;
+    // A list box keeps its arrow keys and letters (the zoom, stamp and shape style lists).
+    return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t?.isContentEditable;
 }
 
 function onKey(e) {

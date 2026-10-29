@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using PdfEngine.Vector.Annotations;
 using PdfEngine.Vector.Forms;
@@ -411,6 +412,107 @@ public sealed partial class Viewer
 
     private string CurrentColor => Selected?.Color ?? (_tool == Tool.Select ? "" : ToolColor(_tool));
 
+    // ---------------------------------------------------------------- shape style
+
+    /// <summary>A shape's fill (null: none), dash (null: solid) and line endings.</summary>
+    private sealed record ShapeStyle(string? Fill, IReadOnlyList<double>? Dash, string Start, string End);
+
+    private readonly Dictionary<Tool, ShapeStyle> _toolStyles = new();
+
+    private static readonly (string Value, string Label)[] PaletteNames =
+        [("#FFD400", "Yellow"), ("#22A06B", "Green"), ("#E5484D", "Red"), ("#2563EB", "Blue"), ("#000000", "Black")];
+
+    /// <summary>The line endings (/LE, ISO 32000-2 Table 179) offered for lines and connected lines.</summary>
+    private static readonly (string Name, string Label)[] EndingNames =
+    [
+        ("None", "None"), ("OpenArrow", "Open arrow"), ("ClosedArrow", "Closed arrow"), ("Circle", "Circle"), ("Square", "Square"),
+        ("Diamond", "Diamond"), ("Butt", "Bar"), ("ROpenArrow", "Reverse open arrow"), ("RClosedArrow", "Reverse closed arrow"), ("Slash", "Slash"),
+    ];
+
+    private static bool IsShapeTool(Tool tool) => tool is Tool.Square or Tool.Circle or Tool.Line or Tool.Arrow or Tool.Polygon or Tool.PolyLine;
+
+    private ShapeStyle ToolStyle(Tool tool) =>
+        _toolStyles.TryGetValue(tool, out var s) ? s : new ShapeStyle(null, null, "None", tool == Tool.Arrow ? "OpenArrow" : "None");
+
+    private static ShapeStyle StyleOf(ViewerAnnotation a) => new(a.FillColor, a.Dash, a.StartEnding, a.EndEnding);
+
+    /// <summary>
+    /// The style the shape style controls show and change: the selected shape's, else the shape
+    /// tool's; null hides them (another kind, or a measurement).
+    /// </summary>
+    private ShapeStyle? CurrentShapeStyle =>
+        Selected is { } a ? (a.HasShapeStyle ? StyleOf(a) : null)
+        : IsShapeTool(_tool) ? ToolStyle(_tool) : null;
+
+    /// <summary>The selected shape, or the shape tool, has line endings.</summary>
+    private bool CurrentHasEndings => Selected is { } a ? a.HasEndings : _tool is Tool.Line or Tool.Arrow or Tool.PolyLine;
+
+    /// <summary>A shape drawn with a tool gets the tool's style.</summary>
+    private ViewerAnnotation WithToolStyle(ViewerAnnotation a)
+    {
+        if (!a.IsShape) return a;
+        var s = ToolStyle(_tool);
+        return a with
+        {
+            FillColor = s.Fill,
+            Dash = s.Dash,
+            StartEnding = a.HasEndings ? s.Start : "None",
+            EndEnding = a.HasEndings ? s.End : "None",
+        };
+    }
+
+    /// <summary>Changes the selected shape's style (one undo step), else the shape tool's.</summary>
+    private void SetShapeStyle(Func<ShapeStyle, ShapeStyle> change)
+    {
+        if (Selected is { } a)
+        {
+            if (!a.HasShapeStyle || !CanEditAnnotations) return;
+            var was = StyleOf(a);
+            var s = change(was);
+            if (!a.HasEndings) s = s with { Start = was.Start, End = was.End };
+            if (s.Fill == was.Fill && ViewerAnnotation.SameDash(s.Dash, was.Dash) && s.Start == was.Start && s.End == was.End) return;
+            var changed = a with { FillColor = s.Fill, Dash = s.Dash, StartEnding = s.Start, EndEnding = s.End, Modified = DateTimeOffset.UtcNow };
+            // New endings may reach past the box: it grows to hold them.
+            if (s.Start != was.Start || s.End != was.End) changed = changed with { Box = ViewerAnnotationStore.GrownForEndings(changed) };
+            Change(() => _store!.Update(changed));
+            return;
+        }
+        if (IsShapeTool(_tool)) _toolStyles[_tool] = change(ToolStyle(_tool));
+    }
+
+    private static string FillValue(string? fill) =>
+        fill == null ? "none" : PaletteNames.FirstOrDefault(p => string.Equals(p.Value, fill, StringComparison.OrdinalIgnoreCase)).Value ?? "current";
+
+    private static string DashValue(IReadOnlyList<double>? dash) =>
+        dash == null ? "solid" : ViewerAnnotation.SameDash(dash, ViewerAnnotation.Dashed) ? "dashed"
+        : ViewerAnnotation.SameDash(dash, ViewerAnnotation.Dotted) ? "dotted" : "current";
+
+    private void PickFill(ChangeEventArgs e)
+    {
+        string? v = e.Value as string;
+        if (v == "none") SetShapeStyle(s => s with { Fill = null });
+        else if (PaletteNames.Any(p => p.Value == v)) SetShapeStyle(s => s with { Fill = v });
+    }
+
+    private void PickDash(ChangeEventArgs e)
+    {
+        IReadOnlyList<double>? dash;
+        switch (e.Value as string)
+        {
+            case "solid": dash = null; break;
+            case "dashed": dash = ViewerAnnotation.Dashed; break;
+            case "dotted": dash = ViewerAnnotation.Dotted; break;
+            default: return;
+        }
+        SetShapeStyle(s => s with { Dash = dash });
+    }
+
+    private void PickEnding(bool start, ChangeEventArgs e)
+    {
+        if (e.Value is not string name || !PdfAnnotationLimits.LineEndings.Contains(name)) return;
+        SetShapeStyle(s => start ? s with { Start = name } : s with { End = name });
+    }
+
     private void Undo()
     {
         if (!CanEditAnnotations) return;
@@ -534,9 +636,8 @@ public sealed partial class Viewer
                 int least = kind == ViewerAnnotationKind.Polygon ? 3 : 2;
                 if (user.Count / 2 < least) return;
                 if (kind == ViewerAnnotationKind.Line) user = [user[0], user[1], user[^2], user[^1]];
-                var shape = NewAnnotation(kind, page, default) with { Vertices = user.ToArray(), EndEnding = _tool == Tool.Arrow ? "OpenArrow" : "None" };
-                bool endings = shape.EndEnding != "None";
-                a = shape with { Box = ClampBox(ViewerBox.Around(user, ViewerAnnotationStore.ShapeMargin(shape.StrokeWidth, endings)), g) };
+                var shape = WithToolStyle(NewAnnotation(kind, page, default) with { Vertices = user.ToArray() });
+                a = shape with { Box = ClampBox(ViewerBox.Around(user, ViewerAnnotationStore.ShapeMargin(shape.StrokeWidth, shape.StartEnding, shape.EndEnding)), g) };
                 break;
             }
             default:
@@ -549,7 +650,7 @@ public sealed partial class Viewer
                     rect = new ViewerRect(Math.Min(x0, width - 200), Math.Min(y0, height - 40), 200, 40);
                 else if (rect.Width < 4 || rect.Height < 4)
                     return;
-                a = NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g));
+                a = WithToolStyle(NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g)));
                 break;
             }
         }
