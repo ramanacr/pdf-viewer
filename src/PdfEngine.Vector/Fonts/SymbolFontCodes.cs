@@ -7,7 +7,7 @@ namespace PdfEngine.Vector.Fonts;
 /// (a document may have re-encoded its Symbol font, so the code it shows is not that one), and the
 /// standard character for one Adobe's glyph list puts in the private-use area.
 /// </summary>
-public static class SymbolFontCodes
+internal static class SymbolFontCodes
 {
     /// <summary>
     /// Adobe's private-use characters with a standard equivalent: the serif and sans forms of

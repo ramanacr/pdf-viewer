@@ -7,7 +7,7 @@ using PdfEngine.Vector.Objects;
 namespace PdfEngine.Vector.Security;
 
 /// <summary>How one class of data (strings, streams) is encrypted (ISO 32000-2 7.6.5, Table 25 /CFM).</summary>
-public enum PdfCryptMethod
+internal enum PdfCryptMethod
 {
     None,
     Rc4,
@@ -26,27 +26,27 @@ public abstract class PdfSecurityHandler
     private readonly PdfCryptMethod _streamMethod, _stringMethod;
 
     /// <summary>/V of the encryption dictionary.</summary>
-    protected int V { get; }
+    private protected int V { get; }
 
     /// <summary>File key length in bytes: 5 for V1, /Length for V2 (default 40 bits), 16 for V4 unless stated, 32 for V5.</summary>
-    protected int KeyLength { get; }
+    private protected int KeyLength { get; }
 
-    protected bool EncryptMetadata { get; }
+    private protected bool EncryptMetadata { get; }
 
     /// <summary>The file key; set by <see cref="SetFileKey"/> after authentication.</summary>
-    protected byte[]? FileKey { get; private set; }
+    private protected byte[]? FileKey { get; private set; }
 
     /// <summary>The permission flags in effect (Table 22): /P, or the recipient's permissions for public-key encryption.</summary>
-    public int Permissions { get; protected set; }
+    public int Permissions { get; private protected set; }
 
     /// <summary>
     /// True when access is unrestricted: the Standard owner password, or a public-key recipient
     /// granted every permission. Readers then ignore /P.
     /// </summary>
-    public bool IsOwner { get; protected set; }
+    public bool IsOwner { get; private protected set; }
 
     /// <summary>Security handler revision (/R), or the public-key sub-filter's equivalent.</summary>
-    public int Revision { get; protected set; }
+    public int Revision { get; private protected set; }
 
     /// <summary>The cipher protecting streams (strings when streams are left in clear), for display: "AES-256", "RC4 128-bit".</summary>
     public string Algorithm => (_streamMethod != PdfCryptMethod.None ? _streamMethod : _stringMethod) switch
@@ -60,7 +60,7 @@ public abstract class PdfSecurityHandler
     /// <summary>False when the document's XMP metadata stream is left unencrypted (/EncryptMetadata false).</summary>
     public bool IsMetadataEncrypted => EncryptMetadata;
 
-    protected PdfSecurityHandler(PdfDictionary encrypt, Func<PdfObject?, PdfObject?> resolve)
+    private protected PdfSecurityHandler(PdfDictionary encrypt, Func<PdfObject?, PdfObject?> resolve)
     {
         V = (int)(encrypt.GetInteger("V") ?? 0);
         EncryptMetadata = resolve(encrypt["EncryptMetadata"]) is not PdfBoolean { Value: false };
@@ -100,12 +100,12 @@ public abstract class PdfSecurityHandler
         : _cryptFilters.TryGetValue(filterName, out var f) ? f
         : throw new PdfEncryptedDocumentException($"Crypt filter /{filterName} is not defined.");
 
-    protected static byte[] Bytes(PdfObject? o) => o is PdfString s ? s.RawBytes.ToArray() : Array.Empty<byte>();
+    private protected static byte[] Bytes(PdfObject? o) => o is PdfString s ? s.RawBytes.ToArray() : Array.Empty<byte>();
 
-    protected void SetFileKey(byte[] key) => FileKey = key;
+    private protected void SetFileKey(byte[] key) => FileKey = key;
 
     /// <summary>Creates the handler named by /Filter (Standard or Adobe.PubSec).</summary>
-    public static PdfSecurityHandler Create(PdfDictionary encrypt, PdfArray? id, Func<PdfObject?, PdfObject?> resolve)
+    internal static PdfSecurityHandler Create(PdfDictionary encrypt, PdfArray? id, Func<PdfObject?, PdfObject?> resolve)
     {
         return encrypt.GetName("Filter") switch
         {
@@ -121,7 +121,7 @@ public abstract class PdfSecurityHandler
     /// Decrypts every string of an indirect object, and a stream's data, with the object's key.
     /// Cross-reference streams, and the metadata stream when /EncryptMetadata is false, are left as is.
     /// </summary>
-    public PdfObject DecryptObject(PdfObject obj, int objectNumber, int generation)
+    internal PdfObject DecryptObject(PdfObject obj, int objectNumber, int generation)
     {
         if (FileKey == null)
             throw new InvalidOperationException("The security handler is not authenticated.");
@@ -207,7 +207,7 @@ public abstract class PdfSecurityHandler
     /// key: every string, and a stream's data. The same exceptions as reading apply:
     /// cross-reference streams, unencrypted metadata, and a signature's /Contents.
     /// </summary>
-    public PdfObject EncryptObject(PdfObject obj, int objectNumber, int generation)
+    internal PdfObject EncryptObject(PdfObject obj, int objectNumber, int generation)
     {
         if (FileKey == null)
             throw new InvalidOperationException("The security handler is not authenticated.");

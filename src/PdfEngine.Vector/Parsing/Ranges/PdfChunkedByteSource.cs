@@ -9,7 +9,7 @@ namespace PdfEngine.Vector.Parsing;
 /// cache and throws <see cref="PdfDataNotLoadedException"/>. <see cref="PdfRangedDocument"/> fetches
 /// what a page needs before it parses the page, so misses are the exception. Disposing it leaves the cache alone.
 /// </summary>
-public sealed class PdfChunkedByteSource : IPdfByteSource
+internal sealed class PdfChunkedByteSource : IPdfByteSource
 {
     private readonly PdfChunkCache _cache;
     private readonly long _base;

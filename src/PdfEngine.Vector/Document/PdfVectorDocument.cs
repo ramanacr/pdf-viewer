@@ -477,7 +477,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
     /// Interprets the page as it prints and reports every painting operation to <paramref name="observer"/>
     /// (print production: colorants, preflight). Returns the print display list that was built.
     /// </summary>
-    public ValueTask<IPdfDisplayList> ObservePageAsync(int pageNumber, PdfEngine.Vector.PrintProduction.IPdfPaintObserver observer,
+    internal ValueTask<IPdfDisplayList> ObservePageAsync(int pageNumber, PdfEngine.Vector.PrintProduction.IPdfPaintObserver observer,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(observer);
@@ -723,7 +723,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
 /// <summary>
 /// Single page representation for IPdfVectorDocument.
 /// </summary>
-public sealed class PdfVectorPage : IPdfPage
+internal sealed class PdfVectorPage : IPdfPage
 {
     /// <inheritdoc/>
     public int PageNumber { get; }

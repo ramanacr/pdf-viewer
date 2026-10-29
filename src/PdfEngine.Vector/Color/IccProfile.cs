@@ -5,7 +5,7 @@ using System.Collections.Generic;
 namespace PdfEngine.Vector.Color;
 
 /// <summary>Rendering intents (ISO 32000-2 8.6.5.8), in the order of the ICC A2B0/A2B1/A2B2 tags they select.</summary>
-public enum PdfRenderingIntent
+internal enum PdfRenderingIntent
 {
     Perceptual = 0,
     RelativeColorimetric = 1,

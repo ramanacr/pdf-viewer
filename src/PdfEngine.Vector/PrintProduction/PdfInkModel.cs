@@ -70,7 +70,7 @@ public sealed class PdfInkModel
     /// <see cref="ChannelCount"/> long; plates the colour does not paint are 0), and the plates it paints:
     /// the plates an overprinting object changes. Overprint mode 1 is not applied here (see <see cref="NonzeroMask"/>).
     /// </summary>
-    public ulong Evaluate(PdfColorSpace space, ReadOnlySpan<double> components, Span<double> inks)
+    internal ulong Evaluate(PdfColorSpace space, ReadOnlySpan<double> components, Span<double> inks)
     {
         ArgumentNullException.ThrowIfNull(space);
         if (inks.Length < _channels.Length)
@@ -83,7 +83,7 @@ public sealed class PdfInkModel
     /// For overprint mode 1 (ISO 32000-2 8.6.7): the process plates a DeviceCMYK (or four-component ICCBased)
     /// colour paints, those whose component is not zero. Null for any other space, where the mode does not apply.
     /// </summary>
-    public static ulong? NonzeroMask(PdfColorSpace space, ReadOnlySpan<double> components)
+    internal static ulong? NonzeroMask(PdfColorSpace space, ReadOnlySpan<double> components)
     {
         var s = Unwrap(space);
         if (!IsCmyk(s)) return null;

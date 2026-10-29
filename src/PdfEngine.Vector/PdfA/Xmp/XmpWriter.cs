@@ -11,7 +11,7 @@ namespace PdfEngine.Vector.PdfA.Xmp;
 /// encoding attributes, one rdf:Description per schema, structures as rdf:parseType="Resource",
 /// arrays as rdf:Bag/Seq/Alt and language alternatives with xml:lang.
 /// </summary>
-public static class XmpWriter
+internal static class XmpWriter
 {
     public static byte[] Write(IEnumerable<XmpProperty> properties)
     {

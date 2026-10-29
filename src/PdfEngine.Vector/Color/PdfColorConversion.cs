@@ -3,7 +3,7 @@ using System;
 namespace PdfEngine.Vector.Color;
 
 /// <summary>Colour conversions the rendering backends share with the core, so every backend shows the same colours.</summary>
-public static class PdfColorConversion
+internal static class PdfColorConversion
 {
     /// <summary>
     /// Converts 8-bit CMYK pixels (C, M, Y, K per pixel) to opaque BGRA through the DeviceCMYK conversion.

@@ -16,7 +16,7 @@ namespace PdfEngine.Vector.Fonts;
 /// keyed by the built-in Symbol code. ZapfDingbats widths are an approximation (a constant 788 with
 /// 278 for space), because no metric-compatible system font exists.
 /// </remarks>
-public static class Standard14Fonts
+internal static class Standard14Fonts
 {
     private static readonly HashSet<string> StandardNames = new(StringComparer.OrdinalIgnoreCase)
     {

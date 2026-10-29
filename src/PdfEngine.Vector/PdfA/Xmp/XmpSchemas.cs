@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.PdfA.Xmp;
 /// ISO 19005-1 and -2), with the value type of every property and of every structure's fields,
 /// and the checks of simple values' lexical forms.
 /// </summary>
-public static class XmpSchemas
+internal static class XmpSchemas
 {
     public const string Dc = "http://purl.org/dc/elements/1.1/";
     public const string Xmp = "http://ns.adobe.com/xap/1.0/";

@@ -50,7 +50,7 @@ public interface IPdfVectorDocument : IPdfDocument
 /// <summary>
 /// Vector visual presentation model for high-fidelity UI rendering.
 /// </summary>
-public interface IPdfVectorPageVisual
+internal interface IPdfVectorPageVisual
 {
     /// <summary>The page number, starting at 1.</summary>
     int PageNumber { get; }

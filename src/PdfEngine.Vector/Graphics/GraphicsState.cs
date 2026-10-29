@@ -9,7 +9,7 @@ namespace PdfEngine.Vector.Graphics;
 /// <summary>
 /// Mutable graphics state tracked on the interpreter state stack (ISO 32000-2 8.4, Tables 51–52).
 /// </summary>
-public sealed class GraphicsState
+internal sealed class GraphicsState
 {
     public PdfMatrix CTM { get; set; } = PdfMatrix.Identity;
     public double LineWidth { get; set; } = 1.0;

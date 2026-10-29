@@ -18,7 +18,7 @@ namespace PdfEngine.Vector.Functions;
 /// Runtime errors (stack underflow/overflow, type errors, division by zero, budget exhaustion) raise
 /// <see cref="PdfUnsupportedFeatureException"/> with the reason supplied at parse time.
 /// </remarks>
-public sealed class PostScriptCalculatorFunction : PdfFunction
+internal sealed class PostScriptCalculatorFunction : PdfFunction
 {
     private readonly Instruction[][] _blocks;
     private readonly int _maxStack;

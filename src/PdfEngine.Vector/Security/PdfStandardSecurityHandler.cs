@@ -48,7 +48,7 @@ public sealed class PdfStandardSecurityHandler : PdfSecurityHandler
     }
 
     /// <summary>Creates the handler for a document's /Encrypt dictionary (the first /ID string feeds key derivation).</summary>
-    public static new PdfStandardSecurityHandler Create(PdfDictionary encrypt, PdfArray? id, Func<PdfObject?, PdfObject?> resolve)
+    internal static new PdfStandardSecurityHandler Create(PdfDictionary encrypt, PdfArray? id, Func<PdfObject?, PdfObject?> resolve)
     {
         byte[] id0 = id != null && id.Count > 0 ? Bytes(resolve(id[0])) : Array.Empty<byte>();
         return new PdfStandardSecurityHandler(encrypt, id0, resolve);

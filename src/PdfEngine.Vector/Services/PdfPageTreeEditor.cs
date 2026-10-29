@@ -7,7 +7,7 @@ namespace PdfEngine.Vector.Services;
 /// FPDFPage_New): only the page, the /Pages node holding it and the /Count of the nodes above
 /// change. Page numbers refer to the document as it was opened, so make one edit per update.
 /// </summary>
-public static class PdfPageTreeEditor
+internal static class PdfPageTreeEditor
 {
     /// <summary>Sets the page's /Rotate to <paramref name="degrees"/> (a multiple of 90, any sign).</summary>
     public static void Rotate(PdfUpdate update, int pageNumber, int degrees)

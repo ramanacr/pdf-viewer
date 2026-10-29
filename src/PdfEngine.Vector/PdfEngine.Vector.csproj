@@ -32,6 +32,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="PdfEngine.Vector.Tests" />
     <InternalsVisibleTo Include="PdfViewer.Tests" />
+    <InternalsVisibleTo Include="PdfEngine.Vector.Skia.Tests" />
     <!-- The developer tool times the phases of native text extraction (vectorpdf textbench). -->
     <InternalsVisibleTo Include="vectorpdf" />
     <!-- The Skia backend shapes text drawn with a substitute font (Arabic joining, Indic reordering) with the editing shaper. -->
@@ -39,6 +40,8 @@
     <!-- The Direct2D and WPF backends shape substitute text with the same engine code (Text/SubstituteShaper). -->
     <InternalsVisibleTo Include="PdfEngine.Vector.Direct2D" />
     <InternalsVisibleTo Include="PdfEngine.Vector.Windows" />
+    <!-- The browser viewer's bundled font index picks the CJK face of a run with Fonts/CharacterFaces, as the Skia backend does. -->
+    <InternalsVisibleTo Include="PdfViewer.Web.Engine" />
   </ItemGroup>
 
   <ItemGroup>

@@ -17,14 +17,14 @@ namespace PdfEngine.Vector.Streams;
 /// <param name="Data">Decoded bytes; still encoded by <paramref name="ImageFilter"/> when that is non-null.</param>
 /// <param name="ImageFilter">Normalised image filter name ("DCTDecode", "JPXDecode", "JBIG2Decode", "CCITTFaxDecode"), or null.</param>
 /// <param name="ImageFilterParms">The /DecodeParms entry belonging to <paramref name="ImageFilter"/>, if any.</param>
-public sealed record PdfDecodedStream(byte[] Data, string? ImageFilter, PdfDictionary? ImageFilterParms);
+internal sealed record PdfDecodedStream(byte[] Data, string? ImageFilter, PdfDictionary? ImageFilterParms);
 
 /// <summary>
 /// Stream filter pipeline decoder (ISO 32000-2 Clause 7.4) with decompression ratio and memory bomb guards.
 /// Every filter writes into a <see cref="BoundedOutputBuffer"/>, so the ceilings in
 /// <see cref="PdfSecurityLimits"/> are enforced while decoding rather than after the fact.
 /// </summary>
-public sealed class PdfStreamDecoder
+internal sealed class PdfStreamDecoder
 {
     private const int FlateChunkSize = 64 * 1024;
 

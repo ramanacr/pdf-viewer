@@ -7,7 +7,7 @@ using PdfEngine.Vector.Xref;
 namespace PdfEngine.Vector.Parsing;
 
 /// <summary>What a <see cref="PdfObjectClosure"/> walks.</summary>
-public enum PdfClosureKind
+internal enum PdfClosureKind
 {
     /// <summary>
     /// What opening a document reads: the trailer's /Root, /Info and /Encrypt, the page tree with
@@ -31,7 +31,7 @@ public enum PdfClosureKind
 /// stream is read with its stream, so its range is the stream's. Used by <see cref="PdfRangedDocument"/>
 /// to fetch the objects a page needs before the page is parsed.
 /// </summary>
-public sealed class PdfRangePlanner
+internal sealed class PdfRangePlanner
 {
     private readonly PdfXrefTable _xref;
     private readonly long[] _offsets; // sorted, distinct; the file length last
@@ -147,7 +147,7 @@ public sealed class PdfRangePlanner
 /// cannot be read yet (a reference the planner could not place, such as an indirect /Length past
 /// the object) is asked for again once, in the next level.
 /// </summary>
-public sealed class PdfObjectClosure
+internal sealed class PdfObjectClosure
 {
     private readonly PdfRangePlanner _planner;
     private readonly HashSet<int> _seen = new();

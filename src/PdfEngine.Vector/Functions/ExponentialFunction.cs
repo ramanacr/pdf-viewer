@@ -6,7 +6,7 @@ namespace PdfEngine.Vector.Functions;
 /// <summary>
 /// Type 2 exponential interpolation function (ISO 32000-2 7.10.3): y_j = C0_j + x^N * (C1_j - C0_j).
 /// </summary>
-public sealed class ExponentialFunction : PdfFunction
+internal sealed class ExponentialFunction : PdfFunction
 {
     private readonly double[] _c0;
     private readonly double[] _c1;

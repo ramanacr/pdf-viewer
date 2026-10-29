@@ -20,7 +20,7 @@ public sealed class PdfXrefTable
     private readonly PdfSecurityLimits _limits;
     private PdfDictionary? _trailer;
 
-    public IReadOnlyDictionary<int, PdfXrefEntry> Entries => _entries;
+    internal IReadOnlyDictionary<int, PdfXrefEntry> Entries => _entries;
     public PdfDictionary? Trailer => _trailer;
 
     /// <summary>True when the cross-reference data was rebuilt by scanning the file (damaged/missing xref).</summary>
@@ -29,12 +29,12 @@ public sealed class PdfXrefTable
     /// <summary>Number of bounded recoveries applied while loading (for local diagnostics).</summary>
     public int RecoveryCount { get; private set; }
 
-    public PdfXrefTable(PdfSecurityLimits? limits = null)
+    internal PdfXrefTable(PdfSecurityLimits? limits = null)
     {
         _limits = limits ?? PdfSecurityLimits.Default;
     }
 
-    public static long FindStartXref(IPdfByteSource source)
+    internal static long FindStartXref(IPdfByteSource source)
     {
         long len = source.Length;
         int searchBytes = (int)Math.Min(len, 4096);
@@ -82,7 +82,7 @@ public sealed class PdfXrefTable
     /// Loads the xref chain from <c>startxref</c>. When that fails or yields no usable catalog, the
     /// table is reconstructed by scanning for <c>N G obj</c> headers (05_PDF_CORE layer 3, step 6).
     /// </summary>
-    public void Load(IPdfByteSource source)
+    internal void Load(IPdfByteSource source)
     {
         bool chainOk;
         try
@@ -262,7 +262,7 @@ public sealed class PdfXrefTable
     /// Discards the loaded table and rebuilds it by scanning. Called when an xref offset turns out to
     /// point at a different object than it claims (a common writer bug PDFium also repairs).
     /// </summary>
-    public void Rebuild(IPdfByteSource source) => Reconstruct(source);
+    internal void Rebuild(IPdfByteSource source) => Reconstruct(source);
 
     /// <summary>
     /// Rebuilds the table by scanning for object headers. Later definitions win (incremental updates

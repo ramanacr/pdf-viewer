@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.Create;
 /// chunks put back together), the Adobe colour transform (APP14), the EXIF orientation (APP1) and
 /// the JFIF density (APP0).
 /// </summary>
-public sealed record JpegHeader
+internal sealed record JpegHeader
 {
     public required int Width { get; init; }
     public required int Height { get; init; }

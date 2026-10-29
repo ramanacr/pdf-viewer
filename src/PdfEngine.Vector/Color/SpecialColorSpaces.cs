@@ -3,7 +3,7 @@ using PdfEngine.Vector.Functions;
 
 namespace PdfEngine.Vector.Color;
 
-public abstract partial class PdfColorSpace
+internal abstract partial class PdfColorSpace
 {
     /// <summary>
     /// ICCBased (ISO 32000-2 8.6.5.5). Colours are converted to sRGB through the embedded profile (gray TRC,

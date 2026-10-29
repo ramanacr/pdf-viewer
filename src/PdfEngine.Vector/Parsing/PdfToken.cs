@@ -1,6 +1,6 @@
 namespace PdfEngine.Vector.Parsing;
 
-public enum PdfTokenType
+internal enum PdfTokenType
 {
     None = 0,
     Integer,
@@ -16,7 +16,7 @@ public enum PdfTokenType
     EndOfFile
 }
 
-public readonly record struct PdfToken(
+internal readonly record struct PdfToken(
     PdfTokenType Type,
     string TextValue,
     long IntValue = 0,

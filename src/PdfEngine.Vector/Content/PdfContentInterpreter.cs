@@ -32,7 +32,7 @@ namespace PdfEngine.Vector.Content;
 /// <see cref="DrawFallbackRegion"/> with conservative page-space bounds instead of being
 /// silently dropped or approximated (06_PDFIUM_FALLBACK_AND_EXIT_PLAN, 11 "Error policy").
 /// </remarks>
-public sealed class PdfContentInterpreter
+internal sealed class PdfContentInterpreter
 {
     private readonly PdfObjectResolver _resolver;
     private readonly PdfFontResolver _fontResolver;

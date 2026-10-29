@@ -117,7 +117,7 @@ public static class PdfFormFiller
     /// can be used).
     /// </summary>
     /// <param name="hasAppearance">The widget has a usable /AP /N stream for its state.</param>
-    public static PdfStream? GenerateAppearance(PdfAcroForm form, PdfFormField field, PdfFormWidget w, Parsing.PdfObjectResolver r, bool hasAppearance)
+    internal static PdfStream? GenerateAppearance(PdfAcroForm form, PdfFormField field, PdfFormWidget w, Parsing.PdfObjectResolver r, bool hasAppearance)
     {
         bool choiceOrText = field.Kind is PdfFormFieldKind.Text or PdfFormFieldKind.ComboBox or PdfFormFieldKind.ListBox;
         if (hasAppearance && !(form.NeedAppearances && choiceOrText))

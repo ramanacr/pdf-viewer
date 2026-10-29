@@ -133,7 +133,7 @@ public sealed class PdfRangedDocument : IDisposable
     public PdfVectorDocument Document { get; private set; } = null!;
 
     /// <summary>The fetched blocks.</summary>
-    public PdfChunkCache Cache => _cache;
+    internal PdfChunkCache Cache => _cache;
 
     /// <summary>The length of the file.</summary>
     public long Length => _reader.Length;

@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.Parsing;
 /// <summary>
 /// High-performance lexical analyzer for PDF streams complying with ISO 32000-2 Clause 7.2.
 /// </summary>
-public sealed class PdfLexer
+internal sealed class PdfLexer
 {
     private readonly IPdfByteSource _source;
     private readonly PdfSecurityLimits _limits;

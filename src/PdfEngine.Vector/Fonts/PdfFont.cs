@@ -6,7 +6,7 @@ using PdfEngine.Vector.Objects;
 namespace PdfEngine.Vector.Fonts;
 
 /// <summary>Kind of font program embedded through the font descriptor (ISO 32000-2 9.9).</summary>
-public enum PdfFontProgramKind
+internal enum PdfFontProgramKind
 {
     /// <summary>No embedded font program.</summary>
     None = 0,
@@ -28,7 +28,7 @@ public enum PdfFontProgramKind
 }
 
 /// <summary>Vertical metrics of one CID (ISO 32000-2 9.7.4.3): advance W1y and position vector (VX, VY).</summary>
-public readonly record struct PdfVerticalMetrics(double W1y, double VX, double VY);
+internal readonly record struct PdfVerticalMetrics(double W1y, double VX, double VY);
 
 /// <summary>
 /// Resolved PDF font representation containing metric tables, encoding, and ToUnicode mappings.
@@ -40,7 +40,7 @@ public readonly record struct PdfVerticalMetrics(double W1y, double VX, double V
 /// every font kind: <see cref="GetGlyphWidth"/> takes the character code for simple fonts and the
 /// CID for composite fonts. <see cref="MapToUnicode"/> always takes the character code.
 /// </remarks>
-public sealed class PdfFont
+internal sealed class PdfFont
 {
     private static readonly PdfMatrix DefaultFontMatrix = new(0.001, 0, 0, 0.001, 0, 0);
 

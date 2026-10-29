@@ -45,7 +45,7 @@ public static class PdfPasswordPreparation
     private static byte[] Truncate(string prepared) => Truncate(Encoding.UTF8.GetBytes(prepared));
 
     /// <summary>RFC 4013 on <paramref name="input"/>; throws <see cref="ArgumentException"/> naming the rule broken.</summary>
-    public static string SaslPrep(string input, bool allowUnassigned)
+    internal static string SaslPrep(string input, bool allowUnassigned)
     {
         ArgumentNullException.ThrowIfNull(input);
 

@@ -34,7 +34,7 @@ public static class PdfAnnotationAppearances
     /// Builds a normal appearance for an annotation that lacks one, or null when the type is not supported.
     /// newObject is called to add supporting objects (e.g. an embedded font) and returns their object numbers.
     /// </summary>
-    public static PdfStream? Generate(PdfDictionary annotation, PdfObjectResolver resolver, Func<PdfObject, int> newObject) =>
+    internal static PdfStream? Generate(PdfDictionary annotation, PdfObjectResolver resolver, Func<PdfObject, int> newObject) =>
         Generate(annotation, resolver, newObject, null);
 
     /// <summary>The same, with how a stamp is designed: its label, second line, size and rotation.</summary>

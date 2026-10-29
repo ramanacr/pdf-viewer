@@ -13,7 +13,7 @@ namespace PdfEngine.Vector.Editing;
 /// and subsetting to the glyphs a document uses. Subsets keep glyph ids (unused glyphs become
 /// empty), so a Type0 font can use CIDToGIDMap /Identity with CID = glyph id.
 /// </summary>
-public sealed class TrueTypeFontFile
+internal sealed class TrueTypeFontFile
 {
     private readonly Dictionary<string, byte[]> _tables;
     private readonly TrueTypeCmap? _cmap;
