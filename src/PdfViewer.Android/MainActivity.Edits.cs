@@ -1,5 +1,8 @@
 using Android.App;
 using Android.Content;
+using Android.Content.PM;
+using Android.OS;
+using Android.Provider;
 using Android.Text;
 using Android.Views;
 using Android.Widget;
@@ -13,11 +16,14 @@ namespace PdfViewer.Android;
 /// Edits: form filling (a tap on a field; text with the soft keyboard, check boxes, radio buttons,
 /// choices), highlight, underline and strike-out on a text selection, freehand ink, rectangles,
 /// ellipses, lines and arrows (a drag), sticky notes and text boxes (a tap), delete, undo and
-/// redo, the annotation list, and "Save a copy". The rules and the writing are the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
+/// redo, the annotation list, "Save" and "Save a copy". The rules and the writing are the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
 /// fields, /MaxLen and signed or certified documents); after each change the engine writes the
-/// edits into the document as an incremental update and the pages are drawn again from it. A copy
-/// is saved with the system's save dialog (ACTION_CREATE_DOCUMENT), which grants access to the
-/// one file the reader names: no storage permission. Document JavaScript never runs.
+/// edits into the document as an incremental update and the pages are drawn again from it. "Save"
+/// writes them back into the opened file when Android granted write access to it
+/// (<see cref="ViewerSaveBack"/>); a copy is saved with the system's save dialog
+/// (ACTION_CREATE_DOCUMENT), which grants access to the one file the reader names. Neither needs a
+/// storage permission. After a save the undo history stays, as in the desktop and web viewers.
+/// Document JavaScript never runs.
 /// </summary>
 public sealed partial class MainActivity
 {
@@ -396,11 +402,17 @@ public sealed partial class MainActivity
     /// </summary>
     private ViewerDocument? _saveFor;
 
-    /// <summary>"Save a copy": the system's save dialog, with the file's name and "(edited)" offered.</summary>
-    private void PickSaveCopy()
+    /// <summary>What to do once the copy is saved: the action the unsaved-changes question was asked for.</summary>
+    private Action? _afterCopy;
+
+    /// <summary>
+    /// "Save a copy": the system's save dialog, with the file's name and "(edited)" offered.
+    /// <paramref name="after"/> runs once the copy is saved.
+    /// </summary>
+    private void PickSaveCopy(Action? after = null)
     {
         if (_doc == null) return;
-        if (_session?.IsSaving == true || _saveFor != null)
+        if (_session?.IsSaving == true || _saveFor != null || _savingBack)
         {
             Toast.MakeText(this, "A copy is being saved already.", ToastLength.Short)?.Show();
             return;
@@ -411,6 +423,7 @@ public sealed partial class MainActivity
         intent.SetType("application/pdf");
         intent.PutExtra(Intent.ExtraTitle, (name.Length > 0 ? name : "Document") + " (edited).pdf");
         _saveFor = _doc;
+        _afterCopy = after;
         StartActivityForResult(intent, SaveCopyRequest);
     }
 
@@ -418,7 +431,9 @@ public sealed partial class MainActivity
     private void SaveDialogAnswered(Uri? target)
     {
         var doc = _saveFor;
+        var after = _afterCopy;
         _saveFor = null;
+        _afterCopy = null;
         if (target == null) return;
         if (doc == null || !ReferenceEquals(doc, _doc))
         {
@@ -429,41 +444,48 @@ public sealed partial class MainActivity
                 .SetPositiveButton("OK", (_, _) => { })!.Show();
             return;
         }
-        _ = SaveCopyAsync(doc, target);
+        _ = SaveCopyAsync(doc, target, after);
     }
 
-    private async Task SaveCopyAsync(ViewerDocument doc, Uri target)
+    /// <summary>
+    /// Writes the copy. The session stays dirty (<see cref="ViewerSaveBack.CopyAsync"/>): the opened
+    /// file still lacks the edits, so leaving still asks, and Save still offers to write them there.
+    /// </summary>
+    private async Task SaveCopyAsync(ViewerDocument doc, Uri target, Action? after)
     {
         var session = _session;
-        ViewerSave? save = session != null ? await session.BeginSaveAsync() : null;
-        byte[]? bytes = session == null ? doc.Bytes : save?.Bytes;
-        if (bytes == null || !ReferenceEquals(doc, _doc))
-        {
-            if (save != null) session!.EndSave(save, saved: false);
-            DeleteTarget(target);
-            Toast.MakeText(this, session?.IsSaving == true ? "A copy is being saved already." : "The changes could not be written into the document, so nothing was saved.", ToastLength.Long)?.Show();
-            return;
-        }
+        ViewerSaveBackResult result;
         try
         {
-            await Task.Run(() =>
-            {
-                // "wt": the file the reader named is written from the start (truncated).
-                using var output = ContentResolver?.OpenOutputStream(target, "wt") ?? throw new IOException("No stream for the file.");
-                output.Write(bytes, 0, bytes.Length);
-                output.Flush();
-            });
+            result = session != null
+                ? await ViewerSaveBack.CopyAsync(session, bytes => Task.Run(() => WriteCopy(target, bytes)))
+                : new(true, null, false, (await Task.Run(() => WriteCopy(target, doc.Bytes))) ?? doc.Bytes.Length);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            if (save != null) session!.EndSave(save, saved: false);
             // A part-written PDF is worse than none.
             bool removed = DeleteTarget(target);
             Toast.MakeText(this, $"The copy could not be saved ({ex.GetType().Name}).{(removed ? " The unfinished file was removed." : "")}", ToastLength.Long)?.Show();
             return;
         }
-        if (save != null) session!.EndSave(save, saved: true);
-        Toast.MakeText(this, "Copy saved.", ToastLength.Short)?.Show();
+        if (!result.Saved)
+        {
+            DeleteTarget(target);
+            Toast.MakeText(this, result.Problem ?? ViewerSaveBack.NotWrittenMessage, ToastLength.Long)?.Show();
+            return;
+        }
+        Toast.MakeText(this, "Copy saved. The opened file does not have the changes.", ToastLength.Short)?.Show();
+        // The reader chose a copy instead of saving this file: the action they asked for goes on.
+        if (ReferenceEquals(session, _session)) after?.Invoke();
+    }
+
+    private long? WriteCopy(Uri target, byte[] bytes)
+    {
+        // "wt": the file the reader named is written from the start (truncated).
+        using var output = ContentResolver?.OpenOutputStream(target, "wt") ?? throw new IOException("No stream for the file.");
+        output.Write(bytes, 0, bytes.Length);
+        output.Flush();
+        return null;
     }
 
     /// <summary>Removes the file the save dialog created (best effort; the provider may not allow it).</summary>
@@ -479,12 +501,239 @@ public sealed partial class MainActivity
         }
     }
 
+    // ------------------------------------------------------------------ save into the opened file
+
+    /// <summary>The provider's size and last-modified time of the open file when its bytes were read, or after this app saved it.</summary>
+    private ViewerFileStamp _openedStamp;
+
+    /// <summary>The bytes the opened file has (as read, or as last saved here): written back if a save fails part-way.</summary>
+    private byte[]? _onDisk;
+
     /// <summary>
-    /// Share sends the file as opened (its own content URI), without edits no save has written:
-    /// with such edits the reader chooses first.
+    /// A save into the opened file runs (from the access check until the write ends). A dialog that
+    /// cannot be cancelled covers the app meanwhile, so no edit, Back, Open or Share can come in
+    /// between; the saved state then keeps no document (see <see cref="OnSaveInstanceState"/>).
+    /// </summary>
+    private bool _savingBack;
+
+    /// <summary>
+    /// "Save": the edits written back to the file that was opened, when Android lets this app write
+    /// it; otherwise the reader is told why and offered "Save a copy". A file that changed since it
+    /// was opened is replaced only when the reader agrees. <paramref name="after"/> runs once the
+    /// file is saved with every edit (or when there is nothing to save); with
+    /// <paramref name="afterCopy"/>, it also runs when the reader saves a copy instead.
+    /// </summary>
+    private void Save(Action? after = null, bool overwrite = false, bool afterCopy = false) => _ = SaveFlowAsync(after, overwrite, afterCopy);
+
+    private async Task SaveFlowAsync(Action? after, bool overwrite, bool afterCopy)
+    {
+        if (_doc == null || _uri is not { } uri) return;
+        if (_saveFor != null || _savingBack || _session?.IsSaving == true)
+        {
+            Toast.MakeText(this, ViewerSaveBack.BusyMessage, ToastLength.Short)?.Show();
+            return;
+        }
+        var session = _session;
+        if (session?.IsDirty != true)
+        {
+            if (after != null) after();
+            else Toast.MakeText(this, ViewerSaveBack.NothingToSaveMessage, ToastLength.Short)?.Show();
+            return;
+        }
+        Action? copyAfter = afterCopy ? after : null;
+        _savingBack = true;
+        var progress = new AlertDialog.Builder(this).SetMessage("Saving…")!.SetCancelable(false)!.Create()!;
+        progress.Show();
+        ViewerSaveBackResult? result = null;
+        try
+        {
+            // Provider calls (the access check, the size and time) run on a worker thread.
+            var (canWrite, now) = await Task.Run(() =>
+            {
+                bool writable = CanWriteBack(uri);
+                return (writable, writable ? Stamp(uri) : default);
+            });
+            if (!ReferenceEquals(session, _session)) return;
+            switch (ViewerSaveBack.Check(session, canWrite, _openedStamp, now, overwrite))
+            {
+                case ViewerSaveBackStep.CannotWrite:
+                    new AlertDialog.Builder(this)
+                        .SetTitle("Save a copy instead?")!
+                        .SetMessage(ViewerSaveBack.CannotWriteMessage)!
+                        .SetPositiveButton("Save a copy", (_, _) => PickSaveCopy(copyAfter))!
+                        .SetNegativeButton("Cancel", (_, _) => { })!
+                        .Show();
+                    return;
+                case ViewerSaveBackStep.ChangedOnDisk:
+                    new AlertDialog.Builder(this)
+                        .SetTitle("The file has changed")!
+                        .SetMessage(ViewerSaveBack.ChangedOnDiskMessage)!
+                        .SetPositiveButton("Replace", (_, _) => Save(after, overwrite: true, afterCopy))!
+                        .SetNeutralButton("Save a copy", (_, _) => PickSaveCopy(copyAfter))!
+                        .SetNegativeButton("Cancel", (_, _) => { })!
+                        .Show();
+                    return;
+                case ViewerSaveBackStep.Write:
+                    break;
+                default:
+                    return;
+            }
+            // The complete bytes (the file as opened plus the edits as an incremental update) are
+            // made first; only then is the file written, on a worker thread.
+            byte[]? written = null;
+            result = await ViewerSaveBack.SaveAsync(session!, bytes =>
+            {
+                written ??= bytes;
+                return Task.Run(() => WriteBack(uri, bytes));
+            }, previous: _onDisk);
+            if (result.Value.Saved)
+            {
+                _onDisk = written;
+                _openedStamp = ViewerSaveBack.StampAfterSave(result.Value.Length);
+            }
+        }
+        finally
+        {
+            _savingBack = false;
+            progress.Dismiss();
+        }
+        if (result is not { } r) return;
+        if (!ReferenceEquals(session, _session) || IsFinishing || IsDestroyed)
+        {
+            // The document was closed meanwhile (the activity ended): a failure is still told.
+            if (!r.Saved) Toast.MakeText(ApplicationContext, r.Problem ?? ViewerSaveBack.NotWrittenMessage, ToastLength.Long)?.Show();
+            return;
+        }
+        UpdateEditButtons();
+        if (r.Saved)
+        {
+            Toast.MakeText(this, r.Unverified ? "Saved. (The storage did not confirm the file's size.)" : "Saved.", ToastLength.Short)?.Show();
+            // An edit that came in after the bytes were taken is not in the file: ask again.
+            if (after != null)
+            {
+                if (session!.IsDirty) AfterDiscard(after);
+                else after();
+            }
+            return;
+        }
+        if (r.OfferCopy)
+        {
+            // The edits are still in memory: a copy keeps them.
+            new AlertDialog.Builder(this)
+                .SetTitle(r.FileMayBeDamaged ? "Not saved: the file may be incomplete" : "Not saved")!
+                .SetMessage(r.Problem!)!
+                .SetPositiveButton("Save a copy", (_, _) => PickSaveCopy(copyAfter))!
+                .SetNegativeButton("Close", (_, _) => { })!
+                .Show();
+            return;
+        }
+        if (r.Problem is { } problem) Toast.MakeText(this, problem, ToastLength.Long)?.Show();
+    }
+
+    /// <summary>
+    /// Writes <paramref name="bytes"/> over the file in one go and returns the length the file has
+    /// afterwards, or null when the descriptor cannot tell (a pipe to the provider). It tries the
+    /// modes "wt", then "w" and "rw" (some providers refuse "wt"), cutting the file to length
+    /// itself; when no mode opens, it throws <see cref="ViewerFileNotOpenedException"/>: nothing was
+    /// written.
+    /// </summary>
+    private long? WriteBack(Uri uri, byte[] bytes)
+    {
+        var resolver = ContentResolver ?? throw new ViewerFileNotOpenedException("no content resolver");
+        ParcelFileDescriptor? descriptor = null;
+        string reason = "no file descriptor";
+        foreach (var mode in new[] { "wt", "w", "rw" })
+        {
+            try
+            {
+                descriptor = resolver.OpenFileDescriptor(uri, mode);
+                if (descriptor != null) break;
+            }
+            catch (Exception ex) when (ex is Java.Lang.Exception or IOException)
+            {
+                reason = ex.GetType().Name;
+            }
+        }
+        if (descriptor == null) throw new ViewerFileNotOpenedException(reason);
+        long? length = null;
+        // Closing the stream closes the descriptor.
+        var output = new ParcelFileDescriptor.AutoCloseOutputStream(descriptor);
+        try
+        {
+            output.Write(bytes);
+            output.Flush();
+            // A provider may ignore the "t" of "wt" ("w" and "rw" do not cut): an older, longer file would keep its end.
+            if (descriptor.StatSize > bytes.Length) output.Channel!.Truncate(bytes.Length);
+            try
+            {
+                output.FD?.Sync();
+            }
+            catch (Java.IO.SyncFailedException)
+            {
+                // Not a file on this device's storage (a pipe to the provider): nothing to sync.
+            }
+            if (descriptor.StatSize is >= 0 and var size) length = size;
+            // A provider behind a pipe reports its own failure here (before the close).
+            descriptor.CheckError();
+        }
+        finally
+        {
+            output.Close();
+        }
+        // Unknown for a pipe: the provider's size column may lag, so it proves nothing either way.
+        return length;
+    }
+
+    /// <summary>
+    /// The app may write the file: Android granted write access to it (the document picker, a
+    /// persisted grant or "Open with" with write access), and a document provider does not say
+    /// that the file is read-only. Never throws. Calls the provider: not on the UI thread.
+    /// </summary>
+    private bool CanWriteBack(Uri uri)
+    {
+        try
+        {
+            if (CheckCallingOrSelfUriPermission(uri, ActivityFlags.GrantWriteUriPermission) != Permission.Granted) return false;
+            if (DocumentsContract.IsDocumentUri(this, uri) && QueryLong(uri, DocumentsContract.Document.ColumnFlags) is { } flags)
+                return (flags & (long)DocumentContractFlags.SupportsWrite) != 0;
+            return true;
+        }
+        catch (Exception ex) when (ex is Java.Lang.Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The provider's size and (for a document provider) last-modified time of the file; unknown
+    /// values are null. Calls the provider: not on the UI thread.
+    /// </summary>
+    private ViewerFileStamp Stamp(Uri uri) =>
+        new(QueryLong(uri, IOpenableColumns.Size),
+            DocumentsContract.IsDocumentUri(this, uri) ? QueryLong(uri, DocumentsContract.Document.ColumnLastModified) : null);
+
+    private long? QueryLong(Uri uri, string column)
+    {
+        try
+        {
+            using var cursor = ContentResolver?.Query(uri, [column], null, null, null);
+            if (cursor == null || !cursor.MoveToFirst()) return null;
+            int i = cursor.GetColumnIndex(column);
+            return i < 0 || cursor.IsNull(i) ? null : cursor.GetLong(i);
+        }
+        catch (Exception ex) when (ex is Java.Lang.Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Share sends the file as saved (its own content URI), without edits no save into it has
+    /// written: with such edits the reader chooses first.
     /// </summary>
     private void ShareChecked()
     {
+        if (_savingBack) return;
         if (_session?.IsDirty != true)
         {
             Share();
@@ -492,24 +741,34 @@ public sealed partial class MainActivity
         }
         new AlertDialog.Builder(this)
             .SetTitle("Unsaved changes")!
-            .SetMessage("Share sends the file as it was opened, without your changes. To share them, save a copy first and share that file.")!
-            .SetPositiveButton("Save a copy", (_, _) => PickSaveCopy())!
+            .SetMessage("Share sends the file as it is saved, without the changes that are not saved in it. Save them first, or share without them?")!
+            .SetPositiveButton("Save", (_, _) => Save(after: Share))!
             .SetNeutralButton("Share without changes", (_, _) => Share())!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
     }
-    /// <summary>Runs <paramref name="then"/> at once, or, with edits no save has written, once the reader chooses to discard them.</summary>
+
+    /// <summary>
+    /// Runs <paramref name="then"/> at once, or, with edits not saved into the opened file (a saved
+    /// copy does not count), once the reader saves them (Save; where the file cannot be written,
+    /// Save offers a copy, and <paramref name="then"/> runs once the copy is saved) or discards them.
+    /// </summary>
     private void AfterDiscard(Action then)
     {
+        if (_savingBack)
+        {
+            Toast.MakeText(this, "Saving…", ToastLength.Short)?.Show();
+            return;
+        }
         if (_session?.IsDirty != true)
         {
             then();
             return;
         }
         new AlertDialog.Builder(this)
-            .SetTitle("Unsaved changes")!
-            .SetMessage("This document has changes that are not saved. Save a copy first, or discard them?")!
-            .SetPositiveButton("Save a copy", (_, _) => PickSaveCopy())!
+            .SetTitle("Save changes?")!
+            .SetMessage(ViewerSaveBack.UnsavedMessage)!
+            .SetPositiveButton("Save", (_, _) => Save(after: then, afterCopy: true))!
             .SetNeutralButton("Discard", (_, _) => then())!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();

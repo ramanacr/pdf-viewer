@@ -21,8 +21,9 @@ namespace PdfViewer.Android;
 /// The reader: a toolbar with a menu, a search bar, a selection bar, the pages and the page grid.
 /// A document comes from the system document picker (Storage Access Framework,
 /// ACTION_OPEN_DOCUMENT), from another app's "Open with" (ACTION_VIEW) or from the recent list;
-/// it is read into memory. Edits (annotations, form values; MainActivity.Edits.cs) are saved only as a
-/// copy the reader picks with the system's save dialog. The activity is kept across rotation and
+/// it is read into memory. Edits (annotations, form values; MainActivity.Edits.cs) are saved back into
+/// that file when Android grants write access to it, or as a copy the reader picks with the system's
+/// save dialog. The activity is kept across rotation and
 /// dark-mode switches; when Android ends the process in the background, the saved state reopens
 /// the document at the same place.
 /// </summary>
@@ -97,7 +98,8 @@ public sealed partial class MainActivity : Activity
     protected override void OnSaveInstanceState(Bundle outState)
     {
         base.OnSaveInstanceState(outState);
-        if (_uri == null || _doc == null) return;
+        // During a save into the file, a new instance must not read it half-written: no document is kept.
+        if (_uri == null || _doc == null || _savingBack) return;
         outState.PutString(StateUri, _uri.ToString());
         outState.PutBoolean(StateNight, _pages.NightPages);
         if (_pages.SavedView is { } view)
@@ -141,7 +143,7 @@ public sealed partial class MainActivity : Activity
         _pageIndicator = ToolButton("", "Go to page", (_, _) => AskPage());
         _searchButton = ToolButton("Search", "Search the document", (_, _) => ShowSearch(true));
         _annotateButton = ToolButton("✎", "Annotate: draw, shapes, notes, text boxes, undo and redo", (_, _) => ShowAnnotateBar(_annotateBar.Visibility != ViewStates.Visible));
-        _menuButton = ToolButton("⋮", "More: outline, pages, annotations, save a copy, share, night pages, recent files", (_, _) => ShowMenu());
+        _menuButton = ToolButton("⋮", "More: outline, pages, annotations, save, save a copy, share, night pages, recent files", (_, _) => ShowMenu());
         _toolbar.AddView(_openButton);
         _toolbar.AddView(_title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _toolbar.AddView(_pageIndicator);
@@ -347,7 +349,16 @@ public sealed partial class MainActivity : Activity
         night.SetEnabled(open);
         items.Add(0, 5, 5, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
         items.Add(0, 6, 3, "Annotations")!.SetEnabled(open && _session != null);
-        items.Add(0, 7, 3, "Save a copy")!.SetEnabled(open);
+        // Save writes the opened file (it offers a copy when the file is read-only); enabled with unsaved edits.
+        var save = items.Add(0, 8, 3, "Save")!;
+        save.SetEnabled(open && _session?.IsDirty == true);
+        var copy = items.Add(0, 7, 3, "Save a copy")!;
+        copy.SetEnabled(open);
+        if (OperatingSystem.IsAndroidVersionAtLeast(26))
+        {
+            save.SetContentDescription("Save the changes into the opened file");
+            copy.SetContentDescription("Save the document with the changes as a new file");
+        }
         menu.MenuItemClick += (_, e) =>
         {
             switch (e.Item?.ItemId)
@@ -359,6 +370,7 @@ public sealed partial class MainActivity : Activity
                 case 5: AskRecent(); break;
                 case 6: ShowAnnotationList(); break;
                 case 7: PickSaveCopy(); break;
+                case 8: Save(); break;
             }
         };
         menu.Show();
@@ -488,11 +500,12 @@ public sealed partial class MainActivity : Activity
 
     private void PickDocumentNow()
     {
-        // The system picker grants this app access to the one file chosen; no storage permission is needed.
+        // The system picker grants this app access to the one file chosen (read, and write where the
+        // provider allows it, so Save can write the edits back); no storage permission is needed.
         var intent = new Intent(Intent.ActionOpenDocument);
         intent.AddCategory(Intent.CategoryOpenable);
         intent.SetType("application/pdf");
-        intent.AddFlags(ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantPersistableUriPermission);
+        intent.AddFlags(ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantWriteUriPermission | ActivityFlags.GrantPersistableUriPermission);
         StartActivityForResult(intent, OpenDocumentRequest);
     }
 
@@ -508,14 +521,23 @@ public sealed partial class MainActivity : Activity
         {
             RememberPosition();
             // Keep access across restarts (the picker offers a persistable grant), so the recent
-            // list and a restore after Android ended the process can open the file again.
+            // list and a restore after Android ended the process can open the file again. Write access
+            // too, when the picker granted it, so Save works on a file reopened from the recent list.
+            var granted = data.Flags & (ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantWriteUriPermission);
             try
             {
-                ContentResolver?.TakePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
+                ContentResolver?.TakePersistableUriPermission(uri, granted | ActivityFlags.GrantReadUriPermission);
             }
             catch (Java.Lang.SecurityException)
             {
-                // Not persistable: the file opens now, but is not kept in the recent list.
+                try
+                {
+                    ContentResolver?.TakePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
+                }
+                catch (Java.Lang.SecurityException)
+                {
+                    // Not persistable: the file opens now, but is not kept in the recent list.
+                }
             }
             _ = OpenUriAsync(uri, null);
         }
@@ -528,8 +550,13 @@ public sealed partial class MainActivity : Activity
     {
         try
         {
-            if (Uri.Parse(location) is { } uri && HasPersistedPermission(uri))
-                ContentResolver?.ReleasePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
+            if (Uri.Parse(location) is not { } uri) return;
+            var held = ContentResolver?.PersistedUriPermissions?.FirstOrDefault(p => p.Uri?.Equals(uri) == true);
+            if (held == null) return;
+            // Both grants when both were taken.
+            var flags = (held.IsReadPermission ? ActivityFlags.GrantReadUriPermission : 0)
+                        | (held.IsWritePermission ? ActivityFlags.GrantWriteUriPermission : 0);
+            if (flags != 0) ContentResolver?.ReleasePersistableUriPermission(uri, flags);
         }
         catch (Java.Lang.SecurityException)
         {
@@ -540,9 +567,11 @@ public sealed partial class MainActivity : Activity
     private async Task OpenUriAsync(Uri uri, (PageAnchor TopLeft, double Zoom)? view, bool fromRecent = false)
     {
         byte[] bytes;
+        ViewerFileStamp stamp;
         try
         {
-            bytes = await Task.Run(() => ReadAll(uri));
+            // The size and time that later tell whether another app changed the file: taken with the read.
+            (bytes, stamp) = await Task.Run(() => (ReadAll(uri), Stamp(uri)));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -556,7 +585,7 @@ public sealed partial class MainActivity : Activity
             Toast.MakeText(this, ex is FileTooLargeException ? ex.Message : $"The file could not be read ({ex.GetType().Name}).", ToastLength.Long)?.Show();
             return;
         }
-        await OpenBytesAsync(bytes, uri, fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri), password: null, view);
+        await OpenBytesAsync(bytes, uri, fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri), password: null, view, stamp);
     }
 
     private sealed class FileTooLargeException(string message) : IOException(message);
@@ -590,7 +619,7 @@ public sealed partial class MainActivity : Activity
         }
     }
 
-    private async Task OpenBytesAsync(byte[] bytes, Uri uri, string? name, string? password, (PageAnchor TopLeft, double Zoom)? view)
+    private async Task OpenBytesAsync(byte[] bytes, Uri uri, string? name, string? password, (PageAnchor TopLeft, double Zoom)? view, ViewerFileStamp stamp)
     {
         ViewerDocument opened;
         try
@@ -599,7 +628,7 @@ public sealed partial class MainActivity : Activity
         }
         catch (ViewerOpenException ex) when (ex.Failure is ViewerOpenFailure.PasswordRequired or ViewerOpenFailure.WrongPassword)
         {
-            AskPassword(bytes, uri, name, wrong: ex.Failure == ViewerOpenFailure.WrongPassword, view);
+            AskPassword(bytes, uri, name, wrong: ex.Failure == ViewerOpenFailure.WrongPassword, view, stamp);
             return;
         }
         catch (ViewerOpenException ex)
@@ -631,6 +660,9 @@ public sealed partial class MainActivity : Activity
         _doc = opened;
         _fileName = name;
         _uri = uri;
+        // To tell, at a save, whether another app changed the file since; and what to write back if a save fails part-way.
+        _openedStamp = stamp;
+        _onDisk = bytes;
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
         StartEdits(session);
@@ -656,14 +688,14 @@ public sealed partial class MainActivity : Activity
         }
     }
 
-    private void AskPassword(byte[] bytes, Uri uri, string? name, bool wrong, (PageAnchor TopLeft, double Zoom)? view)
+    private void AskPassword(byte[] bytes, Uri uri, string? name, bool wrong, (PageAnchor TopLeft, double Zoom)? view, ViewerFileStamp stamp)
     {
         var input = new EditText(this) { InputType = InputTypes.ClassText | InputTypes.TextVariationPassword, Hint = "Password" };
         new AlertDialog.Builder(this)
             .SetTitle(wrong ? "Wrong password" : "This PDF is protected")!
             .SetMessage(wrong ? "That password does not open this PDF. Try again." : "Enter the password to open it.")!
             .SetView(input)!
-            .SetPositiveButton("Open", (_, _) => _ = OpenBytesAsync(bytes, uri, name, input.Text ?? "", view))!
+            .SetPositiveButton("Open", (_, _) => _ = OpenBytesAsync(bytes, uri, name, input.Text ?? "", view, stamp))!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
     }
