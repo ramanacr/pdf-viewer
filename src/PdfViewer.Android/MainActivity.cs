@@ -98,7 +98,8 @@ public sealed partial class MainActivity : Activity
     protected override void OnSaveInstanceState(Bundle outState)
     {
         base.OnSaveInstanceState(outState);
-        if (_uri == null || _doc == null) return;
+        // During a save into the file, a new instance must not read it half-written: no document is kept.
+        if (_uri == null || _doc == null || _savingBack) return;
         outState.PutString(StateUri, _uri.ToString());
         outState.PutBoolean(StateNight, _pages.NightPages);
         if (_pages.SavedView is { } view)
@@ -566,9 +567,11 @@ public sealed partial class MainActivity : Activity
     private async Task OpenUriAsync(Uri uri, (PageAnchor TopLeft, double Zoom)? view, bool fromRecent = false)
     {
         byte[] bytes;
+        ViewerFileStamp stamp;
         try
         {
-            bytes = await Task.Run(() => ReadAll(uri));
+            // The size and time that later tell whether another app changed the file: taken with the read.
+            (bytes, stamp) = await Task.Run(() => (ReadAll(uri), Stamp(uri)));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -582,7 +585,7 @@ public sealed partial class MainActivity : Activity
             Toast.MakeText(this, ex is FileTooLargeException ? ex.Message : $"The file could not be read ({ex.GetType().Name}).", ToastLength.Long)?.Show();
             return;
         }
-        await OpenBytesAsync(bytes, uri, fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri), password: null, view);
+        await OpenBytesAsync(bytes, uri, fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri), password: null, view, stamp);
     }
 
     private sealed class FileTooLargeException(string message) : IOException(message);
@@ -616,7 +619,7 @@ public sealed partial class MainActivity : Activity
         }
     }
 
-    private async Task OpenBytesAsync(byte[] bytes, Uri uri, string? name, string? password, (PageAnchor TopLeft, double Zoom)? view)
+    private async Task OpenBytesAsync(byte[] bytes, Uri uri, string? name, string? password, (PageAnchor TopLeft, double Zoom)? view, ViewerFileStamp stamp)
     {
         ViewerDocument opened;
         try
@@ -625,7 +628,7 @@ public sealed partial class MainActivity : Activity
         }
         catch (ViewerOpenException ex) when (ex.Failure is ViewerOpenFailure.PasswordRequired or ViewerOpenFailure.WrongPassword)
         {
-            AskPassword(bytes, uri, name, wrong: ex.Failure == ViewerOpenFailure.WrongPassword, view);
+            AskPassword(bytes, uri, name, wrong: ex.Failure == ViewerOpenFailure.WrongPassword, view, stamp);
             return;
         }
         catch (ViewerOpenException ex)
@@ -657,8 +660,9 @@ public sealed partial class MainActivity : Activity
         _doc = opened;
         _fileName = name;
         _uri = uri;
-        // To tell, at a save, whether another app changed the file since.
-        _openedStamp = Stamp(uri);
+        // To tell, at a save, whether another app changed the file since; and what to write back if a save fails part-way.
+        _openedStamp = stamp;
+        _onDisk = bytes;
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
         StartEdits(session);
@@ -684,14 +688,14 @@ public sealed partial class MainActivity : Activity
         }
     }
 
-    private void AskPassword(byte[] bytes, Uri uri, string? name, bool wrong, (PageAnchor TopLeft, double Zoom)? view)
+    private void AskPassword(byte[] bytes, Uri uri, string? name, bool wrong, (PageAnchor TopLeft, double Zoom)? view, ViewerFileStamp stamp)
     {
         var input = new EditText(this) { InputType = InputTypes.ClassText | InputTypes.TextVariationPassword, Hint = "Password" };
         new AlertDialog.Builder(this)
             .SetTitle(wrong ? "Wrong password" : "This PDF is protected")!
             .SetMessage(wrong ? "That password does not open this PDF. Try again." : "Enter the password to open it.")!
             .SetView(input)!
-            .SetPositiveButton("Open", (_, _) => _ = OpenBytesAsync(bytes, uri, name, input.Text ?? "", view))!
+            .SetPositiveButton("Open", (_, _) => _ = OpenBytesAsync(bytes, uri, name, input.Text ?? "", view, stamp))!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
     }
