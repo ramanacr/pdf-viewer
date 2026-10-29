@@ -10,8 +10,10 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 
 - **No permissions at all.** The manifest has no `INTERNET` permission and no storage
   permission. A document comes through the system document picker, which grants access to the
-  one file the user picks; the app keeps that grant for its recent list. A copy with edits is
-  written through the system's save dialog, which grants access to the one file the user names.
+  one file the user picks (read access, and write access where the provider allows it); the app
+  keeps that grant for its recent list. **Save** writes edits back only to a file Android granted
+  write access to. A copy with edits is written through the system's save dialog, which grants
+  access to the one file the user names.
   Backups are off (`android:allowBackup="false"`).
 - **No telemetry.** No analytics, no crash reporting, no network code.
 - **Document JavaScript never runs.** The engine has no script interpreter.
@@ -30,7 +32,7 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 | Outline | **⋮ → Outline**: the document's bookmarks as an indented list; tap one to go to its page. |
 | Pages | **⋮ → Pages**: a grid of page thumbnails, the current page marked; tap one to go to it. |
 | Text selection | Long press selects the word under the finger; two handles extend the selection (on one page); **Copy** puts it on the clipboard, **All** takes the whole page. The rules are the desktop viewer's (`ViewerTextLayout`): lines, words, selection bands, line-end hyphens removed. A document that does not allow copying (its permissions, ISO 32000-2 Table 22) selects nothing and says so. |
-| Share | **⋮ → Share**: the system share sheet with the document's own content URI and read access for the chosen app. No file is copied and no permission is needed. It sends the file **as opened**: with unsaved edits the app says so first and offers to save a copy (share that copy to send the edits). |
+| Share | **⋮ → Share**: the system share sheet with the document's own content URI and read access for the chosen app. No file is copied and no permission is needed. It sends the file **as saved**: with unsaved edits the app says so first and offers to save them (then shares), share without them, or cancel. Where the file cannot be written, Save offers a copy (share that copy to send the edits). |
 | Recent files | The empty screen and **⋮ → Recent files** list up to 12 documents with their last page; long press removes one. The app keeps the picker's grant (`takePersistableUriPermission`) and gives it back when a file leaves the list. The list (`files/recent.json`) holds locations, file names and positions only: no document text, no passwords. A file opened with `ACTION_VIEW` has no grant to keep and is not listed. |
 | Restore | When Android ends the process in the background, the saved state reopens the document at the same page, place and zoom (a password is asked again; it is never stored). |
 | Page indicator | "3 / 24" in the toolbar. Tap it to go to a page. |
@@ -49,7 +51,8 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 | Choose, edit, delete | Tap an annotation to choose it (outlined); a note (or any annotation with text) opens its comment to read or change. **Delete** removes the chosen one with its replies. |
 | Undo and redo | **↶** and **↷** in the annotation bar, for every annotation change (the store keeps 100 steps). |
 | Annotation list | **⋮ → Annotations**: every annotation with its page, kind and the start of its text, replies under the annotation they answer; tap one to go to it. |
-| Save a copy | **⋮ → Save a copy** opens the system's save dialog (`ACTION_CREATE_DOCUMENT`) with "*name* (edited).pdf". The bytes are the file as opened plus one incremental update with the edits (a damaged file is written whole, as on the web). Opening another file or leaving with unsaved edits asks first: save a copy, discard, or cancel. If writing fails, the unfinished file is removed. If Android ends the app while the save dialog is open, the edits are gone: the file the dialog created is removed and the reader is told, never written with other bytes. |
+| Save | **⋮ → Save** (enabled with unsaved edits) writes the edits back into the opened file. It works when Android granted write access to that file: the document picker (`ACTION_OPEN_DOCUMENT`, with a persistable read and write grant where the provider allows it) or "Open with" with write access; a document provider that marks the file read-only (no `FLAG_SUPPORTS_WRITE`) counts as no access. The access check and the provider queries run on a worker thread. Without access, Save says so and offers **Save a copy**. While a save runs, a "Saving…" dialog that cannot be cancelled covers the app, so no edit, Back, Open or Share comes in between, and the saved state keeps no document (a new instance does not read a half-written file). The complete new bytes (the file as opened plus one incremental update, so signatures stay valid) are made first, then written in one go with mode `"wt"`; a provider that refuses `"wt"` is tried with `"w"` and `"rw"`, and a longer old file is cut to the new length. A provider behind a pipe can report its failure (`ParcelFileDescriptor.checkError`). The written length is checked where the descriptor tells it; where it cannot (a pipe), the save counts but is reported as unconfirmed, never as damage. If no mode opens the file, nothing was written: the reader is told the file is unchanged and is offered a copy. If writing fails part-way or the length differs, the bytes the file had (as read, or as last saved) are written back once, and the reader is told whether that worked and is offered a copy; the edits stay open and unsaved. A failure is reported even if the document was closed meanwhile. The provider's size and last-modified time are taken when the bytes are read; if they changed by Save time, Save asks first: replace, save a copy, or cancel. After this app's own save only the written size is compared, because a cloud or pipe provider may set its time later. After a save the document is not reloaded (its bytes are already what was written), the dirty state is cleared and the undo history stays, as in the desktop and web viewers. If an edit came in after the bytes were taken, the pending action (open, leave, share) asks again. Opening another file, leaving or sharing with unsaved edits asks first: save, discard, or cancel; when Save offers a copy instead, the pending open or leave goes on once the copy is saved. |
+| Save a copy | **⋮ → Save a copy** opens the system's save dialog (`ACTION_CREATE_DOCUMENT`) with "*name* (edited).pdf". The bytes are the file as opened plus one incremental update with the edits (a damaged file is written whole, as on the web). A copy does **not** count as saving the opened file: the edits stay "not saved in this file", leaving still asks, and Share and the recent list still use the opened file as it is. Save writes the edits into the opened file only when the reader chooses Save. If writing fails, the unfinished file is removed. If Android ends the app while the save dialog is open, the edits are gone: the file the dialog created is removed and the reader is told, never written with other bytes. |
 | Signed and certified files | The web viewer's rules (Acrobat's): a certification that allows no changes allows no edits, one for form filling allows only that, and a signed file is changed only by an incremental update, so its signatures stay valid. Before the first change the reader is told that changes are added as a new revision. A document whose permissions do not allow annotations or form filling is not changed. |
 
 ## Architecture
@@ -59,7 +62,7 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
  ┌───────────────────────────────────────────────────────────────────────────┐
  │ MainActivity     toolbar, menu, search and selection bars, document       │
  │                  picker, outline, share, recent files, saved state;       │
- │                  .Edits: fields, markup, ink, notes, list, save a copy    │
+ │                  .Edits: fields, markup, ink, notes, list, save, copy     │
  │ PageView         gestures, selection handles, render loop, tiles,         │
  │                  field tint, ink strokes, taps on fields and annotations  │
  │ ThumbnailView    page grid                                                │
@@ -217,7 +220,8 @@ from a later run on the same emulator image.
 | Logs | No crash, no unhandled exception and no SELinux denial for the app in `logcat` during the run. |
 | Form filling (phase 2) | With a test form written in code: a tap on the name field opens the dialog with the soft keyboard; "Ada Lovelace" is drawn into the field. The comb field with `/MaxLen 5` takes only "12345" of nine typed digits. The check box and a radio button switch on a tap; the combo box changes from Paris to Rome; the list box selects Banana. Fields are tinted. |
 | Save a copy (phase 2) | **⋮ → Save a copy** offers "form (edited).pdf" in the system's save dialog. The saved file starts with the original bytes unchanged and adds one incremental update. After saving, opening another file does not ask about unsaved changes. With the app ended (`am kill`) while the save dialog was open, **Save** leaves no file behind and the reader is told the changes were lost. With unsaved edits, **Share** first says that it sends the file as opened. |
-| Annotations (phase 2) | A long press and **Highlight** or **Strike** mark a word; **Draw** draws a stroke with one finger; **Note** and a tap place a note after its text is typed. A tap on the drawing outlines it; **Delete** removes it and **↶** brings it back. **⋮ → Annotations** lists "Highlight", "Strike-through", "Drawing" and "Note · Check this". With unsaved changes, **Open** asks to save a copy, discard or cancel. |
+| Annotations (phase 2) | A long press and **Highlight** or **Strike** mark a word; **Draw** draws a stroke with one finger; **Note** and a tap place a note after its text is typed. A tap on the drawing outlines it; **Delete** removes it and **↶** brings it back. **⋮ → Annotations** lists "Highlight", "Strike-through", "Drawing" and "Note · Check this". With unsaved changes, **Open** asks to save a copy, discard or cancel (since **Save** was added, the question offers Save instead). |
+| Save (into the opened file) | **Not yet run on the emulator or a phone.** Checked by `AndroidSaveTests` on the desktop and by the Android compile check only. |
 
 The runs found these bugs, all fixed: the soft keyboard service was asked for under the wrong
 name (`InputService` instead of `InputMethodService`), which crashed the search bar; SELinux
@@ -260,7 +264,14 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 5. **Recent files** lists only files with a persistable grant (the document picker gives one);
    a file another app handed over with `ACTION_VIEW` is opened but not listed.
 6. **Edits are not kept when Android ends the process** in the background (only the view is); a
-   copy must be saved first. Saving over the opened file itself is not offered, only a copy.
+   save must come first. **Save** needs write access to the opened file: a file from the recent
+   list that was opened before this version (a read-only grant), or from an app that handed over
+   read access only, can only be saved as a copy. A content URI cannot be replaced atomically,
+   so a write that fails part-way can leave the file incomplete when writing the previous bytes
+   back fails too (the reader is told and offered a copy). Save over a provider that changes a
+   file without changing its size or last-modified time cannot tell that it changed, and after
+   this app's own save only the size is compared until the file is opened again. If Android
+   ends the process during a save, the write stops part-way and the file may be incomplete.
 7. **Markup needs a text selection**, so a document that does not allow copying cannot be
    highlighted. A note's icon is 20 points, a small target at fit width. With the draw tool on,
    one finger only draws: scrolling needs the tool off.
@@ -289,4 +300,11 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
   and highlights made from touches and read back from the saved file, rectangles, ellipses,
   lines, arrows and text boxes saved with their appearance streams (short drags add nothing), editing and deleting a file's
   own annotation, undo and redo, the annotation list, and one save at a time.
+- `tests/PdfEngine.Vector.Skia.Tests/AndroidSaveTests.cs`: **Save** (`ViewerSaveBack`): nothing
+  to save, no write access, a file changed since it was opened (and replacing it), one save at a
+  time, the bytes written being the file as opened plus an incremental update, the dirty state
+  cleared and the undo history kept, a failed or short write that leaves the edits unsaved, and a
+  certified file saved back with its signature still valid; a file that cannot be opened for
+  writing left unchanged, the previous bytes written back after a failed or short write, an
+  unconfirmed length, a copy that leaves the opened file unsaved, and the stamp after a save.
 - `tests/PdfEngine.Vector.Skia.Tests/CmykJpegTests.cs`: the CMYK and YCCK JPEG decoder.
