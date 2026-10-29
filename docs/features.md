@@ -104,6 +104,18 @@ For the browser demo and the Android proof of concept, see their own READMEs
     arrow head), Polygon and PolyLine (with `/Vertices`), each with an appearance stream. They have
     no `/Measure`, so they are not measurements. When you open the file again, they come back as
     the same tools. *Save as XFDF* exports them too.
+- **Shape style.** Select a rectangle, ellipse, line, arrow, polygon or connected lines and press
+  `Enter` (or double-click it) to open its comment. The *Shape style* part of that window sets:
+  - **Fill**: none or a colour (`/IC`). It fills a rectangle, ellipse or polygon, and the closed
+    line endings (closed arrow, circle, square, diamond) of a line.
+  - **Line style**: solid, dashed or dotted (`/BS` with `/S /D` and a `/D` dash).
+  - **Start** and **End** (lines and connected lines only): None, Open arrow, Closed arrow,
+    Circle, Square, Diamond, Bar (`/Butt`), Reversed open arrow, Reversed closed arrow or Slash
+    (`/LE`). A line with an ending is an arrow; an arrow with no endings is a line.
+  - Each change is one undo step. The save draws the new appearance stream, and the screen shows
+    the shape as it is saved: dashed lines with solid endings.
+  - A shape from another program keeps its own fill, dash and endings until you change that one
+    value. Measurements have no shape style.
 - **Save** (`Ctrl+S`) writes the annotations into the document, editable. The file is written to
   a temporary file first and then replaces the original, so a failure leaves your file as it was.
   Other ways to save: flattened into the page, or exported as XFDF.

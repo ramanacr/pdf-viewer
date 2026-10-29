@@ -185,6 +185,7 @@ public partial class MainViewModel
     /// <summary>Records an edit already made to the annotation's properties; false when nothing changed.</summary>
     private bool RecordInPlaceEdit(AnnotationModel annot, string name)
     {
+        FitShapeBox(annot); // new line endings or a wider line need a bigger box
         var before = _knownAnnotationStates.TryGetValue(annot, out var known) ? known : null;
         var after = AnnotationState.Of(annot);
         if (before != null && before.EqualsIgnoringModified(after)) return false;
@@ -297,6 +298,8 @@ public partial class MainViewModel
         private double StampRotation { get; init; }
         private Size StampSize { get; init; }
         private string[]? LineEndings { get; init; }
+        private string? InteriorColorHex { get; init; }
+        private double[]? BorderDash { get; init; }
 
         public static AnnotationState Of(AnnotationModel a) => new()
         {
@@ -308,6 +311,8 @@ public partial class MainViewModel
             StampRotation = a.StampRotation,
             StampSize = a.StampSize,
             LineEndings = a.LineEndings?.ToArray(),
+            InteriorColorHex = a.InteriorColorHex,
+            BorderDash = a.BorderDash?.ToArray(),
             PageNumber = a.PageNumber,
             Type = a.Type,
             Box = new Rect(a.X, a.Y, a.Width, a.Height),
@@ -345,6 +350,8 @@ public partial class MainViewModel
             a.StampRotation = StampRotation;
             a.StampSize = StampSize;
             a.LineEndings = LineEndings?.ToArray();
+            a.InteriorColorHex = InteriorColorHex;
+            a.BorderDash = BorderDash?.ToArray();
         }
 
         public bool EqualsIgnoringModified(AnnotationState other) =>
@@ -356,7 +363,9 @@ public partial class MainViewModel
             && Vertices.AsSpan().SequenceEqual(other.Vertices) && MeasureKind == other.MeasureKind
             && (Measure == null ? other.Measure == null : Measure.SameAs(other.Measure))
             && StampName == other.StampName && StampSubtitle == other.StampSubtitle && StampRotation.Equals(other.StampRotation) && StampSize == other.StampSize
-            && (LineEndings ?? Array.Empty<string>()).AsSpan().SequenceEqual(other.LineEndings ?? Array.Empty<string>());
+            && (LineEndings ?? Array.Empty<string>()).AsSpan().SequenceEqual(other.LineEndings ?? Array.Empty<string>())
+            && InteriorColorHex == other.InteriorColorHex
+            && (BorderDash ?? Array.Empty<double>()).AsSpan().SequenceEqual(other.BorderDash ?? Array.Empty<double>());
 
         public bool Equals(AnnotationState? other) => other != null && EqualsIgnoringModified(other) && ModifiedDate == other.ModifiedDate;
         public override bool Equals(object? obj) => Equals(obj as AnnotationState);

@@ -1954,8 +1954,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>The annotations as last loaded or saved: unchanged means a save can keep the form's incremental revision.</summary>
     private string _savedAnnotationsFingerprint = string.Empty;
 
+    /// <summary>
+    /// What a save compares to decide whether only the form changed. Every edit through the
+    /// history stamps a new modified date, so properties not listed here are covered too.
+    /// </summary>
     private string AnnotationsFingerprint() => string.Join("|", AllAnnotations.Select(a =>
-        $"{a.Id}:{a.Type}:{a.PageNumber}:{a.X:F5},{a.Y:F5},{a.Width:F5},{a.Height:F5}:{a.ColorHex}:{a.Opacity:F3}:{a.Contents}:{a.Author}:{a.StrokeThickness}:{a.InkStrokes.Count}:{a.Quads.Count}:{a.StampRotation:F3}:{string.Join(";", a.Vertices.Select(v => $"{v.X:F5},{v.Y:F5}"))}:{string.Join(";", a.InkStrokes.SelectMany(st => st).Select(v => $"{v.X:F5},{v.Y:F5}"))}"));
+        $"{a.Id}:{a.Type}:{a.PageNumber}:{a.X:F5},{a.Y:F5},{a.Width:F5},{a.Height:F5}:{a.ColorHex}:{a.Opacity:F3}:{a.Contents}:{a.Author}:{a.Title}:{a.ModifiedDate.Ticks}:{a.StrokeThickness}:{a.InkStrokes.Count}:{a.Quads.Count}:{a.StampRotation:F3}:{string.Join(";", a.Vertices.Select(v => $"{v.X:F5},{v.Y:F5}"))}:{string.Join(";", a.InkStrokes.SelectMany(st => st).Select(v => $"{v.X:F5},{v.Y:F5}"))}"
+        + $":{a.InteriorColorHex}:{string.Join(",", a.LineEndings ?? Array.Empty<string>())}:{string.Join(",", a.BorderDash ?? Array.Empty<double>())}"));
 
     /// <summary>Only the form changed since the last save: the in-memory revision is written as it is.</summary>
     private bool OnlyFormChanges => _formChangedSinceSave && AnnotationsFingerprint() == _savedAnnotationsFingerprint;

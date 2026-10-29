@@ -270,9 +270,17 @@ internal sealed class NativeDocumentServices
             model.Vertices = points.Select(p => new Point((p.X - ox) / w, 1.0 - (p.Y - oy) / h)).ToList();
             // Endings as the file gives them (a single name too), so a save writes them back unchanged.
             model.LineEndings = type != AnnotationType.Polygon && a.LineEndings is { Length: > 0 } ends ? ends.ToArray() : null;
-            model.InteriorColorHex = PdfAnnotation.ToRgb(a.InteriorColor) is var (ir, ig, ib) ? PdfNativeAnnotationService.Hex(ir, ig, ib) : null;
             model.HasOwnAppearance = a.HasAppearance;
             model.Opacity = a.Opacity;
+        }
+        if (model.IsStyledShape)
+        {
+            // The fill and dash as the file gives them, so a save writes them back unchanged.
+            model.InteriorColorHex = HexOf(a.InteriorColor);
+            model.BorderDash = LoadedDash(a);
+            // The page draws a loaded rectangle or ellipse from its own appearance (with its
+            // opacity, clouds and /RD) until it is changed; only then does the overlay draw it.
+            if (type is AnnotationType.Rectangle or AnnotationType.Ellipse) model.HasOwnAppearance = a.HasAppearance;
         }
         if (type == AnnotationType.Stamp)
         {
@@ -339,6 +347,52 @@ internal sealed class NativeDocumentServices
         IsVertexShapeType(type) ? Math.Max(0, a.BorderWidth ?? 1)
         : a.BorderWidth is double bw && bw > 0 ? bw : 2.0;
 
+    /// <summary>An /IC or /C colour as #RRGGBB; null for none.</summary>
+    private static string? HexOf(double[]? colour) =>
+        PdfAnnotation.ToRgb(colour) is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b) : null;
+
+    /// <summary>
+    /// The dash of an annotation's border as read: /BS /S /D with its /D (the standard's [3] when
+    /// it gives none), or the dash of a /Border array; null for a solid line.
+    /// </summary>
+    internal static double[]? LoadedDash(PdfAnnotation a)
+    {
+        var dash = a.BorderDash is { Length: > 0 } d && d.All(v => v >= 0 && double.IsFinite(v)) && d.Sum() > 0 ? d : null;
+        return a.BorderStyle == "D" ? dash?.ToArray() ?? new[] { 3.0 }
+            : a.BorderStyle == null ? dash?.ToArray()
+            : null;
+    }
+
+    private static bool SameDash(double[]? x, double[]? y) =>
+        (x ?? Array.Empty<double>()).AsSpan().SequenceEqual(y ?? Array.Empty<double>());
+
+    private static bool SameEndings(string[]? x, string[]? y) =>
+        (x ?? Array.Empty<string>()).AsSpan().SequenceEqual(y ?? Array.Empty<string>());
+
+    /// <summary>A new shape's fill (/IC) and dash (/BS /S /D).</summary>
+    private static void ApplyStyle(PdfAnnotation a, AnnotationModel m)
+    {
+        a.InteriorColor = m.InteriorColorHex != null ? Rgb(m.InteriorColorHex) : null;
+        a.BorderStyle = m.BorderDash != null ? "D" : null;
+        a.BorderDash = m.BorderDash?.ToArray();
+    }
+
+    /// <summary>
+    /// A loaded shape's fill and dash: what the user changed is written, anything else stays as
+    /// the file had it (a beveled border, a dash given in /Border, no /IC).
+    /// </summary>
+    private static void ApplyChangedStyle(PdfAnnotation existing, AnnotationModel m)
+    {
+        if (!string.Equals(m.InteriorColorHex, HexOf(existing.InteriorColor), StringComparison.OrdinalIgnoreCase))
+            existing.InteriorColor = m.InteriorColorHex != null ? Rgb(m.InteriorColorHex) : null;
+        if (!SameDash(m.BorderDash, LoadedDash(existing)))
+        {
+            existing.BorderStyle = m.BorderDash != null ? "D" : "S";
+            existing.BorderDash = m.BorderDash?.ToArray();
+            existing.BorderWidth ??= Math.Max(0, m.StrokeThickness); // the dash lives in /BS, which needs a width
+        }
+    }
+
     /// <summary>A line's or connected lines' endings as saved: as read or set, else an open arrow at the end of an arrow.</summary>
     internal static string[]? ShapeEndings(AnnotationModel m) =>
         m.Type == AnnotationType.Polygon ? null
@@ -367,7 +421,7 @@ internal sealed class NativeDocumentServices
     {
         var points = m.Vertices.Select(p => ToPage(p, crop)).ToList();
         if (points.Count < 2) return;
-        // A loaded shape keeps its /LE as read: the viewer has no way to change it.
+        // A loaded shape keeps its /LE as read unless the user chose other endings.
         var ends = setEndings ? ShapeEndings(m) : a.LineEndings;
         var bounds = ShapeBounds(points, m.StrokeThickness > 0 ? m.StrokeThickness : 1, ends?.Any(e => e != "None") == true);
         // A loaded shape's rectangle may hold more than its points (a caption, leader lines): it is kept, moved with them.
@@ -438,6 +492,9 @@ internal sealed class NativeDocumentServices
         var sb = new StringBuilder();
         sb.Append(CultureInfo.InvariantCulture, $"{a.Type}|{a.PageNumber}|{a.X:F6},{a.Y:F6},{a.Width:F6},{a.Height:F6}|{a.ColorHex}|{a.Opacity:F4}|{a.StrokeThickness:F3}|");
         sb.Append(a.Contents).Append('|').Append(a.Author).Append('|').Append(a.Title).Append('|').Append(a.CreationDate.Ticks).Append('|');
+        // A shape's fill, endings and dash (one part, so the geometry stays the last two).
+        sb.Append(a.InteriorColorHex).Append(';').Append(string.Join(",", a.LineEndings ?? Array.Empty<string>())).Append(';')
+            .Append(string.Join(",", (a.BorderDash ?? Array.Empty<double>()).Select(v => v.ToString("R", CultureInfo.InvariantCulture)))).Append('|');
         foreach (var s in a.InkStrokes) { foreach (var p in s) sb.Append(CultureInfo.InvariantCulture, $"{p.X:F6},{p.Y:F6};"); sb.Append('/'); }
         sb.Append('|');
         foreach (var q in a.Quads) sb.Append(CultureInfo.InvariantCulture, $"{q.X:F6},{q.Y:F6},{q.Width:F6},{q.Height:F6};");
@@ -537,6 +594,7 @@ internal sealed class NativeDocumentServices
         var a = new PdfAnnotation { PageNumber = m.PageNumber, Subtype = SubtypeOf(m.Type) };
         Apply(a, m, crop, geometry: true);
         if (m.IsVertexShape) ApplyShape(a, m, crop, setEndings: true);
+        if (m.IsStyledShape) ApplyStyle(a, m);
         if (m.Type == AnnotationType.FreeText)
         {
             // The viewer draws free text black on a box outlined in the annotation's colour.
@@ -588,12 +646,14 @@ internal sealed class NativeDocumentServices
             // stays no colour, no /BS (or /W 0) stays as it was, unless the user chose another.
             if (string.Equals(m.ColorHex, loadedHex, StringComparison.OrdinalIgnoreCase)) existing.Color = colourBefore;
             if (Math.Abs(m.StrokeThickness - loadedWidth) < 1e-9) existing.BorderWidth = widthBefore;
+            ApplyChangedStyle(existing, m);
         }
         if (m.IsVertexShape)
         {
             if (string.IsNullOrEmpty(authorBefore) && string.IsNullOrEmpty(m.Author)) existing.Author = authorBefore;
             if (string.IsNullOrEmpty(subjectBefore) && string.IsNullOrEmpty(m.Title)) existing.Subject = subjectBefore;
-            ApplyShape(existing, m, crop, setEndings: false); // its rectangle follows its points and line width
+            // Its rectangle follows its points, line width and endings; its /LE changes only when the user chose others.
+            ApplyShape(existing, m, crop, setEndings: m.HasLineEndings && !SameEndings(m.LineEndings, existing.LineEndings));
         }
         if (!string.Equals(before ?? string.Empty, m.Contents ?? string.Empty, StringComparison.Ordinal))
             existing.RichContents = null; // rich text of the old contents would contradict the new

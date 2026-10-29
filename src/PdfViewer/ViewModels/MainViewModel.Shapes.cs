@@ -167,4 +167,21 @@ public partial class MainViewModel
     }
 
     private static Rect FromPage(PdfRect r, PdfRect crop) => NativeDocumentServices.FromPage(r, crop);
+
+    /// <summary>
+    /// Grows a line's or connected lines' box to hold its line endings, as the saved rectangle
+    /// will, after its endings or line width changed. The box only grows.
+    /// </summary>
+    private void FitShapeBox(AnnotationModel a)
+    {
+        if (!a.HasLineEndings || a.Vertices.Count < 2 || a.PageNumber < 1 || a.PageNumber > Pages.Count) return;
+        if (NativeDocumentServices.ShapeEndings(a)?.Any(e => e != "None") != true) return;
+        var crop = CropOf(a.PageNumber);
+        var current = new Rect(a.X, a.Y, a.Width, a.Height);
+        var box = FromPage(NativeDocumentServices.ShapeBounds(a.Vertices.Select(p => ToPage(p, crop)).ToList(), a.StrokeThickness > 0 ? a.StrokeThickness : 1, true), crop);
+        box.Union(current);
+        box.Intersect(new Rect(0, 0, 1, 1));
+        if (box.IsEmpty || box == current) return;
+        a.SetGeometry(box, a.Quads);
+    }
 }

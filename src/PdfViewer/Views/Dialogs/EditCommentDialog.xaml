@@ -17,6 +17,7 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Header -->
@@ -96,7 +97,8 @@
                            Margin="0,0,6,0" />
                 <ComboBox x:Name="ColorComboBox"
                           Width="54"
-                          Height="28">
+                          Height="28"
+                          AutomationProperties.Name="Colour">
                     <ComboBox.ItemTemplate>
                         <DataTemplate>
                             <Border Width="16" Height="16" CornerRadius="8" Background="{Binding Converter={StaticResource HexToBrushConverter}}" BorderBrush="#888888" BorderThickness="1" />
@@ -106,8 +108,39 @@
             </StackPanel>
         </Grid>
 
+        <!-- Shape style: fill, line style and line endings (rectangles, ellipses, lines, polygons, connected lines) -->
+        <Grid Grid.Row="4" x:Name="ShapeStylePanel" Visibility="Collapsed" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Label Content="_Fill:" Target="{Binding ElementName=FillComboBox}" Padding="0" VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0" />
+            <ComboBox Grid.Column="1" x:Name="FillComboBox" Height="28" Margin="0,0,12,0"
+                      AutomationProperties.Name="Fill colour"
+                      ToolTip="The inside of a rectangle, ellipse or polygon, and of closed line endings" />
+            <Label Grid.Column="2" Content="Line _style:" Target="{Binding ElementName=DashComboBox}" Padding="0" VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,8,0" />
+            <ComboBox Grid.Column="3" x:Name="DashComboBox" Height="28"
+                      AutomationProperties.Name="Line style" />
+            <Label Grid.Row="1" x:Name="StartEndingLabel" Content="S_tart:" Target="{Binding ElementName=StartEndingComboBox}" Padding="0" VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,8,0" />
+            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="StartEndingComboBox" Height="28" Margin="0,8,12,0"
+                      AutomationProperties.Name="Start line ending" />
+            <Label Grid.Row="1" Grid.Column="2" x:Name="EndEndingLabel" Content="_End:" Target="{Binding ElementName=EndEndingComboBox}" Padding="0" VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,8,0" />
+            <ComboBox Grid.Row="1" Grid.Column="3" x:Name="EndEndingComboBox" Height="28" Margin="0,8,0,0"
+                      AutomationProperties.Name="End line ending" />
+        </Grid>
+
         <!-- Action Buttons -->
-        <StackPanel Grid.Row="4"
+        <StackPanel Grid.Row="5"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right">
             <Button Content="Save Comment"

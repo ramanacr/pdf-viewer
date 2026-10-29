@@ -50,7 +50,7 @@ public sealed class PdfAnnotation
 
     /// <summary>The border width from /BS /W, else /Border's third number; null when neither is given.</summary>
     public double? BorderWidth { get; set; }
-    /// <summary>/BS /S: S, D, B, I or U.</summary>
+    /// <summary>/BS /S: S, D, B, I or U ("S" when /BS gives none; null when there is no /BS).</summary>
     public string? BorderStyle { get; set; }
     public double[]? BorderDash { get; set; }
 
@@ -206,7 +206,8 @@ public static class PdfAnnotationReader
         if (r.Resolve(d["BS"]) is PdfDictionary bs)
         {
             a.BorderWidth = Number(bs["W"]);
-            a.BorderStyle = r.Resolve(bs["S"]) is PdfName s ? s.Value : null;
+            // No /S is a solid border (the standard's default), even with a /D.
+            a.BorderStyle = r.Resolve(bs["S"]) is PdfName s ? s.Value : "S";
             a.BorderDash = PdfDocumentInfo.Numbers(r.Resolve(bs["D"]), r);
         }
         if (a.BorderWidth == null && r.Resolve(d["Border"]) is PdfArray border && border.Count >= 3)
