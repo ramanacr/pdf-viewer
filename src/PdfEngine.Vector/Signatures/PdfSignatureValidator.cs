@@ -890,7 +890,7 @@ public static partial class PdfSignatureValidator
 
 
     /// <summary>Byte offsets just past each revision's %%EOF, in order.</summary>
-    public static List<long> RevisionEnds(byte[] file)
+    public static IReadOnlyList<long> RevisionEnds(byte[] file)
     {
         var ends = new List<long>();
         byte[] eof = "%%EOF"u8.ToArray();

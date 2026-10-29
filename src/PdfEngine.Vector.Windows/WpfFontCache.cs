@@ -76,7 +76,7 @@ internal sealed class WpfFontCache : IDisposable
             return GetFamily("Segoe UI Symbol", false, false); // the Dingbats block, by the encoding's Unicode
         // The installed font of that name or design first, as the Direct2D backend chooses it.
         if (!name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase)
-            && PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Match(name, bold, italic, face?.IsSerif == true, face?.IsFixedPitch == true, face?.IsScript == true) is { } catalogFace
+            && PdfEngine.Vector.Fonts.SystemFontCatalog.Installed.Match(name, bold, italic, face?.IsSerif == true, face?.IsFixedPitch == true, face?.IsScript == true) is { } catalogFace
             && GetInstalled(catalogFace, bold, italic) is { } match)
             return match;
         if (name.StartsWith("Symbol", StringComparison.OrdinalIgnoreCase))
@@ -164,7 +164,7 @@ internal sealed class WpfFontCache : IDisposable
         face.FamilyNames.Values.Concat(face.Win32FamilyNames.Values).Any(n => n.StartsWith(family, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The installed face the shared font catalogue chose, from its file (a single-font file only).</summary>
-    private GlyphTypeface? GetInstalled(PdfEngine.Vector.Editing.SystemFontFace installed, bool bold, bool italic)
+    private GlyphTypeface? GetInstalled(PdfEngine.Vector.Fonts.SystemFontFace installed, bool bold, bool italic)
     {
         if (installed.Index != 0 || installed.Path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase))
             return null;
@@ -252,7 +252,7 @@ internal sealed class WpfFontCache : IDisposable
         string? family = typeface.Win32FamilyNames.TryGetValue(english, out var f) ? f : null;
         string? style = typeface.Win32FaceNames.TryGetValue(english, out var s) ? s : null;
         int? found = null;
-        foreach (var face in PdfEngine.Vector.Editing.SystemFontCatalog.Installed.Faces)
+        foreach (var face in PdfEngine.Vector.Fonts.SystemFontCatalog.Installed.Faces)
         {
             if (!string.Equals(face.Path, path, StringComparison.OrdinalIgnoreCase)) continue;
             if ((string.Equals(face.Family, family, StringComparison.OrdinalIgnoreCase) || string.Equals(face.LegacyFamily, family, StringComparison.OrdinalIgnoreCase))

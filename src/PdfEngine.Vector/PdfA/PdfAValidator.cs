@@ -19,28 +19,28 @@ namespace PdfEngine.Vector.PdfA;
 public static class PdfAValidator
 {
     /// <summary>
-    /// Validates against <paramref name="flavour"/>, or against what the document claims to be
+    /// Validates against <paramref name="flavor"/>, or against what the document claims to be
     /// (PDF/A-2b when it claims nothing).
     /// </summary>
-    public static PdfAReport Validate(PdfVectorDocument document, byte[] file, PdfAFlavour? flavour = null)
+    public static PdfAReport Validate(PdfVectorDocument document, byte[] file, PdfAFlavor? flavor = null)
     {
-        var claimed = ClaimedFlavour(document);
-        var target = flavour ?? claimed ?? PdfAFlavour.A2b;
+        var claimed = ClaimedFlavor(document);
+        var target = flavor ?? claimed ?? PdfAFlavor.A2b;
         if (target.Level == PdfAConformance.A) target = target with { Level = target.Part == 1 ? PdfAConformance.B : PdfAConformance.U };
         var checker = new PdfAChecker(document, file, target);
         checker.Run();
-        return new PdfAReport { Flavour = target, Claimed = claimed, Issues = checker.Issues };
+        return new PdfAReport { Flavor = target, Claimed = claimed, Issues = checker.Issues };
     }
 
     /// <summary>The conformance the document's XMP metadata claims (pdfaid:part and pdfaid:conformance), or null.</summary>
-    public static PdfAFlavour? ClaimedFlavour(PdfVectorDocument document)
+    public static PdfAFlavor? ClaimedFlavor(PdfVectorDocument document)
     {
         var xmp = ReadMetadata(document);
         if (xmp == null || xmp.Error != null) return null;
         var part = xmp.Simple(XmpSchemas.PdfaId, "part");
         var conformance = xmp.Simple(XmpSchemas.PdfaId, "conformance");
         if (!int.TryParse(part, out int p) || p is < 1 or > 4) return null;
-        return PdfAFlavour.Parse($"{p}{conformance}");
+        return PdfAFlavor.Parse($"{p}{conformance}");
     }
 
     /// <summary>
@@ -49,7 +49,7 @@ public static class PdfAValidator
     /// </summary>
     internal static IReadOnlyList<PdfAIssue> FontIssues(PdfVectorDocument document, byte[] file)
     {
-        var checker = new PdfAChecker(document, file, PdfAFlavour.A2u);
+        var checker = new PdfAChecker(document, file, PdfAFlavor.A2u);
         checker.RunFonts();
         return checker.Issues.Where(i => i.Clause.StartsWith("6.2.11", StringComparison.Ordinal)).ToList();
     }
@@ -83,7 +83,7 @@ internal sealed partial class PdfAChecker
     private PdfDictionary Trailer { get; }
     private PdfDictionary? Catalog { get; }
 
-    public PdfAChecker(PdfVectorDocument doc, byte[] file, PdfAFlavour flavour)
+    public PdfAChecker(PdfVectorDocument doc, byte[] file, PdfAFlavor flavour)
     {
         _doc = doc;
         _file = file;

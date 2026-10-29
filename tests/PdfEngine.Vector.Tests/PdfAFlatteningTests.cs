@@ -47,7 +47,7 @@ public class PdfAFlatteningTests
     {
         using var rasterizer = new Direct2DPageRasterizer(PdfiumPage);
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = PdfAFlavour.A1b, Rasterizer = rasterizer, Flattening = flattening ?? new() });
+        return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = PdfAFlavor.A1b, Rasterizer = rasterizer, Flattening = flattening ?? new() });
     }
 
     /// <summary>The flattening alone (before fonts are embedded), to compare pixels with the original.</summary>
@@ -113,8 +113,8 @@ public class PdfAFlatteningTests
     {
         Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
         using var doc = await PdfVectorDocument.OpenAsync(result.Bytes);
-        var again = PdfAValidator.Validate(doc, result.Bytes, PdfAFlavour.A1b);
-        Assert.Equal(PdfAFlavour.A1b, again.Claimed);
+        var again = PdfAValidator.Validate(doc, result.Bytes, PdfAFlavor.A1b);
+        Assert.Equal(PdfAFlavor.A1b, again.Claimed);
         Assert.True(again.IsCompliant, string.Join("\n", again.Issues));
         string text = Encoding.Latin1.GetString(result.Bytes);
         Assert.DoesNotContain("/SMask", text);
@@ -503,7 +503,7 @@ public class PdfAFlatteningTests
         b.AddPage("/GS1 gs 1 0 0 rg 20 20 100 100 re f", $"<< /ExtGState << /GS1 {gs} 0 R >> >>");
         byte[] pdf = b.Build();
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        var refused = Assert.Throws<PdfAConversionRefusedException>(() => PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = PdfAFlavour.A1b }));
+        var refused = Assert.Throws<PdfAConversionRefusedException>(() => PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = PdfAFlavor.A1b }));
         Assert.Contains("does not allow transparency", refused.Message);
     }
 

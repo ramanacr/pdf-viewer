@@ -71,7 +71,7 @@ public sealed partial class PdfAViewModel : ObservableObject
 
     public async Task CheckAsync()
     {
-        var flavour = PdfAFlavour.Parse(SelectedFlavour) ?? PdfAFlavour.A2b;
+        var flavour = PdfAFlavor.Parse(SelectedFlavour) ?? PdfAFlavor.A2b;
         IsBusy = true;
         Summary = $"Checking against {flavour}...";
         try
@@ -106,7 +106,7 @@ public sealed partial class PdfAViewModel : ObservableObject
             Summary = "Choose a different file: the original is not overwritten.";
             return false;
         }
-        var flavour = PdfAFlavour.Parse(SelectedFlavour)!;
+        var flavour = PdfAFlavor.Parse(SelectedFlavour)!;
         IsBusy = true;
         Summary = $"Converting to {flavour}...";
         try
@@ -115,7 +115,7 @@ public sealed partial class PdfAViewModel : ObservableObject
             {
                 using var doc = await PdfVectorDocument.OpenAsync(_bytes, _path, password: _password);
                 using var rasterizer = flavour.Part == 1 ? Services.FlatteningRasterizer.Create() : null;
-                return PdfAConverter.Convert(doc, _bytes, new PdfAConversionOptions { Flavour = flavour, Rasterizer = rasterizer });
+                return PdfAConverter.Convert(doc, _bytes, new PdfAConversionOptions { Flavor = flavour, Rasterizer = rasterizer });
             });
             await File.WriteAllBytesAsync(outputPath, result.Bytes);
             ConvertedPath = outputPath;
@@ -129,7 +129,7 @@ public sealed partial class PdfAViewModel : ObservableObject
             Flattening = result.Flattening;
             return true;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is InvalidOperationException or PdfAConversionRefusedException or NotSupportedException or IOException or UnauthorizedAccessException or ArgumentException)
         {
             Summary = $"The document could not be converted: {ex.Message}";
             return false;

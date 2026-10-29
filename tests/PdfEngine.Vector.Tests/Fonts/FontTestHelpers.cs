@@ -13,7 +13,7 @@ namespace PdfEngine.Vector.Tests.Fonts;
 internal static class Pdf
 {
     public static PdfObjectResolver Resolver() =>
-        new(new MemoryByteSource(Array.Empty<byte>()), new PdfXrefTable());
+        new(new PdfMemoryByteSource(Array.Empty<byte>()), new PdfXrefTable());
 
     public static PdfDictionary Dict(params (string Key, PdfObject Value)[] entries)
     {

@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Annotations;
 

@@ -1,12 +1,12 @@
 using System.Text.Json;
 using Microsoft.JSInterop;
 using PdfEngine.Vector.Annotations;
-using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Forms;
 using PdfViewer.Web.Engine;
 using PdfViewer.Web.Engine.Annotations;
 using PdfViewer.Web.Engine.Embed;
 using PdfViewer.Web.Interop;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfViewer.Web.Components;
 
@@ -823,7 +823,7 @@ public sealed partial class Viewer
                 }
                 case EmbedMethod.ImportXfdf:
                 {
-                    List<PdfEngine.Vector.Services.PdfAnnotation> read;
+                    List<PdfEngine.Vector.Annotations.PdfAnnotation> read;
                     try
                     {
                         var import = PdfAnnotationXfdf.ImportWithReport(call.Xfdf!);

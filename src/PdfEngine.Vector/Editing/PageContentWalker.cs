@@ -258,7 +258,7 @@ internal sealed class PageContentWalker
         bool inText = false;
         var marked = new Stack<(int Index, PdfDictionary? Props, bool Removed, string Tag)>();
 
-        using var src = new MemoryByteSource(contentBytes);
+        using var src = new PdfMemoryByteSource(contentBytes);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         void Emit(string s) { if (rewrite) output.Add(s); }
@@ -689,7 +689,7 @@ internal sealed class PageContentWalker
 
     // ------------------------------------------------------------------ inline images
 
-    internal static (string? Raw, int Width, int Height) InlineImage(MemoryByteSource src, PdfLexer lexer, PdfParser parser)
+    internal static (string? Raw, int Width, int Height) InlineImage(PdfMemoryByteSource src, PdfLexer lexer, PdfParser parser)
     {
         var raw = new StringBuilder("BI ");
         int width = 0, height = 0;

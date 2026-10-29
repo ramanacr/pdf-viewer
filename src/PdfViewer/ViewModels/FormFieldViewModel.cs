@@ -39,7 +39,7 @@ public partial class FormFieldViewModel : ObservableObject
     /// <summary>Position in the document's tab order.</summary>
     public int TabIndex { get; init; }
     /// <summary>What the field's scripts ask for: format, keystroke rule, range, calculation.</summary>
-    public PdfFieldBehaviour Behaviour { get; init; } = new();
+    public PdfFieldBehavior Behaviour { get; init; } = new();
     /// <summary>Set by the editor: puts back the committed value when a new one is refused.</summary>
     public Action? RevertRequested { get; set; }
 
@@ -69,7 +69,7 @@ public partial class FormFieldViewModel : ObservableObject
         {
             if (w.Hidden || w.PageNumber < 1 || pageBox(w.PageNumber) is not { } box || box.W <= 0 || box.H <= 0)
                 continue;
-            var da = PdfFormFiller.ParseDA(field.DefaultAppearance);
+            var da = PdfFormFiller.ParseDefaultAppearance(field.DefaultAppearance);
             yield return new FormFieldViewModel
             {
                 FullName = field.FullName,

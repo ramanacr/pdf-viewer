@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Export;
 

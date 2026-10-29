@@ -430,7 +430,7 @@ internal sealed class TextFontInfo
     {
         if (_cff!.Bounds(gid) is not { } b) return GlyphBox.Zero;
         var m = _cffFont!.OutlineMatrix(gid);
-        var r = new TextRect(b.XMin, b.YMin, b.XMax, b.YMax).Transform(new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]));
+        var r = new PdfTextRect(b.XMin, b.YMin, b.XMax, b.YMax).Transform(new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]));
         return new GlyphBox(R(r.Left * 1000), R(r.Bottom * 1000), R(r.Right * 1000), R(r.Top * 1000));
     }
 
@@ -444,26 +444,26 @@ internal sealed class TextFontInfo
         }
         if (_font.FontBBox is { } fb && !fb.IsEmpty)
         {
-            var r = new TextRect(fb.Left, fb.Top, fb.Right, fb.Bottom).Transform(fm);
+            var r = new PdfTextRect(fb.Left, fb.Top, fb.Right, fb.Bottom).Transform(fm);
             return new GlyphBox(R(r.Left * 1000), R(r.Bottom * 1000), R(r.Right * 1000), R(r.Top * 1000));
         }
         return GlyphBox.Zero;
     }
 
-    private readonly Dictionary<int, (double? Wx, TextRect? Box)> _type3 = new();
+    private readonly Dictionary<int, (double? Wx, PdfTextRect? Box)> _type3 = new();
 
     /// <summary>A Type 3 glyph's d0/d1 operands: its width and (d1) its box, in glyph space.</summary>
-    private (double? Wx, TextRect? Box) Type3Metrics(int code)
+    private (double? Wx, PdfTextRect? Box) Type3Metrics(int code)
     {
         if (_type3.TryGetValue(code, out var cached)) return cached;
-        (double? Wx, TextRect? Box) result = (null, null);
+        (double? Wx, PdfTextRect? Box) result = (null, null);
         if (_font.GetGlyphName(code) is { } name && _resolver != null && _font.CharProcs != null &&
             _resolver.Resolve(_font.CharProcs[name]) is PdfStream proc)
         {
             try
             {
                 var bytes = new PdfStreamDecoder(null, _resolver.Resolve).DecodeStream(proc);
-                using var src = new MemoryByteSource(bytes.Length > 512 ? bytes.AsSpan(0, 512).ToArray() : bytes);
+                using var src = new PdfMemoryByteSource(bytes.Length > 512 ? bytes.AsSpan(0, 512).ToArray() : bytes);
                 var lexer = new PdfLexer(src, Limits.PdfSecurityLimits.Default);
                 var nums = new List<double>();
                 for (int i = 0; i < 64; i++)
@@ -478,7 +478,7 @@ internal sealed class TextFontInfo
                     int n = nums.Count;
                     if (t.Type == PdfTokenType.Keyword && t.TextValue == "d1" && n >= 6)
                     {
-                        result = (nums[n - 6], new TextRect(Math.Min(nums[n - 4], nums[n - 2]), Math.Min(nums[n - 3], nums[n - 1]),
+                        result = (nums[n - 6], new PdfTextRect(Math.Min(nums[n - 4], nums[n - 2]), Math.Min(nums[n - 3], nums[n - 1]),
                             Math.Max(nums[n - 4], nums[n - 2]), Math.Max(nums[n - 3], nums[n - 1])));
                         break;
                     }
@@ -504,7 +504,7 @@ internal sealed class TextFontInfo
         {
             if (_font.IsType3)
             {
-                var r = new TextRect(fb.Left, fb.Top, fb.Right, fb.Bottom).Transform(_font.FontMatrix);
+                var r = new PdfTextRect(fb.Left, fb.Top, fb.Right, fb.Bottom).Transform(_font.FontMatrix);
                 return new GlyphBox(R(r.Left * 1000), R(r.Bottom * 1000), R(r.Right * 1000), R(r.Top * 1000));
             }
             return new GlyphBox(R(fb.Left), R(fb.Top), R(fb.Right), R(fb.Bottom));

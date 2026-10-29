@@ -29,7 +29,7 @@ public partial class MainViewModel
             PdfAClaim = await Task.Run(async () =>
             {
                 using var doc = await PdfVectorDocument.OpenAsync(bytes, _docService.CurrentFilePath, password: _openPassword);
-                return PdfAValidator.ClaimedFlavour(doc)?.ToString();
+                return PdfAValidator.ClaimedFlavor(doc)?.ToString();
             });
         }
         catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or System.IO.IOException or ArgumentException)

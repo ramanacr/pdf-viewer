@@ -30,7 +30,7 @@ internal sealed class WpfImageCache
     /// lets through. Damaged data, unsupported features and limits all land here.
     /// </summary>
     internal static bool IsDecodeFailure(Exception ex) =>
-        ex is Diagnostics.PdfVectorException or InvalidDataException or IOException or NotSupportedException
+        ex is Diagnostics.PdfVectorException and not Parsing.PdfDataNotLoadedException or InvalidDataException or IOException or NotSupportedException
            or FileFormatException or ArgumentException or OverflowException;
 
     // Images that failed to decode, by source, with the fallback reason. Like the Direct2D replayer,

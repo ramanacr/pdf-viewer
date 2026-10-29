@@ -273,7 +273,7 @@ public partial class MainViewModel
         bool proven;
         try
         {
-            using var doc = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.MemoryByteSource(_docService.CurrentBytes!), _docService.CurrentFilePath, password: _openPassword);
+            using var doc = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.PdfMemoryByteSource(_docService.CurrentBytes!), _docService.CurrentFilePath, password: _openPassword);
             proven = PdfEncryptor.IsOwnerKnown(doc, ownerPassword);
         }
         catch (PdfEngine.Vector.Diagnostics.PdfVectorException)

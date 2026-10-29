@@ -10,6 +10,7 @@ using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using Xunit;
 using Xunit.Abstractions;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Tests;
 

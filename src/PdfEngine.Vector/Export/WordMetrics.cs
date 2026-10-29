@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Export;
 

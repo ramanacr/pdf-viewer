@@ -85,7 +85,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates = null)
     {
         byte[] bytes = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
-        var memSource = new MemoryByteSource(bytes);
+        var memSource = new PdfMemoryByteSource(bytes);
         return OpenCore(memSource, filePath, limits, password, certificates);
     }
 
@@ -108,12 +108,12 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
         string? password = null,
         IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2>? certificates = null)
     {
-        var memSource = new MemoryByteSource(pdfBytes);
+        var memSource = new PdfMemoryByteSource(pdfBytes);
         return await Task.Run(() => OpenCore(memSource, filePath, limits, password, certificates), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Opens a PDF from a byte source, synchronously. The document owns <paramref name="source"/> and disposes it.</summary>
-    /// <param name="source">The PDF data, for example a <see cref="MemoryByteSource"/> or a <see cref="FileByteSource"/>.</param>
+    /// <param name="source">The PDF data, for example a <see cref="PdfMemoryByteSource"/> or a <see cref="PdfFileByteSource"/>.</param>
     /// <param name="filePath">A name for the document, reported by <see cref="FilePath"/>.</param>
     /// <param name="limits">Ceilings for hostile input; null uses <see cref="PdfSecurityLimits.Default"/>.</param>
     /// <param name="password">The user or owner password of an encrypted document, or null.</param>
@@ -412,7 +412,7 @@ public sealed class PdfVectorDocument : IPdfVectorDocument
                 {
                     _form = PdfEngine.Vector.Forms.PdfAcroForm.Read(this);
                 }
-                catch (Exception ex) when (ex is PdfVectorException or InvalidOperationException or ArgumentException or FormatException or OverflowException)
+                catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidOperationException or ArgumentException or FormatException or OverflowException)
                 {
                     _form = null; // a form that cannot be read: widgets draw their own appearances
                 }

@@ -21,7 +21,7 @@ from. The default reads `SystemFontCatalog.Installed`. A host without installed 
 that wants the same output on every machine, passes a catalog of a font folder that it ships:
 
 ```csharp
-using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 using PdfEngine.Vector.Skia;
 
 var fonts = new SkiaFontSource(SystemFontCatalog.ForDirectory(fontFolder));

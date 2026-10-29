@@ -2,8 +2,9 @@ using PdfEngine.Geometry;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
+using PdfEngine.Vector.Services;
 
-namespace PdfEngine.Vector.Services;
+namespace PdfEngine.Vector.Annotations;
 
 /// <summary>
 /// An annotation's properties (ISO 32000-2 12.5), in default user space. Read from a page by

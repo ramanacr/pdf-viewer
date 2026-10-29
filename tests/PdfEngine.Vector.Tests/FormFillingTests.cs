@@ -140,7 +140,7 @@ public class FormFillingTests
         var metrics = new PdfFormFiller.FontMetrics(_ => 500, 800, -200);
         var lines = PdfFormFiller.Wrap("aaaa bbbb cccccccccccc", metrics, 10, 25);
         Assert.Equal(new[] { "aaaa", "bbbb", "ccccc", "ccccc", "cc" }, lines);
-        var da = PdfFormFiller.ParseDA("/TiRo 9 Tf 0 0 1 rg");
-        Assert.Equal(("TiRo", 9.0, "0 0 1 rg"), (da.FontName, da.Size, da.ColourOps));
+        var da = PdfFormFiller.ParseDefaultAppearance("/TiRo 9 Tf 0 0 1 rg");
+        Assert.Equal(("TiRo", 9.0, "0 0 1 rg"), (da.FontName, da.Size, da.ColorOps));
     }
 }

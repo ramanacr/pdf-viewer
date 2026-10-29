@@ -106,13 +106,13 @@ public static class PdfStamps
         return Math.Abs(d) < 1e-9 || Math.Abs(d - 360) < 1e-9 ? 0 : d;
     }
 
-    /// <summary>The rectangle a <paramref name="width"/> by <paramref name="height"/> stamp turned by <paramref name="degrees"/> about <paramref name="centre"/> covers.</summary>
-    public static PdfRect RotatedBounds(PdfPoint centre, double width, double height, double degrees)
+    /// <summary>The rectangle a <paramref name="width"/> by <paramref name="height"/> stamp turned by <paramref name="degrees"/> about <paramref name="center"/> covers.</summary>
+    public static PdfRect RotatedBounds(PdfPoint center, double width, double height, double degrees)
     {
         double a = NormalizeDegrees(degrees) * Math.PI / 180;
         double c = Math.Abs(Math.Cos(a)), s = Math.Abs(Math.Sin(a));
         double w = width * c + height * s, h = width * s + height * c;
-        return new PdfRect(centre.X - w / 2, centre.Y - h / 2, w, h);
+        return new PdfRect(center.X - w / 2, center.Y - h / 2, w, h);
     }
 
     internal static PdfArray RotationMatrix(double degrees)
@@ -132,7 +132,7 @@ public static class PdfStamps
         ArgumentNullException.ThrowIfNull(stamp);
         var rect = stamp.Rect;
         byte[] blank = BlankPage(Math.Max(1, rect.Width), Math.Max(1, rect.Height), black);
-        using var doc = PdfVectorDocument.Open(new MemoryByteSource(blank));
+        using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(blank));
         var copy = Clone(stamp);
         copy.PageNumber = 1;
         copy.Rect = new PdfRect(0, 0, rect.Width, rect.Height);
@@ -163,7 +163,7 @@ public static class PdfStamps
         double scale = (rect.Width / before.Width + rect.Height / before.Height) / 2;
         double w = Math.Max(1, after.Width * scale), h = Math.Max(1, after.Height * scale);
         byte[] blank = BlankPage(w, h);
-        using var doc = PdfVectorDocument.Open(new MemoryByteSource(blank));
+        using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(blank));
         var update = new PdfUpdate(doc, blank);
         int fm = update.Add(PdfStampForms.CopyInto(update, form, r));
         double opacity = Math.Clamp(r.Resolve(annot["CA"]) switch { PdfReal x => x.Value, PdfInteger n => n.Value, _ => 1.0 }, 0, 1);
@@ -246,7 +246,7 @@ internal static class PdfStampForms
 
     private static PdfStream Page(PdfUpdate update, byte[] pdf, PdfStampAppearance stamp, double opacity)
     {
-        using var source = PdfVectorDocument.Open(new MemoryByteSource(pdf));
+        using var source = PdfVectorDocument.Open(new PdfMemoryByteSource(pdf));
         if (source.IsEncrypted) throw new NotSupportedException("The stamp's PDF is encrypted; use an unencrypted copy.");
         int pageNumber = stamp.SourcePage;
         if (pageNumber < 1 || pageNumber > source.PageCount) throw new ArgumentOutOfRangeException(nameof(stamp), $"The stamp's PDF has no page {pageNumber}.");

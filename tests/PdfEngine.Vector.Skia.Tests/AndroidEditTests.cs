@@ -338,7 +338,7 @@ public class AndroidEditTests
         Assert.True(StartsWith(save.Bytes, pdf));
         using (var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(save.Bytes))
         {
-            var read = PdfEngine.Vector.Services.PdfAnnotationReader.Read(vector, 2);
+            var read = PdfEngine.Vector.Annotations.PdfAnnotationReader.Read(vector, 2);
             Assert.Equal(["Square", "Circle", "Line", "Line"], read.Select(a => a.Subtype));
             Assert.All(read, a => Assert.True(a.HasAppearance));
             Assert.All(read, a => Assert.Equal(ViewerEditSession.ShapeWidth, a.BorderWidth));
@@ -412,7 +412,7 @@ public class AndroidEditTests
         Assert.True(StartsWith(save.Bytes, pdf));
         using (var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(save.Bytes))
         {
-            var read = PdfEngine.Vector.Services.PdfAnnotationReader.Read(vector, 2);
+            var read = PdfEngine.Vector.Annotations.PdfAnnotationReader.Read(vector, 2);
             Assert.Equal(["FreeText", "FreeText"], read.Select(a => a.Subtype));
             Assert.All(read, a => Assert.True(a.HasAppearance));
             Assert.Equal("Check the total", read[0].Contents);
@@ -478,7 +478,7 @@ public class AndroidEditTests
         Assert.All(origins, p => Assert.InRange(p.X, shown.X, shown.X + shown.Width));
         Assert.Equal(origins.OrderBy(p => p.X).ToList(), origins);
         using (var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(save.Bytes))
-            Assert.Equal(rotate, PdfEngine.Vector.Services.PdfAnnotationReader.Read(vector, 1)[0].AppearanceRotation, 3);
+            Assert.Equal(rotate, PdfEngine.Vector.Annotations.PdfAnnotationReader.Read(vector, 1)[0].AppearanceRotation, 3);
         session.EndSave(save, saved: true);
     }
 

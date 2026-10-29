@@ -17,16 +17,16 @@ namespace VectorPdf.Tool;
 /// </summary>
 public static class PdfASmoke
 {
-    private sealed record Case(string Path, PdfAFlavour Flavour, bool ShouldPass, string? Clause);
+    private sealed record Case(string Path, PdfAFlavor Flavor, bool ShouldPass, string? Clause);
 
     public static async Task<int> RunAsync(string[] args)
     {
         string dir = args.Length > 1 ? args[1] : ".";
-        var only = PdfAFlavour.Parse(Program.Option(args, "--flavour"));
+        var only = PdfAFlavor.Parse(Program.Option(args, "--flavour"));
         string? clauseFilter = Program.Option(args, "--clause");
         string show = Program.Option(args, "--show") ?? "none";
         var cases = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).Select(Classify).Where(c => c != null).Select(c => c!)
-            .Where(c => only == null || c.Flavour == only).Where(c => clauseFilter == null || (c.Clause ?? "").StartsWith(clauseFilter, StringComparison.Ordinal))
+            .Where(c => only == null || c.Flavor == only).Where(c => clauseFilter == null || (c.Clause ?? "").StartsWith(clauseFilter, StringComparison.Ordinal))
             .OrderBy(c => c.Path, StringComparer.Ordinal).ToList();
         var clock = Stopwatch.StartNew();
         var stats = new Dictionary<string, int[]>(); // key: flavour|clause → passOk, passFp, failHit, failOtherClause, failMiss
@@ -39,10 +39,10 @@ public static class PdfASmoke
             {
                 byte[] bytes = await File.ReadAllBytesAsync(c.Path);
                 using var doc = await PdfVectorDocument.OpenAsync(bytes);
-                report = PdfAValidator.Validate(doc, bytes, c.Flavour);
+                report = PdfAValidator.Validate(doc, bytes, c.Flavor);
             }
             catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message.Split('\n')[0]; }
-            string key = $"{c.Flavour}|{c.Clause}";
+            string key = $"{c.Flavor}|{c.Clause}";
             if (!stats.TryGetValue(key, out var s)) stats[key] = s = new int[5];
             string name = Path.GetFileName(c.Path);
             if (report == null)
@@ -105,7 +105,7 @@ public static class PdfASmoke
     {
         string dir = args.Length > 1 ? args[1] : ".";
         int limit = int.TryParse(Program.Option(args, "--limit"), out int l) ? l : int.MaxValue;
-        var flavour = PdfAFlavour.Parse(Program.Option(args, "--flavour")) ?? PdfAFlavour.A2b;
+        var flavour = PdfAFlavor.Parse(Program.Option(args, "--flavour")) ?? PdfAFlavor.A2b;
         var files = Directory.EnumerateFiles(dir, "*.pdf", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).Take(limit).ToList();
         using var renderer = new PdfEngine.Vector.Direct2D.Direct2DVectorRenderer();
         // PDF/A-1b flattens transparency with the engine's renderer alone, as the viewer does
@@ -131,7 +131,7 @@ public static class PdfASmoke
                 {
                     if (doc.PageCount == 0) { skipped++; continue; }
                     PdfAConversionResult result;
-                    try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = flavour, Rasterizer = rasterizer }); }
+                    try { result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavor = flavour, Rasterizer = rasterizer }); }
                     catch (PdfAConversionRefusedException ex) { refused++; Console.WriteLine($"refused  {name}: {ex.Message}"); continue; }
                     if (result.Flattening is { } flat && (flat.Pages.Count > 0 || flat.Annotations.Count > 0))
                     {
@@ -205,11 +205,11 @@ public static class PdfASmoke
     {
         string p = path.Replace('\\', '/');
         string name = Path.GetFileNameWithoutExtension(path);
-        PdfAFlavour? flavour = p.Contains("/PDF_A-1b/") || p.Contains("/Isartor test files/") ? PdfAFlavour.A1b
-            : p.Contains("/PDF_A-2b/") ? PdfAFlavour.A2b
-            : p.Contains("/PDF_A-2u/") ? PdfAFlavour.A2u
-            : p.Contains("/PDF_A-3b/") ? PdfAFlavour.A3b
-            : p.Contains("/TWG test files/") ? (name.Contains("pdfa1") ? PdfAFlavour.A1b : name.Contains("pdfa2") ? PdfAFlavour.A2b : null)
+        PdfAFlavor? flavour = p.Contains("/PDF_A-1b/") || p.Contains("/Isartor test files/") ? PdfAFlavor.A1b
+            : p.Contains("/PDF_A-2b/") ? PdfAFlavor.A2b
+            : p.Contains("/PDF_A-2u/") ? PdfAFlavor.A2u
+            : p.Contains("/PDF_A-3b/") ? PdfAFlavor.A3b
+            : p.Contains("/TWG test files/") ? (name.Contains("pdfa1") ? PdfAFlavor.A1b : name.Contains("pdfa2") ? PdfAFlavor.A2b : null)
             : null;
         if (flavour == null) return null;
         if (p.Contains("/Isartor test files/"))

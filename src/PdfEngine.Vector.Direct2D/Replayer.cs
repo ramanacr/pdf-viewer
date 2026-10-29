@@ -12,6 +12,7 @@ using Vortice.DirectWrite;
 using Vortice.DXGI;
 using Vortice.Mathematics;
 using Vortice.WIC;
+using PdfEngine.Vector.Fonts;
 using AlphaMode = Vortice.DCommon.AlphaMode;
 using D2DPixelFormat = Vortice.DCommon.PixelFormat;
 
@@ -1938,7 +1939,7 @@ internal sealed partial class Replayer : IDisposable
             _res.SetImageOutcome(key, null);
             return true;
         }
-        catch (Exception ex) when (ex is PdfEngine.Vector.Diagnostics.PdfVectorException or SharpGenException or InvalidDataException or IOException
+        catch (Exception ex) when (ex is PdfEngine.Vector.Diagnostics.PdfVectorException and not PdfEngine.Vector.Parsing.PdfDataNotLoadedException or SharpGenException or InvalidDataException or IOException
                                        or ArgumentException or OverflowException or NotSupportedException)
         {
             reason = ex is PdfEngine.Vector.Diagnostics.PdfUnsupportedFeatureException u ? u.Reason

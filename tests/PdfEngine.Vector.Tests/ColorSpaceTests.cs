@@ -46,7 +46,7 @@ public class ColorSpaceTests
         foreach (int offset in offsets) sb.Append($"{offset:D10} 00000 n \n");
         sb.Append($"trailer\n<< /Size {objects.Length + 1} >>\nstartxref\n{xrefOffset}\n%%EOF");
 
-        var source = new MemoryByteSource(Encoding.ASCII.GetBytes(sb.ToString()));
+        var source = new PdfMemoryByteSource(Encoding.ASCII.GetBytes(sb.ToString()));
         var xref = new PdfXrefTable();
         xref.Load(source);
         return new PdfObjectResolver(source, xref);

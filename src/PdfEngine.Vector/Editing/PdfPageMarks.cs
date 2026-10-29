@@ -12,6 +12,7 @@ using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
 using PdfEngine.Vector.Redaction;
 using PdfEngine.Vector.Streams;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Editing;
 
@@ -133,7 +134,7 @@ public static class PdfPageMarks
             if (watermark is { Source: PdfMarkSource.Page })
             {
                 if (watermark.SourcePdf is not { Length: > 0 } pdf) throw new ArgumentException("Choose the PDF whose page is drawn.");
-                source = PdfVectorDocument.Open(new MemoryByteSource(pdf));
+                source = PdfVectorDocument.Open(new PdfMemoryByteSource(pdf));
             }
             if (watermark is { Source: PdfMarkSource.Image, Image: null }) throw new ArgumentException("Choose the picture to draw.");
         }

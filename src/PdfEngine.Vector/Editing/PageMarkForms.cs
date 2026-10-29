@@ -10,6 +10,7 @@ using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Parsing;
 using PdfEngine.Vector.Redaction;
 using PdfEngine.Vector.Streams;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Editing;
 

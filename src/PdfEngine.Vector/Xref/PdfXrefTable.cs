@@ -371,7 +371,7 @@ public sealed class PdfXrefTable
                     continue;
                 byte[] decoded = decoder.DecodeStream(stm);
                 long n = stm.Dictionary.GetInteger("N") ?? 0;
-                using var mem = new MemoryByteSource(decoded);
+                using var mem = new PdfMemoryByteSource(decoded);
                 var lexer = new PdfLexer(mem, _limits);
                 for (int i = 0; i < n && i < _limits.MaxObjectsCount; i++)
                 {

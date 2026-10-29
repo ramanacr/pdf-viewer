@@ -104,7 +104,7 @@ internal sealed class ContentRedactor
         // Marked content: (index of the BDC in output, inline properties, removed text inside, MCID).
         var marked = new Stack<(int Index, PdfDictionary? Props, bool Removed, int Mcid, string Tag)>();
 
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
 
@@ -756,7 +756,7 @@ internal sealed class ContentRedactor
     }
 
     /// <summary>An inline image (BI … ID … EI): copied when clear of the redactions, else redacted as an image object.</summary>
-    private bool InlineImage(State gs, PdfDictionary resources, MemoryByteSource src, PdfLexer lexer, PdfParser parser, Dictionary<string, PdfObject> added, Action<string> emit)
+    private bool InlineImage(State gs, PdfDictionary resources, PdfMemoryByteSource src, PdfLexer lexer, PdfParser parser, Dictionary<string, PdfObject> added, Action<string> emit)
     {
         var entries = new Dictionary<string, PdfObject>();
         var raw = new StringBuilder("BI ");

@@ -65,7 +65,7 @@ internal static class AutoTagContent
     public static List<ContentOp> Scan(byte[] content, PdfDictionary? resources, PdfObjectResolver r)
     {
         var ops = new List<ContentOp>();
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         var operands = new List<PdfObject>();

@@ -715,7 +715,7 @@ public sealed class PdfRangedDocument : IDisposable
     {
         ThrowIfDisposed();
         if (_completeDocument) return;
-        Replace(PdfVectorDocument.Open(new MemoryByteSource(bytes), _name, _limits, _password));
+        Replace(PdfVectorDocument.Open(new PdfMemoryByteSource(bytes), _name, _limits, _password));
         _completeDocument = true;
         _planner = null;
         _cache.Clear();

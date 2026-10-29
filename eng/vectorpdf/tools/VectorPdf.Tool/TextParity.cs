@@ -215,7 +215,7 @@ public static class TextParity
         return pick;
     }
 
-    private static double? IoU(TextRect a, TextRect b)
+    private static double? IoU(PdfTextRect a, PdfTextRect b)
     {
         a.Normalize(); b.Normalize();
         double aw = a.Width, ah = a.Height, bw = b.Width, bh = b.Height;
@@ -232,8 +232,8 @@ public static class TextParity
         public int Count;
         public string Text = string.Empty;
         public char[] Unicode = Array.Empty<char>();
-        public TextRect[] Boxes = Array.Empty<TextRect>();
-        public TextRect[] Loose = Array.Empty<TextRect>();
+        public PdfTextRect[] Boxes = Array.Empty<PdfTextRect>();
+        public PdfTextRect[] Loose = Array.Empty<PdfTextRect>();
 
         public static Oracle Read(PdfiumDocument doc, int pageNumber, out Searcher searcher)
         {
@@ -250,15 +250,15 @@ public static class TextParity
                 int written = PdfiumNativeBridge.FPDFText_GetText(text, 0, n, buf);
                 o.Text = written > 0 ? PdfiumNativeBridge.Utf16BytesToString(buf, written * 2) : string.Empty;
                 o.Unicode = new char[n];
-                o.Boxes = new TextRect[n];
-                o.Loose = new TextRect[n];
+                o.Boxes = new PdfTextRect[n];
+                o.Loose = new PdfTextRect[n];
                 for (int i = 0; i < n; i++)
                 {
                     o.Unicode[i] = (char)PdfiumNativeBridge.FPDFText_GetUnicode(text, i);
                     if (PdfiumNativeBridge.FPDFText_GetCharBox(text, i, out double l, out double r, out double b, out double t) != 0)
-                        o.Boxes[i] = new TextRect(l, b, r, t);
+                        o.Boxes[i] = new PdfTextRect(l, b, r, t);
                     if (PdfiumNativeBridge.FPDFText_GetLooseCharBox(text, i, out var rect) != 0)
-                        o.Loose[i] = new TextRect(rect.left, rect.bottom, rect.right, rect.top);
+                        o.Loose[i] = new PdfTextRect(rect.left, rect.bottom, rect.right, rect.top);
                 }
             }
             return o;

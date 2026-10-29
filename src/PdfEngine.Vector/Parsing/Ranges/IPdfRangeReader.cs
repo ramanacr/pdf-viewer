@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using PdfEngine.Vector.Diagnostics;
 
 namespace PdfEngine.Vector.Parsing;
 
@@ -35,13 +36,13 @@ public interface IPdfRangeReader
 }
 
 /// <summary>An <see cref="IPdfRangeReader"/> over bytes in memory, for tests and for hosts that already have the file.</summary>
-public sealed class MemoryRangeReader : IPdfRangeReader
+public sealed class PdfMemoryRangeReader : IPdfRangeReader
 {
     private readonly ReadOnlyMemory<byte> _data;
     private long _bytesRead;
     private int _requests;
 
-    public MemoryRangeReader(ReadOnlyMemory<byte> data) => _data = data;
+    public PdfMemoryRangeReader(ReadOnlyMemory<byte> data) => _data = data;
 
     /// <inheritdoc/>
     public long Length => _data.Length;
@@ -72,12 +73,14 @@ public sealed class MemoryRangeReader : IPdfRangeReader
 /// The parser needed bytes that are not loaded yet (a <see cref="PdfChunkedByteSource"/> over a
 /// partly fetched file). <see cref="PdfRangedDocument"/> catches it, fetches the range and tries
 /// again. It is not a syntax error: the recovery paths of the parser (rebuilding a damaged
-/// cross-reference table) do not catch it.
+/// cross-reference table) do not catch it. Its <see cref="PdfVectorException.Kind"/> is
+/// <see cref="PdfVectorErrorKind.DataNotLoaded"/>; code that recovers from a
+/// <see cref="PdfVectorException"/> lets this one through.
 /// </summary>
-public sealed class PdfDataNotLoadedException : Exception
+public sealed class PdfDataNotLoadedException : PdfVectorException
 {
     public PdfDataNotLoadedException(long offset, long length)
-        : base($"Bytes {offset} to {offset + length} of the file are not loaded yet.")
+        : base(PdfVectorErrorKind.DataNotLoaded, $"Bytes {offset} to {offset + length} of the file are not loaded yet.")
     {
         Offset = offset;
         Length = length;

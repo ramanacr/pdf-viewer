@@ -3,9 +3,9 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using PdfEngine.Vector.Fonts;
+using PdfEngine.Vector.Editing;
 
-namespace PdfEngine.Vector.Editing;
+namespace PdfEngine.Vector.Fonts;
 
 /// <summary>An installed font face: where it is and what it is called.</summary>
 /// <param name="LegacyFamily">The family as older software names it ("Arial Narrow" where the typographic family is "Arial").</param>

@@ -5,12 +5,12 @@ using System.Runtime.Versioning;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
-using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Skia;
 using PdfViewer.Web.Engine;
 using PdfViewer.Web.Engine.Demo;
 using PdfViewer.Web.Engine.Embed;
 using PdfViewer.Web.Interop;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfViewer.Web.Components;
 

@@ -9,11 +9,11 @@ namespace PdfEngine.Vector.Text;
 /// point or line (not "nothing"), intersecting disjoint rectangles gives all zeros, and union and
 /// containment normalize first.
 /// </summary>
-public struct TextRect : IEquatable<TextRect>
+public struct PdfTextRect : IEquatable<PdfTextRect>
 {
     public double Left, Bottom, Right, Top;
 
-    public TextRect(double left, double bottom, double right, double top)
+    public PdfTextRect(double left, double bottom, double right, double top)
     {
         Left = left; Bottom = bottom; Right = right; Top = top;
     }
@@ -22,7 +22,7 @@ public struct TextRect : IEquatable<TextRect>
     public readonly double Height => Top - Bottom;
     public readonly bool IsEmpty => Left >= Right || Bottom >= Top;
 
-    public static TextRect Point(double x, double y) => new(x, y, x, y);
+    public static PdfTextRect Point(double x, double y) => new(x, y, x, y);
 
     public void Normalize()
     {
@@ -30,7 +30,7 @@ public struct TextRect : IEquatable<TextRect>
         if (Bottom > Top) (Bottom, Top) = (Top, Bottom);
     }
 
-    public void Union(TextRect other)
+    public void Union(PdfTextRect other)
     {
         Normalize();
         other.Normalize();
@@ -40,7 +40,7 @@ public struct TextRect : IEquatable<TextRect>
         Top = Math.Max(Top, other.Top);
     }
 
-    public void Intersect(TextRect other)
+    public void Intersect(PdfTextRect other)
     {
         Normalize();
         other.Normalize();
@@ -65,13 +65,13 @@ public struct TextRect : IEquatable<TextRect>
     }
 
     /// <summary>The bounds of the rectangle's four corners mapped by <paramref name="m"/>.</summary>
-    public readonly TextRect Transform(in PdfMatrix m)
+    public readonly PdfTextRect Transform(in PdfMatrix m)
     {
         var p1 = m.Transform(Left, Top);
         var p2 = m.Transform(Left, Bottom);
         var p3 = m.Transform(Right, Top);
         var p4 = m.Transform(Right, Bottom);
-        return new TextRect(
+        return new PdfTextRect(
             Math.Min(Math.Min(p1.X, p2.X), Math.Min(p3.X, p4.X)),
             Math.Min(Math.Min(p1.Y, p2.Y), Math.Min(p3.Y, p4.Y)),
             Math.Max(Math.Max(p1.X, p2.X), Math.Max(p3.X, p4.X)),
@@ -81,8 +81,8 @@ public struct TextRect : IEquatable<TextRect>
     /// <summary>As a <see cref="PdfRect"/> (x, y at the lower left).</summary>
     public readonly PdfRect ToPdfRect() => new(Math.Min(Left, Right), Math.Min(Bottom, Top), Math.Abs(Width), Math.Abs(Height));
 
-    public readonly bool Equals(TextRect other) => Left == other.Left && Bottom == other.Bottom && Right == other.Right && Top == other.Top;
-    public override readonly bool Equals(object? obj) => obj is TextRect r && Equals(r);
+    public readonly bool Equals(PdfTextRect other) => Left == other.Left && Bottom == other.Bottom && Right == other.Right && Top == other.Top;
+    public override readonly bool Equals(object? obj) => obj is PdfTextRect r && Equals(r);
     public override readonly int GetHashCode() => HashCode.Combine(Left, Bottom, Right, Top);
     public override readonly string ToString() => $"[{Left:0.##} {Bottom:0.##} {Right:0.##} {Top:0.##}]";
 }

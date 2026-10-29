@@ -204,7 +204,7 @@ internal sealed class NotdefGlyphRemover
     /// </summary>
     private byte[]? Walk(byte[] content, PdfDictionary? resources, State gs, int depth, bool rewrite)
     {
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         var operands = new List<PdfObject>(8);
@@ -370,7 +370,7 @@ internal sealed class NotdefGlyphRemover
     }
 
     /// <summary>Moves past an inline image's dictionary and data (to after its EI).</summary>
-    private static void SkipInlineImage(MemoryByteSource src, PdfLexer lexer, PdfParser parser)
+    private static void SkipInlineImage(PdfMemoryByteSource src, PdfLexer lexer, PdfParser parser)
     {
         while (true)
         {

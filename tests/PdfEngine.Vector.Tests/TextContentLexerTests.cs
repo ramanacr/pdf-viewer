@@ -34,7 +34,7 @@ public class TextContentLexerTests
     {
         var result = new List<string>();
         var operands = new List<PdfObject>(8);
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         while (true)

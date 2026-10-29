@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using PdfEngine.Geometry;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Editing;
 

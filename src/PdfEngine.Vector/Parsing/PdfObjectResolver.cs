@@ -62,6 +62,46 @@ public sealed class PdfObjectResolver
         return obj;
     }
 
+    /// <summary>
+    /// Decodes the data of <paramref name="stream"/>: applies every filter of its /Filter entry in order,
+    /// with the matching /DecodeParms (indirect entries are resolved through this resolver). A stream that
+    /// this resolver read from an encrypted document is already decrypted, so the result is the plain data.
+    /// The document's <see cref="Limits.PdfSecurityLimits"/> apply, as they do to the engine's own decoding.
+    /// </summary>
+    /// <param name="stream">A stream of this document (for example from <see cref="Resolve(int)"/>).</param>
+    /// <returns>A new array with the decoded data. <see cref="PdfStream"/> itself is not changed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
+    /// <exception cref="Diagnostics.PdfUnsupportedFeatureException">
+    /// A filter is not a general-purpose filter that the engine decodes: an image codec (DCTDecode, JPXDecode,
+    /// JBIG2Decode, CCITTFaxDecode), an unknown filter, or a crypt filter other than /Identity on a stream
+    /// that was not decrypted.
+    /// </exception>
+    /// <exception cref="Diagnostics.PdfSyntaxException">The /Filter entry is malformed, or the data cannot be decoded.</exception>
+    /// <exception cref="Diagnostics.PdfResourceLimitException">The decoded data is larger than the limits allow.</exception>
+    /// <exception cref="PdfDataNotLoadedException">
+    /// The document loads by HTTP ranges (<see cref="PdfRangedDocument"/>) and the bytes of the stream, or of an
+    /// object its /Filter or /DecodeParms refers to, are not loaded yet. Load them and call again.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">The document, and so its byte source, is disposed.</exception>
+    /// <exception cref="System.IO.IOException">The document's file could not be read (a <see cref="PdfFileByteSource"/>).</exception>
+    /// <remarks>
+    /// The four <c>Pdf*Exception</c> types above derive from <see cref="Diagnostics.PdfVectorException"/>. The method
+    /// never returns null. It supports FlateDecode, LZWDecode (both with predictors), ASCIIHexDecode, ASCII85Decode,
+    /// RunLengthDecode and the /Identity crypt filter. It is safe to call while other threads resolve objects of the
+    /// same document.
+    /// </remarks>
+    public byte[] DecodeStream(PdfStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        // The byte source is positional and shared with Resolve: read the raw data under the same lock.
+        ReadOnlyMemory<byte> raw;
+        lock (_sync)
+        {
+            raw = stream.GetRawBytes();
+        }
+        return new PdfStreamDecoder(_limits, Resolve).DecodeStream(stream with { CachedRawBytes = raw });
+    }
+
     public PdfObject? Resolve(int objectNumber)
     {
         if (_resolvedCache.TryGetValue(objectNumber, out var cached))
@@ -211,7 +251,7 @@ public sealed class PdfObjectResolver
         if (relOffset < 0 || targetOffset >= index.Data.Length)
             return null;
 
-        using var memSource = new MemoryByteSource(index.Data);
+        using var memSource = new PdfMemoryByteSource(index.Data);
         memSource.Position = targetOffset;
         var lexer = new PdfLexer(memSource, _limits);
         var parser = new PdfParser(_limits);
@@ -231,7 +271,7 @@ public sealed class PdfObjectResolver
         if (n <= 0 || n > _limits.MaxObjectsCount || first < 0 || first > decoded.Length)
             return null;
 
-        using var memSource = new MemoryByteSource(decoded);
+        using var memSource = new PdfMemoryByteSource(decoded);
         var lexer = new PdfLexer(memSource, _limits);
         var offsets = new List<(int ObjNum, long Offset)>((int)Math.Min(n, 4096));
         for (long i = 0; i < n && memSource.Position < first; i++)

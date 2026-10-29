@@ -15,6 +15,7 @@ using PdfEngine.Vector.Oracle;
 using PdfEngine.Vector.Services;
 using PdfEngine.Vector.Tests.Fixtures;
 using Xunit;
+using PdfEngine.Vector.Annotations;
 
 namespace PdfEngine.Vector.Tests;
 

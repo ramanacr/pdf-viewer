@@ -197,7 +197,7 @@ internal sealed class IccProfileHandle
         {
             handle = FromBytes(decode());
         }
-        catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or IOException or OverflowException)
+        catch (Exception ex) when (ex is PdfVectorException and not Parsing.PdfDataNotLoadedException or InvalidDataException or IOException or OverflowException)
         {
             handle = null;
         }

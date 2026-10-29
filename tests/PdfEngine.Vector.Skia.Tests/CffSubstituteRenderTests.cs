@@ -1,8 +1,8 @@
 using PdfEngine.Vector.Create;
-using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.Web.Engine;
 using Xunit;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Skia.Tests;
 

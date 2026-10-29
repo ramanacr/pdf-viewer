@@ -225,7 +225,7 @@ public sealed class CreatePdfService
             var converted = await Task.Run(async () =>
             {
                 using var doc = await PdfVectorDocument.OpenAsync(pdf, cancellationToken: ct);
-                return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = PdfAFlavour.A2b });
+                return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = PdfAFlavor.A2b });
             }, ct);
             pdf = converted.Bytes;
             issues = converted.Report.Issues.Count;

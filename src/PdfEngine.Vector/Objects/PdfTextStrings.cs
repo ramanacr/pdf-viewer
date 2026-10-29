@@ -1,8 +1,7 @@
 using System.Globalization;
 using System.Text;
-using PdfEngine.Vector.Objects;
 
-namespace PdfEngine.Vector.Services;
+namespace PdfEngine.Vector.Objects;
 
 /// <summary>
 /// Text strings (ISO 32000-2 7.9.2.2): UTF-16BE or UTF-16LE with a byte order mark, UTF-8 with

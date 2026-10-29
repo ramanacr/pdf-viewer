@@ -8,26 +8,26 @@ namespace PdfEngine.Vector.PdfA;
 public enum PdfAConformance { B, U, A }
 
 /// <summary>A PDF/A part and level: PDF/A-1b, PDF/A-2b, PDF/A-2u, PDF/A-3b and so on.</summary>
-public sealed record PdfAFlavour(int Part, PdfAConformance Level)
+public sealed record PdfAFlavor(int Part, PdfAConformance Level)
 {
-    public static readonly PdfAFlavour A1b = new(1, PdfAConformance.B);
-    public static readonly PdfAFlavour A2b = new(2, PdfAConformance.B);
-    public static readonly PdfAFlavour A2u = new(2, PdfAConformance.U);
-    public static readonly PdfAFlavour A3b = new(3, PdfAConformance.B);
-    public static readonly PdfAFlavour A3u = new(3, PdfAConformance.U);
+    public static readonly PdfAFlavor A1b = new(1, PdfAConformance.B);
+    public static readonly PdfAFlavor A2b = new(2, PdfAConformance.B);
+    public static readonly PdfAFlavor A2u = new(2, PdfAConformance.U);
+    public static readonly PdfAFlavor A3b = new(3, PdfAConformance.B);
+    public static readonly PdfAFlavor A3u = new(3, PdfAConformance.U);
 
     public override string ToString() => $"PDF/A-{Part}{char.ToLowerInvariant(Level.ToString()[0])}";
 
-    public static PdfAFlavour? Parse(string? text)
+    public static PdfAFlavor? Parse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         var t = text.Trim().ToUpperInvariant().Replace("PDF/A-", string.Empty).Replace("PDFA", string.Empty).Replace("-", string.Empty);
         if (t.Length < 2 || !int.TryParse(t[..1], out int part) || part is < 1 or > 3) return null;
         return t[1] switch
         {
-            'B' => new PdfAFlavour(part, PdfAConformance.B),
-            'U' when part >= 2 => new PdfAFlavour(part, PdfAConformance.U),
-            'A' => new PdfAFlavour(part, PdfAConformance.A),
+            'B' => new PdfAFlavor(part, PdfAConformance.B),
+            'U' when part >= 2 => new PdfAFlavor(part, PdfAConformance.U),
+            'A' => new PdfAFlavor(part, PdfAConformance.A),
             _ => null,
         };
     }
@@ -42,9 +42,9 @@ public sealed record PdfAIssue(string Clause, int Test, string Message, string? 
 
 public sealed class PdfAReport
 {
-    public required PdfAFlavour Flavour { get; init; }
+    public required PdfAFlavor Flavor { get; init; }
     /// <summary>The conformance the document's metadata claims, or null.</summary>
-    public PdfAFlavour? Claimed { get; init; }
+    public PdfAFlavor? Claimed { get; init; }
     public IReadOnlyList<PdfAIssue> Issues { get; init; } = Array.Empty<PdfAIssue>();
     public bool IsCompliant => Issues.Count == 0;
 

@@ -479,7 +479,7 @@ public class EmbedRangeTests
     [Fact]
     public async Task RangedDocument_TooLarge_IsRefusedBeforeAnyRead()
     {
-        var reader = new MemoryRangeReader(new byte[2000]);
+        var reader = new PdfMemoryRangeReader(new byte[2000]);
         var ex = await Assert.ThrowsAsync<ViewerOpenException>(() => ViewerDocument.OpenRangedAsync(reader, options: new ViewerOptions { MaxFileBytes = 1000 }));
         Assert.Equal(ViewerOpenFailure.TooLarge, ex.Failure);
         Assert.Equal(0, reader.Requests);

@@ -264,7 +264,7 @@ internal static class PerfProfile
                         try { content = dec.DecodeStream(stream); } catch { continue; }
                         decodeMs += clock.Elapsed.TotalMilliseconds;
                         clock.Restart();
-                        var src = new PdfEngine.Vector.Parsing.MemoryByteSource(content);
+                        var src = new PdfEngine.Vector.Parsing.PdfMemoryByteSource(content);
                         var lexer = new PdfEngine.Vector.Parsing.PdfLexer(src);
                         while (true)
                         {

@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Objects;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Create;
 

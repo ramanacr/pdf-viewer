@@ -300,7 +300,7 @@ public class CreatePdfTests
         {
             Assert.Equal("Scans", PdfDocumentInfo.ReadProperties(doc).Title);
             Assert.Equal("Test", PdfDocumentInfo.ReadProperties(doc).Producer);
-            var result = PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = PdfAFlavour.A2b });
+            var result = PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = PdfAFlavor.A2b });
             Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
         }
     }

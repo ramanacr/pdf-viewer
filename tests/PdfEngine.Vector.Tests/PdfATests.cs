@@ -35,16 +35,16 @@ public class PdfATests
         return encryption != null ? b.Build(encryption) : b.Build();
     }
 
-    private static async Task<PdfAReport> Validate(byte[] pdf, PdfAFlavour? flavour = null)
+    private static async Task<PdfAReport> Validate(byte[] pdf, PdfAFlavor? flavour = null)
     {
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
         return PdfAValidator.Validate(doc, pdf, flavour);
     }
 
-    private static async Task<PdfAConversionResult> Convert(byte[] pdf, PdfAFlavour? flavour = null)
+    private static async Task<PdfAConversionResult> Convert(byte[] pdf, PdfAFlavor? flavour = null)
     {
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = flavour ?? PdfAFlavour.A2b });
+        return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = flavour ?? PdfAFlavor.A2b });
     }
 
     private static async Task<RenderedPage> Pdfium(byte[] pdf)
@@ -82,7 +82,7 @@ public class PdfATests
 
         // It claims what it is, and a second check agrees.
         var again = await Validate(result.Bytes);
-        Assert.Equal(PdfAFlavour.A2b, again.Claimed);
+        Assert.Equal(PdfAFlavor.A2b, again.Claimed);
         Assert.True(again.IsCompliant);
 
         // Same text, same page (the annotation now draws its note icon, as viewers drew it before).
@@ -127,11 +127,11 @@ public class PdfATests
         b.WithCatalog($"/Names << /EmbeddedFiles {names} 0 R >>");
         byte[] pdf = b.Build();
 
-        var a2 = await Convert(pdf, PdfAFlavour.A2b);
+        var a2 = await Convert(pdf, PdfAFlavor.A2b);
         Assert.True(a2.Report.IsCompliant, string.Join("\n", a2.Report.Issues));
         Assert.Contains(a2.Changes, c => c.Contains("Removed embedded files", StringComparison.Ordinal));
 
-        var a3 = await Convert(pdf, PdfAFlavour.A3b);
+        var a3 = await Convert(pdf, PdfAFlavor.A3b);
         Assert.True(a3.Report.IsCompliant, string.Join("\n", a3.Report.Issues));
         string text = Encoding.Latin1.GetString(a3.Bytes);
         Assert.Contains("/AFRelationship", text);

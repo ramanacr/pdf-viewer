@@ -281,8 +281,8 @@ public class CreatePdfViewerTests : IDisposable
 
         using var doc = Open(target);
         Assert.Contains("Recognized2", PdfTextExtractor.LoadPage(doc, 2).Text);
-        Assert.Equal(PdfAFlavour.A2b, PdfAValidator.ClaimedFlavour(doc));
-        Assert.True(PdfAValidator.Validate(doc, System.IO.File.ReadAllBytes(target), PdfAFlavour.A2b).IsCompliant);
+        Assert.Equal(PdfAFlavor.A2b, PdfAValidator.ClaimedFlavor(doc));
+        Assert.True(PdfAValidator.Validate(doc, System.IO.File.ReadAllBytes(target), PdfAFlavor.A2b).IsCompliant);
     }
 
     [Fact]

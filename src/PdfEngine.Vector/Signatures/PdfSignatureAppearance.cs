@@ -6,6 +6,7 @@ using System.Text;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Forms;
 using PdfEngine.Vector.Objects;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Signatures;
 
