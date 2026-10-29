@@ -614,7 +614,9 @@ internal sealed class BlockLayout
         if (!rtl && !word.Any(IsIndic)) return null;
         var style = template.Style;
         bool bold = style.Font?.IsBold ?? false, italic = style.Font?.IsItalic ?? false;
-        var builder = _session.Chain(style.Font, bold, italic).FirstOrDefault(b => word.All(c => char.IsSurrogate(c) || char.GetUnicodeCategory(c) == UnicodeCategory.Format || b.Font.GlyphFor(c) > 0));
+        // Only faces whose character maps have the word's characters are loaded.
+        int[] needed = word.Where(c => !char.IsSurrogate(c) && char.GetUnicodeCategory(c) != UnicodeCategory.Format).Select(c => (int)c).Distinct().ToArray();
+        var builder = _session.Chain(style.Font, bold, italic, characters: needed).FirstOrDefault(b => word.All(c => char.IsSurrogate(c) || char.GetUnicodeCategory(c) == UnicodeCategory.Format || b.Font.GlyphFor(c) > 0));
         if (builder == null) return null;
         double userScale = Math.Sqrt(template.Matrix.A * template.Matrix.A + template.Matrix.B * template.Matrix.B);
         var shapedStyle = style with { FontResource = builder.ResourceName, Font = null, WordSpacing = 0 };

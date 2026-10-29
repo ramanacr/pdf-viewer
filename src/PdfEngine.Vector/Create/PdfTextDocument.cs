@@ -77,8 +77,7 @@ public static class PdfTextDocument
 
         using var writer = new PdfDocumentWriter(output);
         var fonts = new List<(EmbeddedFontBuilder Builder, int Number)>();
-        var fallbackFonts = new List<TrueTypeFontFile>();
-        IEnumerator<SystemFontFace>? fallbackFaces = null;
+        List<SystemFontFace>? fallbackFaces = null;
         var fontOf = new Dictionary<int, (int Font, int Gid)>();
 
         int FontIndex(TrueTypeFontFile font)
@@ -95,16 +94,14 @@ public static class PdfTextDocument
             (int, int) result = (FontIndex(primary), gid);
             if (gid == 0)
             {
-                // The loaded fallbacks first, then the next ones, as far as needed.
-                var found = fallbackFonts.Select(f => (Font: f, Gid: f.GlyphFor(codePoint))).FirstOrDefault(f => f.Gid != 0);
-                fallbackFaces ??= catalog.Fallbacks(false, false).GetEnumerator();
-                while (found.Font == null && fallbackFaces.MoveNext())
-                {
-                    if (catalog.Load(fallbackFaces.Current) is not { } next || fallbackFonts.Contains(next)) continue;
-                    fallbackFonts.Add(next);
-                    if (next.GlyphFor(codePoint) is int g and not 0) found = (next, g);
-                }
-                if (found.Font != null) result = (FontIndex(found.Font), found.Gid);
+                // The fallbacks in order; a face whose character map lacks the character is not loaded.
+                fallbackFaces ??= catalog.Fallbacks(false, false).ToList();
+                foreach (var face in fallbackFaces)
+                    if (catalog.MayHaveAsFallback(face, codePoint) && catalog.Load(face) is { } next && next.GlyphFor(codePoint) is int g and not 0)
+                    {
+                        result = (FontIndex(next), g);
+                        break;
+                    }
             }
             fontOf[codePoint] = result;
             return result;

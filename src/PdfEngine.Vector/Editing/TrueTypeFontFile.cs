@@ -302,9 +302,10 @@ internal sealed class TrueTypeFontFile
     /// <summary>
     /// <see cref="ReadNames(byte[], int)"/> reading only the table directory and the name and OS/2
     /// tables, so a catalogue of every installed font does not read hundreds of megabytes of outlines.
-    /// <paramref name="openTypeCff"/> also names fonts with CFF outlines ('OTTO', a CFF or CFF2
-    /// table), for a renderer that loads them itself (Skia) and for new text: <see cref="TryLoad"/>
-    /// with <c>openTypeCff</c> reads 'CFF ' outlines (not CFF2).
+    /// <paramref name="openTypeCff"/> also names fonts with CFF outlines ('OTTO' with a 'CFF '
+    /// table), for the renderers and for new text (<see cref="TryLoad"/> with <c>openTypeCff</c>).
+    /// A font with CFF2 (variable) outlines only is not named: new text cannot load it, so matching
+    /// must not choose it over a static face.
     /// </summary>
     internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily, bool Cff)? ReadNames(Stream stream, int index, bool openTypeCff = false)
     {
@@ -317,7 +318,7 @@ internal sealed class TrueTypeFontFile
             foreach (var (tag, offset, length) in directory)
             {
                 // Only that outlines exist matters for the names: CFF outlines count as glyf here.
-                if (tag == "glyf" || cff && tag is "CFF " or "CFF2") tables["glyf"] = Array.Empty<byte>();
+                if (tag == "glyf" || cff && tag == "CFF ") tables["glyf"] = Array.Empty<byte>();
                 else if (tag is "name" or "OS/2" && length <= 1024 * 1024 && ReadAt(stream, offset, length) is { } table) tables[tag] = table;
             }
             return NamesFromTables(tables, cff);

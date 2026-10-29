@@ -231,7 +231,7 @@ internal sealed class WpfFontCache : IDisposable
         {
             if (typeface.FontUri is { IsFile: true } uri && FaceIndex(uri.LocalPath, typeface) is int index)
             {
-                result = PdfEngine.Vector.Editing.TrueTypeFontFile.TryLoad(File.ReadAllBytes(uri.LocalPath), index);
+                result = PdfEngine.Vector.Editing.TrueTypeFontFile.TryLoad(File.ReadAllBytes(uri.LocalPath), index, openTypeCff: true);
                 if (result != null && result.GlyphCount != typeface.GlyphCount) result = null;
             }
         }

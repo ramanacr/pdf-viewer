@@ -38,6 +38,15 @@ internal static class PdfPlatform
         : IsAndroid ? AndroidFontDirectory
         : Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
 
+    /// <summary>
+    /// The folder of the fonts the current user installed for themselves on Windows 10 1809 and later
+    /// (<c>%LOCALAPPDATA%\Microsoft\Windows\Fonts</c>); null on other platforms and where there are no installed fonts.
+    /// </summary>
+    public static string? UserFontDirectory =>
+        !HasInstalledFonts || IsAndroid || !OperatingSystem.IsWindows() ? null
+        : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) is { Length: > 0 } local
+            ? System.IO.Path.Combine(local, "Microsoft", "Windows", "Fonts") : null;
+
     private static bool IsWebAssembly => OperatingSystem.IsBrowser() || OperatingSystem.IsWasi();
 
     /// <summary>Tests: behave as on a platform with (or without) threads and installed fonts, in the calling flow only.</summary>

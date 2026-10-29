@@ -45,7 +45,11 @@ internal static class CffOpenTypeFont
 
     /// <summary>The OpenType font (1000 units per em).</summary>
     /// <param name="cff">Another CFF program with five glyphs in place of <see cref="Cff"/>.</param>
-    public static byte[] Font(byte[]? cff = null)
+    /// <param name="family">Another family name in place of <see cref="Family"/> (a font the user installed).</param>
+    /// <param name="postScriptName">Another PostScript name in place of <see cref="PostScriptName"/>.</param>
+    /// <param name="map">Another character map (code, glyph; codes ascending) in place of space, A and 中.</param>
+    /// <param name="symbol">The character map is a symbol one (3, 0) instead of Unicode (3, 1).</param>
+    public static byte[] Font(byte[]? cff = null, string family = Family, string postScriptName = PostScriptName, (int Code, int Gid)[]? map = null, bool symbol = false)
     {
         int n = Advances.Length;
         var hmtx = new byte[n * 4];
@@ -57,9 +61,9 @@ internal static class CffOpenTypeFont
             ["hhea"] = Sfnt.Hhea(900, -200, 1000, 1000, n),
             ["hmtx"] = hmtx,
             ["maxp"] = Sfnt.MaxpCff(n),
-            ["cmap"] = Cmap((0x20, 3), (0x41, 1), (0x4E2D, 2)),
+            ["cmap"] = Cmap(symbol, map ?? new[] { (0x20, 3), (0x41, 1), (0x4E2D, 2) }),
             ["OS/2"] = Sfnt.Os2(1000, 900, -200, false, false, 600),
-            ["name"] = Sfnt.Name(Family, PostScriptName, false, false),
+            ["name"] = Sfnt.Name(family, postScriptName, false, false),
             ["post"] = Sfnt.Post(false),
         };
         return Sfnt.Write(Sfnt.OpenTypeCffVersion, tables);
@@ -86,14 +90,14 @@ internal static class CffOpenTypeFont
         return data;
     }
 
-    /// <summary>A cmap with one Windows Unicode BMP (3, 1) format 4 subtable.</summary>
-    private static byte[] Cmap(params (int Code, int Gid)[] map)
+    /// <summary>A cmap with one Windows Unicode BMP (3, 1), or symbol (3, 0), format 4 subtable.</summary>
+    private static byte[] Cmap(bool symbol, (int Code, int Gid)[] map)
     {
         var segments = new List<(int Code, int Gid)>(map) { (0xFFFF, 0) };
         int count = segments.Count;
         using var s = new MemoryStream();
         BigEndian.W16(s, 0); BigEndian.W16(s, 1);            // version, one subtable
-        BigEndian.W16(s, 3); BigEndian.W16(s, 1); BigEndian.W32(s, 12);
+        BigEndian.W16(s, 3); BigEndian.W16(s, symbol ? 0 : 1); BigEndian.W32(s, 12);
         BigEndian.W16(s, 4); BigEndian.W16(s, 16 + count * 8); BigEndian.W16(s, 0); // format, length, language
         int search = 1, selector = 0;
         while (search * 2 <= count) { search *= 2; selector++; }

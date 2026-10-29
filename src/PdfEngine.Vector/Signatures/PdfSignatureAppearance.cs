@@ -262,40 +262,46 @@ internal static class PdfSignatureAppearanceBuilder
     /// </summary>
     private sealed class EmbeddedFace : TextFace
     {
+        private readonly SystemFontCatalog _catalog;
+        private readonly EmbeddedFontBuilder _primary;
+        /// <summary>The fallback faces in order, each with its font once loaded (null: not loaded yet or not loadable).</summary>
+        private readonly List<(SystemFontFace Face, EmbeddedFontBuilder? Builder, bool Tried)> _fallbacks;
+        /// <summary>The primary font, then the loaded fallbacks in the order they were loaded (their resource names).</summary>
         private readonly List<EmbeddedFontBuilder> _chain;
-        private readonly IEnumerator<EmbeddedFontBuilder> _more;
 
-        private EmbeddedFace(EmbeddedFontBuilder primary, IEnumerable<EmbeddedFontBuilder> fallbacks)
+        private EmbeddedFace(SystemFontCatalog catalog, EmbeddedFontBuilder primary, IEnumerable<SystemFontFace> fallbacks)
         {
+            _catalog = catalog;
+            _primary = primary;
             _chain = new List<EmbeddedFontBuilder> { primary };
-            _more = fallbacks.GetEnumerator();
+            _fallbacks = fallbacks.Select(f => (f, (EmbeddedFontBuilder?)null, false)).ToList();
         }
 
         public static EmbeddedFace? TryCreate(SystemFontCatalog catalog, string family)
         {
             var face = catalog.FindFamily(family, false, false) ?? catalog.Match(family, false, false, false, false);
             if (face == null || catalog.Load(face) is not { } file) return null;
-            int n = 1;
-            var primary = new EmbeddedFontBuilder(file, "SigF" + n++);
-            IEnumerable<EmbeddedFontBuilder> Fallbacks()
-            {
-                foreach (var f in catalog.Fallbacks(false, false))
-                    if (f.Path != face.Path || f.Index != face.Index)
-                        if (catalog.Load(f) is { } ff) yield return new EmbeddedFontBuilder(ff, "SigF" + n++);
-            }
-            return new EmbeddedFace(primary, Fallbacks());
+            var primary = new EmbeddedFontBuilder(file, "SigF1");
+            return new EmbeddedFace(catalog, primary, catalog.Fallbacks(false, false).Where(f => f.Path != face.Path || f.Index != face.Index));
         }
 
         /// <summary>The font with a glyph for the character, and that glyph; null when none has it.</summary>
         private (EmbeddedFontBuilder Font, int Gid)? Find(string element)
         {
             int cp = char.ConvertToUtf32(element, 0);
-            foreach (var b in _chain)
-                if (b.Font.GlyphFor(cp) is > 0 and var gid) return (b, gid);
-            while (_more.MoveNext())
+            if (_primary.Font.GlyphFor(cp) is > 0 and var g) return (_primary, g);
+            // The fallbacks in order; a face whose character map lacks the character is not loaded.
+            for (int i = 0; i < _fallbacks.Count; i++)
             {
-                _chain.Add(_more.Current);
-                if (_more.Current.Font.GlyphFor(cp) is > 0 and var gid) return (_more.Current, gid);
+                var (face, builder, tried) = _fallbacks[i];
+                if (!tried)
+                {
+                    if (!_catalog.MayHaveAsFallback(face, cp)) continue;
+                    if (_catalog.Load(face) is { } file && !_chain.Exists(b => ReferenceEquals(b.Font, file)))
+                        _chain.Add(builder = new EmbeddedFontBuilder(file, "SigF" + (_chain.Count + 1)));
+                    _fallbacks[i] = (face, builder, true);
+                }
+                if (builder != null && builder.Font.GlyphFor(cp) is > 0 and var gid) return (builder, gid);
             }
             return null;
         }
