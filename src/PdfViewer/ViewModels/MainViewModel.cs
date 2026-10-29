@@ -1788,6 +1788,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (!Permit(DocumentPermissions.CanAnnotate, "adding comments")) return;
         if (Enum.TryParse<AnnotationType>(toolName, true, out var tool))
         {
+            if (!CanUseShapeTool(tool)) return;
             if (ActiveAnnotationTool == tool)
                 ActiveAnnotationTool = null; // Toggle off
             else

@@ -246,6 +246,14 @@
             </MenuItem>
 
             <MenuItem Header="_Comment">
+                <MenuItem Header="_Draw" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Shape}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
+                    <MenuItem Header="_Rectangle" Command="{Binding ToggleAnnotationToolCommand}" CommandParameter="Rectangle" IsCheckable="True" IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Rectangle, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Shape}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Ellipse" Command="{Binding ToggleAnnotationToolCommand}" CommandParameter="Ellipse" IsCheckable="True" IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Ellipse, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Shape}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Line" Command="{Binding ToggleAnnotationToolCommand}" CommandParameter="Line" IsCheckable="True" IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Line, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Line}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Arrow" Command="{Binding ToggleAnnotationToolCommand}" CommandParameter="Arrow" IsCheckable="True" IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Arrow, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Arrow}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Polygon" Command="{Binding ToggleAnnotationToolCommand}" CommandParameter="Polygon" IsCheckable="True" IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Polygon, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Polygon}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                    <MenuItem Header="_Connected Lines" Command="{Binding ToggleAnnotationToolCommand}" CommandParameter="PolyLine" IsCheckable="True" IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=PolyLine, Mode=OneWay}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.PolyLine}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                </MenuItem>
                 <MenuItem Header="_Stamp" IsEnabled="{Binding IsDocumentLoaded}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                     <MenuItem Header="_Dynamic (name, date and time)"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                         <MenuItem Header="_Approved" Command="{Binding ChooseStampCommand}" CommandParameter="D:Approved"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
@@ -706,6 +714,42 @@
                               IsEnabled="{Binding IsDocumentLoaded}"
                               ToolTip="Rectangle Shape Tool">
                     <TextBlock Text="{x:Static themes:IconGlyphs.Shape}" Style="{StaticResource ToolbarGlyph}" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Line, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Line"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Line Tool (drag)">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Line}" Style="{StaticResource ToolbarGlyph}" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Arrow, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Arrow"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Arrow Tool (drag)">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Arrow}" Style="{StaticResource ToolbarGlyph}" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=Polygon, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="Polygon"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Polygon Tool (click each point, double-click or Enter to finish)">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.Polygon}" Style="{StaticResource ToolbarGlyph}" />
+                </ToggleButton>
+
+                <ToggleButton Style="{StaticResource ToolbarToggleButton}"
+                              IsChecked="{Binding ActiveAnnotationTool, Converter={StaticResource EnumToBool}, ConverterParameter=PolyLine, Mode=OneWay}"
+                              Command="{Binding ToggleAnnotationToolCommand}"
+                              CommandParameter="PolyLine"
+                              IsEnabled="{Binding IsDocumentLoaded}"
+                              ToolTip="Connected Lines Tool (click each point, double-click or Enter to finish)">
+                    <TextBlock Text="{x:Static themes:IconGlyphs.PolyLine}" Style="{StaticResource ToolbarGlyph}" />
                 </ToggleButton>
 
                 <!-- Annotation Color Selector ComboBox with Color Swatches -->
@@ -1678,6 +1722,28 @@
                                                                 </Grid>
                                                             </Grid>
 
+                                                            <!-- Line, arrow, polygon and connected lines: drawn from their points (one read from the file is drawn by the page) -->
+                                                            <Grid Visibility="{Binding IsVertexShape, Converter={StaticResource BoolToVis}}">
+                                                                <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      StrokeThickness="{Binding StrokeThickness}"
+                                                                      Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                      Opacity="{Binding Opacity}"
+                                                                      Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Path.Data>
+                                                                        <MultiBinding Converter="{StaticResource ShapeGeometryConverter}">
+                                                                            <Binding />
+                                                                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                            <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                            <Binding Path="Vertices" />
+                                                                            <Binding Path="StrokeThickness" />
+                                                                            <Binding Path="Width" />
+                                                                            <Binding Path="Height" />
+                                                                        </MultiBinding>
+                                                                    </Path.Data>
+                                                                </Path>
+                                                            </Grid>
+
                                                             <!-- Stamp: drawn by the engine as it will be in the document -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Stamp}">
                                                                 <Image Source="{Binding StampPreview}" Stretch="Fill"
@@ -2023,6 +2089,28 @@
                                                             <TextBlock Text="{Binding Contents}" FontSize="10" Foreground="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" />
                                                         </Border>
                                                     </Grid>
+                                                </Grid>
+
+                                                <!-- Line, arrow, polygon and connected lines: drawn from their points (one read from the file is drawn by the page) -->
+                                                <Grid Visibility="{Binding IsVertexShape, Converter={StaticResource BoolToVis}}">
+                                                    <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          StrokeThickness="{Binding StrokeThickness}"
+                                                          Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                          Opacity="{Binding Opacity}"
+                                                          Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Path.Data>
+                                                            <MultiBinding Converter="{StaticResource ShapeGeometryConverter}">
+                                                                <Binding />
+                                                                <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Grid}" />
+                                                                <Binding Path="Vertices" />
+                                                                <Binding Path="StrokeThickness" />
+                                                                <Binding Path="Width" />
+                                                                <Binding Path="Height" />
+                                                            </MultiBinding>
+                                                        </Path.Data>
+                                                    </Path>
                                                 </Grid>
 
                                                 <!-- Stamp: drawn by the engine as it will be in the document -->

@@ -224,3 +224,19 @@ public class InkStrokesConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         throw new NotImplementedException();
 }
+
+/// <summary>
+/// A line, arrow, polygon or connected lines drawn over its box: values are the annotation and
+/// the box's drawn width and height (further values, such as its points and line width, only make
+/// the binding update when they change).
+/// </summary>
+public class ShapeGeometryConverter : IMultiValueConverter
+{
+    public object? Convert(object[] values, Type targetType, object parameter, CultureInfo culture) =>
+        values.Length >= 3 && values[0] is PdfViewer.Models.AnnotationModel a && values[1] is double w && values[2] is double h
+            ? a.ShapeGeometry(w, h)
+            : null;
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotImplementedException();
+}

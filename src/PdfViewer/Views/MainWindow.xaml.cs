@@ -202,6 +202,16 @@ public partial class MainWindow : Window
                      e.PropertyName == nameof(MainViewModel.IsPanningEnabled))
             {
                 ResetPageCanvasCursors();
+                RefreshShapePreview();
+            }
+            else if (e.PropertyName == nameof(MainViewModel.ShapePreviewPoints))
+            {
+                RefreshShapePreview();
+            }
+            else if (e.PropertyName == nameof(MainViewModel.ZoomLevel) && document.IsDrawingShapePoints)
+            {
+                // The polygon being drawn follows the new page size once the pages are laid out again.
+                Dispatcher.BeginInvoke(RefreshShapePreview, System.Windows.Threading.DispatcherPriority.Loaded);
             }
             else if (e.PropertyName is nameof(MainViewModel.ActiveMeasureTool) or nameof(MainViewModel.MeasurePreviewPoints))
             {
@@ -589,6 +599,10 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
 
+            case Key.Escape or Key.Enter or Key.Back when Keyboard.Modifiers == ModifierKeys.None && TryShapeKey(e.Key):
+                e.Handled = true;
+                break;
+
             case Key.Escape when _vm.IsMeasuring:
                 if (_vm.MeasurePreviewPoints.Count > 0) _vm.CancelMeasurement();
                 else { _vm.ActiveMeasureTool = null; _vm.StatusText = "Measuring stopped."; }
@@ -870,6 +884,7 @@ public partial class MainWindow : Window
     private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+        if (_vm.IsDrawingShapePoints) RefreshShapePreview(); // its page may have a new canvas
         if (e.ExtentWidthChange != 0 || e.ExtentHeightChange != 0)
             PrepareDetailTiles();
         ScheduleDetailTiles();
@@ -1259,6 +1274,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Lines and arrows are dragged; polygons and connected lines get a point per click.
+        if (TryStartShape(canvas, page, e)) return;
+
         // Mode 1: Active Annotation Tool is drawing
         if (_vm.ActiveAnnotationTool != null)
         {
@@ -1528,6 +1546,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // A line follows the pointer; a polygon's rubber band too.
+        if (TryMoveShape(canvas, page, e)) return;
+
         // 1. Updating annotation drawing preview
         if (_isDrawingAnnotation)
         {
@@ -1686,6 +1707,9 @@ public partial class MainWindow : Window
             _ = _vm.PlaceSignatureAsync(new SignaturePlacement(page.PageNumber, bounds));
             return;
         }
+
+        // A line or arrow drag ends: it is added.
+        if (TryFinishLine(canvas, page, e)) return;
 
         // 1. Finalizing annotation creation
         if (_isDrawingAnnotation)

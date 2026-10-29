@@ -89,13 +89,27 @@ For the browser demo and the Android proof of concept, see their own READMEs
 
 ## Comments, measuring and stamps
 
-- **Annotations:** highlight, underline, strikethrough, note, free text, rectangle, ellipse and
-  freehand ink. A highlight from a selection covers each selected line (one quad per line).
+- **Annotations:** highlight, underline, strikethrough, note, free text, rectangle, ellipse,
+  line, arrow, polygon, connected lines and freehand ink. A highlight from a selection covers each
+  selected line (one quad per line).
+- **Lines and polygons** (toolbar, or *Comment → Draw*):
+  - Line and arrow: drag from where the line starts to where it ends. An arrow has an open arrow
+    head at its end. `Esc` during the drag drops the line.
+  - Polygon and connected lines: click each point. Double-click or press `Enter` to finish.
+    `Backspace` removes the last point. `Esc` drops the shape (press it again to stop the tool).
+    A polygon needs three points. Connected lines need two.
+  - They use the colour and line width chosen in the toolbar. You can select, move, nudge and
+    delete them, and undo each change. You cannot resize them or move single points.
+  - They are saved as the annotations other readers expect: Line (with `/L`, and `/LE` for the
+    arrow head), Polygon and PolyLine (with `/Vertices`), each with an appearance stream. They have
+    no `/Measure`, so they are not measurements. When you open the file again, they come back as
+    the same tools. *Save as XFDF* exports them too.
 - **Save** (`Ctrl+S`) writes the annotations into the document, editable. The file is written to
   a temporary file first and then replaces the original, so a failure leaves your file as it was.
   Other ways to save: flattened into the page, or exported as XFDF.
 - **Edit placed annotations.** Click an annotation to select it; double-click or `Enter` opens its
   comment. Drag it to move it, and drag a handle to resize it (`Shift` keeps the proportions).
+  Lines, arrows, polygons and connected lines move as a whole; they have no resize handles.
   Turn a stamp with its rotation handle (`Shift` snaps to 15°). Drag the points of a measurement;
   the result is measured again. Arrow keys nudge by 1 pt (`Shift`: 10 pt), `Delete` removes, `Esc`
   lets go, `Tab` goes to the next annotation. Every change is one undo step.
@@ -328,6 +342,9 @@ encryption and the engine status.
 | `Home` / `End` | Document open | First / last page |
 | `Enter` or double-click | Measuring | Finish a perimeter or area |
 | `Backspace` | Measuring | Remove the last point |
+| `Enter` or double-click | Drawing a polygon or connected lines | Finish the shape |
+| `Backspace` | Drawing a polygon or connected lines | Remove the last point |
+| `Esc` | Drawing a line, polygon or connected lines | Drop the shape (with no polygon started: stop the tool) |
 | `Shift` (held) | Measuring | Place a point without snapping |
 | `Esc` | Measuring or placing a stamp | Drop the measurement (again: stop measuring) / cancel the stamp |
 | Click / `Tab` / `Shift+Tab` | Page | Select an annotation / the next / the previous |

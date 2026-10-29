@@ -65,6 +65,7 @@ public partial class MainViewModel
 
     partial void OnActiveAnnotationToolChanged(AnnotationType? value)
     {
+        OnShapeToolChanged(value);
         if (value != null)
         {
             IsPlacingSignature = false; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null;
