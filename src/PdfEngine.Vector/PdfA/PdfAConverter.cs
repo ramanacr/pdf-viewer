@@ -1027,7 +1027,8 @@ public static class PdfAConverter
             bool symbol = standard == "Symbol";
             if (standard == "ZapfDingbats") return null; // no installed equivalent; reported by the validation
             var face = symbol ? _fonts.FindFamily("Symbol", false, false) : _fonts.Match(baseFont, pdfFont.IsBold, pdfFont.IsItalic, pdfFont.IsSerif, pdfFont.IsFixedPitch);
-            if (face == null || _fonts.Load(face) is not { } file) return null;
+            // A simple TrueType font is written here; a face with CFF outlines cannot be that.
+            if (face == null || _fonts.Load(face) is not { IsCff: false } file) return null;
 
             int first = (int)(font.GetInteger("FirstChar") ?? 32), last = (int)(font.GetInteger("LastChar") ?? 255);
             first = Math.Clamp(first, 0, 255);

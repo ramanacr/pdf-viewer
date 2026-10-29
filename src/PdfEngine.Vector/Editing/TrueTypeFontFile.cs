@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using PdfEngine.Vector.Fonts;
 using PdfEngine.Vector.Fonts.Programs;
@@ -11,7 +13,10 @@ namespace PdfEngine.Vector.Editing;
 /// <summary>
 /// A TrueType (glyf-outline) font read from a file or collection: its metrics, its character map,
 /// and subsetting to the glyphs a document uses. Subsets keep glyph ids (unused glyphs become
-/// empty), so a Type0 font can use CIDToGIDMap /Identity with CID = glyph id.
+/// empty), so a Type0 font can use CIDToGIDMap /Identity with CID = glyph id. Loaded with
+/// <c>openTypeCff</c>, an OpenType font with CFF outlines ('OTTO', a 'CFF ' table) too: the same
+/// metrics, character map and layout tables, and <see cref="Subset"/> gives a CID-keyed CFF whose
+/// CIDs are the glyph ids (<see cref="IsCff"/>).
 /// </summary>
 internal sealed class TrueTypeFontFile
 {
@@ -19,6 +24,13 @@ internal sealed class TrueTypeFontFile
     private readonly TrueTypeCmap? _cmap;
     private readonly int[] _locaOffsets;
     private readonly int[] _advances;
+    private readonly CffSubsetter? _cff;
+
+    /// <summary>A table of the font as read (shared with the other faces of a collection that have the same one); null when it has none.</summary>
+    internal byte[]? Table(string tag) => _tables.TryGetValue(tag, out var table) ? table : null;
+
+    /// <summary>The outlines are CFF: <see cref="Subset"/> gives a bare CID-keyed CFF program (FontFile3 /CIDFontType0C), not an sfnt.</summary>
+    public bool IsCff => _cff != null;
 
     public string FamilyName { get; }
     public string SubfamilyName { get; }
@@ -38,15 +50,17 @@ internal sealed class TrueTypeFontFile
     /// <summary>The font's licence allows embedding (OS/2 fsType is not "restricted licence").</summary>
     public bool EmbeddingAllowed { get; }
 
-    private TrueTypeFontFile(Dictionary<string, byte[]> tables)
+    private TrueTypeFontFile(Dictionary<string, byte[]> tables, CffSubsetter? cff = null)
     {
         _tables = tables;
+        _cff = cff;
         var head = tables["head"];
         UnitsPerEm = Math.Max(16, BigEndian.U16(head, 18));
         BBox = (BigEndian.S16(head, 36), BigEndian.S16(head, 38), BigEndian.S16(head, 40), BigEndian.S16(head, 42));
         int macStyle = BigEndian.U16(head, 44);
         bool longLoca = BigEndian.S16(head, 50) == 1;
         GlyphCount = BigEndian.U16(tables["maxp"], 4);
+        if (cff != null) GlyphCount = Math.Min(GlyphCount, cff.GlyphCount);
 
         var hhea = tables["hhea"];
         int ascender = BigEndian.S16(hhea, 4), descender = BigEndian.S16(hhea, 6);
@@ -60,10 +74,13 @@ internal sealed class TrueTypeFontFile
             _advances[g] = last;
         }
 
-        var loca = tables["loca"];
         _locaOffsets = new int[GlyphCount + 1];
-        for (int g = 0; g <= GlyphCount; g++)
-            _locaOffsets[g] = longLoca ? (int)Math.Min(BigEndian.U32(loca, g * 4), int.MaxValue) : BigEndian.U16(loca, g * 2) * 2;
+        if (cff == null)
+        {
+            var loca = tables["loca"];
+            for (int g = 0; g <= GlyphCount; g++)
+                _locaOffsets[g] = longLoca ? (int)Math.Min(BigEndian.U32(loca, g * 4), int.MaxValue) : BigEndian.U16(loca, g * 2) * 2;
+        }
 
         int weight = 400, capHeight = 0, fsType = 0, fsSelection = 0, panoseFamily = 0, panoseSerif = 0;
         if (tables.TryGetValue("OS/2", out var os2) && os2.Length >= 78)
@@ -98,21 +115,27 @@ internal sealed class TrueTypeFontFile
         SubfamilyName = NameString(tables, 17) ?? NameString(tables, 2) ?? "Regular";
         PostScriptName = Sanitize(NameString(tables, 6) ?? (FamilyName + "-" + SubfamilyName));
 
-        var sfnt = Sfnt.Write(Sfnt.TrueTypeVersion, new Dictionary<string, byte[]> { ["cmap"] = tables.TryGetValue("cmap", out var c) ? c : Array.Empty<byte>(), ["head"] = (byte[])head.Clone() });
-        _cmap = TrueTypeCmap.TryParse(sfnt);
+        _cmap = CharacterMap(tables);
     }
 
-    /// <summary>Reads font <paramref name="index"/> of a TrueType file or collection; null when it is not a glyf-outline font.</summary>
-    public static TrueTypeFontFile? TryLoad(byte[] data, int index = 0)
+    private static TrueTypeCmap? CharacterMap(Dictionary<string, byte[]> tables)
+    {
+        if (!tables.TryGetValue("head", out var head)) return null;
+        var sfnt = Sfnt.Write(Sfnt.TrueTypeVersion, new Dictionary<string, byte[]> { ["cmap"] = tables.TryGetValue("cmap", out var c) ? c : Array.Empty<byte>(), ["head"] = (byte[])head.Clone() });
+        return TrueTypeCmap.TryParse(sfnt);
+    }
+
+    /// <summary>
+    /// Reads font <paramref name="index"/> of a TrueType file or collection; null when it is not a
+    /// glyf-outline font. With <paramref name="openTypeCff"/>, a font with CFF outlines (a 'CFF '
+    /// table, also in a collection) is read too; CFF2 (variable) outlines are not.
+    /// </summary>
+    public static TrueTypeFontFile? TryLoad(byte[] data, int index = 0, bool openTypeCff = false)
     {
         try
         {
-            var tables = ReadTables(data, index);
-            if (tables == null) return null;
-            foreach (var required in new[] { "head", "hhea", "hmtx", "maxp", "loca", "glyf", "cmap" })
-                if (!tables.ContainsKey(required)) return null;
-            if (tables["head"].Length < 54 || tables["hhea"].Length < 36 || tables["maxp"].Length < 6) return null;
-            return new TrueTypeFontFile(tables);
+            var tables = ReadTables(data, index, openTypeCff);
+            return tables == null ? null : FromTables(tables, openTypeCff);
         }
         catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException)
         {
@@ -120,11 +143,115 @@ internal sealed class TrueTypeFontFile
         }
     }
 
+    /// <summary>
+    /// <see cref="TryLoad(byte[], int, bool)"/> reading from <paramref name="stream"/> only the table
+    /// directory and then the tables a font for new text uses (not bitmap or colour glyphs), and
+    /// nothing more when the outlines are missing. <paramref name="shared"/> holds the tables read
+    /// from one file by offset and length, so the faces of a collection that share a table (the CFF
+    /// table of Noto Sans CJK's SC, TC, JP and KR faces) share one copy of it.
+    /// </summary>
+    internal static TrueTypeFontFile? TryLoad(Stream stream, int index, bool openTypeCff, ConcurrentDictionary<(long Offset, int Length), byte[]>? shared = null)
+    {
+        try
+        {
+            if (ReadDirectory(stream, index, openTypeCff) is not { } directory) return null;
+            if (!HasOutlineTables(directory.Select(t => t.Tag).ToHashSet(StringComparer.Ordinal), openTypeCff)) return null;
+            var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var (tag, offset, length) in directory)
+                if (!UnusedTables.Contains(tag)) tables[tag] = ReadShared(stream, offset, length, shared);
+            return FromTables(tables, openTypeCff);
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException or IOException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The character map of font <paramref name="index"/>, read alone (with <paramref name="shared"/>
+    /// as in <see cref="TryLoad(Stream, int, bool, ConcurrentDictionary{ValueTuple{long, int}, byte[]})"/>):
+    /// enough to tell that a face lacks a character without loading it. Null when it cannot be read.
+    /// </summary>
+    internal static TrueTypeCmap? ReadCharacterMap(Stream stream, int index, bool openTypeCff, ConcurrentDictionary<(long Offset, int Length), byte[]>? shared = null)
+    {
+        try
+        {
+            if (ReadDirectory(stream, index, openTypeCff) is not { } directory) return null;
+            var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var (tag, offset, length) in directory)
+                if (tag is "cmap" or "head") tables[tag] = ReadShared(stream, offset, length, shared);
+            return CharacterMap(tables);
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException or IOException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Whether <see cref="GlyphFor"/> finds a glyph for <paramref name="codePoint"/> in <paramref name="cmap"/>.</summary>
+    internal static bool Maps(TrueTypeCmap cmap, int codePoint) => Lookup(cmap, codePoint) != 0;
+
+    /// <summary>Tables a font for new text never reads: bitmap and colour glyphs, signatures, variable CFF.</summary>
+    private static readonly HashSet<string> UnusedTables = new(StringComparer.Ordinal) { "CBDT", "CBLC", "sbix", "SVG ", "EBDT", "EBLC", "EBSC", "COLR", "CPAL", "DSIG", "CFF2" };
+
+    private static byte[] ReadShared(Stream stream, long offset, int length, ConcurrentDictionary<(long Offset, int Length), byte[]>? shared) =>
+        shared != null
+            ? shared.GetOrAdd((offset, length), key => ReadAt(stream, key.Offset, key.Length) ?? throw new InvalidDataException("font table beyond the file"))
+            : ReadAt(stream, offset, length) ?? throw new InvalidDataException("font table beyond the file");
+
+    private static bool IsCffOutlines(ICollection<string> tags, bool openTypeCff) => openTypeCff && !tags.Contains("glyf") && tags.Contains("CFF ");
+
+    private static bool HasOutlineTables(ICollection<string> tags, bool openTypeCff) =>
+        (IsCffOutlines(tags, openTypeCff) ? new[] { "head", "hhea", "hmtx", "maxp", "cmap", "CFF " } : new[] { "head", "hhea", "hmtx", "maxp", "loca", "glyf", "cmap" }).All(tags.Contains);
+
+    /// <summary>The parsed CFF program of a table, one per table array (faces sharing a table share it).</summary>
+    private static readonly ConditionalWeakTable<byte[], StrongBox<CffSubsetter?>> CffPrograms = new();
+
+    private static TrueTypeFontFile? FromTables(Dictionary<string, byte[]> tables, bool openTypeCff)
+    {
+        if (!HasOutlineTables(tables.Keys, openTypeCff)) return null;
+        if (tables["head"].Length < 54 || tables["hhea"].Length < 36 || tables["maxp"].Length < 6) return null;
+        if (!IsCffOutlines(tables.Keys, openTypeCff)) return new TrueTypeFontFile(tables);
+        var program = CffPrograms.GetValue(tables["CFF "], table => new StrongBox<CffSubsetter?>(CffSubsetter.TryParse(table))).Value;
+        return program != null ? new TrueTypeFontFile(tables, program) : null;
+    }
+
+    /// <summary>The table records of font <paramref name="index"/> (tag, offset, length); null when it is not a font this class reads.</summary>
+    private static List<(string Tag, long Offset, int Length)>? ReadDirectory(Stream stream, int index, bool openTypeCff)
+    {
+        long dir = 0;
+        var header = ReadAt(stream, 0, 12);
+        if (header == null) return null;
+        if (BigEndian.U32(header, 0) == 0x74746366)
+        {
+            int count = (int)Math.Min(BigEndian.U32(header, 8), 256);
+            if (index < 0 || index >= count || ReadAt(stream, 12 + index * 4, 4) is not { } entry) return null;
+            dir = BigEndian.U32(entry, 0);
+        }
+        else if (index != 0) return null;
+        if (ReadAt(stream, dir, 12) is not { } offsetTable) return null;
+        uint version = BigEndian.U32(offsetTable, 0);
+        bool cff = openTypeCff && version == 0x4F54544F; // 'OTTO'
+        if (version != 0x00010000 && version != 0x74727565 && !cff) return null; // TrueType outlines only
+        int numTables = BigEndian.U16(offsetTable, 4);
+        if (numTables == 0 || numTables > 256 || ReadAt(stream, dir + 12, numTables * 16) is not { } records) return null;
+        var tables = new List<(string, long, int)>(numTables);
+        for (int i = 0; i < numTables; i++)
+        {
+            string tag = Encoding.ASCII.GetString(records, i * 16, 4);
+            long offset = BigEndian.U32(records, i * 16 + 8), length = BigEndian.U32(records, i * 16 + 12);
+            if (offset + length > stream.Length) return null;
+            tables.Add((tag, offset, (int)length));
+        }
+        return tables;
+    }
+
     /// <summary>Number of fonts in a file (a collection has several).</summary>
     public static int FontCount(byte[] data) =>
         data.Length >= 12 && BigEndian.U32(data, 0) == 0x74746366 ? (int)Math.Min(BigEndian.U32(data, 8), 256) : 1;
 
-    internal static Dictionary<string, byte[]>? ReadTables(byte[] data, int index)
+    /// <param name="openTypeCff">Also a font with CFF outlines ('OTTO').</param>
+    internal static Dictionary<string, byte[]>? ReadTables(byte[] data, int index, bool openTypeCff = false)
     {
         if (data.Length < 12) return null;
         int dir = 0;
@@ -136,7 +263,8 @@ internal sealed class TrueTypeFontFile
         }
         else if (index != 0) return null;
         uint version = BigEndian.U32(data, dir);
-        if (version != 0x00010000 && version != 0x74727565) return null; // TrueType outlines only
+        bool cff = openTypeCff && version == 0x4F54544F; // 'OTTO'
+        if (version != 0x00010000 && version != 0x74727565 && !cff) return null; // TrueType outlines only
         int numTables = BigEndian.U16(data, dir + 4);
         if (numTables == 0 || numTables > 256 || dir + 12 + numTables * 16 > data.Length) return null;
         var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
@@ -152,7 +280,7 @@ internal sealed class TrueTypeFontFile
     }
 
     /// <summary>Reads only the naming strings of font <paramref name="index"/> (fast, for font catalogues).</summary>
-    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? ReadNames(byte[] data, int index)
+    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily, bool Cff)? ReadNames(byte[] data, int index)
     {
         try
         {
@@ -175,39 +303,24 @@ internal sealed class TrueTypeFontFile
     /// <see cref="ReadNames(byte[], int)"/> reading only the table directory and the name and OS/2
     /// tables, so a catalogue of every installed font does not read hundreds of megabytes of outlines.
     /// <paramref name="openTypeCff"/> also names fonts with CFF outlines ('OTTO', a CFF or CFF2
-    /// table), for a renderer that loads them itself (Skia); this class reads TrueType outlines only.
+    /// table), for a renderer that loads them itself (Skia) and for new text: <see cref="TryLoad"/>
+    /// with <c>openTypeCff</c> reads 'CFF ' outlines (not CFF2).
     /// </summary>
-    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? ReadNames(Stream stream, int index, bool openTypeCff = false)
+    internal static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily, bool Cff)? ReadNames(Stream stream, int index, bool openTypeCff = false)
     {
         try
         {
-            long dir = 0;
-            var header = ReadAt(stream, 0, 12);
-            if (header == null) return null;
-            if (BigEndian.U32(header, 0) == 0x74746366)
-            {
-                int count = (int)Math.Min(BigEndian.U32(header, 8), 256);
-                if (index < 0 || index >= count || ReadAt(stream, 12 + index * 4, 4) is not { } entry) return null;
-                dir = BigEndian.U32(entry, 0);
-            }
-            else if (index != 0) return null;
-            if (ReadAt(stream, dir, 12) is not { } offsetTable) return null;
-            uint version = BigEndian.U32(offsetTable, 0);
-            bool cff = openTypeCff && version == 0x4F54544F; // 'OTTO'
-            if (version != 0x00010000 && version != 0x74727565 && !cff) return null; // TrueType outlines only
-            int numTables = BigEndian.U16(offsetTable, 4);
-            if (numTables == 0 || numTables > 256 || ReadAt(stream, dir + 12, numTables * 16) is not { } records) return null;
+            if (ReadDirectory(stream, index, openTypeCff) is not { } directory) return null;
+            // ReadDirectory accepts 'OTTO' only with openTypeCff, so no glyf table means CFF outlines here.
+            bool cff = openTypeCff && !directory.Any(t => t.Tag == "glyf");
             var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-            for (int i = 0; i < numTables; i++)
+            foreach (var (tag, offset, length) in directory)
             {
-                string tag = Encoding.ASCII.GetString(records, i * 16, 4);
-                long offset = BigEndian.U32(records, i * 16 + 8), length = BigEndian.U32(records, i * 16 + 12);
-                if (offset + length > stream.Length) return null;
                 // Only that outlines exist matters for the names: CFF outlines count as glyf here.
                 if (tag == "glyf" || cff && tag is "CFF " or "CFF2") tables["glyf"] = Array.Empty<byte>();
-                else if (tag is "name" or "OS/2" && length <= 1024 * 1024 && ReadAt(stream, offset, (int)length) is { } table) tables[tag] = table;
+                else if (tag is "name" or "OS/2" && length <= 1024 * 1024 && ReadAt(stream, offset, length) is { } table) tables[tag] = table;
             }
-            return NamesFromTables(tables);
+            return NamesFromTables(tables, cff);
         }
         catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or OverflowException or IOException)
         {
@@ -224,7 +337,7 @@ internal sealed class TrueTypeFontFile
         return buffer;
     }
 
-    private static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily)? NamesFromTables(Dictionary<string, byte[]>? tables)
+    private static (string Family, string Subfamily, string PostScript, int Weight, bool Italic, string LegacyFamily, bool Cff)? NamesFromTables(Dictionary<string, byte[]>? tables, bool cff = false)
     {
         if (tables == null || !tables.ContainsKey("glyf")) return null;
         string family = NameString(tables, 16) ?? NameString(tables, 1) ?? string.Empty;
@@ -237,20 +350,28 @@ internal sealed class TrueTypeFontFile
             weight = BigEndian.U16(os2, 4);
             italic |= (BigEndian.U16(os2, 62) & 1) != 0;
         }
-        return (family, sub, ps, weight, italic, NameString(tables, 1) ?? family);
+        return (family, sub, ps, weight, italic, NameString(tables, 1) ?? family, cff);
     }
 
     /// <summary>The glyph for a Unicode scalar value, 0 when the font has none.</summary>
     public int GlyphFor(int codePoint)
     {
         if (_cmap == null) return 0;
-        int gid = _cmap.Has(3, 10) ? _cmap.Lookup(3, 10, codePoint) : 0;
-        if (gid == 0 && codePoint <= 0xFFFF && _cmap.Has(3, 1)) gid = _cmap.Lookup(3, 1, codePoint);
-        if (gid == 0 && _cmap.Has(0, 4)) gid = _cmap.Lookup(0, 4, codePoint);
-        if (gid == 0 && codePoint <= 0xFFFF && _cmap.Has(0, 3)) gid = _cmap.Lookup(0, 3, codePoint);
-        // Symbol fonts map their characters into the private-use area F0xx.
-        if (gid == 0 && codePoint <= 0xFF && _cmap.Has(3, 0)) gid = _cmap.Lookup(3, 0, 0xF000 + codePoint);
+        int gid = Lookup(_cmap, codePoint);
+        // A CFF glyph built from two others (seac) cannot be embedded: the next font is used for it.
+        if (_cff != null && gid > 0 && gid < GlyphCount && _cff.UsesSeac(gid)) return 0;
         return gid < GlyphCount ? gid : 0;
+    }
+
+    private static int Lookup(TrueTypeCmap cmap, int codePoint)
+    {
+        int gid = cmap.Has(3, 10) ? cmap.Lookup(3, 10, codePoint) : 0;
+        if (gid == 0 && codePoint <= 0xFFFF && cmap.Has(3, 1)) gid = cmap.Lookup(3, 1, codePoint);
+        if (gid == 0 && cmap.Has(0, 4)) gid = cmap.Lookup(0, 4, codePoint);
+        if (gid == 0 && codePoint <= 0xFFFF && cmap.Has(0, 3)) gid = cmap.Lookup(0, 3, codePoint);
+        // Symbol fonts map their characters into the private-use area F0xx.
+        if (gid == 0 && codePoint <= 0xFF && cmap.Has(3, 0)) gid = cmap.Lookup(3, 0, 0xF000 + codePoint);
+        return gid;
     }
 
     /// <summary>Advance width in 1/1000 em.</summary>
@@ -310,14 +431,17 @@ internal sealed class TrueTypeFontFile
     }
 
     /// <summary>The glyph has an outline (subsets leave the glyphs they dropped empty).</summary>
-    public bool HasOutline(int gid) => gid > 0 && gid < GlyphCount && _locaOffsets[gid + 1] > _locaOffsets[gid];
+    public bool HasOutline(int gid) => _cff != null ? gid < GlyphCount && _cff.HasOutline(gid) : gid > 0 && gid < GlyphCount && _locaOffsets[gid + 1] > _locaOffsets[gid];
 
     /// <summary>
     /// A standalone font with only <paramref name="glyphs"/> (and the components of composite
-    /// glyphs) kept; every other glyph is empty. Glyph ids are unchanged.
+    /// glyphs) kept; every other glyph is empty. Glyph ids are unchanged. A CFF font gives a bare
+    /// CID-keyed CFF instead (<see cref="CffSubsetter.Subset"/>): only the glyphs kept, each with its glyph id as CID.
     /// </summary>
-    public byte[] Subset(IEnumerable<int> glyphs)
+    /// <param name="fontName">A CFF subset's font name (the /BaseFont that embeds it, with its subset tag); the PostScript name when null.</param>
+    public byte[] Subset(IEnumerable<int> glyphs, string? fontName = null)
     {
+        if (_cff != null) return _cff.Subset(glyphs.Where(g => g < GlyphCount), fontName ?? PostScriptName);
         var keep = new HashSet<int> { 0 };
         var queue = new Queue<int>(glyphs.Where(g => g > 0 && g < GlyphCount));
         var glyf = _tables["glyf"];

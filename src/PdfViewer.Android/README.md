@@ -122,6 +122,10 @@ Serif, Droid Sans Mono, Noto Sans CJK, Noto Sans Symbols and others. On Android:
    Noto Sans CJK): the Skia backend, the only renderer on Android, loads them itself. On the
    Android 13 emulator the catalog has 218 faces, 41 of them from `.otf` files and 14 Noto CJK
    faces. The Windows catalog still reads TrueType outlines only.
+   New text (text boxes, form fields, page text) can use a CFF face too. The engine embeds it as a
+   CID-keyed CFF subset (`CIDFontType0`, `FontFile3 /CIDFontType0C`) with only the glyphs used and
+   the subroutines they call. When a TrueType face can stand in, it is used first; a CFF face is
+   used for the characters that only it has, such as Chinese, Japanese and Korean in Noto Sans CJK.
 5. **Roboto's real bold.** Android 12 and later ship Roboto as one variable font. SkiaSharp
    3.116 has no API to set a variation axis, but Android's font manager reads
    `/system/etc/fonts.xml`, which names an axis value for each weight. `SkiaFontSource.LoadInstance`
@@ -251,8 +255,8 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
    is dragged to the edge. No floating copy toolbar: the bar over the pages holds the actions.
 4. **Not in the app:** printing, a document properties view, and these annotation tools of the web
    viewer: polygons, connected lines, stamps, replies, moving an annotation, colours, XFDF. Text
-   boxes cannot use Chinese, Japanese or Korean text yet: the engine embeds only TrueType (glyf)
-   fonts, and Android's CJK font (Noto Sans CJK) is CFF, so such text is refused with a message.
+   with a character that no font on the device has is refused with a message. CFF2 (variable CFF)
+   fonts are not used for new text.
 5. **Recent files** lists only files with a persistable grant (the document picker gives one);
    a file another app handed over with `ACTION_VIEW` is opened but not listed.
 6. **Edits are not kept when Android ends the process** in the background (only the view is); a
@@ -267,6 +271,9 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
   alias catalog, threads), family aliases in `Match`, `FindFamily` and `Fallbacks`, the alias
   table covering every family that substitution asks for, and CFF faces in the Android catalog
   only.
+- `tests/PdfEngine.Vector.Tests/CffSubstituteFontTests.cs` and
+  `tests/PdfEngine.Vector.Skia.Tests/CffSubstituteRenderTests.cs`: a CFF font built in code
+  (as Noto Sans CJK) is loaded, shaped, measured, embedded as a CFF subset and drawn back.
 - `tests/PdfEngine.Vector.Skia.Tests/AndroidViewerTests.cs`: the page layout (fit width, visible
   and current pages, zoom anchoring, rotation, search rectangles), the image cache, non-embedded
   text drawn with an aliased stand-in through `ViewerDocument`, and a variable font's bold

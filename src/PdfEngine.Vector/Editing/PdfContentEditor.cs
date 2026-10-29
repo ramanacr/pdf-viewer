@@ -420,14 +420,16 @@ internal sealed class PageSession
 
     /// <summary>Installed fonts for characters a style's own font lacks: the one that matches it first.</summary>
     /// <param name="vertical">Embedded for vertical writing (upright characters in a column).</param>
-    public IEnumerable<EmbeddedFontBuilder> Chain(PdfFont? font, bool bold, bool italic, bool vertical = false)
+    /// <param name="characters">When given, faces whose character map lacks one of them are passed over without being loaded.</param>
+    public IEnumerable<EmbeddedFontBuilder> Chain(PdfFont? font, bool bold, bool italic, bool vertical = false, IReadOnlyCollection<int>? characters = null)
     {
         string? name = font != null ? SystemFontCatalog.StripSubset(font.PostScriptName ?? font.BaseFont) : null;
         bold |= font?.IsBold ?? false;
         italic |= font?.IsItalic ?? false;
-        if (_catalog.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false) is { } match && Builder(match, vertical) is { } b) yield return b;
+        bool May(SystemFontFace face) => characters == null || characters.All(cp => _catalog.MayHave(face, cp));
+        if (_catalog.Match(name, bold, italic, font?.IsSerif ?? false, font?.IsFixedPitch ?? false) is { } match && May(match) && Builder(match, vertical) is { } b) yield return b;
         foreach (var face in _catalog.Fallbacks(bold, italic))
-            if (Builder(face, vertical) is { } fb) yield return fb;
+            if (May(face) && Builder(face, vertical) is { } fb) yield return fb;
     }
 
     /// <summary>
@@ -466,7 +468,7 @@ internal sealed class PageSession
     public bool HasVerticalForm(string element, GlyphStyle style, bool bold, bool italic)
     {
         int cp = char.ConvertToUtf32(element, 0);
-        foreach (var builder in Chain(style.Font, bold, italic, vertical: true))
+        foreach (var builder in Chain(style.Font, bold, italic, vertical: true, characters: new[] { cp }))
         {
             int gid = builder.Font.GlyphFor(cp);
             if (gid <= 0) continue;
@@ -648,7 +650,15 @@ internal sealed class PageSession
             return true;
         }
         if (primary != null && Has(primary)) return primary;
-        foreach (var b in Chain(null, bold, italic))
+        var needed = new List<int>();
+        for (int i = 0; i < word.Length;)
+        {
+            int cp = char.ConvertToUtf32(word, i);
+            string c = char.ConvertFromUtf32(cp);
+            if (c != " " && !IsFormat(c)) needed.Add(cp);
+            i += c.Length;
+        }
+        foreach (var b in Chain(null, bold, italic, characters: needed))
             if (Has(b)) return b;
         return primary ?? Chain(null, bold, italic).FirstOrDefault();
     }

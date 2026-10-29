@@ -3,12 +3,14 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Editing;
 
 /// <summary>An installed font face: where it is and what it is called.</summary>
 /// <param name="LegacyFamily">The family as older software names it ("Arial Narrow" where the typographic family is "Arial").</param>
-public sealed record SystemFontFace(string Path, int Index, string Family, string Subfamily, string PostScriptName, int Weight, bool Italic, string? LegacyFamily = null)
+/// <param name="OpenTypeCff">The face has CFF outlines (an <c>.otf</c> file, or a CFF face of a <c>.ttc</c> collection).</param>
+public sealed record SystemFontFace(string Path, int Index, string Family, string Subfamily, string PostScriptName, int Weight, bool Italic, string? LegacyFamily = null, bool OpenTypeCff = false)
 {
     public bool Bold => Weight >= 600;
 }
@@ -16,7 +18,8 @@ public sealed record SystemFontFace(string Path, int Index, string Family, strin
 /// <summary>
 /// The TrueType fonts in a font directory (on Android also those with CFF outlines), found by PostScript name or by family and style, with
 /// a fallback chain for characters the chosen font lacks. Only fonts whose licence allows
-/// embedding are used.
+/// embedding are used. Faces with CFF outlines are embedded as CIDFontType0 (FontFile3); where a
+/// TrueType face can stand in, it is preferred (see <see cref="Fallbacks"/>).
 /// </summary>
 public sealed class SystemFontCatalog
 {
@@ -153,7 +156,7 @@ public sealed class SystemFontCatalog
     /// <summary>The TrueType fonts (<c>.ttf</c>, <c>.ttc</c>) of a folder, read once per folder.</summary>
     public static SystemFontCatalog ForDirectory(string directory) => Catalogs.GetOrAdd(directory, d => new SystemFontCatalog(ScanFaces(d, openTypeCff: false)));
 
-    /// <param name="openTypeCff">Also <c>.otf</c> files and faces with CFF outlines (only a renderer that loads fonts itself can use them).</param>
+    /// <param name="openTypeCff">Also <c>.otf</c> files and faces with CFF outlines (a renderer that loads fonts itself draws them; new text embeds them as CFF).</param>
     private static List<SystemFontFace> ScanFaces(string directory, bool openTypeCff)
     {
         var faces = new List<SystemFontFace>();
@@ -177,7 +180,7 @@ public sealed class SystemFontCatalog
                     int count = TrueTypeFontFile.FontCount(stream);
                     for (int f = 0; f < count; f++)
                         if (TrueTypeFontFile.ReadNames(stream, f, openTypeCff) is { } n && n.Family.Length > 0)
-                            found.Add(new SystemFontFace(path, f, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily));
+                            found.Add(new SystemFontFace(path, f, n.Family, n.Subfamily, n.PostScript, n.Weight, n.Italic, n.LegacyFamily, n.Cff));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             });
@@ -187,15 +190,46 @@ public sealed class SystemFontCatalog
         return faces;
     }
 
+    /// <summary>
+    /// The tables read from each font file, by offset and length: the faces of a collection share
+    /// them (Noto Sans CJK's SC, TC, JP and KR faces have one CFF table of about 16 MB).
+    /// </summary>
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<(long Offset, int Length), byte[]>> _tables = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(string, int), TrueTypeCmap?> _cmaps = new();
+
+    private ConcurrentDictionary<(long Offset, int Length), byte[]> TablesOf(string path) => _tables.GetOrAdd(path, _ => new());
+
+    /// <summary>The face as a font for new text (only the tables it uses are read, once per file); null when it cannot be loaded or embedded.</summary>
     internal TrueTypeFontFile? Load(SystemFontFace face) => _loaded.GetOrAdd((face.Path, face.Index), key =>
     {
         try
         {
-            var font = TrueTypeFontFile.TryLoad(File.ReadAllBytes(key.Item1), key.Item2);
+            using var stream = new FileStream(key.Item1, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+            var font = TrueTypeFontFile.TryLoad(stream, key.Item2, openTypeCff: true, TablesOf(key.Item1));
             return font is { EmbeddingAllowed: true } ? font : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     });
+
+    /// <summary>
+    /// Whether the face may have a glyph for <paramref name="codePoint"/>: false when its character
+    /// map (read alone, without loading the face) has none, so a walk through the fallbacks for a
+    /// character no font has does not load every face.
+    /// </summary>
+    internal bool MayHave(SystemFontFace face, int codePoint)
+    {
+        if (_loaded.TryGetValue((face.Path, face.Index), out var font)) return font != null && font.GlyphFor(codePoint) != 0;
+        var cmap = _cmaps.GetOrAdd((face.Path, face.Index), key =>
+        {
+            try
+            {
+                using var stream = new FileStream(key.Item1, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+                return TrueTypeFontFile.ReadCharacterMap(stream, key.Item2, openTypeCff: true, TablesOf(key.Item1));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        });
+        return cmap != null && TrueTypeFontFile.Maps(cmap, codePoint);
+    }
 
     /// <summary>The face of <paramref name="family"/> nearest to the weight and slant asked for.</summary>
     public SystemFontFace? FindFamily(string family, bool bold, bool italic) => FindFamily(family, bold ? 700 : 400, italic);
@@ -209,15 +243,18 @@ public sealed class SystemFontCatalog
     /// Roboto for Arial), nearest to the weight and slant asked for; null when the catalog has no alias
     /// for the family or none of its stand-ins is there.
     /// </summary>
-    public SystemFontFace? FindAliasedFamily(string family, int weight, bool italic)
+    public SystemFontFace? FindAliasedFamily(string family, int weight, bool italic) => FindAliasedFamily(family, weight, italic, trueTypeOnly: false);
+
+    private SystemFontFace? FindAliasedFamily(string family, int weight, bool italic, bool trueTypeOnly)
     {
         if (_aliases == null || !_aliases.TryGetValue(Squash(family), out var standIns)) return null;
         foreach (var standIn in standIns)
-            if (FindOwnFamily(standIn, weight, italic) is { } face) return face;
+            if (FindOwnFamily(standIn, weight, italic, trueTypeOnly) is { } face) return face;
         return null;
     }
 
-    private SystemFontFace? FindOwnFamily(string family, int weight, bool italic)
+    /// <param name="trueTypeOnly">Leave out faces with CFF outlines.</param>
+    private SystemFontFace? FindOwnFamily(string family, int weight, bool italic, bool trueTypeOnly = false)
     {
         // Either name finds the family: "Arial Narrow" is a family of its own to older software but
         // only a width of "Arial" typographically, and "Segoe UI" has its Semibold only typographically.
@@ -227,7 +264,9 @@ public sealed class SystemFontCatalog
         int bestScore = int.MaxValue;
         foreach (var (face, legacy) in candidates)
         {
-            int score = (face.Italic == italic ? 0 : 10000) + Math.Abs(face.Weight - weight) * 2 + (legacy ? 0 : 1);
+            if (trueTypeOnly && face.OpenTypeCff) continue;
+            // A TrueType face wins a tie with a CFF one.
+            int score = ((face.Italic == italic ? 0 : 10000) + Math.Abs(face.Weight - weight) * 2 + (legacy ? 0 : 1)) * 2 + (face.OpenTypeCff ? 1 : 0);
             if (score < bestScore) (best, bestScore) = (face, score);
         }
         return best;
@@ -285,12 +324,22 @@ public sealed class SystemFontCatalog
         return null;
     }
 
-    /// <summary>Faces tried, in order, for characters the chosen font does not have.</summary>
+    /// <summary>
+    /// Faces tried, in order, for characters the chosen font does not have. TrueType faces come
+    /// first (for each family, a TrueType stand-in before a CFF one: "Droid Sans Fallback" before
+    /// "Noto Sans CJK"); faces with CFF outlines follow, for the characters only they have.
+    /// </summary>
     public IEnumerable<SystemFontFace> Fallbacks(bool bold, bool italic)
     {
+        int weight = bold ? 700 : 400;
+        var cff = new List<SystemFontFace>();
         foreach (var family in new[] { "Segoe UI", "Arial", "Segoe UI Symbol", "Nirmala UI", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic",
                      "Microsoft JhengHei", "Ebrima", "Gadugi", "Leelawadee UI", "Segoe UI Historic", "Cambria Math", "Segoe UI Emoji" })
-            if (FindFamily(family, bold, italic) is { } f) yield return f;
+        {
+            if ((FindOwnFamily(family, weight, italic, trueTypeOnly: true) ?? FindAliasedFamily(family, weight, italic, trueTypeOnly: true)) is { } f) yield return f;
+            if (FindFamily(family, weight, italic) is { OpenTypeCff: true } c) cff.Add(c);
+        }
+        foreach (var c in cff.Distinct()) yield return c;
     }
 
     /// <summary>Family names to look up, in order: as written, without MT/PS and style words, then the Windows alias.</summary>
