@@ -125,7 +125,25 @@ internal sealed class CffSubsetter
         if (gid <= 0 || gid >= GlyphCount) return false;
         var scan = new Scanner(this, FdOf(gid), new HashSet<int>(), new HashSet<int>());
         scan.Run(_charStrings[gid], 0);
-        return scan.Drew || scan.Failed;
+        return !scan.Seac && (scan.Drew || scan.Failed);
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _seac = new();
+
+    /// <summary>
+    /// The glyph is an accented character built from two standard-encoding glyphs (endchar with
+    /// the seac operands, name-keyed fonts only). A CID-keyed subset cannot express that, so such a
+    /// glyph is not used: <see cref="Editing.TrueTypeFontFile.GlyphFor"/> gives 0 and the next font is tried.
+    /// </summary>
+    public bool UsesSeac(int gid)
+    {
+        if (_fdSelect != null || gid <= 0 || gid >= GlyphCount) return false;
+        return _seac.GetOrAdd(gid, g =>
+        {
+            var scan = new Scanner(this, 0, new HashSet<int>(), new HashSet<int>());
+            scan.Run(_charStrings[g], 0);
+            return scan.Seac;
+        });
     }
 
     /// <summary>
@@ -187,6 +205,8 @@ internal sealed class CffSubsetter
         private int _sp, _stems;
 
         public bool Drew { get; private set; }
+        /// <summary>The glyph ends with the seac form of endchar (an accented character made of two glyphs).</summary>
+        public bool Seac { get; private set; }
         /// <summary>An operator the scan does not follow (arithmetic and storage), or a bad subroutine number.</summary>
         public bool Failed { get; private set; }
 
@@ -240,7 +260,8 @@ internal sealed class CffSubsetter
                     }
                     case 11: // return
                         return false;
-                    case 14: // endchar
+                    case 14: // endchar; with 4 operands (5 with a width) it is seac: adx ady bchar achar
+                        Seac = _sp >= 4;
                         return true;
                     case 21 or 22 or 4: // rmoveto, hmoveto, vmoveto
                         Drew = true;

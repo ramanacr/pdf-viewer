@@ -46,7 +46,8 @@ internal sealed class EmbeddedFontBuilder
         string tag = SubsetTag();
         string baseFont = tag + "+" + Font.PostScriptName;
 
-        byte[] program = Font.Subset(_used.Keys);
+        // A CFF program's name is the /BaseFont (CIDFontName) it is embedded under, subset tag included.
+        byte[] program = Font.Subset(_used.Keys, baseFont);
         bool cff = Font.IsCff;
         objects[file] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>
         {

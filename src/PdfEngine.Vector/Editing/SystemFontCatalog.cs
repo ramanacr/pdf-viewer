@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Editing;
 
@@ -189,15 +190,46 @@ public sealed class SystemFontCatalog
         return faces;
     }
 
+    /// <summary>
+    /// The tables read from each font file, by offset and length: the faces of a collection share
+    /// them (Noto Sans CJK's SC, TC, JP and KR faces have one CFF table of about 16 MB).
+    /// </summary>
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<(long Offset, int Length), byte[]>> _tables = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(string, int), TrueTypeCmap?> _cmaps = new();
+
+    private ConcurrentDictionary<(long Offset, int Length), byte[]> TablesOf(string path) => _tables.GetOrAdd(path, _ => new());
+
+    /// <summary>The face as a font for new text (only the tables it uses are read, once per file); null when it cannot be loaded or embedded.</summary>
     internal TrueTypeFontFile? Load(SystemFontFace face) => _loaded.GetOrAdd((face.Path, face.Index), key =>
     {
         try
         {
-            var font = TrueTypeFontFile.TryLoad(File.ReadAllBytes(key.Item1), key.Item2, openTypeCff: true);
+            using var stream = new FileStream(key.Item1, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+            var font = TrueTypeFontFile.TryLoad(stream, key.Item2, openTypeCff: true, TablesOf(key.Item1));
             return font is { EmbeddingAllowed: true } ? font : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     });
+
+    /// <summary>
+    /// Whether the face may have a glyph for <paramref name="codePoint"/>: false when its character
+    /// map (read alone, without loading the face) has none, so a walk through the fallbacks for a
+    /// character no font has does not load every face.
+    /// </summary>
+    internal bool MayHave(SystemFontFace face, int codePoint)
+    {
+        if (_loaded.TryGetValue((face.Path, face.Index), out var font)) return font != null && font.GlyphFor(codePoint) != 0;
+        var cmap = _cmaps.GetOrAdd((face.Path, face.Index), key =>
+        {
+            try
+            {
+                using var stream = new FileStream(key.Item1, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+                return TrueTypeFontFile.ReadCharacterMap(stream, key.Item2, openTypeCff: true, TablesOf(key.Item1));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        });
+        return cmap != null && TrueTypeFontFile.Maps(cmap, codePoint);
+    }
 
     /// <summary>The face of <paramref name="family"/> nearest to the weight and slant asked for.</summary>
     public SystemFontFace? FindFamily(string family, bool bold, bool italic) => FindFamily(family, bold ? 700 : 400, italic);

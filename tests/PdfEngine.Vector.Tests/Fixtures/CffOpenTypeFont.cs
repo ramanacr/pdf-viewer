@@ -44,14 +44,15 @@ internal static class CffOpenTypeFont
     }
 
     /// <summary>The OpenType font (1000 units per em).</summary>
-    public static byte[] Font()
+    /// <param name="cff">Another CFF program with five glyphs in place of <see cref="Cff"/>.</param>
+    public static byte[] Font(byte[]? cff = null)
     {
         int n = Advances.Length;
         var hmtx = new byte[n * 4];
         for (int g = 0; g < n; g++) BigEndian.Put16(hmtx, g * 4, Advances[g]);
         var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal)
         {
-            ["CFF "] = Cff(),
+            ["CFF "] = cff ?? Cff(),
             ["head"] = Sfnt.Head(1000, 0, -200, 1000, 900, false, false),
             ["hhea"] = Sfnt.Hhea(900, -200, 1000, 1000, n),
             ["hmtx"] = hmtx,

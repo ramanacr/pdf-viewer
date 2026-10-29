@@ -89,6 +89,48 @@ public sealed class CffSubstituteFontTests
     }
 
     [Fact]
+    public void CollectionFaces_ShareOneCopyOfTheirCffTable_AndACharacterMapRulesFacesOut()
+    {
+        // As NotoSansCJK-Regular.ttc: several faces over one CFF table.
+        using var folder = new FontFolder("SyntheticCjk.ttc", CffOpenTypeFont.Collection(CffOpenTypeFont.Font()));
+        var catalog = SystemFontCatalog.ForAndroid(folder.Path);
+        Assert.Equal(2, catalog.Faces.Count);
+
+        // Without loading the face: its character map says what it lacks.
+        Assert.True(catalog.MayHave(catalog.Faces[1], 0x4E2D));
+        Assert.False(catalog.MayHave(catalog.Faces[1], 0x1F600)); // an emoji no face has
+
+        var first = catalog.Load(catalog.Faces[0]);
+        var second = catalog.Load(catalog.Faces[1]);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.NotSame(first, second);
+        Assert.Same(first.Table("CFF "), second.Table("CFF "));
+        Assert.Same(first.Table("cmap"), second.Table("cmap"));
+        Assert.Equal(2, second.GlyphFor(0x4E2D));
+        Assert.True(catalog.MayHave(catalog.Faces[0], 'A'));
+        Assert.False(catalog.MayHave(catalog.Faces[0], 'B'));
+    }
+
+    [Fact]
+    public void SeacGlyph_IsNotUsed_SoTheNextFontDrawsIt()
+    {
+        // A name-keyed font whose 'A' is built from two standard-encoding glyphs (endchar adx ady bchar achar):
+        // a CID-keyed subset cannot express that.
+        var box = new SyntheticCff.CharString().N(50, 0).Op(21).N(400, 0).Op(5).N(0, 700).Op(5).N(-400, 0).Op(5).Op(14).ToArray();
+        var seac = new SyntheticCff.CharString().N(0, 0, 66, 67).Op(14).ToArray();
+        byte[] cff = SyntheticCff.NameKeyed(null, new[] { ".notdef", "A", "B", "C", "D" }, new[] { new byte[] { 14 }, seac, box, box, box });
+        var program = CffSubsetter.TryParse(cff)!;
+        Assert.True(program.UsesSeac(1));
+        Assert.False(program.UsesSeac(2));
+        Assert.False(program.HasOutline(1));
+
+        var font = TrueTypeFontFile.TryLoad(CffOpenTypeFont.Font(cff), 0, openTypeCff: true)!;
+        Assert.Equal(0, font.GlyphFor('A'));       // glyph 1 is the seac glyph
+        Assert.Equal(2, font.GlyphFor(0x4E2D));    // glyph 2 draws itself
+    }
+
+    [Fact]
     public void Subset_OfANameKeyedFont_IsCidKeyed_AndKeepsItsFontMatrix()
     {
         // Most Latin .otf fonts are name-keyed, many with 2048 units per em.
@@ -170,6 +212,9 @@ public sealed class CffSubstituteFontTests
         Assert.True(cff.IsCidKeyed);
         Assert.Equal(3, cff.GlyphCount);
         Assert.Equal(2, cff.GidForCid(2));
+        // The program's name is the CIDFontName: the /BaseFont with its subset tag.
+        Assert.Equal(cid.GetName("BaseFont"), cff.FontName);
+        Assert.Matches("^[A-Z]{6}\\+" + CffOpenTypeFont.PostScriptName + "$", cff.FontName);
     }
 
     [Fact]
@@ -197,7 +242,9 @@ public sealed class CffSubstituteFontTests
     {
         public string Path { get; } = Directory.CreateTempSubdirectory("cff-fonts").FullName;
 
-        public FontFolder() => File.WriteAllBytes(System.IO.Path.Combine(Path, "SyntheticCjk-Regular.otf"), CffOpenTypeFont.Font());
+        public FontFolder() : this("SyntheticCjk-Regular.otf", CffOpenTypeFont.Font()) { }
+
+        public FontFolder(string name, byte[] data) => File.WriteAllBytes(System.IO.Path.Combine(Path, name), data);
 
         public void Dispose()
         {
