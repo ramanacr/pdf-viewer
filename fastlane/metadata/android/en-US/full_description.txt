@@ -4,7 +4,7 @@ PRIVATE BY DESIGN
 • No permissions at all: no internet access, no storage access.
 • No account, no ads, no analytics, no crash reporting.
 • You open a file through the system document picker, which gives the app access to that one file only.
-• Edits are saved as a copy that you name in the system's save dialog.
+• Edits are saved into the file you opened, when Android lets the app write it, or as a copy that you name in the system's save dialog.
 • JavaScript in documents never runs.
 
 READ
@@ -27,7 +27,7 @@ ANNOTATE
 • Add sticky notes and text boxes.
 • Choose, edit and delete annotations, with undo and redo.
 • A list of all annotations; tap one to go to it.
-• Save a copy: your edits are added as an incremental update, so the original content and any signatures stay intact. Certified documents only allow the changes that their certification permits.
+• Save into the opened file, or save a copy: your edits are added as an incremental update, so the original content and any signatures stay intact. Certified documents only allow the changes that their certification permits.
 
 LIMITS OF THIS PREVIEW
 • There is no printing and no stamps, and you cannot move an annotation or change its colour yet.
