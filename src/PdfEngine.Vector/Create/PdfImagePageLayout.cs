@@ -35,7 +35,7 @@ public sealed record PdfImagePageOptions
 }
 
 /// <summary>Where an image goes: the page's size and the rectangle the upright image fills, in points.</summary>
-public readonly record struct PdfImagePlacement(double PageWidth, double PageHeight, double X, double Y, double Width, double Height, bool Clip)
+internal readonly record struct PdfImagePlacement(double PageWidth, double PageHeight, double X, double Y, double Width, double Height, bool Clip)
 {
     /// <summary>The largest page PDF readers are required to show (200 inches, ISO 32000-2 Annex C).</summary>
     public const double MaxPageSide = 14_400;

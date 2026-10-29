@@ -7,7 +7,7 @@ namespace PdfEngine.Vector.Functions;
 /// Type 3 stitching function (ISO 32000-2 7.10.4): a 1-input function built from k sub-functions over
 /// the sub-domains delimited by /Bounds, each re-mapped through its /Encode pair.
 /// </summary>
-public sealed class StitchingFunction : PdfFunction
+internal sealed class StitchingFunction : PdfFunction
 {
     private readonly PdfFunction[] _functions;
     private readonly double[] _bounds;

@@ -15,7 +15,7 @@ namespace PdfEngine.Vector.Document;
 /// stay valid and the edit can be undone by truncating. The new section has the same form as
 /// the previous one (a classic table, or a cross-reference stream after one).
 /// </summary>
-public static class PdfIncrementalWriter
+internal static class PdfIncrementalWriter
 {
     /// <summary>
     /// The original file with <paramref name="objects"/> (object number → object) appended. Changed

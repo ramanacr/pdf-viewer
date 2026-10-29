@@ -72,7 +72,7 @@ public sealed class PdfPageTree
     /// <summary>How many kids after one whose bytes are missing are read in the same pass, so that their misses are fetched together.</summary>
     internal const int KidsReadAhead = 64;
 
-    public PdfPageTree(PdfObjectResolver resolver, PdfSecurityLimits? limits = null)
+    internal PdfPageTree(PdfObjectResolver resolver, PdfSecurityLimits? limits = null)
     {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _limits = limits ?? PdfSecurityLimits.Default;
@@ -81,7 +81,7 @@ public sealed class PdfPageTree
         PageAncestors = new PageList<int[]>(this, i => IsLazy ? AncestorsAt(i) : _pageAncestors[i]);
     }
 
-    public void Load(PdfDictionary rootCatalog)
+    internal void Load(PdfDictionary rootCatalog)
     {
         _pages.Clear();
         _pageObjectNumbers.Clear();

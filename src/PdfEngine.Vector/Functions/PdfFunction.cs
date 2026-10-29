@@ -21,7 +21,7 @@ namespace PdfEngine.Vector.Functions;
 /// <see cref="PdfResourceLimitException"/>. Malformed input never surfaces as IndexOutOfRangeException.
 /// </para>
 /// </remarks>
-public abstract class PdfFunction
+internal abstract class PdfFunction
 {
     private readonly double[] _domain;
     private readonly double[]? _range;

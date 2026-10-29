@@ -34,7 +34,7 @@ public sealed class PdfObjectResolver
     /// objects inside object streams are covered by their stream. <paramref name="encryptObjectNumber"/>
     /// (the /Encrypt dictionary) stays plain. Earlier resolutions are discarded.
     /// </summary>
-    public void SetSecurityHandler(PdfEngine.Vector.Security.PdfSecurityHandler handler, int encryptObjectNumber)
+    internal void SetSecurityHandler(PdfEngine.Vector.Security.PdfSecurityHandler handler, int encryptObjectNumber)
     {
         lock (_sync)
         {
@@ -45,7 +45,7 @@ public sealed class PdfObjectResolver
         }
     }
 
-    public PdfObjectResolver(IPdfByteSource source, PdfXrefTable xrefTable, PdfSecurityLimits? limits = null)
+    internal PdfObjectResolver(IPdfByteSource source, PdfXrefTable xrefTable, PdfSecurityLimits? limits = null)
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _xrefTable = xrefTable ?? throw new ArgumentNullException(nameof(xrefTable));

@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.Parsing;
 /// <summary>
 /// Recursive descent parser that converts PDF token streams into high-level PdfObject graphs.
 /// </summary>
-public sealed class PdfParser
+internal sealed class PdfParser
 {
     private readonly PdfSecurityLimits _limits;
 

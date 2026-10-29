@@ -9,7 +9,7 @@ namespace PdfEngine.Vector.Parsing;
 /// <see cref="BeginOperation"/> are never dropped, so one page's bytes stay while that page is
 /// parsed even when it alone is larger than the cap. Thread-safe.
 /// </summary>
-public sealed class PdfChunkCache
+internal sealed class PdfChunkCache
 {
     /// <summary>The default block size: 4 KB, small enough that a page object costs little more than its own bytes.</summary>
     public const int DefaultBlockSize = 4096;

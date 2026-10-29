@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.Fonts;
 /// symbols in Segoe UI Symbol), and the CJK language of a run. The Direct2D and WPF backends pick
 /// installed faces by these rules; the web demo's bundled faces use <see cref="CjkLanguage"/> too.
 /// </summary>
-public static class CharacterFaces
+internal static class CharacterFaces
 {
     /// <summary>The CJK languages in the order they are tried when the run's own has no face for a character.</summary>
     public static IReadOnlyList<string> CjkLanguages { get; } = new[] { "sc", "tc", "jp", "kr" };

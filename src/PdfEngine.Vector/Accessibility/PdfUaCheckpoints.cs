@@ -6,7 +6,7 @@ namespace PdfEngine.Vector.Accessibility;
 /// The Matterhorn Protocol 1.1 failure conditions this checker can evaluate by machine, each with
 /// the condition and how to put it right.
 /// </summary>
-public static class PdfUaCheckpoints
+internal static class PdfUaCheckpoints
 {
     private static readonly Dictionary<string, (string Condition, string Fix)> All = new()
     {

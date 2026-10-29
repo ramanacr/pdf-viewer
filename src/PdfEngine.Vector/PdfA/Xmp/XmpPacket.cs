@@ -7,10 +7,10 @@ using System.Xml;
 
 namespace PdfEngine.Vector.PdfA.Xmp;
 
-public enum XmpKind { Simple, Struct, Bag, Seq, Alt }
+internal enum XmpKind { Simple, Struct, Bag, Seq, Alt }
 
 /// <summary>A value in the XMP data model: a simple value, a structure of fields, or an array of items.</summary>
-public sealed class XmpValue
+internal sealed class XmpValue
 {
     public XmpKind Kind { get; init; }
     public string Text { get; init; } = string.Empty;
@@ -28,7 +28,7 @@ public sealed class XmpValue
 }
 
 /// <summary>A property (or struct field, or qualifier): its namespace, prefix, name and value.</summary>
-public sealed record XmpProperty(string Namespace, string Prefix, string Name, XmpValue Value);
+internal sealed record XmpProperty(string Namespace, string Prefix, string Name, XmpValue Value);
 
 /// <summary>
 /// An XMP packet parsed into the XMP data model (XMP Specification Part 1, the RDF/XML
@@ -36,7 +36,7 @@ public sealed record XmpProperty(string Namespace, string Prefix, string Name, X
 /// (rdf:parseType="Resource", nested rdf:Description or attribute shorthand) and qualifiers.
 /// Malformed packets report <see cref="Error"/> instead of throwing.
 /// </summary>
-public sealed class XmpPacket
+internal sealed class XmpPacket
 {
     public const string RdfNs = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 

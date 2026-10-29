@@ -20,7 +20,7 @@ namespace PdfEngine.Vector.Images;
 /// JPEG data is handed over still encoded; everything else is converted here so backends do not
 /// need to understand PDF colour spaces, bit depths or /Decode arrays.
 /// </remarks>
-public sealed class PdfImageSource : IPdfImageSource
+internal sealed class PdfImageSource : IPdfImageSource
 {
     private readonly PdfStream _stream;
     private readonly PdfColorSpace? _colorSpace;

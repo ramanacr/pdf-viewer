@@ -5,7 +5,7 @@ using PdfEngine.Vector.Fonts;
 namespace PdfEngine.Vector.PrintProduction;
 
 /// <summary>What a painting operation painted.</summary>
-public enum PdfPaintKind
+internal enum PdfPaintKind
 {
     Fill,
     Stroke,
@@ -24,7 +24,7 @@ public enum PdfPaintKind
 /// is on the page, and the measures preflight looks at. Carries no text of the document.
 /// </summary>
 /// <param name="Bounds">Conservative bounds in default user space (page points, y up).</param>
-public sealed record PdfPaintEvent(PdfPaintKind Kind, PdfRect Bounds)
+internal sealed record PdfPaintEvent(PdfPaintKind Kind, PdfRect Bounds)
 {
     /// <summary>The colour space painted with (the document's, never a plate space); null for groups and JPEG 2000 images in their own colours.</summary>
     public PdfColorSpace? ColorSpace { get; init; }
@@ -61,7 +61,7 @@ public sealed record PdfPaintEvent(PdfPaintKind Kind, PdfRect Bounds)
 }
 
 /// <summary>Receives every painting operation of a page build that observes the page.</summary>
-public interface IPdfPaintObserver
+internal interface IPdfPaintObserver
 {
     void OnPaint(PdfPaintEvent paint);
 }

@@ -152,7 +152,7 @@ internal sealed partial class SkiaReplayer
 }
 
 /// <summary>JPEG (DCTDecode) data to straight BGRA through Skia's codec, honouring CMYK inversion and colour-space mapping.</summary>
-public static class SkiaJpeg
+internal static class SkiaJpeg
 {
     /// <summary>Decodes; null when the data is not a readable JPEG.</summary>
     public static byte[]? TryDecode(PdfDecodedImage decoded, out int width, out int height)

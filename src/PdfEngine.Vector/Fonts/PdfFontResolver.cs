@@ -18,7 +18,7 @@ namespace PdfEngine.Vector.Fonts;
 /// Fonts are cached by the identity of the resolved font dictionary, never by resource name: pages
 /// and Form XObjects routinely reuse names such as "F1" for different fonts. Thread-safe.
 /// </remarks>
-public sealed class PdfFontResolver
+internal sealed class PdfFontResolver
 {
     /// <summary>Maximum /Differences entries honoured.</summary>
     private const int MaxDifferencesEntries = 4096;

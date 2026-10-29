@@ -187,7 +187,7 @@ public sealed class SystemFontCatalog
         return faces;
     }
 
-    public TrueTypeFontFile? Load(SystemFontFace face) => _loaded.GetOrAdd((face.Path, face.Index), key =>
+    internal TrueTypeFontFile? Load(SystemFontFace face) => _loaded.GetOrAdd((face.Path, face.Index), key =>
     {
         try
         {

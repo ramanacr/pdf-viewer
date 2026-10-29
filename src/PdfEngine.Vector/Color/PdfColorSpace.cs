@@ -19,7 +19,7 @@ namespace PdfEngine.Vector.Color;
 /// faithfully are returned as usable spaces flagged through <see cref="UnsupportedReason"/> rather than
 /// being silently substituted.
 /// </summary>
-public abstract partial class PdfColorSpace
+internal abstract partial class PdfColorSpace
 {
     public abstract string Name { get; }
     public abstract int NumberOfComponents { get; }

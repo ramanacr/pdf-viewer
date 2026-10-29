@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.Functions;
 /// Type 0 sampled function (ISO 32000-2 7.10.2). Samples are decoded once at parse time; evaluation uses
 /// multilinear interpolation between the 2^m surrounding samples (/Order 3 cubic is approximated linearly).
 /// </summary>
-public sealed class SampledFunction : PdfFunction
+internal sealed class SampledFunction : PdfFunction
 {
     /// <summary>Highest input dimension supported (2^m corners are visited per evaluation).</summary>
     internal const int MaxInputs = 8;

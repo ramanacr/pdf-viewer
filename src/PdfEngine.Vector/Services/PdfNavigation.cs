@@ -36,7 +36,7 @@ public sealed record PdfAction(PdfActionKind Kind, string Type)
 }
 
 /// <summary>Name trees (7.9.6) read in key order, cycle- and depth-safe.</summary>
-public static class PdfNameTree
+internal static class PdfNameTree
 {
     private const int MaxDepth = 32;
 

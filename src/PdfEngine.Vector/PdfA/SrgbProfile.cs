@@ -10,7 +10,7 @@ namespace PdfEngine.Vector.PdfA;
 /// D50-adapted (Bradford) colorants, the D65 media white and the sRGB tone curve sampled at 1,024
 /// points. Written here rather than shipped, so no third-party profile is redistributed.
 /// </summary>
-public static class SrgbProfile
+internal static class SrgbProfile
 {
     private static readonly Lazy<byte[]> Cached = new(Build);
 

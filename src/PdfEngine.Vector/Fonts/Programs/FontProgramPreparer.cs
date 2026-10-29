@@ -9,7 +9,7 @@ namespace PdfEngine.Vector.Fonts.Programs;
 /// An embedded font program normalized into a complete sfnt that platform rasterizers load, plus
 /// the mapping from PDF character codes / CIDs to glyph indices in that sfnt.
 /// </summary>
-public sealed class PreparedFontProgram
+internal sealed class PreparedFontProgram
 {
     private readonly Func<int, int, int> _glyphId;
 
@@ -42,7 +42,7 @@ public sealed class PreparedFontProgram
 /// wrapped in OpenType; Type 1 (FontFile) is converted to CFF first. Returns null when the program
 /// is absent or cannot be prepared — the caller then classifies the text as fallback.
 /// </summary>
-public static class FontProgramPreparer
+internal static class FontProgramPreparer
 {
     /// <summary>Largest program accepted for preparation (the stream decoder bounds it earlier too).</summary>
     public const int MaxProgramBytes = 32 * 1024 * 1024;

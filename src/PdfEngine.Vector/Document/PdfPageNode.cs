@@ -40,7 +40,7 @@ public sealed class PdfPageNode
             ? new PdfSize(CropBox.Height, CropBox.Width)
             : new PdfSize(CropBox.Width, CropBox.Height);
 
-    public PdfPageNode(
+    internal PdfPageNode(
         int pageNumber,
         PdfDictionary dictionary,
         PdfRect mediaBox,

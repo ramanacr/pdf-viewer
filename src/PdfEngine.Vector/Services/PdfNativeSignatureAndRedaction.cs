@@ -40,7 +40,7 @@ public sealed class PdfNativeSignatureService : IPdfSignatureService
         return match?.Status ?? SignatureStatus.Unknown;
     }
 
-    public static SignatureInfo ToInfo(PdfSignatureCheck c) => new()
+    internal static SignatureInfo ToInfo(PdfSignatureCheck c) => new()
     {
         FieldName = c.FieldName,
         SignerName = c.SignerName,

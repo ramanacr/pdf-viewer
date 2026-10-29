@@ -4,7 +4,7 @@ using PdfEngine.Vector.Parsing;
 
 namespace PdfEngine.Vector.Color;
 
-public abstract partial class PdfColorSpace
+internal abstract partial class PdfColorSpace
 {
     /// <summary>
     /// CIE XYZ to sRGB conversion helpers (IEC 61966-2-1) with Bradford chromatic adaptation from the

@@ -2,7 +2,7 @@
 
 A PDF engine in pure C#, with no native code: parser and repair, document model, content stream
 interpreter (display list), text extraction and search, annotations, forms, digital signatures,
-redaction, page organisation and saving. It targets `net9.0`.
+redaction, page organisation and saving. It targets `net9.0` and `net10.0`.
 
 It is the engine of [PDF Viewer](https://github.com/ramanacr/pdf-viewer). To draw pages, add a
 renderer: [PdfEngine.Vector.Skia](https://www.nuget.org/packages/PdfEngine.Vector.Skia) (portable).

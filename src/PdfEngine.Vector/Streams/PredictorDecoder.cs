@@ -11,7 +11,7 @@ namespace PdfEngine.Vector.Streams;
 /// larger than the input itself, and a short final row is decoded as far as data allows (truncated)
 /// instead of raising <see cref="IndexOutOfRangeException"/>.
 /// </remarks>
-public static class PredictorDecoder
+internal static class PredictorDecoder
 {
     public static byte[] DecodePredictor(
         ReadOnlySpan<byte> input,

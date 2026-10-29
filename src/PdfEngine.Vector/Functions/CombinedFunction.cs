@@ -7,7 +7,7 @@ namespace PdfEngine.Vector.Functions;
 /// An array of n single-output functions evaluated on the same inputs, yielding n outputs
 /// (ISO 32000-2 8.7.4.5.1: shading /Function may be "an array of n 1-out functions").
 /// </summary>
-public sealed class CombinedFunction : PdfFunction
+internal sealed class CombinedFunction : PdfFunction
 {
     private readonly PdfFunction[] _functions;
 
