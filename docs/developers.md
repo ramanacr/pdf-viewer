@@ -151,7 +151,9 @@ Version 1.0 changes the API of `0.2.0-preview.1`. Update your code as follows.
 
 - `PdfFieldValidationException`, `PdfDataNotLoadedException` and `PdfAConversionRefusedException`
   now derive from `PdfVectorException`. Their `Kind` is one of the new `PdfVectorErrorKind` values
-  `FieldValidation`, `DataNotLoaded` and `ConversionRefused`.
+  `FieldValidation`, `DataNotLoaded` and `ConversionRefused`. If you `switch` on `Kind` and the
+  switch must cover every value (for example a switch expression without a default case), add these
+  three values or a default case.
 - `PdfAConversionRefusedException` no longer derives from `InvalidOperationException`. If you catch
   `InvalidOperationException` around `PdfAConverter.Convert`, also catch `PdfAConversionRefusedException`.
 - If you catch `PdfVectorException` while you read a document that loads by HTTP ranges

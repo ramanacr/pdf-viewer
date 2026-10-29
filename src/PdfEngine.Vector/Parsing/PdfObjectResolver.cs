@@ -78,15 +78,28 @@ public sealed class PdfObjectResolver
     /// </exception>
     /// <exception cref="Diagnostics.PdfSyntaxException">The /Filter entry is malformed, or the data cannot be decoded.</exception>
     /// <exception cref="Diagnostics.PdfResourceLimitException">The decoded data is larger than the limits allow.</exception>
+    /// <exception cref="PdfDataNotLoadedException">
+    /// The document loads by HTTP ranges (<see cref="PdfRangedDocument"/>) and the bytes of the stream, or of an
+    /// object its /Filter or /DecodeParms refers to, are not loaded yet. Load them and call again.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">The document, and so its byte source, is disposed.</exception>
+    /// <exception cref="System.IO.IOException">The document's file could not be read (a <see cref="PdfFileByteSource"/>).</exception>
     /// <remarks>
-    /// All three exceptions derive from <see cref="Diagnostics.PdfVectorException"/>. The method never returns null.
-    /// It supports FlateDecode, LZWDecode (both with predictors), ASCIIHexDecode, ASCII85Decode,
-    /// RunLengthDecode and the /Identity crypt filter.
+    /// The four <c>Pdf*Exception</c> types above derive from <see cref="Diagnostics.PdfVectorException"/>. The method
+    /// never returns null. It supports FlateDecode, LZWDecode (both with predictors), ASCIIHexDecode, ASCII85Decode,
+    /// RunLengthDecode and the /Identity crypt filter. It is safe to call while other threads resolve objects of the
+    /// same document.
     /// </remarks>
     public byte[] DecodeStream(PdfStream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return new PdfStreamDecoder(_limits, Resolve).DecodeStream(stream);
+        // The byte source is positional and shared with Resolve: read the raw data under the same lock.
+        ReadOnlyMemory<byte> raw;
+        lock (_sync)
+        {
+            raw = stream.GetRawBytes();
+        }
+        return new PdfStreamDecoder(_limits, Resolve).DecodeStream(stream with { CachedRawBytes = raw });
     }
 
     public PdfObject? Resolve(int objectNumber)
