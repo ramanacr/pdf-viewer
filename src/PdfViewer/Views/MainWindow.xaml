@@ -1727,6 +1727,7 @@
                                                                 <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                                       Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                       StrokeThickness="{Binding StrokeThickness}"
+                                                                      Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                       Opacity="{Binding Opacity}"
                                                                       Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
                                                                     <Path.Data>
@@ -2095,6 +2096,7 @@
                                                     <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                           Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                           StrokeThickness="{Binding StrokeThickness}"
+                                                          Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                           Opacity="{Binding Opacity}"
                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
                                                         <Path.Data>

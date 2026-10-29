@@ -32,19 +32,39 @@ internal sealed class NativeDocumentServices
     /// (with its /L), polyline or polygon (with its /Vertices). Loading and saving use the same
     /// test, so nothing the viewer does not show is ever deleted.
     /// </summary>
-    internal static bool IsManaged(PdfAnnotation a) =>
+    internal static bool IsManaged(PdfAnnotation a, PdfVectorDocument doc) =>
         Array.IndexOf(ManagedSubtypes, a.Subtype) >= 0
         || a.Measure != null && PdfMeasurements.KindOf(a.Subtype) != null
-        || IsPlainShape(a);
+        || IsPlainShape(a, doc);
 
-    /// <summary>A line with its two points, or a polyline or polygon with enough of them, and no /Measure.</summary>
-    private static bool IsPlainShape(PdfAnnotation a) => a.Measure == null && a.Subtype switch
+    /// <summary>
+    /// A line with its two points, or a polyline or polygon with enough of them, that is no
+    /// measurement of any kind: its dictionary has no /Measure at all (a geospatial or broken one
+    /// reads as none, and must still be left alone). A polygon or polyline with more points than
+    /// the reader keeps is left alone too, so a save never writes it cut short.
+    /// </summary>
+    private static bool IsPlainShape(PdfAnnotation a, PdfVectorDocument doc)
     {
-        "Line" => a.Line is { Length: 4 },
-        "PolyLine" => a.Vertices.Count >= 2,
-        "Polygon" => a.Vertices.Count >= 3,
-        _ => false,
-    };
+        bool shape = a.Subtype switch
+        {
+            "Line" => a.Line is { Length: 4 },
+            "PolyLine" => a.Vertices.Count >= 2,
+            "Polygon" => a.Vertices.Count >= 3,
+            _ => false,
+        };
+        if (!shape || a.Measure != null || RawDictionary(doc, a) is not { } raw || raw.ContainsKey("Measure")) return false;
+        return doc.Resolver.Resolve(raw["Vertices"]) is not PdfArray v || v.Count <= 2 * PdfAnnotationLimits.MaxVertices;
+    }
+
+    /// <summary>The annotation's own dictionary in its page's /Annots.</summary>
+    private static PdfDictionary? RawDictionary(PdfVectorDocument doc, PdfAnnotation a)
+    {
+        if (a.PageNumber < 1 || a.PageNumber > doc.PageCount) return null;
+        var r = doc.Resolver;
+        return r.Resolve(doc.PageTree.Pages[a.PageNumber - 1].Dictionary["Annots"]) is PdfArray annots && a.Index >= 0 && a.Index < annots.Count
+            ? r.Resolve(annots[a.Index]) as PdfDictionary
+            : null;
+    }
 
     /// <summary>Where each loaded annotation came from, and what it looked like then, keyed by the model's id.</summary>
     private readonly Dictionary<Guid, (int Page, int Index, int ObjectNumber, string Fingerprint)> _loaded = new();
@@ -143,7 +163,7 @@ internal sealed class NativeDocumentServices
             var crop = doc.PageTree.Pages[p - 1].CropBox;
             foreach (var a in PdfAnnotationReader.Read(doc, p))
             {
-                if (ToModel(a, crop) is not { } model) continue;
+                if (ToModel(a, crop, doc) is not { } model) continue;
                 _loaded[model.Id] = (p, a.Index, a.ObjectNumber, Fingerprint(model));
                 list.Add(model);
             }
@@ -186,9 +206,9 @@ internal sealed class NativeDocumentServices
         _ => "Highlight",
     };
 
-    internal static AnnotationModel? ToModel(PdfAnnotation a, PdfRect crop)
+    internal static AnnotationModel? ToModel(PdfAnnotation a, PdfRect crop, PdfVectorDocument doc)
     {
-        if (!IsManaged(a) || TypeOf(a) is not AnnotationType type || a.Rect.IsEmpty && a.Rect.Width <= 0 && a.Rect.Height <= 0 && a.Rect.X == 0 && a.Rect.Y == 0)
+        if (!IsManaged(a, doc) || TypeOf(a) is not AnnotationType type || a.Rect.IsEmpty && a.Rect.Width <= 0 && a.Rect.Height <= 0 && a.Rect.X == 0 && a.Rect.Y == 0)
             return null;
         double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
         double ox = crop.Left, oy = crop.Top;
@@ -196,7 +216,8 @@ internal sealed class NativeDocumentServices
 
         // The colour from /C; for free text without one, the border colour of its /DA.
         var colour = PdfAnnotation.ToRgb(a.Color) ?? (a.Subtype == "FreeText" ? StrokeOf(a.DefaultAppearance) : null);
-        string colorHex = colour is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b) : "#FF32CD32";
+        string colorHex = LoadedColorHex(a, type);
+        bool shape = IsVertexShapeType(type);
         double opacity = colour != null ? a.Opacity : (a.Opacity < 1 ? a.Opacity : type == AnnotationType.Highlight ? 0.4 : 1.0);
 
         var model = new AnnotationModel
@@ -209,10 +230,11 @@ internal sealed class NativeDocumentServices
             Height = Math.Max(0.01, rect.Height / h),
             ColorHex = colorHex,
             Opacity = Math.Clamp(opacity, 0, 1),
-            StrokeThickness = a.BorderWidth is double bw && bw > 0 ? bw : 2.0,
+            StrokeThickness = LoadedWidth(a, type),
             Contents = a.Contents ?? string.Empty,
-            Author = string.IsNullOrEmpty(a.Author) ? "Author" : a.Author,
-            Title = string.IsNullOrEmpty(a.Subject) ? type.ToString() : a.Subject,
+            // A line or polygon from another program keeps no author or subject it did not have.
+            Author = string.IsNullOrEmpty(a.Author) ? (shape ? string.Empty : "Author") : a.Author,
+            Title = string.IsNullOrEmpty(a.Subject) ? (shape ? string.Empty : type.ToString()) : a.Subject,
             // The document's own date, not the moment it was opened.
             CreationDate = PdfTextStrings.ParseDate(a.CreationDate) ?? PdfTextStrings.ParseDate(a.ModifiedDate) ?? DateTime.Now,
         };
@@ -246,7 +268,9 @@ internal sealed class NativeDocumentServices
         {
             var points = a.Line is { Length: 4 } l ? new[] { new PdfPoint(l[0], l[1]), new PdfPoint(l[2], l[3]) } : a.Vertices.ToArray();
             model.Vertices = points.Select(p => new Point((p.X - ox) / w, 1.0 - (p.Y - oy) / h)).ToList();
-            model.LineEndings = type != AnnotationType.Polygon && a.LineEndings is { Length: 2 } ends ? ends.ToArray() : null;
+            // Endings as the file gives them (a single name too), so a save writes them back unchanged.
+            model.LineEndings = type != AnnotationType.Polygon && a.LineEndings is { Length: > 0 } ends ? ends.ToArray() : null;
+            model.InteriorColorHex = PdfAnnotation.ToRgb(a.InteriorColor) is var (ir, ig, ib) ? PdfNativeAnnotationService.Hex(ir, ig, ib) : null;
             model.HasOwnAppearance = a.HasAppearance;
             model.Opacity = a.Opacity;
         }
@@ -295,10 +319,30 @@ internal sealed class NativeDocumentServices
         return PdfMeasurements.Create(m.MeasureKind, m.PageNumber, points, measure, Rgb(m.ColorHex), m.StrokeThickness > 0 ? m.StrokeThickness : 1);
     }
 
+    private static bool IsVertexShapeType(AnnotationType type) =>
+        type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.Polygon or AnnotationType.PolyLine;
+
+    /// <summary>
+    /// The model's colour for an annotation as read. A line or polygon without /C is not stroked:
+    /// fully transparent. Anything else without one is lime green, as the PDFium path showed it.
+    /// </summary>
+    private static string LoadedColorHex(PdfAnnotation a, AnnotationType type)
+    {
+        var colour = PdfAnnotation.ToRgb(a.Color) ?? (a.Subtype == "FreeText" ? StrokeOf(a.DefaultAppearance) : null);
+        return colour is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b)
+            : IsVertexShapeType(type) ? "#00000000"
+            : "#FF32CD32";
+    }
+
+    /// <summary>The model's line width for an annotation as read: a line or polygon keeps its own (1 when it gives none, as the standard says), others 2 when they give none.</summary>
+    private static double LoadedWidth(PdfAnnotation a, AnnotationType type) =>
+        IsVertexShapeType(type) ? Math.Max(0, a.BorderWidth ?? 1)
+        : a.BorderWidth is double bw && bw > 0 ? bw : 2.0;
+
     /// <summary>A line's or connected lines' endings as saved: as read or set, else an open arrow at the end of an arrow.</summary>
     internal static string[]? ShapeEndings(AnnotationModel m) =>
         m.Type == AnnotationType.Polygon ? null
-        : m.LineEndings is { Length: 2 } le ? le
+        : m.LineEndings is { Length: > 0 } le ? le
         : m.Type == AnnotationType.Arrow ? new[] { "None", "OpenArrow" }
         : null;
 
@@ -319,11 +363,12 @@ internal sealed class NativeDocumentServices
     /// A line, arrow, polygon or connected lines takes the model's points (/L or /Vertices), its
     /// endings (/LE) and a rectangle around them; the annotation editor then draws its appearance.
     /// </summary>
-    private static void ApplyShape(PdfAnnotation a, AnnotationModel m, PdfRect crop)
+    private static void ApplyShape(PdfAnnotation a, AnnotationModel m, PdfRect crop, bool setEndings)
     {
         var points = m.Vertices.Select(p => ToPage(p, crop)).ToList();
         if (points.Count < 2) return;
-        var ends = ShapeEndings(m);
+        // A loaded shape keeps its /LE as read: the viewer has no way to change it.
+        var ends = setEndings ? ShapeEndings(m) : a.LineEndings;
         var bounds = ShapeBounds(points, m.StrokeThickness > 0 ? m.StrokeThickness : 1, ends?.Any(e => e != "None") == true);
         // A loaded shape's rectangle may hold more than its points (a caption, leader lines): it is kept, moved with them.
         var box = BoxOf(m, crop);
@@ -340,7 +385,7 @@ internal sealed class NativeDocumentServices
             a.Line = null;
             a.Vertices = points;
         }
-        a.LineEndings = ends?.ToArray();
+        if (setEndings) a.LineEndings = ends?.ToArray();
     }
 
     /// <summary>The stamp annotation for a model, with how its appearance is drawn (a new stamp, or one given a new look).</summary>
@@ -436,7 +481,7 @@ internal sealed class NativeDocumentServices
             var crop = doc.PageTree.Pages[p - 1].CropBox;
             foreach (var existing in PdfAnnotationReader.Read(doc, p))
             {
-                if (!IsManaged(existing)) continue;
+                if (!IsManaged(existing, doc)) continue;
                 if (byOrigin.TryGetValue((p, existing.Index), out var origin) && origin.ObjectNumber == existing.ObjectNumber
                     && byId.TryGetValue(origin.Id, out var model) && model.PageNumber == p && handled.Add(origin.Id))
                 {
@@ -491,7 +536,7 @@ internal sealed class NativeDocumentServices
         }
         var a = new PdfAnnotation { PageNumber = m.PageNumber, Subtype = SubtypeOf(m.Type) };
         Apply(a, m, crop, geometry: true);
-        if (m.IsVertexShape) ApplyShape(a, m, crop);
+        if (m.IsVertexShape) ApplyShape(a, m, crop, setEndings: true);
         if (m.Type == AnnotationType.FreeText)
         {
             // The viewer draws free text black on a box outlined in the annotation's colour.
@@ -532,8 +577,24 @@ internal sealed class NativeDocumentServices
             }
             return existing;
         }
+        var widthBefore = existing.BorderWidth;
+        string? authorBefore = existing.Author, subjectBefore = existing.Subject;
+        string loadedHex = LoadedColorHex(existing, m.Type);
+        double loadedWidth = LoadedWidth(existing, m.Type);
         Apply(existing, m, crop, geometryChanged);
-        if (m.IsVertexShape) ApplyShape(existing, m, crop); // its rectangle follows its points and line width
+        if (m.IsVertexShape || m.Type is AnnotationType.Rectangle or AnnotationType.Ellipse)
+        {
+            // What the viewer filled in for what the file left out is not written back: no /C
+            // stays no colour, no /BS (or /W 0) stays as it was, unless the user chose another.
+            if (string.Equals(m.ColorHex, loadedHex, StringComparison.OrdinalIgnoreCase)) existing.Color = colourBefore;
+            if (Math.Abs(m.StrokeThickness - loadedWidth) < 1e-9) existing.BorderWidth = widthBefore;
+        }
+        if (m.IsVertexShape)
+        {
+            if (string.IsNullOrEmpty(authorBefore) && string.IsNullOrEmpty(m.Author)) existing.Author = authorBefore;
+            if (string.IsNullOrEmpty(subjectBefore) && string.IsNullOrEmpty(m.Title)) existing.Subject = subjectBefore;
+            ApplyShape(existing, m, crop, setEndings: false); // its rectangle follows its points and line width
+        }
         if (!string.Equals(before ?? string.Empty, m.Contents ?? string.Empty, StringComparison.Ordinal))
             existing.RichContents = null; // rich text of the old contents would contradict the new
         if (m.Type == AnnotationType.FreeText && colourBefore == null)

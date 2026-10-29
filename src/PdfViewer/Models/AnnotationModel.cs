@@ -170,6 +170,9 @@ public partial class AnnotationModel : ObservableObject
     /// <summary>A line's or connected lines' /LE: the start and end styles ("None", "OpenArrow"...); null for none.</summary>
     public string[]? LineEndings { get; set; }
 
+    /// <summary>A loaded polygon's or line's /IC: the fill of a polygon and of closed line endings; null for none.</summary>
+    public string? InteriorColorHex { get; set; }
+
     /// <summary>A line, arrow, polygon or connected lines: a shape drawn from its <see cref="Vertices"/>.</summary>
     public bool IsVertexShape => Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.Polygon or AnnotationType.PolyLine;
 
@@ -187,20 +190,21 @@ public partial class AnnotationModel : ObservableObject
         Point Local(Point p) => new((p.X - X) / Width * width, (p.Y - Y) / Height * height);
         var points = _vertices.Select(Local).ToList();
         var path = new System.Windows.Media.PathGeometry();
-        var figure = new System.Windows.Media.PathFigure { StartPoint = points[0], IsClosed = Type == AnnotationType.Polygon, IsFilled = false };
+        bool filled = InteriorColorHex != null;
+        var figure = new System.Windows.Media.PathFigure { StartPoint = points[0], IsClosed = Type == AnnotationType.Polygon, IsFilled = filled && Type == AnnotationType.Polygon };
         foreach (var p in points.Skip(1)) figure.Segments.Add(new System.Windows.Media.LineSegment(p, true));
         path.Figures.Add(figure);
         if (Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.PolyLine && LineEndings is { Length: 2 } ends)
         {
-            Arrow(path, ends[0], points[0], points[0] - points[1]);
-            Arrow(path, ends[1], points[^1], points[^1] - points[^2]);
+            Arrow(path, ends[0], points[0], points[0] - points[1], filled);
+            Arrow(path, ends[1], points[^1], points[^1] - points[^2], filled);
         }
         path.Freeze();
         return path;
     }
 
-    /// <summary>An arrow head at <paramref name="tip"/> pointing along <paramref name="outward"/> (open or closed; other endings are left out on screen).</summary>
-    private void Arrow(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward)
+    /// <summary>An arrow head at <paramref name="tip"/> pointing along <paramref name="outward"/> (open or closed, a closed one filled with /IC; other endings are left out on screen).</summary>
+    private void Arrow(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward, bool filled)
     {
         if (style is not ("OpenArrow" or "ClosedArrow") || outward.Length < 1e-9) return;
         outward.Normalize();
@@ -208,7 +212,7 @@ public partial class AnnotationModel : ObservableObject
         double length = 9 * Math.Max(StrokeThickness, 1);
         var back = outward * (length * Math.Cos(Math.PI / 6));
         var side = normal * (length * Math.Sin(Math.PI / 6));
-        var head = new System.Windows.Media.PathFigure { StartPoint = tip - back + side, IsClosed = style == "ClosedArrow", IsFilled = false };
+        var head = new System.Windows.Media.PathFigure { StartPoint = tip - back + side, IsClosed = style == "ClosedArrow", IsFilled = filled && style == "ClosedArrow" };
         head.Segments.Add(new System.Windows.Media.LineSegment(tip, true));
         head.Segments.Add(new System.Windows.Media.LineSegment(tip - back - side, true));
         path.Figures.Add(head);

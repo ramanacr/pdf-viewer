@@ -39,6 +39,17 @@ public partial class MainViewModel
     /// <summary>A polygon or connected lines has points placed and is not finished yet.</summary>
     public bool IsDrawingShapePoints => _shapePoints.Count > 0;
 
+    /// <summary>
+    /// The PDFium engine (developer builds) cannot save lines, arrows, polygons or connected
+    /// lines, so their tools say so and stay off rather than drawing shapes a save would drop.
+    /// </summary>
+    private bool CanUseShapeTool(AnnotationType tool)
+    {
+        if (!IsLineTool(tool) && !IsClickShapeTool(tool) || UseNativeDocumentServices) return true;
+        StatusText = "Lines, arrows, polygons and connected lines cannot be saved with the PDFium engine. Switch to the vector engine to draw them.";
+        return false;
+    }
+
     private void OnShapeToolChanged(AnnotationType? tool)
     {
         ResetShapePoints();

@@ -30,8 +30,12 @@ public partial class MainWindow
         if (MainViewModel.IsClickShapeTool(tool))
         {
             e.Handled = true;
+            bool samePage = _vm.ShapePageNumber == page.PageNumber;
+            if (e.ClickCount >= 2 && !_vm.IsDrawingShapePoints)
+                return true; // the rest of the double- or triple-click that finished a shape
             _shapeCanvas = canvas;
-            if (e.ClickCount >= 2) _vm.FinishShape();
+            // A double-click finishes the shape on its own page; on another page it is a click there.
+            if (e.ClickCount >= 2 && samePage) _vm.FinishShape();
             else _vm.ShapeClick(page.PageNumber, Normalized(page, e.GetPosition(canvas)));
             RefreshShapePreview();
             return true;
@@ -131,12 +135,16 @@ public partial class MainWindow
     {
         if (_shapeLine != null && VisualTreeHelper.GetParent(_shapeLine) is Canvas old) old.Children.Remove(_shapeLine);
         _shapeLine = null;
-        if (_shell.ActiveDocument == null || !_vm.IsDrawingShapePoints || _shapeCanvas?.Tag is not PageViewModel page
-            || page.PageNumber != _vm.ShapePageNumber)
+        if (_shell.ActiveDocument == null || !_vm.IsDrawingShapePoints || _vm.ShapePageNumber < 1 || _vm.ShapePageNumber > _vm.Pages.Count)
         {
             if (!_vm.IsDrawingShapePoints) _shapeCursor = null;
             return;
         }
+        // After a zoom or a scroll the page may have a new canvas: find the one shown now.
+        var page = _vm.Pages[_vm.ShapePageNumber - 1];
+        if (!ReferenceEquals(_shapeCanvas?.Tag, page) || _shapeCanvas is not { IsVisible: true })
+            _shapeCanvas = FindPageCanvas(this, page);
+        if (_shapeCanvas == null) return;
 
         double w = page.UnrotatedDisplayWidth, h = page.UnrotatedDisplayHeight;
         var points = _vm.ShapePreviewPoints.Select(p => new Point(p.X * w, p.Y * h)).ToList();

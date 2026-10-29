@@ -329,6 +329,117 @@ public class ShapeToolsViewerTests : IDisposable
         Assert.True(MainViewModel.HasVertexHandles(reopened.AllAnnotations[0])); // a measurement's points still move one by one
     }
 
+    // ------------------------------------------------------------------ shapes from other programs
+
+    /// <summary>A 612 x 792 page with the given annotation dictionaries (made here, not taken from anywhere).</summary>
+    private string WithAnnotations(string name, params string[] annotations)
+    {
+        var b = new VectorPdfBuilder();
+        var numbers = annotations.Select(a => b.Add(a)).ToList();
+        b.AddPage("", mediaBox: "[0 0 612 792]", extra: "/Annots [" + string.Join(" ", numbers.Select(n => $"{n} 0 R")) + "]");
+        string path = Path.Combine(_dir, name);
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    [Fact]
+    public async Task ForeignShapes_KeepWhatTheFileLeftOut_WhenMoved()
+    {
+        string path = WithAnnotations("foreign.pdf",
+            // No /C, no /BS, no /T, no /Subj, and /LE given as one name.
+            "<< /Type /Annot /Subtype /Line /Rect [90 390 310 410] /L [100 400 300 400] /LE /OpenArrow >>",
+            // A stroke width of 0 and a fill.
+            "<< /Type /Annot /Subtype /Polygon /Rect [90 90 210 210] /Vertices [100 100 200 100 150 200] /C [0 0 1] /IC [0 1 0] /BS << /W 0 >> >>",
+            // A square without /C or /BS (the same rule is kept for rectangles and ellipses).
+            "<< /Type /Annot /Subtype /Square /Rect [300 300 400 350] >>");
+
+        using (var vm = await Open(path))
+        {
+            var line = vm.AllAnnotations[0];
+            var polygon = vm.AllAnnotations[1];
+            Assert.Equal(AnnotationType.Arrow, line.Type);
+            Assert.Equal(new[] { "OpenArrow" }, line.LineEndings);
+            Assert.Equal("#00000000", line.ColorHex); // not stroked: nothing drawn on screen either
+            Assert.Equal(1, line.StrokeThickness);    // the standard's default width
+            Assert.Equal(string.Empty, line.Author);
+            Assert.Equal(0, polygon.StrokeThickness);
+            Assert.Equal("#00FF00", polygon.InteriorColorHex);
+            Assert.True(((PathGeometry)polygon.ShapeGeometry(100, 100)!).Figures[0].IsFilled);
+
+            foreach (var a in vm.AllAnnotations)
+            {
+                vm.SelectAnnotation(a);
+                Assert.True(vm.NudgeSelectedAnnotation(1, 0, large: true));
+            }
+            await vm.SaveAsync();
+        }
+
+        var saved = await ReadSaved(path);
+        Assert.Equal(new[] { "Line", "Polygon", "Square" }, saved.Select(a => a.Subtype));
+        Assert.Equal(new[] { 110.0, 400, 310, 400 }, saved[0].Line!.Select(v => Math.Round(v, 3)));
+        Assert.Null(saved[0].Color);
+        Assert.Null(saved[0].BorderWidth);
+        Assert.Null(saved[0].Author);
+        Assert.Null(saved[0].Subject);
+        Assert.Equal(new[] { "OpenArrow" }, saved[0].LineEndings); // not replaced by [None OpenArrow]
+        Assert.Equal(0, saved[1].BorderWidth);
+        Assert.Equal(new[] { 0.0, 0, 1 }, saved[1].Color);
+        Assert.Equal(new[] { 0.0, 1, 0 }, saved[1].InteriorColor);
+        Assert.Equal(110, saved[1].Vertices[0].X, 3);
+        Assert.Null(saved[2].Color);
+        Assert.Null(saved[2].BorderWidth);
+        Assert.Equal(310, saved[2].Rect.X, 3);
+
+        // A colour and width the user chooses are written.
+        using (var vm = await Open(path))
+        {
+            vm.ChangeAnnotation(vm.AllAnnotations[0], a => { a.ColorHex = "#FF0000"; a.StrokeThickness = 3; }, "Change");
+            await vm.SaveAsync();
+        }
+        saved = await ReadSaved(path);
+        Assert.Equal(new[] { 1.0, 0, 0 }, saved[0].Color);
+        Assert.Equal(3, saved[0].BorderWidth);
+    }
+
+    [Fact]
+    public async Task GeospatialOrBrokenMeasures_AndOverlongPolylines_AreLeftAlone()
+    {
+        string many = string.Join(" ", Enumerable.Range(0, PdfAnnotationLimits.MaxVertices + 5).Select(i => $"{100 + i % 50} {100 + i % 7}"));
+        string path = WithAnnotations("leftalone.pdf",
+            "<< /Type /Annot /Subtype /Polygon /Rect [90 90 210 210] /Vertices [100 100 200 100 150 200] /Measure << /Type /Measure /Subtype /GEO >> >>",
+            "<< /Type /Annot /Subtype /Line /Rect [90 390 310 410] /L [100 400 300 400] /Measure << /Type /Measure /Subtype /RL >> >>",
+            $"<< /Type /Annot /Subtype /PolyLine /Rect [90 90 160 120] /Vertices [{many}] >>");
+
+        using (var vm = await Open(path))
+        {
+            Assert.Empty(vm.AllAnnotations); // not shown as shapes or measurements, so never rewritten
+            vm.ToggleAnnotationTool("Line");
+            vm.AddLineShape(1, N(100, 600), N(200, 600));
+            await vm.SaveAsync();
+        }
+
+        using var doc = await PdfVectorDocument.OpenAsync(File.ReadAllBytes(path));
+        var saved = PdfAnnotationReader.Read(doc, 1);
+        Assert.Equal(new[] { "Polygon", "Line", "PolyLine", "Line" }, saved.Select(a => a.Subtype));
+        var annots = (PdfEngine.Vector.Objects.PdfArray)doc.Resolver.Resolve(doc.PageTree.Pages[0].Dictionary["Annots"])!;
+        var polyline = (PdfEngine.Vector.Objects.PdfDictionary)doc.Resolver.Resolve(annots[2])!;
+        Assert.Equal(2 * (PdfAnnotationLimits.MaxVertices + 5), ((PdfEngine.Vector.Objects.PdfArray)doc.Resolver.Resolve(polyline["Vertices"])!).Count);
+        Assert.True(((PdfEngine.Vector.Objects.PdfDictionary)doc.Resolver.Resolve(annots[0])!).ContainsKey("Measure"));
+    }
+
+    [Fact]
+    public void ClosedArrowHeads_AreFilledWithTheInteriorColour()
+    {
+        var line = new AnnotationModel { Type = AnnotationType.Arrow, X = 0, Y = 0, Width = 1, Height = 1, LineEndings = new[] { "ClosedArrow", "OpenArrow" } };
+        line.Vertices = new() { new Point(0.1, 0.5), new Point(0.9, 0.5) };
+        var path = (PathGeometry)line.ShapeGeometry(100, 100)!;
+        Assert.False(path.Figures[1].IsFilled); // no /IC: outlined only
+        line.InteriorColorHex = "#FF0000";
+        path = (PathGeometry)line.ShapeGeometry(100, 100)!;
+        Assert.True(path.Figures[1].IsFilled && path.Figures[1].IsClosed);
+        Assert.False(path.Figures[2].IsFilled); // an open arrow is never filled
+    }
+
     [Fact]
     public async Task XfdfExport_WritesLinesWithTheirEnds_AndPolygonsWithTheirPoints()
     {

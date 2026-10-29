@@ -208,6 +208,11 @@ public partial class MainWindow : Window
             {
                 RefreshShapePreview();
             }
+            else if (e.PropertyName == nameof(MainViewModel.ZoomLevel) && document.IsDrawingShapePoints)
+            {
+                // The polygon being drawn follows the new page size once the pages are laid out again.
+                Dispatcher.BeginInvoke(RefreshShapePreview, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
             else if (e.PropertyName is nameof(MainViewModel.ActiveMeasureTool) or nameof(MainViewModel.MeasurePreviewPoints))
             {
                 RefreshMeasurePreview();
@@ -879,6 +884,7 @@ public partial class MainWindow : Window
     private void DocumentScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!_vm.IsDocumentLoaded || _vm.Pages.Count == 0) return;
+        if (_vm.IsDrawingShapePoints) RefreshShapePreview(); // its page may have a new canvas
         if (e.ExtentWidthChange != 0 || e.ExtentHeightChange != 0)
             PrepareDetailTiles();
         ScheduleDetailTiles();
