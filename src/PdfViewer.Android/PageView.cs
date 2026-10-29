@@ -14,13 +14,20 @@ namespace PdfViewer.Android;
 /// at most <see cref="BaseMaxPixels"/> pixels; at a deeper zoom the view's part of the page is
 /// drawn over it in tiles at the zoom's own scale (<see cref="PageTiles"/>), so 8× stays sharp.
 /// With an edit session, a tap fills a form field or picks an annotation, the ink tool draws with
-/// one finger (two still zoom), and the note tool places a note; the engine draws the edits into
+/// one finger (two still zoom), the rectangle, ellipse, line and arrow tools draw with a drag, and
+/// the note and text tools place a note or a text box with a tap; the engine draws the edits into
 /// the pages, which are drawn again after each change (<see cref="Refresh"/>).
 /// </summary>
 internal sealed class PageView : SkiaView
 {
-    /// <summary>What one finger does on a page: browse (scroll, tap, long press), draw, or place a note.</summary>
-    public enum PageTool { Browse, Ink, Note }
+    /// <summary>
+    /// What one finger does on a page: browse (scroll, tap, long press), draw (ink, rectangle,
+    /// ellipse, line, arrow: a drag), or place a note or a text box (a tap).
+    /// </summary>
+    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text }
+
+    /// <summary>A tool that draws with a drag of one finger (the page does not scroll under it).</summary>
+    public static bool Drags(PageTool tool) => tool is PageTool.Ink or PageTool.Rectangle or PageTool.Ellipse or PageTool.Line or PageTool.Arrow;
 
     /// <summary>Whole-page bitmaps kept for scrolling back (native Skia memory, not the Java heap).</summary>
     private const long ImageBudgetBytes = 96L * 1024 * 1024;
@@ -112,6 +119,16 @@ internal sealed class PageView : SkiaView
 
     /// <summary>The note tool was tapped on a page: the page and the point on it.</summary>
     public event Action<int, ViewerPoint>? NoteRequested;
+
+    /// <summary>The text tool was tapped on a page: the page and the point on it.</summary>
+    public event Action<int, ViewerPoint>? TextRequested;
+
+    /// <summary>
+    /// A shape tool was dragged: the tool, the page, where the drag started and ended (shown-page
+    /// points), and the outline drawn over the page until it is drawn with the shape (drop it with
+    /// <see cref="DropPendingInk(IReadOnlyList{ViewerPoint})"/> when no shape is kept).
+    /// </summary>
+    public event Action<PageTool, int, ViewerPoint, ViewerPoint, IReadOnlyList<ViewerPoint>>? ShapeDrawn;
 
     private PageTool _tool;
 
@@ -361,7 +378,38 @@ internal sealed class PageView : SkiaView
         _ink.StrokeWidth = (float)(ViewerEditSession.InkWidth * _layout.PixelsPerPoint);
         foreach (var (page, _, points) in _pendingInk)
             if (visible.Contains(page)) DrawStroke(canvas, page, points);
-        if (_stroke != null) DrawStroke(canvas, _strokePage, _stroke);
+        if (_stroke != null) DrawStroke(canvas, _strokePage, _tool == PageTool.Ink || _stroke.Count < 2 ? _stroke : Outline(_tool, _stroke[0], _stroke[^1]));
+    }
+
+    /// <summary>
+    /// A shape's outline as one path of shown-page points, to show it while it is dragged and until
+    /// the page is drawn with it: a rectangle's corners, an ellipse's points, a line, or a line with
+    /// an open arrowhead (nine line widths long, as the engine draws it).
+    /// </summary>
+    internal static List<ViewerPoint> Outline(PageTool tool, ViewerPoint a, ViewerPoint b)
+    {
+        switch (tool)
+        {
+            case PageTool.Rectangle:
+                return [a, new(b.X, a.Y), b, new(a.X, b.Y), a];
+            case PageTool.Ellipse:
+            {
+                double cx = (a.X + b.X) / 2, cy = (a.Y + b.Y) / 2, rx = Math.Abs(b.X - a.X) / 2, ry = Math.Abs(b.Y - a.Y) / 2;
+                return Enumerable.Range(0, 49).Select(i => new ViewerPoint(cx + rx * Math.Cos(i * Math.PI / 24), cy + ry * Math.Sin(i * Math.PI / 24))).ToList();
+            }
+            case PageTool.Arrow:
+            {
+                double dx = b.X - a.X, dy = b.Y - a.Y, length = Math.Sqrt(dx * dx + dy * dy);
+                if (length < 1e-6) return [a, b];
+                double head = 9 * ViewerEditSession.ShapeWidth, ux = dx / length, uy = dy / length;
+                double cos = Math.Cos(Math.PI / 6), sin = Math.Sin(Math.PI / 6);
+                // Two strokes back from the tip, 30 degrees either side of the line.
+                ViewerPoint Side(double sign) => new(b.X - head * (ux * cos - sign * uy * sin), b.Y - head * (uy * cos + sign * ux * sin));
+                return [a, b, Side(1), b, Side(-1)];
+            }
+            default:
+                return [a, b];
+        }
     }
 
     private void DrawStroke(SKCanvas canvas, int page, IReadOnlyList<ViewerPoint> points)
@@ -597,9 +645,9 @@ internal sealed class PageView : SkiaView
     private void Tap(float x, float y)
     {
         if (_layout?.PageAt(x, y) is not var (page, point)) return;
-        if (_tool == PageTool.Note)
+        if (_tool is PageTool.Note or PageTool.Text)
         {
-            NoteRequested?.Invoke(page, point);
+            (_tool == PageTool.Note ? NoteRequested : TextRequested)?.Invoke(page, point);
             return;
         }
         if (Session is not { } session) return;
@@ -612,8 +660,9 @@ internal sealed class PageView : SkiaView
     }
 
     /// <summary>
-    /// The ink tool: one finger draws on the page it starts on; a second finger ends the stroke
-    /// unfinished and zooms instead. True when the event was the stroke's.
+    /// The ink and shape tools: one finger draws on the page it starts on (a stroke, or a shape
+    /// from where it went down to where it is); a second finger ends the drawing unfinished and
+    /// zooms instead. True when the event was the drawing's.
     /// </summary>
     private bool DrawInk(MotionEvent e)
     {
@@ -631,6 +680,13 @@ internal sealed class PageView : SkiaView
                 Invalidate();
                 return false;
             case MotionEventActions.Move when _stroke != null:
+                if (_tool != PageTool.Ink)
+                {
+                    // A shape needs only where the drag started and where it is.
+                    _stroke = [_stroke[0], ToPage(_strokePage, e.GetX(), e.GetY())];
+                    Invalidate();
+                    return true;
+                }
                 for (int i = 0; i < e.HistorySize; i++) _stroke.Add(ToPage(_strokePage, e.GetHistoricalX(i), e.GetHistoricalY(i)));
                 _stroke.Add(ToPage(_strokePage, e.GetX(), e.GetY()));
                 Invalidate();
@@ -638,6 +694,15 @@ internal sealed class PageView : SkiaView
             case MotionEventActions.Up when _stroke != null:
                 var stroke = _stroke;
                 _stroke = null;
+                if (_tool != PageTool.Ink)
+                {
+                    var end = ToPage(_strokePage, e.GetX(), e.GetY());
+                    var outline = Outline(_tool, stroke[0], end);
+                    _pendingInk.Add((_strokePage, _generation, outline));
+                    Invalidate();
+                    ShapeDrawn?.Invoke(_tool, _strokePage, stroke[0], end, outline);
+                    return true;
+                }
                 _pendingInk.Add((_strokePage, _generation, stroke));
                 Invalidate();
                 InkDrawn?.Invoke(_strokePage, stroke);
@@ -729,9 +794,10 @@ internal sealed class PageView : SkiaView
             return true;
         }
         _pinch.OnTouchEvent(e);
-        if (_tool == PageTool.Ink && Session != null && !_pinch.IsInProgress && e.PointerCount == 1 && DrawInk(e)) return true;
-        if (_tool == PageTool.Ink && e.ActionMasked is MotionEventActions.PointerDown) DrawInk(e);
-        if (!_pinch.IsInProgress && _tool != PageTool.Ink) _gestures.OnTouchEvent(e);
+        bool drags = Drags(_tool);
+        if (drags && Session != null && !_pinch.IsInProgress && e.PointerCount == 1 && DrawInk(e)) return true;
+        if (drags && e.ActionMasked is MotionEventActions.PointerDown) DrawInk(e);
+        if (!_pinch.IsInProgress && !drags) _gestures.OnTouchEvent(e);
         if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel && !_flinging)
             RequestRender();
         return true;

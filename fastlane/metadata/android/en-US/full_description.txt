@@ -23,13 +23,14 @@ FILL IN FORMS
 
 ANNOTATE
 • Highlight, underline and strike out selected text.
-• Draw with your finger, and add sticky notes.
+• Draw with your finger, and draw rectangles, ellipses, lines and arrows.
+• Add sticky notes and text boxes.
 • Choose, edit and delete annotations, with undo and redo.
 • A list of all annotations; tap one to go to it.
 • Save a copy: your edits are added as an incremental update, so the original content and any signatures stay intact. Certified documents only allow the changes that their certification permits.
 
 LIMITS OF THIS PREVIEW
-• There is no printing, no free text, shapes or stamps, and you cannot move an annotation yet.
+• There is no printing and no stamps, and you cannot move an annotation or change its colour yet.
 • Edits that you have not saved are lost if Android closes the app in the background.
 • It has been tested on the Android emulator; feedback from real phones is welcome.
 

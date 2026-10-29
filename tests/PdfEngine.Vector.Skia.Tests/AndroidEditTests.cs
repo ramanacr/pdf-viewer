@@ -283,6 +283,155 @@ public class AndroidEditTests
         Assert.Equal(2, (await ReadBack(doc.Bytes)).Count);
     }
 
+    // ------------------------------------------------------------------ shapes and text boxes (phase 3)
+
+    [Fact]
+    public async Task Shapes_FromDrags_AreSavedWithAppearances_WithUndoAndRedo()
+    {
+        byte[] pdf = TextPage();
+        await using var doc = await Open(pdf);
+        var session = await ViewerEditSession.StartAsync(doc, author: "Reader");
+        var before = await doc.RenderPageAsync(2, 1);
+
+        // Drags on page 2 (shown points, y down), dragged either way.
+        var rect = session.AddShape(ViewerAnnotationKind.Square, 2, new ViewerPoint(300, 200), new ViewerPoint(100, 100));
+        var ellipse = session.AddShape(ViewerAnnotationKind.Circle, 2, new ViewerPoint(100, 300), new ViewerPoint(250, 400));
+        var line = session.AddLine(2, new ViewerPoint(100, 500), new ViewerPoint(300, 500), arrow: false);
+        // An arrow dragged past the page's edge ends on the page.
+        var arrow = session.AddLine(2, new ViewerPoint(100, 600), new ViewerPoint(700, 700), arrow: true);
+        Assert.NotNull(rect);
+        Assert.NotNull(ellipse);
+        Assert.NotNull(line);
+        Assert.NotNull(arrow);
+        Assert.Equal(new ViewerRect(100, 100, 200, 100), doc.Geometry[1].ToShown(rect.Box));
+        Assert.Equal(ViewerEditSession.ShapeWidth, rect.StrokeWidth);
+        Assert.Equal(new double[] { 100, 292, 300, 292 }, line.Vertices);
+        Assert.Equal(("None", "None"), (line.StartEnding, line.EndEnding));
+        Assert.Equal(("None", "OpenArrow"), (arrow.StartEnding, arrow.EndEnding));
+        Assert.Equal(612, arrow.Vertices[2], 6);
+        Assert.Equal(792 - 700, arrow.Vertices[3], 6);
+        // The line's box holds the line and its width; the arrow's box holds the arrowhead.
+        Assert.True(line.Box.Y1 < 292 && line.Box.Y2 > 292);
+        Assert.True(arrow.Box.X1 < 100 - ViewerEditSession.ShapeWidth);
+
+        // A drag shorter than a few points adds nothing (a tap with a shape tool, a thin rectangle).
+        Assert.Null(session.AddShape(ViewerAnnotationKind.Square, 2, new ViewerPoint(50, 50), new ViewerPoint(52, 51)));
+        Assert.Null(session.AddShape(ViewerAnnotationKind.Circle, 2, new ViewerPoint(50, 50), new ViewerPoint(150, 52)));
+        Assert.Null(session.AddLine(2, new ViewerPoint(50, 50), new ViewerPoint(52, 52), arrow: true));
+        Assert.Null(session.AddLine(2, new ViewerPoint(double.NaN, 50), new ViewerPoint(80, 80), arrow: false));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.AddShape(ViewerAnnotationKind.Line, 2, new ViewerPoint(0, 0), new ViewerPoint(50, 50)));
+        Assert.Equal(4, session.Store.Current.Count);
+
+        // A tap finds each; the list names them.
+        Assert.Equal(rect.Id, session.AnnotationAt(2, new ViewerPoint(150, 150), slack: 2)?.Id);
+        Assert.Equal(line.Id, session.AnnotationAt(2, new ViewerPoint(200, 501), slack: 2)?.Id);
+        Assert.Equal(["Rectangle", "Ellipse", "Line", "Line"], session.List().Select(i => i.Label));
+
+        // Written into the document and drawn: the page is no longer blank.
+        Assert.True((await session.ApplyAsync()).Written);
+        var after = await doc.RenderPageAsync(2, 1);
+        Assert.False(before.Pixels.AsSpan().SequenceEqual(after.Pixels));
+
+        // Save a copy: an incremental update with real annotations and their appearance streams.
+        var save = await session.BeginSaveAsync();
+        Assert.NotNull(save);
+        Assert.True(StartsWith(save.Bytes, pdf));
+        using (var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(save.Bytes))
+        {
+            var read = PdfEngine.Vector.Services.PdfAnnotationReader.Read(vector, 2);
+            Assert.Equal(["Square", "Circle", "Line", "Line"], read.Select(a => a.Subtype));
+            Assert.All(read, a => Assert.True(a.HasAppearance));
+            Assert.All(read, a => Assert.Equal(ViewerEditSession.ShapeWidth, a.BorderWidth));
+            Assert.Null(read[2].LineEndings);
+            Assert.Equal(["None", "OpenArrow"], read[3].LineEndings!);
+            Assert.Equal(new double[] { 100, 292, 300, 292 }, read[2].Line);
+        }
+        session.EndSave(save, saved: true);
+        Assert.False(session.IsDirty);
+
+        // Read back as the app reads a file it opens.
+        var back = await ReadBack(save.Bytes);
+        Assert.Equal([ViewerAnnotationKind.Square, ViewerAnnotationKind.Circle, ViewerAnnotationKind.Line, ViewerAnnotationKind.Line], back.Select(a => a.Kind));
+        Assert.Equal(("None", "OpenArrow"), (back[3].StartEnding, back[3].EndEnding));
+        Assert.Equal(ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Square), back[0].Color);
+
+        // Undo takes them back one at a time, newest first; redo makes them again.
+        Assert.True(session.Undo());
+        Assert.True(session.Undo());
+        Assert.Equal([rect.Id, ellipse.Id], session.Store.Current.Select(a => a.Id));
+        Assert.True(session.Redo());
+        Assert.Equal([rect.Id, ellipse.Id, line.Id], session.Store.Current.Select(a => a.Id));
+        // Delete the chosen one (as the Delete button does), then undo the delete.
+        Assert.True(session.Delete(ellipse.Id));
+        Assert.True((await session.ApplyAsync()).Written);
+        Assert.Equal(["Square", "Line"], (await ReadBack(doc.Bytes)).Select(a => ViewerAnnotationPdf.Subtype(a.Kind)));
+        Assert.True(session.Undo());
+        Assert.True((await session.ApplyAsync()).Written);
+        Assert.Equal(3, (await ReadBack(doc.Bytes)).Count);
+    }
+
+    [Fact]
+    public async Task TextBoxes_FitTheirText_StayOnThePage_AndAreSavedWithAnAppearance()
+    {
+        byte[] pdf = TextPage();
+        await using var doc = await Open(pdf);
+        var session = await ViewerEditSession.StartAsync(doc, author: "Reader");
+        var g = doc.Geometry[1];
+
+        // No text, no text box.
+        Assert.Null(session.AddFreeText(2, new ViewerPoint(100, 100), "   \n "));
+
+        var box = session.AddFreeText(2, new ViewerPoint(100, 100), "Check the total");
+        Assert.NotNull(box);
+        var shown = g.ToShown(box.Box);
+        Assert.Equal(100, shown.X, 6);
+        Assert.Equal(100, shown.Y, 6);
+        Assert.Equal(ViewerEditSession.FreeTextWidth, shown.Width, 6);
+        Assert.Equal(ViewerEditSession.FreeTextSize, box.FontSize);
+        Assert.Equal("#000000", box.Color);
+        Assert.Equal(0, box.StrokeWidth);
+
+        // Near the bottom-right corner it stays on the page; a longer text makes a taller box.
+        var corner = session.AddFreeText(2, new ViewerPoint(600, 790), string.Join("\n", Enumerable.Repeat("A line of the text", 4)));
+        Assert.NotNull(corner);
+        var c = g.ToShown(corner.Box);
+        Assert.True(c.X + c.Width <= 612 + 1e-6 && c.Y + c.Height <= 792 + 1e-6 && c.X >= 0 && c.Y >= 0);
+        Assert.True(c.Height > shown.Height * 3);
+
+        // A tap finds it; new text resizes it; empty text is refused (delete it instead).
+        Assert.Equal(box.Id, session.AnnotationAt(2, new ViewerPoint(110, 105), slack: 2)?.Id);
+        Assert.True(session.SetContents(box.Id, new string('x', 200)));
+        Assert.True(g.ToShown(session.Store.Find(box.Id)!.Box).Height > shown.Height);
+        Assert.Equal(100, g.ToShown(session.Store.Find(box.Id)!.Box).Y, 6);
+        Assert.Throws<ViewerAnnotationException>(() => session.SetContents(box.Id, ""));
+        Assert.True(session.Undo());
+        Assert.Equal("Check the total", session.Store.Find(box.Id)!.Contents);
+
+        var save = await session.BeginSaveAsync();
+        Assert.NotNull(save);
+        Assert.True(StartsWith(save.Bytes, pdf));
+        using (var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(save.Bytes))
+        {
+            var read = PdfEngine.Vector.Services.PdfAnnotationReader.Read(vector, 2);
+            Assert.Equal(["FreeText", "FreeText"], read.Select(a => a.Subtype));
+            Assert.All(read, a => Assert.True(a.HasAppearance));
+            Assert.Equal("Check the total", read[0].Contents);
+            Assert.Contains("12 Tf", read[0].DefaultAppearance);
+        }
+        session.EndSave(save, saved: true);
+
+        var back = await ReadBack(save.Bytes);
+        Assert.Equal([ViewerAnnotationKind.FreeText, ViewerAnnotationKind.FreeText], back.Select(a => a.Kind));
+        Assert.Equal(("Check the total", "#000000", 12.0), (back[0].Contents, back[0].Color, back[0].FontSize));
+        Assert.Equal(["Text box", "Text box"], session.List().Select(i => i.Label));
+
+        // Undo removes the newest; redo puts it back.
+        Assert.True(session.Undo());
+        Assert.Single(session.Store.Current);
+        Assert.True(session.Redo());
+        Assert.Equal(2, session.Store.Current.Count);
+    }
+
     private static async Task<IReadOnlyList<ViewerAnnotation>> ReadBack(byte[] bytes)
     {
         await using var doc = await Open(bytes);
