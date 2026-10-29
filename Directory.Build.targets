@@ -34,6 +34,20 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!--
+      Target frameworks: net9.0 always; net10.0 (LTS) as well when the .NET 10 SDK builds the
+      project (see the TargetFrameworks of each packed project). The package build uses SDK 10 and
+      checks that every package has both.
+
+      Package validation (part of the SDK) runs on each pack: the net10.0 build must not lose any
+      API of the net9.0 build. From 1.0.0 on, set PdfEngineBaselineVersion to the last released
+      version: the pack then fails on any breaking change against that package on nuget.org. An
+      intended break is recorded with "dotnet pack -p:GenerateCompatibilitySuppressionFile=true"
+      (CompatibilitySuppressions.xml next to the project) and needs a new major version.
+    -->
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageValidationBaselineVersion Condition="'$(PdfEngineBaselineVersion)' != ''">$(PdfEngineBaselineVersion)</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">

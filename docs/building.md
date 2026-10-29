@@ -115,7 +115,9 @@ dotnet pack src/PdfEngine.Vector/PdfEngine.Vector.csproj -o packages
 dotnet pack src/PdfEngine.Vector.Skia/PdfEngine.Vector.Skia.csproj -o packages
 ```
 
-A local pack has the version `0.0.0-dev`. See [Use the engine as a library](developers.md).
+A local pack has the version `0.0.0-dev`. With the .NET 9 SDK it has only `net9.0`; to get
+`net10.0` as well, as the released packages have, pack with the .NET 10 SDK. See
+[Use the engine as a library](developers.md).
 
 ## Engine modes
 

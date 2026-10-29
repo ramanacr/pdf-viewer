@@ -5,11 +5,11 @@ permalink: /developers/
 
 # Use the engine as a library
 
-The PDF engine of PDF Viewer is also a set of NuGet packages for .NET 9 (`net9.0`). It is pure C#.
+The PDF engine of PDF Viewer is also a set of NuGet packages for .NET 9 and .NET 10 (`net9.0` and `net10.0`). It is pure C#.
 It opens, reads, searches, edits and saves PDF files, and the Skia package draws pages on any
 platform that SkiaSharp supports.
 
-The packages are a **preview** (`0.1.0-preview.1`). The API can change before version 1.0.
+The packages are a **preview** (`0.2.0-preview.1`). The API can change before version 1.0.
 
 ## Packages
 
@@ -103,6 +103,11 @@ More detail:
 Package releases have their own git tags: `engine-v0.1.0` gives version `0.1.0`. The
 `packages.yml` workflow publishes them to nuget.org through Trusted Publishing. A local
 `dotnet pack` gives version `0.0.0-dev` (see [Build from source](building.md#pack-the-engine-libraries)).
+
+The package build uses the .NET 10 SDK, so each package has `net9.0` and `net10.0` assemblies. A
+build with the .NET 9 SDK makes only `net9.0`. Each pack also runs package validation: the
+`net10.0` assemblies must have all the API of the `net9.0` ones. From version 1.0, the pack also
+compares the API with the last released package and fails on a breaking change.
 
 ## Licence and support
 

@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- net10.0 (LTS) too when the .NET 10 SDK builds it, as the package build does (see Directory.Build.targets). -->
+    <TargetFrameworks>net9.0</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals($(NETCoreSdkVersion), 10.0))">net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>PdfEngine</RootNamespace>

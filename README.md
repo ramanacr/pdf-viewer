@@ -23,7 +23,7 @@ The published app contains no PDFium.
 | **Windows, without the Store** | Released (latest: [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases/latest)) | For a machine without the Store: `PdfViewer.exe` (portable app) or `PdfViewerSetup.exe` (installer). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). The files are signed with the project's self-signed certificate, so SmartScreen can show a warning. See the [code signing policy](CODE_SIGNING_POLICY.md). |
 | **Web demo** | Live | [ramanacr.github.io/pdf-viewer/demo/](https://ramanacr.github.io/pdf-viewer/demo/). Runs in the tab as WebAssembly; nothing is uploaded. |
 | **Android** | Proof of concept | Build from source, or take the APK artifact of the `android.yml` workflow. See [its README](src/PdfViewer.Android/README.md). |
-| **NuGet packages** | Preview (`0.1.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). |
+| **NuGet packages** | Preview (`0.2.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). |
 | **Web embed SDK** | Preview (npm [`pdfviewer-embed`](https://www.npmjs.com/package/pdfviewer-embed)) | `npm install pdfviewer-embed`. An API like the Adobe PDF Embed API. See [Web embed SDK](https://ramanacr.github.io/pdf-viewer/sdk/). |
 
 Release binaries are Authenticode-signed with the project's own self-signed certificate, so
