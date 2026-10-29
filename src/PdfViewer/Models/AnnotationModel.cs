@@ -22,7 +22,15 @@ public enum AnnotationType
     /// <summary>A distance, perimeter or area measurement (Line, PolyLine or Polygon with /Measure).</summary>
     Measurement,
     /// <summary>A stamp: a standard or dynamic one, a picture or a PDF page.</summary>
-    Stamp
+    Stamp,
+    /// <summary>A straight line (a Line annotation without /Measure).</summary>
+    Line,
+    /// <summary>A line with an arrow head (a Line annotation with a line ending in /LE).</summary>
+    Arrow,
+    /// <summary>A closed shape of straight sides (a Polygon annotation without /Measure).</summary>
+    Polygon,
+    /// <summary>Connected lines that stay open (a PolyLine annotation without /Measure).</summary>
+    PolyLine
 }
 
 /// <summary>
@@ -158,6 +166,53 @@ public partial class AnnotationModel : ObservableObject
         }
     }
     private List<Point> _vertices = new();
+
+    /// <summary>A line's or connected lines' /LE: the start and end styles ("None", "OpenArrow"...); null for none.</summary>
+    public string[]? LineEndings { get; set; }
+
+    /// <summary>A line, arrow, polygon or connected lines: a shape drawn from its <see cref="Vertices"/>.</summary>
+    public bool IsVertexShape => Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.Polygon or AnnotationType.PolyLine;
+
+    partial void OnTypeChanged(AnnotationType value) => OnPropertyChanged(nameof(IsVertexShape));
+
+    /// <summary>
+    /// A line, arrow, polygon or connected lines in the coordinates of its box drawn
+    /// <paramref name="width"/> by <paramref name="height"/> pixels, with its arrow heads drawn at
+    /// the size the engine draws them (nine line widths long at 30 degrees). Null when it has too
+    /// few points.
+    /// </summary>
+    public System.Windows.Media.Geometry? ShapeGeometry(double width, double height)
+    {
+        if (!IsVertexShape || _vertices.Count < 2 || Width <= 0 || Height <= 0 || width <= 0 || height <= 0) return null;
+        Point Local(Point p) => new((p.X - X) / Width * width, (p.Y - Y) / Height * height);
+        var points = _vertices.Select(Local).ToList();
+        var path = new System.Windows.Media.PathGeometry();
+        var figure = new System.Windows.Media.PathFigure { StartPoint = points[0], IsClosed = Type == AnnotationType.Polygon, IsFilled = false };
+        foreach (var p in points.Skip(1)) figure.Segments.Add(new System.Windows.Media.LineSegment(p, true));
+        path.Figures.Add(figure);
+        if (Type is AnnotationType.Line or AnnotationType.Arrow or AnnotationType.PolyLine && LineEndings is { Length: 2 } ends)
+        {
+            Arrow(path, ends[0], points[0], points[0] - points[1]);
+            Arrow(path, ends[1], points[^1], points[^1] - points[^2]);
+        }
+        path.Freeze();
+        return path;
+    }
+
+    /// <summary>An arrow head at <paramref name="tip"/> pointing along <paramref name="outward"/> (open or closed; other endings are left out on screen).</summary>
+    private void Arrow(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward)
+    {
+        if (style is not ("OpenArrow" or "ClosedArrow") || outward.Length < 1e-9) return;
+        outward.Normalize();
+        var normal = new Vector(-outward.Y, outward.X);
+        double length = 9 * Math.Max(StrokeThickness, 1);
+        var back = outward * (length * Math.Cos(Math.PI / 6));
+        var side = normal * (length * Math.Sin(Math.PI / 6));
+        var head = new System.Windows.Media.PathFigure { StartPoint = tip - back + side, IsClosed = style == "ClosedArrow", IsFilled = false };
+        head.Segments.Add(new System.Windows.Media.LineSegment(tip, true));
+        head.Segments.Add(new System.Windows.Media.LineSegment(tip - back - side, true));
+        path.Figures.Add(head);
+    }
 
     /// <summary>What a measurement measures.</summary>
     [ObservableProperty]

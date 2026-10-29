@@ -137,6 +137,10 @@ public static class IconGlyphs
     public const string TextBox = "";
     public const string Ink = "";
     public const string Shape = "";
+    public const string Line = "";      // Remove: a straight line
+    public const string Arrow = "";     // Forward: an arrow
+    public const string Polygon = "";   // A triangle
+    public const string PolyLine = "";  // Connected lines
 
     // Measuring and stamps
     public const string Measure = "";   // Ruler

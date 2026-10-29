@@ -1509,8 +1509,8 @@ public class PdfiumDocumentService : IPdfDocumentService
                     foreach (var annot in pageAnnotations)
                     {
                         ct.ThrowIfCancellationRequested();
-                        // PDFium mode (developer builds) cannot write measurements or stamps; the native services do.
-                        if (annot.Type is AnnotationType.Measurement or AnnotationType.Stamp) continue;
+                        // PDFium mode (developer builds) cannot write measurements, stamps, lines or polygons; the native services do.
+                        if (annot.Type is AnnotationType.Measurement or AnnotationType.Stamp || annot.IsVertexShape) continue;
 
                         int subtype = annot.Type switch
                         {

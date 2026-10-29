@@ -160,6 +160,7 @@ public partial class MainViewModel
         AnnotationType.FreeText => "Text Box",
         AnnotationType.Ink => "Drawing",
         AnnotationType.Measurement => "Measurement",
+        AnnotationType.PolyLine => "Connected Lines",
         _ => type.ToString(),
     };
 
@@ -295,6 +296,7 @@ public partial class MainViewModel
         private string? StampSubtitle { get; init; }
         private double StampRotation { get; init; }
         private Size StampSize { get; init; }
+        private string[]? LineEndings { get; init; }
 
         public static AnnotationState Of(AnnotationModel a) => new()
         {
@@ -305,6 +307,7 @@ public partial class MainViewModel
             StampSubtitle = a.StampSubtitle,
             StampRotation = a.StampRotation,
             StampSize = a.StampSize,
+            LineEndings = a.LineEndings?.ToArray(),
             PageNumber = a.PageNumber,
             Type = a.Type,
             Box = new Rect(a.X, a.Y, a.Width, a.Height),
@@ -341,6 +344,7 @@ public partial class MainViewModel
             a.StampSubtitle = StampSubtitle;
             a.StampRotation = StampRotation;
             a.StampSize = StampSize;
+            a.LineEndings = LineEndings?.ToArray();
         }
 
         public bool EqualsIgnoringModified(AnnotationState other) =>
@@ -351,7 +355,8 @@ public partial class MainViewModel
             && Contents == other.Contents && Author == other.Author && Title == other.Title && CreationDate == other.CreationDate
             && Vertices.AsSpan().SequenceEqual(other.Vertices) && MeasureKind == other.MeasureKind
             && (Measure == null ? other.Measure == null : Measure.SameAs(other.Measure))
-            && StampName == other.StampName && StampSubtitle == other.StampSubtitle && StampRotation.Equals(other.StampRotation) && StampSize == other.StampSize;
+            && StampName == other.StampName && StampSubtitle == other.StampSubtitle && StampRotation.Equals(other.StampRotation) && StampSize == other.StampSize
+            && (LineEndings ?? Array.Empty<string>()).AsSpan().SequenceEqual(other.LineEndings ?? Array.Empty<string>());
 
         public bool Equals(AnnotationState? other) => other != null && EqualsIgnoringModified(other) && ModifiedDate == other.ModifiedDate;
         public override bool Equals(object? obj) => Equals(obj as AnnotationState);

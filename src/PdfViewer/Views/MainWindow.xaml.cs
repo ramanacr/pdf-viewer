@@ -202,6 +202,11 @@ public partial class MainWindow : Window
                      e.PropertyName == nameof(MainViewModel.IsPanningEnabled))
             {
                 ResetPageCanvasCursors();
+                RefreshShapePreview();
+            }
+            else if (e.PropertyName == nameof(MainViewModel.ShapePreviewPoints))
+            {
+                RefreshShapePreview();
             }
             else if (e.PropertyName is nameof(MainViewModel.ActiveMeasureTool) or nameof(MainViewModel.MeasurePreviewPoints))
             {
@@ -586,6 +591,10 @@ public partial class MainWindow : Window
         {
             case Key.F11:
                 ToggleFullScreen();
+                e.Handled = true;
+                break;
+
+            case Key.Escape or Key.Enter or Key.Back when Keyboard.Modifiers == ModifierKeys.None && TryShapeKey(e.Key):
                 e.Handled = true;
                 break;
 
@@ -1259,6 +1268,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Lines and arrows are dragged; polygons and connected lines get a point per click.
+        if (TryStartShape(canvas, page, e)) return;
+
         // Mode 1: Active Annotation Tool is drawing
         if (_vm.ActiveAnnotationTool != null)
         {
@@ -1528,6 +1540,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // A line follows the pointer; a polygon's rubber band too.
+        if (TryMoveShape(canvas, page, e)) return;
+
         // 1. Updating annotation drawing preview
         if (_isDrawingAnnotation)
         {
@@ -1686,6 +1701,9 @@ public partial class MainWindow : Window
             _ = _vm.PlaceSignatureAsync(new SignaturePlacement(page.PageNumber, bounds));
             return;
         }
+
+        // A line or arrow drag ends: it is added.
+        if (TryFinishLine(canvas, page, e)) return;
 
         // 1. Finalizing annotation creation
         if (_isDrawingAnnotation)

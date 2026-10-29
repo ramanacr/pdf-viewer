@@ -22,6 +22,7 @@
             <converters:SearchHighlightBorderConverter x:Key="SearchHighlightBorderConverter" />
             <converters:HexToBrushConverter x:Key="HexToBrushConverter" />
             <converters:InkStrokesConverter x:Key="InkStrokesConverter" />
+            <converters:ShapeGeometryConverter x:Key="ShapeGeometryConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

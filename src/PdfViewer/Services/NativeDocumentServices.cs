@@ -27,13 +27,24 @@ internal sealed class NativeDocumentServices
     internal static readonly string[] ManagedSubtypes = { "Highlight", "Underline", "StrikeOut", "Text", "FreeText", "Square", "Circle", "Ink", "Stamp" };
 
     /// <summary>
-    /// The viewer reads and writes this annotation: one of <see cref="ManagedSubtypes"/>, or a
-    /// line, polyline or polygon that is a measurement (has a rectilinear /Measure). Loading and
-    /// saving use the same test, so nothing the viewer does not show is ever deleted.
+    /// The viewer reads and writes this annotation: one of <see cref="ManagedSubtypes"/>, a line,
+    /// polyline or polygon that is a measurement (has a rectilinear /Measure), or a plain line
+    /// (with its /L), polyline or polygon (with its /Vertices). Loading and saving use the same
+    /// test, so nothing the viewer does not show is ever deleted.
     /// </summary>
     internal static bool IsManaged(PdfAnnotation a) =>
         Array.IndexOf(ManagedSubtypes, a.Subtype) >= 0
-        || a.Measure != null && PdfMeasurements.KindOf(a.Subtype) != null;
+        || a.Measure != null && PdfMeasurements.KindOf(a.Subtype) != null
+        || IsPlainShape(a);
+
+    /// <summary>A line with its two points, or a polyline or polygon with enough of them, and no /Measure.</summary>
+    private static bool IsPlainShape(PdfAnnotation a) => a.Measure == null && a.Subtype switch
+    {
+        "Line" => a.Line is { Length: 4 },
+        "PolyLine" => a.Vertices.Count >= 2,
+        "Polygon" => a.Vertices.Count >= 3,
+        _ => false,
+    };
 
     /// <summary>Where each loaded annotation came from, and what it looked like then, keyed by the model's id.</summary>
     private readonly Dictionary<Guid, (int Page, int Index, int ObjectNumber, string Fingerprint)> _loaded = new();
@@ -140,8 +151,14 @@ internal sealed class NativeDocumentServices
         return list;
     }
 
-    private static AnnotationType? TypeOf(string subtype) => subtype switch
+    private static AnnotationType? TypeOf(PdfAnnotation a) => a.Measure != null && PdfMeasurements.KindOf(a.Subtype) != null
+        ? AnnotationType.Measurement
+        : a.Subtype switch
     {
+        // A line with an ending at either end is an arrow (the measuring tools write theirs with /Measure).
+        "Line" => a.LineEndings?.Any(e => e != "None") == true ? AnnotationType.Arrow : AnnotationType.Line,
+        "Polygon" => AnnotationType.Polygon,
+        "PolyLine" => AnnotationType.PolyLine,
         "Highlight" => AnnotationType.Highlight,
         "Underline" => AnnotationType.Underline,
         "StrikeOut" => AnnotationType.StrikeOut,
@@ -151,7 +168,6 @@ internal sealed class NativeDocumentServices
         "Circle" => AnnotationType.Ellipse,
         "Ink" => AnnotationType.Ink,
         "Stamp" => AnnotationType.Stamp,
-        "Line" or "PolyLine" or "Polygon" => AnnotationType.Measurement,
         _ => null,
     };
 
@@ -164,12 +180,15 @@ internal sealed class NativeDocumentServices
         AnnotationType.Rectangle => "Square",
         AnnotationType.Ellipse => "Circle",
         AnnotationType.Ink => "Ink",
+        AnnotationType.Line or AnnotationType.Arrow => "Line",
+        AnnotationType.Polygon => "Polygon",
+        AnnotationType.PolyLine => "PolyLine",
         _ => "Highlight",
     };
 
     internal static AnnotationModel? ToModel(PdfAnnotation a, PdfRect crop)
     {
-        if (!IsManaged(a) || TypeOf(a.Subtype) is not AnnotationType type || a.Rect.IsEmpty && a.Rect.Width <= 0 && a.Rect.Height <= 0 && a.Rect.X == 0 && a.Rect.Y == 0)
+        if (!IsManaged(a) || TypeOf(a) is not AnnotationType type || a.Rect.IsEmpty && a.Rect.Width <= 0 && a.Rect.Height <= 0 && a.Rect.X == 0 && a.Rect.Y == 0)
             return null;
         double w = crop.Width > 0 ? crop.Width : 612, h = crop.Height > 0 ? crop.Height : 792;
         double ox = crop.Left, oy = crop.Top;
@@ -223,6 +242,14 @@ internal sealed class NativeDocumentServices
             model.HasOwnAppearance = a.HasAppearance;
             model.Opacity = a.Opacity;
         }
+        if (model.IsVertexShape)
+        {
+            var points = a.Line is { Length: 4 } l ? new[] { new PdfPoint(l[0], l[1]), new PdfPoint(l[2], l[3]) } : a.Vertices.ToArray();
+            model.Vertices = points.Select(p => new Point((p.X - ox) / w, 1.0 - (p.Y - oy) / h)).ToList();
+            model.LineEndings = type != AnnotationType.Polygon && a.LineEndings is { Length: 2 } ends ? ends.ToArray() : null;
+            model.HasOwnAppearance = a.HasAppearance;
+            model.Opacity = a.Opacity;
+        }
         if (type == AnnotationType.Stamp)
         {
             model.StampName = a.Icon ?? "Draft";
@@ -266,6 +293,54 @@ internal sealed class NativeDocumentServices
         var points = m.Vertices.Select(p => ToPage(p, crop)).ToList();
         if (m.MeasureKind == PdfMeasurementKind.Distance && points.Count > 2) points = new List<PdfPoint> { points[0], points[^1] };
         return PdfMeasurements.Create(m.MeasureKind, m.PageNumber, points, measure, Rgb(m.ColorHex), m.StrokeThickness > 0 ? m.StrokeThickness : 1);
+    }
+
+    /// <summary>A line's or connected lines' endings as saved: as read or set, else an open arrow at the end of an arrow.</summary>
+    internal static string[]? ShapeEndings(AnnotationModel m) =>
+        m.Type == AnnotationType.Polygon ? null
+        : m.LineEndings is { Length: 2 } le ? le
+        : m.Type == AnnotationType.Arrow ? new[] { "None", "OpenArrow" }
+        : null;
+
+    /// <summary>
+    /// The rectangle a line, arrow, polygon or connected lines is drawn in: its points grown by
+    /// half the line width, or by the arrow heads (nine line widths long at 30 degrees) when it
+    /// has line endings.
+    /// </summary>
+    internal static PdfRect ShapeBounds(IReadOnlyList<PdfPoint> points, double width, bool endings)
+    {
+        double margin = endings ? 5 * Math.Max(width, 1) + 1 : width / 2 + 1;
+        double minX = points.Min(p => p.X) - margin, minY = points.Min(p => p.Y) - margin;
+        double maxX = points.Max(p => p.X) + margin, maxY = points.Max(p => p.Y) + margin;
+        return new PdfRect(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    /// <summary>
+    /// A line, arrow, polygon or connected lines takes the model's points (/L or /Vertices), its
+    /// endings (/LE) and a rectangle around them; the annotation editor then draws its appearance.
+    /// </summary>
+    private static void ApplyShape(PdfAnnotation a, AnnotationModel m, PdfRect crop)
+    {
+        var points = m.Vertices.Select(p => ToPage(p, crop)).ToList();
+        if (points.Count < 2) return;
+        var ends = ShapeEndings(m);
+        var bounds = ShapeBounds(points, m.StrokeThickness > 0 ? m.StrokeThickness : 1, ends?.Any(e => e != "None") == true);
+        // A loaded shape's rectangle may hold more than its points (a caption, leader lines): it is kept, moved with them.
+        var box = BoxOf(m, crop);
+        double minX = Math.Min(bounds.X, box.X), minY = Math.Min(bounds.Y, box.Y);
+        double maxX = Math.Max(bounds.X + bounds.Width, box.X + box.Width), maxY = Math.Max(bounds.Y + bounds.Height, box.Y + box.Height);
+        a.Rect = new PdfRect(minX, minY, maxX - minX, maxY - minY);
+        if (m.Type is AnnotationType.Line or AnnotationType.Arrow)
+        {
+            a.Line = new[] { points[0].X, points[0].Y, points[^1].X, points[^1].Y };
+            a.Vertices = new List<PdfPoint>();
+        }
+        else
+        {
+            a.Line = null;
+            a.Vertices = points;
+        }
+        a.LineEndings = ends?.ToArray();
     }
 
     /// <summary>The stamp annotation for a model, with how its appearance is drawn (a new stamp, or one given a new look).</summary>
@@ -416,6 +491,7 @@ internal sealed class NativeDocumentServices
         }
         var a = new PdfAnnotation { PageNumber = m.PageNumber, Subtype = SubtypeOf(m.Type) };
         Apply(a, m, crop, geometry: true);
+        if (m.IsVertexShape) ApplyShape(a, m, crop);
         if (m.Type == AnnotationType.FreeText)
         {
             // The viewer draws free text black on a box outlined in the annotation's colour.
@@ -457,6 +533,7 @@ internal sealed class NativeDocumentServices
             return existing;
         }
         Apply(existing, m, crop, geometryChanged);
+        if (m.IsVertexShape) ApplyShape(existing, m, crop); // its rectangle follows its points and line width
         if (!string.Equals(before ?? string.Empty, m.Contents ?? string.Empty, StringComparison.Ordinal))
             existing.RichContents = null; // rich text of the old contents would contradict the new
         if (m.Type == AnnotationType.FreeText && colourBefore == null)

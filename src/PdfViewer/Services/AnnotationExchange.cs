@@ -64,6 +64,9 @@ public static class AnnotationExchange
                 AnnotationType.Ellipse => "circle",
                 AnnotationType.Ink => "ink",
                 AnnotationType.Stamp => "stamp",
+                AnnotationType.Line or AnnotationType.Arrow => "line",
+                AnnotationType.Polygon => "polygon",
+                AnnotationType.PolyLine => "polyline",
                 AnnotationType.Measurement => a.MeasureKind switch
                 {
                     PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance => "line",
@@ -113,6 +116,16 @@ public static class AnnotationExchange
             string Point(Point p) => string.Format(CultureInfo.InvariantCulture, "{0:F4},{1:F4}", ox + p.X * pw, oy + (1.0 - p.Y) * ph);
             if (a.Type == AnnotationType.Measurement && a.MeasureKind == PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance && a.Vertices.Count >= 2)
                 writer.Write($" start=\"{Point(a.Vertices[0])}\" end=\"{Point(a.Vertices[^1])}\"");
+            if (a.Type is AnnotationType.Line or AnnotationType.Arrow && a.Vertices.Count >= 2)
+                writer.Write($" start=\"{Point(a.Vertices[0])}\" end=\"{Point(a.Vertices[^1])}\"");
+            if (a.IsVertexShape && NativeDocumentServices.ShapeEndings(a) is { Length: 2 } ends)
+            {
+                // XFDF names the start "head" and the end "tail".
+                if (ends[0] != "None") writer.Write($" head=\"{System.Security.SecurityElement.Escape(ends[0])}\"");
+                if (ends[1] != "None") writer.Write($" tail=\"{System.Security.SecurityElement.Escape(ends[1])}\"");
+            }
+            if (a.IsVertexShape)
+                writer.Write(string.Format(CultureInfo.InvariantCulture, " width=\"{0:0.###}\"", a.StrokeThickness));
             if (a.Type == AnnotationType.Stamp)
                 writer.Write($" icon=\"{System.Security.SecurityElement.Escape(a.StampName)}\"");
 
@@ -121,7 +134,8 @@ public static class AnnotationExchange
             {
                 writer.WriteLine($"      <contents>{System.Security.SecurityElement.Escape(a.Contents)}</contents>");
             }
-            if (a.Type == AnnotationType.Measurement && a.MeasureKind != PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance && a.Vertices.Count > 0)
+            if ((a.Type == AnnotationType.Measurement && a.MeasureKind != PdfEngine.Vector.Annotations.PdfMeasurementKind.Distance
+                 || a.Type is AnnotationType.Polygon or AnnotationType.PolyLine) && a.Vertices.Count > 0)
                 writer.WriteLine($"      <vertices>{string.Join(";", a.Vertices.Select(Point))}</vertices>");
             writer.WriteLine($"    </{annotTag}>");
         }

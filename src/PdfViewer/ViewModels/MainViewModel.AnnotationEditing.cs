@@ -76,9 +76,13 @@ public partial class MainViewModel
 
     // ------------------------------------------------------------------ what each kind offers
 
-    /// <summary>Corner and edge handles: everything but notes (a fixed-size icon), measurements (moved point by point) and multi-line markup.</summary>
+    /// <summary>
+    /// Corner and edge handles: everything but notes (a fixed-size icon), measurements (moved
+    /// point by point), lines, arrows, polygons and connected lines (drawn from their points, and
+    /// moved whole), and multi-line markup.
+    /// </summary>
     public static bool CanResizeAnnotation(AnnotationModel a) =>
-        a.Type is not (AnnotationType.Note or AnnotationType.Measurement) && !a.HasQuads && !HasVertexHandles(a);
+        a.Type is not (AnnotationType.Note or AnnotationType.Measurement) && !a.IsVertexShape && !a.HasQuads && !HasVertexHandles(a);
 
     public static bool CanRotateAnnotation(AnnotationModel a) => a.Type == AnnotationType.Stamp;
 
