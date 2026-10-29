@@ -430,7 +430,10 @@ buttons set the **shape style** of the next shape of that tool, or change the se
 
 Each change is one undo step. A shape from the file keeps its own fill, dash, line endings and
 `/BS` until that value is changed: no defaults are added to it. A measurement (an annotation
-with `/Measure`) shows no shape style and keeps its own. Undo and redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation
+with `/Measure`) shows no shape style and keeps its own. A file's shape moved to another page
+(with `updateAnnotation`) is written there as a new annotation with its own entries, its
+`/Measure` too. While a list has the focus, it keeps its letters, arrow keys and `Delete`;
+`Ctrl`+`Z` and `Ctrl`+`Y` still undo and redo. Undo and redo (`Ctrl`+`Z`, `Ctrl`+`Y`) cover every annotation
 change, the host page's too. The side panel's **Comments** tab lists the annotations as
 threads: each reply is under the comment it answers. Click one to go to it; with a comment
 selected, **Reply** adds a reply. Deleting a comment deletes its replies, as in Acrobat.
@@ -523,10 +526,18 @@ of `Approved`, `SBCompleted`, `Confidential`, `Draft`, `Final`, `ForComment`, `F
 
 `dashPattern` makes the line of a square, circle, line, polygon or polyline dashed (`/BS /S /D`
 with this `/D`): 1 to 16 numbers from 0 to 1000, not all 0. The toolbar's presets are `[4, 3]`
-(dashed) and `[1, 2]` (dotted). Leave it out, or give `null` or `[]`, for a solid line. The
-viewer writes it only for a dashed shape. `updateAnnotation` replaces the annotation, so give
-the `dashPattern` (and `fillColor` and `lineEndings`) that the shape should keep. A
-measurement's `fillColor`, `dashPattern` and `lineEndings` cannot change.
+(dashed) and `[1, 2]` (dotted). The viewer gives it only for a dashed shape, with the file's
+numbers as they are (not rounded).
+
+- `addAnnotations`: leave it out, or give `null` or `[]`, for a solid line.
+- `updateAnnotation`: **leave it out to keep the shape's dash** (so a page written before
+  `dashPattern` existed does not change it). Give `null` or `[]` to make the line solid. A dash
+  within 0.1 % of the current one is not a change: a file's shape then keeps its own `/D`.
+  `updateAnnotation` replaces the other values, so give the `fillColor` and `lineEndings` that the
+  shape should keep.
+- A measurement (`/Measure`) keeps its fill, dash and line endings: values given for them are
+  ignored, and no error is returned.
+- A polygon has no line endings: `lineEndings` given for one are ignored.
 
 A **reply** answers another annotation (a note with `/IRT`, ISO 32000-2 12.5.6.4). It has no
 selector: its `target` is the `id` of the annotation it answers, and it takes that one's page:

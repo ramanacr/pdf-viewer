@@ -885,6 +885,8 @@ public sealed partial class Viewer
                 {
                     var given = call.Annotations[0];
                     var old = store.Find(given.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{given.Id}\".");
+                    // No dashPattern property: the dash stays (null or [] makes the line solid).
+                    if (call.KeepsDash) given = given with { Dash = old.Dash };
                     var updated = store.Update(Defaults(given, now, old));
                     _ = CommitEditsAsync();
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List([updated], Source));

@@ -156,9 +156,11 @@ public class WebShapeStyleTests
         Assert.True(m.IsMeasurement);
         Assert.False(m.HasShapeStyle);
         var store = new ViewerAnnotationStore(doc.Geometry, fromFile);
-        Assert.Throws<ViewerAnnotationException>(() => store.Update(m with { FillColor = "#000000" }));
-        Assert.Throws<ViewerAnnotationException>(() => store.Update(m with { Dash = ViewerAnnotation.Dashed }));
-        Assert.Throws<ViewerAnnotationException>(() => store.Update(m with { EndEnding = "OpenArrow" }));
+        // Style values given for a measurement are ignored, without an error (a host page's update without them too).
+        var kept = store.Update(m with { FillColor = "#000000", Dash = ViewerAnnotation.Dashed, StartEnding = "None", EndEnding = "OpenArrow" });
+        Assert.Null(kept.FillColor);
+        Assert.Null(kept.Dash);
+        Assert.Equal(("Butt", "Butt"), (kept.StartEnding, kept.EndEnding));
         // A move keeps it a measurement, with its /Measure and endings.
         var moved = store.Move(m.Id, 5, 0, DateTimeOffset.UtcNow);
         Assert.True(moved.IsMeasurement);
@@ -167,6 +169,122 @@ public class WebShapeStyleTests
         Assert.NotNull(saved.Annotation.Measure);
         Assert.Equal(["Butt", "Butt"], saved.Annotation.LineEndings!);
         Assert.Null(saved.Dictionary["IC"]);
+    }
+
+    private static byte[] TwoPages(string annotation)
+    {
+        var b = new VectorPdfBuilder();
+        int n = b.Add(annotation);
+        b.AddPage("", mediaBox: "[0 0 612 792]", extra: $"/Annots [{n} 0 R]");
+        b.AddPage("", mediaBox: "[0 0 612 792]");
+        return b.Build();
+    }
+
+    [Fact]
+    public async Task MeasurementMovedToAnotherPage_KeepsItsOwnEntries()
+    {
+        byte[] file = TwoPages(
+            "<< /Type /Annot /Subtype /Line /Rect [40 190 360 310] /L [50 200 350 300] /LE [/Butt /Butt] /IT /LineDimension /Subj (Distance) "
+            + "/T (Ada) /CA 0.5 /BS << /W 1 /S /D /D [3 1] >> "
+            + "/Measure << /Type /Measure /R (1 in = 1 in) /X [<< /U (in) /C 0.0138889 >>] /D [<< /U (in) /C 1 >>] /A [<< /U (sq in) /C 1 >>] >> >>");
+        await using var doc = await ViewerDocument.OpenAsync(file);
+        var fromFile = await doc.ReadAnnotationsAsync();
+        var m = Assert.Single(fromFile);
+        var store = new ViewerAnnotationStore(doc.Geometry, fromFile);
+        store.Update(m with { Page = 2 });
+        await doc.ApplyEditsAsync(store.FromFile, store.Current, []);
+
+        using var vector = await PdfVectorDocument.OpenAsync(doc.Bytes);
+        Assert.Empty(PdfAnnotationReader.Read(vector, 1));
+        var moved = Assert.Single(PdfAnnotationReader.Read(vector, 2));
+        Assert.NotNull(moved.Measure);
+        Assert.Equal("LineDimension", moved.Intent);
+        Assert.Equal("Distance", moved.Subject);
+        Assert.Equal(0.5, moved.Opacity, 3);
+        Assert.Equal([3.0, 1.0], moved.BorderDash!);
+        Assert.Equal(["Butt", "Butt"], moved.LineEndings!);
+        Assert.True(moved.HasAppearance);
+    }
+
+    [Fact]
+    public async Task UpdateWithoutDashPattern_KeepsTheDash_AndAnAlmostEqualDashKeepsTheFileValues()
+    {
+        string Update(string extra) => "{" + Envelope + ",\"type\":\"call\",\"requestId\":9,\"document\":1,\"method\":\"updateAnnotation\",\"args\":[" +
+            "{\"id\":\"sq\",\"type\":\"Annotation\",\"bodyValue\":\"\",\"target\":{\"source\":\"x\",\"selector\":{\"node\":{\"index\":0},\"subtype\":\"square\",\"boundingBox\":[50,50,150,150],\"strokeColor\":\"#FF0000\"" + extra + "}}}]}";
+        var keep = Assert.IsType<EmbedCall>(EmbedProtocol.Parse(Update(""), EmbedMode.FullWindow));
+        Assert.True(keep.KeepsDash);
+        Assert.False(Assert.IsType<EmbedCall>(EmbedProtocol.Parse(Update(",\"dashPattern\":null"), EmbedMode.FullWindow)).KeepsDash);
+        var empty = Assert.IsType<EmbedCall>(EmbedProtocol.Parse(Update(",\"dashPattern\":[]"), EmbedMode.FullWindow));
+        Assert.False(empty.KeepsDash);
+        Assert.Null(empty.Annotations[0].Dash);
+        var rounded = Assert.IsType<EmbedCall>(EmbedProtocol.Parse(Update(",\"dashPattern\":[2.835,1.417]"), EmbedMode.FullWindow));
+
+        byte[] file = WithAnnotations("<< /Type /Annot /Subtype /Square /NM (sq) /Rect [50 50 150 150] /C [1 0 0] /BS << /W 1 /S /D /D [2.83465 1.41732] >> >>");
+        await using var doc = await ViewerDocument.OpenAsync(file);
+        var fromFile = await doc.ReadAnnotationsAsync();
+        var store = new ViewerAnnotationStore(doc.Geometry, fromFile);
+        // As the viewer does for updateAnnotation: no dashPattern keeps the current dash.
+        var given = keep.Annotations[0] with { Dash = fromFile[0].Dash, Contents = "kept" };
+        Assert.Equal([2.83465, 1.41732], store.Update(given).Dash!);
+        // A host page that gives the dash back with fewer digits: the same dash.
+        Assert.True(ViewerAnnotation.SameDash(rounded.Annotations[0].Dash, fromFile[0].Dash));
+        store.Update(rounded.Annotations[0] with { Contents = "rounded" });
+        await doc.ApplyEditsAsync(store.FromFile, store.Current, []);
+        // The file's dash, not the host's [2.835 1.417] (the engine writes numbers with 4 decimals).
+        var saved = Assert.Single(await ReadSaved(doc.Bytes));
+        Assert.Equal([2.8346, 1.4173], saved.Annotation.BorderDash!);
+
+        // The JSON gives the file's dash as it is.
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var w = new Utf8JsonWriter(buffer)) EmbedAnnotationJson.Write(w, fromFile[0], "x");
+        Assert.Contains("\"dashPattern\":[2.83465,1.41732]", Encoding.UTF8.GetString(buffer.WrittenSpan));
+    }
+
+    [Fact]
+    public void Polygon_LineEndingsAreIgnored()
+    {
+        string json = "{" + Envelope + ",\"type\":\"call\",\"requestId\":9,\"document\":1,\"method\":\"addAnnotations\",\"args\":[[" +
+            "{\"id\":\"pg\",\"type\":\"Annotation\",\"bodyValue\":\"\",\"target\":{\"source\":\"x\",\"selector\":{\"node\":{\"index\":0},\"subtype\":\"polygon\",\"vertices\":[100,100,200,100,150,200],\"strokeWidth\":2,\"lineEndings\":[\"ROpenArrow\",\"ClosedArrow\"]}}}]]}";
+        var a = Assert.IsType<EmbedCall>(EmbedProtocol.Parse(json, EmbedMode.FullWindow)).Annotations[0];
+        Assert.Equal(("None", "None"), (a.StartEnding, a.EndEnding));
+        Assert.Equal(ViewerBox.Around([100, 100, 200, 100, 150, 200], ViewerAnnotationStore.ShapeMargin(2, false)), a.Box);
+        Assert.Equal(a.Box, ViewerAnnotationStore.GrownForEndings(a with { StartEnding = "ROpenArrow" }));
+    }
+
+    /// <summary>Lines with every ending, short and at 30 and 60 degrees, in boxes of the given margin; the page at 3 pixels per point.</summary>
+    private static async Task<byte[]> RenderEndings(Func<string, double> margin)
+    {
+        await using var doc = await ViewerDocument.OpenAsync(WithAnnotations());
+        var store = new ViewerAnnotationStore(doc.Geometry, []);
+        var list = new List<ViewerAnnotation>();
+        string[] endings = ["Square", "Circle", "Diamond", "OpenArrow", "ClosedArrow", "Butt", "ROpenArrow", "RClosedArrow", "Slash"];
+        for (int i = 0; i < endings.Length; i++)
+        {
+            for (int k = 0; k < 2; k++)
+            {
+                double angle = (k == 0 ? 30 : 60) * Math.PI / 180, x = 80 + 220 * k, y = 80 + 75 * i;
+                double[] v = [x, y, x + 25 * Math.Cos(angle), y + 25 * Math.Sin(angle)];
+                list.Add(New(ViewerAnnotationKind.Line, ViewerBox.Around(v, margin(endings[i])), v) with
+                    { StrokeWidth = 4, StartEnding = endings[i], EndEnding = endings[i], FillColor = "#2563EB" });
+            }
+        }
+        store.Add(list);
+        await doc.ApplyEditsAsync(store.FromFile, store.Current, []);
+        var bitmap = await doc.RenderPageAsync(1, 3.0);
+        return bitmap.Pixels.ToArray();
+    }
+
+    private static int Differences(byte[] a, byte[] b) => a.Zip(b).Count(p => Math.Abs(p.First - p.Second) > 24);
+
+    [Fact]
+    public async Task EndingMargins_ClipNoInk()
+    {
+        var reference = await RenderEndings(_ => 60);
+        var tight = await RenderEndings(e => ViewerAnnotationStore.ShapeMargin(4, e, e));
+        Assert.Equal(0, Differences(reference, tight));
+        // The old margin (5 widths and a point) cut the arrows: the check sees a clip.
+        var old = await RenderEndings(_ => 5 * 4 + 1);
+        Assert.True(Differences(reference, old) > 0);
     }
 
     [Fact]

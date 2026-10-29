@@ -294,10 +294,15 @@ export async function loadLocalFonts(families, maxBytes) {
     return picked.length;
 }
 
+/** The focus is in a text field: it keeps its own editing keys (select all, copy, undo). */
 function inField(e) {
     const t = e.target;
-    // A list box keeps its arrow keys and letters (the zoom, stamp and shape style lists).
-    return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t?.isContentEditable;
+    return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t?.isContentEditable;
+}
+
+/** The focus is in a text field or a list box (zoom, stamp, shape style): it keeps its letters, arrows and Delete. */
+function inFieldOrList(e) {
+    return inField(e) || e.target instanceof HTMLSelectElement;
 }
 
 function onKey(e) {
@@ -340,7 +345,7 @@ function onKey(e) {
         action = e.shiftKey ? 'find-previous' : 'find-next';
     } else if (e.key === 'Escape') {
         action = 'escape';
-    } else if (!inField(e) && !e.altKey) {
+    } else if (!inFieldOrList(e) && !e.altKey) {
         switch (e.key) {
             case 'Delete': case 'Backspace': action = 'delete'; break;
             case 'ArrowRight': case 'n': case 'j': action = 'next-page'; break;

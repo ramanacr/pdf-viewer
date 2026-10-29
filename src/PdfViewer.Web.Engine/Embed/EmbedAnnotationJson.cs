@@ -129,7 +129,8 @@ public static class EmbedAnnotationJson
             int least = kind switch { ViewerAnnotationKind.Polygon => 6, _ => 4 };
             if (vertices.Length % 2 != 0 || vertices.Length < least || kind == ViewerAnnotationKind.Line && vertices.Length != 4)
                 throw Bad(requestId, $"{w}.vertices must be x, y pairs: two points for a line, {least / 2} or more for a {subtypeName}.");
-            if (selector.TryGetProperty("lineEndings", out var le) && le.ValueKind != JsonValueKind.Null)
+            // A polygon is closed: it has no line endings, and lineEndings given for it are ignored.
+            if (kind != ViewerAnnotationKind.Polygon && selector.TryGetProperty("lineEndings", out var le) && le.ValueKind != JsonValueKind.Null)
             {
                 if (le.ValueKind != JsonValueKind.Array || le.GetArrayLength() != 2 || le.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String))
                     throw Bad(requestId, $"{w}.lineEndings must be two names, [start, end].");
@@ -181,6 +182,11 @@ public static class EmbedAnnotationJson
             Modified = modified,
         };
     }
+
+    /// <summary>The annotation's target.selector has a dashPattern property (null and [] included).</summary>
+    public static bool HasDashPattern(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty("target", out var t) && t.ValueKind == JsonValueKind.Object
+        && t.TryGetProperty("selector", out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty("dashPattern", out _);
 
     /// <summary>A filter: { annotationIds: [...], pageRange: { startPage, endPage } } (pages from 1); null or {} is every annotation.</summary>
     public static ViewerAnnotationFilter ParseFilter(JsonElement e, int requestId, string method)
@@ -293,7 +299,13 @@ public static class EmbedAnnotationJson
         if (a.Kind == ViewerAnnotationKind.Stamp) w.WriteString("stampName", a.StampName);
         w.WriteString("strokeColor", a.Color);
         if (a.FillColor != null) w.WriteString("fillColor", a.FillColor);
-        if (a.Dash != null) WriteNumbers(w, "dashPattern", a.Dash);
+        if (a.Dash != null)
+        {
+            // Not rounded: given back, a file's dash is the same dash.
+            w.WriteStartArray("dashPattern");
+            foreach (double v in a.Dash) w.WriteNumberValue(v);
+            w.WriteEndArray();
+        }
         if (a.Kind is ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.FreeText || a.HasVertices)
             w.WriteNumber("strokeWidth", Round(a.StrokeWidth));
         if (a.Kind == ViewerAnnotationKind.FreeText) w.WriteNumber("fontSize", Round(a.FontSize));

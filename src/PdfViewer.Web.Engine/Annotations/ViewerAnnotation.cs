@@ -153,9 +153,13 @@ public sealed record ViewerAnnotation
     public static IReadOnlyList<double> Dashed { get; } = [4, 3];
     public static IReadOnlyList<double> Dotted { get; } = [1, 2];
 
-    /// <summary>Two dashes are the same (null: solid).</summary>
+    /// <summary>
+    /// Two dashes are the same (null: solid), each number within 0.1 % (at least 0.001 points), so
+    /// a file's dash given back by a host page with fewer digits is not a change.
+    /// </summary>
     public static bool SameDash(IReadOnlyList<double>? a, IReadOnlyList<double>? b) =>
-        a == null ? b == null : b != null && a.SequenceEqual(b);
+        a == null ? b == null
+        : b != null && a.Count == b.Count && a.Zip(b).All(p => Math.Abs(p.First - p.Second) <= 1e-3 * Math.Max(1, Math.Max(Math.Abs(p.First), Math.Abs(p.Second))));
 }
 
 /// <summary>
@@ -605,15 +609,32 @@ public static class ViewerAnnotationPdf
             }
             // New annotations before new replies, and each reply after the one it answers, so the
             // editor can find a new parent by its /NM; a parent from the file is given by its object number.
+            var fileById = new Dictionary<string, ViewerAnnotation>(StringComparer.Ordinal);
+            foreach (var f in fromFile) fileById.TryAdd(f.Id, f);
             foreach (var a in current.Where(a => !a.FromFile).OrderBy(a => Depth(a, now)))
             {
-                var p = ToPdf(a, null);
+                var p = ToPdf(a, MovedShapeBasis(a));
                 // (one written directly in /Annots is made an object first, so /IRT can refer to it).
                 if (a.Kind == ViewerAnnotationKind.Reply && now.TryGetValue(a.InReplyTo, out var parent) && parent.FromFile
                     && Basis(parent) is { } fileParent)
                     p.InReplyTo = fileParent.ObjectNumber > 0 ? fileParent.ObjectNumber : editor.MakeIndirect(parent.Page, fileParent.Index);
                 editor.Add(p);
                 changed = true;
+            }
+
+            // A file's shape moved to another page is written there as a new annotation from its
+            // own entries (a measurement's /Measure, /IT, /Subj, its style), not from the model alone.
+            PdfAnnotation? MovedShapeBasis(ViewerAnnotation a)
+            {
+                if (!a.IsShape || !fileById.TryGetValue(a.Id, out var origin) || origin.Page == a.Page
+                    || origin.Kind != a.Kind || origin.IsMeasurement != a.IsMeasurement || Basis(origin) is not { } b) return null;
+                b.Index = -1;
+                b.ObjectNumber = 0;
+                b.PopupObjectNumber = 0;
+                b.PopupRect = null;
+                b.InReplyTo = 0;
+                b.InReplyToName = null;
+                return b;
             }
         });
         return changed ? result : null;

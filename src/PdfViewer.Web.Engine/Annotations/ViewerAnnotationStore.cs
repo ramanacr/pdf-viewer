@@ -116,21 +116,29 @@ public sealed class ViewerAnnotationStore
     /// How far a line's, polygon's or polyline's box reaches past its points: half the line, or
     /// with line endings their size (the engine draws arrows nine line widths long, shapes three across).
     /// </summary>
-    public static double ShapeMargin(double strokeWidth, bool endings) => endings ? 5 * Math.Max(strokeWidth, 1) + 1 : strokeWidth / 2 + 1;
+    public static double ShapeMargin(double strokeWidth, bool endings) =>
+        endings ? Reach("OpenArrow", strokeWidth) : Reach("None", strokeWidth);
+
+    /// <summary><see cref="ShapeMargin(double, bool)"/> for these endings.</summary>
+    public static double ShapeMargin(double strokeWidth, string start, string end) =>
+        Math.Max(Reach(start, strokeWidth), Reach(end, strokeWidth));
 
     /// <summary>
-    /// <see cref="ShapeMargin(double, bool)"/> for these endings: a reverse arrow reaches past its
-    /// point by its length (nine line widths at 30 degrees).
+    /// How far an ending (as PdfAnnotationAppearances draws it, s = max(width, 1)) can reach from
+    /// its point along either axis, with the line's half width and its joins: an arrow's wings are
+    /// 9 s long at 30 degrees to the line (on a line at 30 or 60 degrees a wing lies along an axis)
+    /// and its tip's mitre adds up to a line width; a square's corner is 3 s √2 away, a slash's
+    /// end 4.5 s; mitred corners add up to a line width. One point more for anti-aliasing.
     /// </summary>
-    public static double ShapeMargin(double strokeWidth, string start, string end)
+    private static double Reach(string ending, double width)
     {
-        double Reach(string ending) => ending switch
+        double s = Math.Max(width, 1);
+        return ending switch
         {
-            "None" => ShapeMargin(strokeWidth, false),
-            "ROpenArrow" or "RClosedArrow" => 9 * Math.Max(strokeWidth, 1) * Math.Cos(Math.PI / 6) + strokeWidth / 2 + 1,
-            _ => ShapeMargin(strokeWidth, true),
+            "None" => width / 2 + 1,
+            "OpenArrow" or "ClosedArrow" or "ROpenArrow" or "RClosedArrow" => 9 * s + width + 1,
+            _ => 4.5 * s + width + 1, // Square, Circle, Diamond, Butt, Slash (and a name the store refuses)
         };
-        return Math.Max(Reach(start), Reach(end));
     }
 
     /// <summary>
@@ -139,7 +147,7 @@ public sealed class ViewerAnnotationStore
     /// </summary>
     public static ViewerBox GrownForEndings(ViewerAnnotation a)
     {
-        var around = ViewerBox.Around(a.Vertices, ShapeMargin(a.StrokeWidth, a.StartEnding, a.EndEnding));
+        var around = ViewerBox.Around(a.Vertices, a.HasEndings ? ShapeMargin(a.StrokeWidth, a.StartEnding, a.EndEnding) : ShapeMargin(a.StrokeWidth, false));
         var b = a.Box;
         return a.Vertices.Count == 0 ? b
             : new ViewerBox(Math.Min(b.X1, around.X1), Math.Min(b.Y1, around.Y1), Math.Max(b.X2, around.X2), Math.Max(b.Y2, around.Y2));
@@ -190,11 +198,10 @@ public sealed class ViewerAnnotationStore
         if (old.Kind != annotation.Kind) throw new ViewerAnnotationException("An annotation's subtype cannot change.");
         if (old.InReplyTo != annotation.InReplyTo) throw new ViewerAnnotationException("What a reply answers cannot change.");
         if (old.Kind == ViewerAnnotationKind.Reply) annotation = annotation with { Page = old.Page, Box = old.Box };
-        // A measurement stays one, and keeps its fill, dash and line endings.
-        if (old.IsMeasurement && (annotation.FillColor != old.FillColor || !ViewerAnnotation.SameDash(annotation.Dash, old.Dash)
-                                  || annotation.StartEnding != old.StartEnding || annotation.EndEnding != old.EndEnding))
-            throw new ViewerAnnotationException($"Annotation \"{old.Id}\" is a measurement: its fillColor, dashPattern and lineEndings cannot change.");
-        annotation = annotation with { IsMeasurement = old.IsMeasurement };
+        // A measurement stays one, and keeps its fill, dash and line endings (values given for them are ignored).
+        annotation = old.IsMeasurement
+            ? annotation with { IsMeasurement = true, FillColor = old.FillColor, Dash = old.Dash, StartEnding = old.StartEnding, EndEnding = old.EndEnding }
+            : annotation with { IsMeasurement = false };
         // Moved to another page, a file's annotation is written as a new one there (and removed from its page).
         var updated = Fit(annotation with { SourceIndex = annotation.Page == old.Page ? old.SourceIndex : -1 });
         Check(updated);
