@@ -2,5 +2,5 @@ First preview release (0.1).
 • Read PDFs: scroll, zoom to 8×, outline, page thumbnails, search, text selection and copy, night pages, password-protected files, recent files.
 • Fill in forms: text, check box, radio, combo and list fields.
 • Annotate: highlight, underline, strike out, draw, sticky notes, undo and redo, annotation list.
-• Save your edits into the file, or save a copy.
+• Save a copy with your edits.
 • No permissions, no tracking, no ads.
