@@ -168,7 +168,7 @@ public partial class MainWindow : Window
             int pages;
             try
             {
-                using var doc = PdfEngine.Vector.Document.PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.MemoryByteSource(File.ReadAllBytes(dialog.FileName)));
+                using var doc = PdfEngine.Vector.Document.PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.PdfMemoryByteSource(File.ReadAllBytes(dialog.FileName)));
                 pages = doc.PageCount;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)

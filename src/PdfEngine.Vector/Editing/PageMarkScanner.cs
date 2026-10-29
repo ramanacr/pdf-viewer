@@ -21,7 +21,7 @@ internal static class PageMarkScanner
     public static List<MarkSequence> Find(byte[] content, Func<string, PdfDictionary?> properties)
     {
         var result = new List<MarkSequence>();
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         var operands = new List<PdfObject>(4);
@@ -100,7 +100,7 @@ internal static class PageMarkScanner
     }
 
     // Past the data of an inline image (BI … ID data EI), which may hold any bytes.
-    private static void SkipInlineImage(MemoryByteSource src, PdfLexer lexer, byte[] all)
+    private static void SkipInlineImage(PdfMemoryByteSource src, PdfLexer lexer, byte[] all)
     {
         while (true)
         {

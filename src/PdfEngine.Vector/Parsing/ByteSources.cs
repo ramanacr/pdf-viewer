@@ -6,7 +6,7 @@ namespace PdfEngine.Vector.Parsing;
 /// <summary>
 /// Memory-backed IPdfByteSource over a byte array or ReadOnlyMemory.
 /// </summary>
-public sealed class MemoryByteSource : IPdfByteSource
+public sealed class PdfMemoryByteSource : IPdfByteSource
 {
     private readonly ReadOnlyMemory<byte> _memory;
     private long _position;
@@ -23,7 +23,7 @@ public sealed class MemoryByteSource : IPdfByteSource
         set => _position = Math.Clamp(value, 0, Length);
     }
 
-    public MemoryByteSource(ReadOnlyMemory<byte> memory)
+    public PdfMemoryByteSource(ReadOnlyMemory<byte> memory)
     {
         _memory = memory;
         _position = 0;
@@ -34,7 +34,7 @@ public sealed class MemoryByteSource : IPdfByteSource
         }
     }
 
-    public MemoryByteSource(byte[] bytes) : this(bytes.AsMemory()) { }
+    public PdfMemoryByteSource(byte[] bytes) : this(bytes.AsMemory()) { }
 
     public int ReadByte()
     {
@@ -70,7 +70,7 @@ public sealed class MemoryByteSource : IPdfByteSource
             throw new ArgumentOutOfRangeException(nameof(offset));
         int available = (int)(_memory.Length - offset);
         int actual = (int)Math.Min(length, available);
-        return new MemoryByteSource(_memory.Slice((int)offset, actual));
+        return new PdfMemoryByteSource(_memory.Slice((int)offset, actual));
     }
 
     public void Seek(long offset, SeekOrigin origin = SeekOrigin.Begin)
@@ -91,7 +91,7 @@ public sealed class MemoryByteSource : IPdfByteSource
 /// <summary>
 /// File-backed IPdfByteSource with random access over a FileStream.
 /// </summary>
-public sealed class FileByteSource : IPdfByteSource
+public sealed class PdfFileByteSource : IPdfByteSource
 {
     private readonly FileStream _stream;
     private readonly long _baseOffset;
@@ -106,7 +106,7 @@ public sealed class FileByteSource : IPdfByteSource
         set => _stream.Position = _baseOffset + Math.Clamp(value, 0, _length);
     }
 
-    public FileByteSource(string filePath)
+    public PdfFileByteSource(string filePath)
     {
         _stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess);
         _baseOffset = 0;
@@ -114,7 +114,7 @@ public sealed class FileByteSource : IPdfByteSource
         _ownsStream = true;
     }
 
-    private FileByteSource(FileStream stream, long baseOffset, long length, bool ownsStream)
+    private PdfFileByteSource(FileStream stream, long baseOffset, long length, bool ownsStream)
     {
         _stream = stream;
         _baseOffset = baseOffset;
@@ -168,7 +168,7 @@ public sealed class FileByteSource : IPdfByteSource
     {
         long sliceBase = _baseOffset + offset;
         long sliceLen = Math.Min(length, _length - offset);
-        return new FileByteSource(_stream, sliceBase, Math.Max(0, sliceLen), ownsStream: false);
+        return new PdfFileByteSource(_stream, sliceBase, Math.Max(0, sliceLen), ownsStream: false);
     }
 
     public void Seek(long offset, SeekOrigin origin = SeekOrigin.Begin)

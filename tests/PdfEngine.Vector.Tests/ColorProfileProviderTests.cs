@@ -83,7 +83,7 @@ public class ColorProfileProviderTests
         byte[] pdf = CmykDocument();
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
 
-        var result = PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = PdfAFlavour.A2b });
+        var result = PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = PdfAFlavor.A2b });
 
         Assert.False(result.Report.IsCompliant);
         Assert.DoesNotContain(result.Changes, c => c.Contains("Gave CMYK colour an ICC profile", StringComparison.Ordinal));
@@ -104,7 +104,7 @@ public class ColorProfileProviderTests
 
         byte[] pdf = CmykDocument();
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        var result = PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = PdfAFlavour.A2b });
+        var result = PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = PdfAFlavor.A2b });
         Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
     }
 

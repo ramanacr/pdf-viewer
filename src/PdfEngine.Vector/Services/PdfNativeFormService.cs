@@ -519,7 +519,7 @@ public sealed class PdfNativeFormService : IPdfFormService
         PdfDictionary? fdf = null;
         try
         {
-            var lexer = new PdfLexer(new MemoryByteSource(data));
+            var lexer = new PdfLexer(new PdfMemoryByteSource(data));
             var parser = new PdfParser();
             // Objects are read in order ("n g obj ... endobj"); the trailer's /Root is the catalog.
             while (true)

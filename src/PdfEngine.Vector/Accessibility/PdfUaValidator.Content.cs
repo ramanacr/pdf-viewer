@@ -82,7 +82,7 @@ internal sealed partial class PdfUaChecker
     private void Walk(byte[] content, PdfDictionary? resources, Matrix ctm, List<Marked> inherited, PageScan scan, int stm, int? structParents, int depth)
     {
         if (depth > 12) return;
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         var operands = new List<PdfObject>();
@@ -349,7 +349,7 @@ internal sealed partial class PdfUaChecker
         return new PdfRect(x0, y0, corners.Max(p => p.X) - x0, corners.Max(p => p.Y) - y0);
     }
 
-    private static void SkipInlineImage(MemoryByteSource src, PdfLexer lexer, PdfParser parser)
+    private static void SkipInlineImage(PdfMemoryByteSource src, PdfLexer lexer, PdfParser parser)
     {
         while (true)
         {

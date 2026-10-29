@@ -15,7 +15,7 @@ namespace PdfEngine.Vector.Tests;
 public class FunctionTests
 {
     internal static PdfObjectResolver EmptyResolver() =>
-        new(new MemoryByteSource(Array.Empty<byte>()), new PdfXrefTable());
+        new(new PdfMemoryByteSource(Array.Empty<byte>()), new PdfXrefTable());
 
     internal static PdfArray Nums(params double[] values) =>
         new(values.Select(v => v == Math.Floor(v) ? (PdfObject)new PdfInteger((long)v) : new PdfReal(v)).ToArray());

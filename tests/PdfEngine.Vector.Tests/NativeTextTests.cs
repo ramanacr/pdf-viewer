@@ -61,7 +61,7 @@ public class NativeTextTests
         return PdfTextExtractor.LoadPage(doc, page);
     }
 
-    private static double? IoU(TextRect a, TextRect b)
+    private static double? IoU(PdfTextRect a, PdfTextRect b)
     {
         a.Normalize(); b.Normalize();
         if (a.Width <= 0 || a.Height <= 0 || b.Width <= 0 || b.Height <= 0) return null;

@@ -9,6 +9,7 @@ using PdfEngine.Geometry;
 using PdfEngine.Pdfium;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 
 namespace VectorPdf.Tool;
 

@@ -95,7 +95,7 @@ public static class StampLibrary
         var info = new FileInfo(path);
         if (info.Length > MaxFileBytes) throw new NotSupportedException("The PDF is larger than 20 MB.");
         byte[] bytes = File.ReadAllBytes(path);
-        using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
         if (doc.IsEncrypted) throw new NotSupportedException("The PDF is encrypted; use an unencrypted copy.");
         if (pageNumber < 1 || pageNumber > doc.PageCount) throw new ArgumentOutOfRangeException(nameof(pageNumber), $"The PDF has {doc.PageCount} page(s).");
         // Only the page and what it draws: no outline, form or other pages.

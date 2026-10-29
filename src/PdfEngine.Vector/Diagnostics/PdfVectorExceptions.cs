@@ -20,6 +20,19 @@ public enum PdfVectorErrorKind
     Encryption,
     /// <summary>A renderer failed.</summary>
     RenderBackend,
+    /// <summary>
+    /// The parser needs bytes of a partly loaded file that are not there yet
+    /// (<see cref="Parsing.PdfDataNotLoadedException"/>). It is not a failure of the document:
+    /// fetch the range and try again.
+    /// </summary>
+    DataNotLoaded,
+    /// <summary>A form field's keystroke or validate rule refused a value (<see cref="Forms.PdfFieldValidationException"/>).</summary>
+    FieldValidation,
+    /// <summary>
+    /// A PDF/A conversion was refused because it would change how the document looks
+    /// (<see cref="PdfA.PdfAConversionRefusedException"/>).
+    /// </summary>
+    ConversionRefused,
 }
 
 /// <summary>

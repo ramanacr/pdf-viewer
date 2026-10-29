@@ -8,6 +8,7 @@ using PdfEngine.Vector;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Oracle;
 using PdfEngine.Vector.Services;
+using PdfEngine.Vector.Annotations;
 
 namespace VectorPdf.Tool;
 

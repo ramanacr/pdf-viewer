@@ -299,7 +299,7 @@ public static class TextBench
         var buf = new byte[8];
         void D(double v) { BitConverter.TryWriteBytes(buf, v); sha.AppendData(buf); }
         void I(long v) { BitConverter.TryWriteBytes(buf, v); sha.AppendData(buf); }
-        void R(TextRect r) { D(r.Left); D(r.Bottom); D(r.Right); D(r.Top); }
+        void R(PdfTextRect r) { D(r.Left); D(r.Bottom); D(r.Right); D(r.Top); }
         sha.AppendData(System.Text.Encoding.UTF8.GetBytes(page.GetAllText()));
         I(page.CharCount);
         for (int i = 0; i < page.CharCount; i++)

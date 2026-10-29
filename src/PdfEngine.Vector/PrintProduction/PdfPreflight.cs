@@ -33,11 +33,11 @@ public sealed class PdfPreflightProfile
     public double? ImageWarningPpi { get; init; }
     public PdfPreflightSeverity? RgbContent { get; init; }
     /// <summary>Device-independent colour (Lab, CalRGB, CalGray, ICCBased) other than RGB, which <see cref="RgbContent"/> covers.</summary>
-    public PdfPreflightSeverity? DeviceIndependentColour { get; init; }
+    public PdfPreflightSeverity? DeviceIndependentColor { get; init; }
     public double? InkLimitPercent { get; init; }
     public double? HairlinePoints { get; init; }
     public PdfPreflightSeverity? Transparency { get; init; }
-    public bool ListSpotColours { get; init; }
+    public bool ListSpotColors { get; init; }
     /// <summary>Pages should have a TrimBox (warning) and a BleedBox (information).</summary>
     public bool TrimAndBleedBoxes { get; init; }
     /// <summary>PDF/X: every page needs a TrimBox or an ArtBox (error).</summary>
@@ -60,7 +60,7 @@ public sealed class PdfPreflightProfile
         InkLimitPercent = 300,
         HairlinePoints = 0.25,
         Transparency = PdfPreflightSeverity.Info,
-        ListSpotColours = true,
+        ListSpotColors = true,
         TrimAndBleedBoxes = true,
     };
 
@@ -74,9 +74,9 @@ public sealed class PdfPreflightProfile
                      + "a PDF/X validator and the version keys (GTS_PDFXVersion) before it can claim PDF/X-1a.",
         FontsNotEmbedded = PdfPreflightSeverity.Error,
         RgbContent = PdfPreflightSeverity.Error,
-        DeviceIndependentColour = PdfPreflightSeverity.Error,
+        DeviceIndependentColor = PdfPreflightSeverity.Error,
         Transparency = PdfPreflightSeverity.Error,
-        ListSpotColours = true,
+        ListSpotColors = true,
         TrimOrArtBoxRequired = true,
         OutputIntentRequired = true,
         EncryptionForbidden = true,
@@ -174,7 +174,7 @@ public static class PdfPreflight
                     await _doc.ObservePageAsync(page, this, ct).ConfigureAwait(false);
                     inkPages.Add(page);
                 }
-                catch (PdfVectorException ex)
+                catch (PdfVectorException ex) when (ex is not Parsing.PdfDataNotLoadedException)
                 {
                     Add("PP-0.1", PdfPreflightSeverity.Error, $"The page could not be read ({ex.GetType().Name}); it was not checked.", page);
                 }
@@ -184,7 +184,7 @@ public static class PdfPreflight
             }
 
             CheckFonts();
-            if (_profile.ListSpotColours)
+            if (_profile.ListSpotColors)
             {
                 foreach (var colorant in _colorants.ToInventory([]).Spots)
                 {
@@ -274,7 +274,7 @@ public static class PdfPreflight
             int obj = paint.Kind == PdfPaintKind.Image ? paint.ObjectNumber : -1;
             if (kind.Rgb && _profile.RgbContent is { } rgb)
                 AddOnPage("PP-3.1", rgb, $"RGB colour ({kind.Name}) in {what}.", paint.Bounds, obj);
-            else if (kind.DeviceIndependent && _profile.DeviceIndependentColour is { } cie)
+            else if (kind.DeviceIndependent && _profile.DeviceIndependentColor is { } cie)
                 AddOnPage("PP-3.2", cie, $"Device-independent colour ({kind.Name}) in {what}.", paint.Bounds, obj);
         }
 
@@ -410,7 +410,7 @@ public static class PdfPreflight
                         separation = await PdfSeparationRenderer.RenderAsync(_doc, page, w, h, rasterizer,
                             new PdfSeparationOptions { Model = model, SimulateOverprint = true }, ct).ConfigureAwait(false);
                     }
-                    catch (PdfVectorException)
+                    catch (PdfVectorException failure) when (failure is not Parsing.PdfDataNotLoadedException)
                     {
                         continue;
                     }

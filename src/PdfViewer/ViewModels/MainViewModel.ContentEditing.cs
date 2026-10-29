@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.Input;
 using PdfEngine.Geometry;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Editing;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfViewer.ViewModels;
 

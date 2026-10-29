@@ -418,7 +418,7 @@ public sealed class ViewerDocument : IAsyncDisposable
                 try
                 {
                     return _document.Resolver.Resolve(_document.XrefTable.Trailer?["Info"]) is PdfEngine.Vector.Objects.PdfDictionary info
-                        ? PdfEngine.Vector.Services.PdfTextStrings.Decode(_document.Resolver.Resolve(info[key]))
+                        ? PdfEngine.Vector.Objects.PdfTextStrings.Decode(_document.Resolver.Resolve(info[key]))
                         : null;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -427,7 +427,7 @@ public sealed class ViewerDocument : IAsyncDisposable
                 }
             }
             return new ViewerMetadata(PageCount, m.Title ?? "", m.Author ?? "", m.Subject ?? "", Info("Keywords") ?? "", m.Creator ?? "", m.Producer ?? "",
-                PdfEngine.Vector.Services.PdfTextStrings.ParseDate(Info("CreationDate")), PdfEngine.Vector.Services.PdfTextStrings.ParseDate(Info("ModDate")),
+                PdfEngine.Vector.Objects.PdfTextStrings.ParseDate(Info("CreationDate")), PdfEngine.Vector.Objects.PdfTextStrings.ParseDate(Info("ModDate")),
                 _document.HeaderVersion ?? m.PdfVersion, _document.IsEncrypted, tagged, CanCopy, CanPrint, WasRepaired, _fileSize,
                 _signed.IsSigned, _signed.CertificationLevel);
         }
@@ -1036,7 +1036,7 @@ public sealed class ViewerDocument : IAsyncDisposable
     }
 
     /// <summary>A user-space box on the shown page: crop box origin, y down, then the page's /Rotate (clockwise).</summary>
-    internal static ViewerRect ToShown(PdfTextPage text, PdfEngine.Vector.Text.TextRect box)
+    internal static ViewerRect ToShown(PdfTextPage text, PdfEngine.Vector.Text.PdfTextRect box)
     {
         var crop = text.PageBox;
         double w = crop.Width, h = crop.Height;

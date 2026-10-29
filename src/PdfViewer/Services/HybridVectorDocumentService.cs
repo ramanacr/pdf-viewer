@@ -556,7 +556,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         _vectorOpenAttempted = true;
         // The first non-embedded font waits for the list of installed fonts (a scan of the font
         // folder, read once per process): start it now, while the document opens.
-        _ = Task.Run(() => PdfEngine.Vector.Editing.SystemFontCatalog.Installed);
+        _ = Task.Run(() => PdfEngine.Vector.Fonts.SystemFontCatalog.Installed);
         try
         {
             // The revision in memory, with the password it was opened with (a decrypted copy needs none).

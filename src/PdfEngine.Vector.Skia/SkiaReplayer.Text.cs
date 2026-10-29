@@ -1,8 +1,8 @@
 using System.Numerics;
 using PdfEngine.Geometry;
-using PdfEngine.Vector.Editing;
 using SubstituteShaper = PdfEngine.Vector.Text.SubstituteShaper;
 using SkiaSharp;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Skia;
 

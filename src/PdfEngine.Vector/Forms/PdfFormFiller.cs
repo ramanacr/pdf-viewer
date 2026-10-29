@@ -15,6 +15,9 @@ namespace PdfEngine.Vector.Forms;
 public sealed record PdfFieldChange(string FullName, string? Text = null, bool? Checked = null, string? Choice = null, IReadOnlyList<string>? Selections = null,
     string? Display = null, bool DisplayRed = false);
 
+/// <summary>The /DA (default appearance) string parsed: font resource name, size (0 = auto) and the colour operators.</summary>
+public sealed record PdfDefaultAppearance(string FontName, double Size, string ColorOps);
+
 /// <summary>
 /// Fills form fields and writes the result as an incremental update: each changed field gets its
 /// new /V, each of its widgets a regenerated appearance (text and choice fields: the value laid
@@ -232,16 +235,14 @@ public static class PdfFormFiller
 
     // ------------------------------------------------------------------ text layout
 
-    /// <summary>The /DA string parsed: font resource name, size (0 = auto) and the colour operators.</summary>
-    public sealed record Appearance(string FontName, double Size, string ColourOps);
-
-    public static Appearance ParseDA(string? da)
+    /// <summary>Parses a /DA (default appearance) string. A missing or empty string gives /Helv, size 0 (auto) and black.</summary>
+    public static PdfDefaultAppearance ParseDefaultAppearance(string? da)
     {
         string font = "Helv";
         double size = 0;
         string colour = "0 g";
         if (string.IsNullOrWhiteSpace(da))
-            return new Appearance(font, size, colour);
+            return new PdfDefaultAppearance(font, size, colour);
         var tokens = da.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         for (int i = 0; i < tokens.Length; i++)
         {
@@ -262,7 +263,7 @@ public static class PdfFormFiller
                     break;
             }
         }
-        return new Appearance(font, size, colour);
+        return new PdfDefaultAppearance(font, size, colour);
     }
 
     /// <summary>Glyph widths (1/1000 em) and byte encoding of a simple font, for layout and the content stream.</summary>
@@ -316,9 +317,9 @@ public static class PdfFormFiller
         }, asc, desc);
     }
 
-    private static (PdfDictionary? Resources, PdfDictionary? FontDict, Appearance Da) Font(PdfFormField field, PdfAcroForm form, Parsing.PdfObjectResolver r)
+    private static (PdfDictionary? Resources, PdfDictionary? FontDict, PdfDefaultAppearance Da) Font(PdfFormField field, PdfAcroForm form, Parsing.PdfObjectResolver r)
     {
-        var da = ParseDA(field.DefaultAppearance ?? form.DefaultAppearance);
+        var da = ParseDefaultAppearance(field.DefaultAppearance ?? form.DefaultAppearance);
         var fonts = r.Resolve(form.DefaultResources?["Font"]) as PdfDictionary;
         var fontRef = fonts?[da.FontName];
         var fontDict = r.Resolve(fontRef) as PdfDictionary;
@@ -380,7 +381,7 @@ public static class PdfFormFiller
                 while (size > 4 && lines.Count * size * 1.15 > innerH) { size -= 0.5; lines = Wrap(text, metrics, size, innerW); }
             }
             double leading = size * 1.15;
-            s.Append($"/{da.FontName} {F(size)} Tf {colourOps ?? da.ColourOps}\n");
+            s.Append($"/{da.FontName} {F(size)} Tf {colourOps ?? da.ColorOps}\n");
             double y = height - pad - metrics.Ascent / 1000.0 * size;
             foreach (var line in lines)
             {
@@ -399,7 +400,7 @@ public static class PdfFormFiller
                 if (tw > innerW && tw > 0) size = Math.Max(4, size * innerW / tw);
             }
             double baseline = pad + (innerH - em * size) / 2 - metrics.Descent / 1000.0 * size;
-            s.Append($"/{da.FontName} {F(size)} Tf {colourOps ?? da.ColourOps}\n");
+            s.Append($"/{da.FontName} {F(size)} Tf {colourOps ?? da.ColorOps}\n");
             if (field.IsComb)
             {
                 double cell = width / field.MaxLength;
@@ -438,7 +439,7 @@ public static class PdfFormFiller
             if (selected.Contains(i))
                 s.Append($"0.6 0.75 0.86 rg 1 {F(y0)} {F(width - 2)} {F(leading)} re f\n");
         }
-        s.Append($"BT /{da.FontName} {F(size)} Tf {da.ColourOps}\n");
+        s.Append($"BT /{da.FontName} {F(size)} Tf {da.ColorOps}\n");
         for (int i = 0; i < field.Options.Count; i++)
         {
             double baseline = top - (i + 1) * leading - metrics.Descent / 1000.0 * size + (leading - size) / 2;

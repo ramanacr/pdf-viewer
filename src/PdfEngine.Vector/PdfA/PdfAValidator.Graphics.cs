@@ -193,7 +193,7 @@ internal sealed partial class PdfAChecker
     private void CheckContent(byte[] content, PdfDictionary? resources, Usage usage, string where, int depth)
     {
         if (depth > 12) return;
-        using var src = new MemoryByteSource(content);
+        using var src = new PdfMemoryByteSource(content);
         var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
         var parser = new PdfParser(PdfSecurityLimits.Default);
         var operands = new List<PdfObject>();
@@ -696,7 +696,7 @@ internal sealed partial class PdfAChecker
         else if (chosen.Meth == 1 && chosen.Enum == 19) Fail(null, "6.2.8.3", 4, "A JPEG 2000 image uses the CIEJab enumerated colour space.", where);
     }
 
-    private void CheckInlineImage(MemoryByteSource src, PdfLexer lexer, PdfParser parser, string where, Usage usage, PdfDictionary? resources)
+    private void CheckInlineImage(PdfMemoryByteSource src, PdfLexer lexer, PdfParser parser, string where, Usage usage, PdfDictionary? resources)
     {
         var entries = new Dictionary<string, PdfObject>();
         while (true)

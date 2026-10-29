@@ -14,6 +14,7 @@ using PdfEngine.Vector.Objects;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfEngine.Vector.Text;
 using Xunit;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Tests;
 

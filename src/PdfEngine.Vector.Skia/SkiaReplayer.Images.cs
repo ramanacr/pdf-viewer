@@ -68,7 +68,7 @@ internal sealed partial class SkiaReplayer
             _decoded[image.Source.CacheKey] = (pixels, width, height);
             return true;
         }
-        catch (Exception ex) when (ex is PdfEngine.Vector.Diagnostics.PdfVectorException or InvalidDataException or IOException
+        catch (Exception ex) when (ex is PdfEngine.Vector.Diagnostics.PdfVectorException and not PdfEngine.Vector.Parsing.PdfDataNotLoadedException or InvalidDataException or IOException
                                        or ArgumentException or OverflowException or NotSupportedException)
         {
             reason = ex is PdfEngine.Vector.Diagnostics.PdfUnsupportedFeatureException u ? u.Reason
@@ -162,7 +162,7 @@ internal static class SkiaJpeg
             return Decode(decoded, out width, out height);
         }
         catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or OverflowException
-                                       or PdfEngine.Vector.Diagnostics.PdfVectorException)
+                                       or PdfEngine.Vector.Diagnostics.PdfVectorException and not PdfEngine.Vector.Parsing.PdfDataNotLoadedException)
         {
             width = height = 0;
             return null;

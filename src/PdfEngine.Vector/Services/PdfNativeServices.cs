@@ -8,6 +8,8 @@ using PdfEngine.Pages;
 using PdfEngine.Rendering;
 using PdfEngine.Safety;
 using PdfEngine.Save;
+using PdfEngine.Vector.Annotations;
+using PdfEngine.Vector.Objects;
 
 namespace PdfEngine.Vector.Services;
 
@@ -483,7 +485,7 @@ public sealed class PdfNativeAttachmentService : IPdfAttachmentService
         {
             payload = PdfAttachments.Extract(doc.Vector, index);
         }
-        catch (Exception ex) when (ex is InvalidDataException or PdfEngine.Vector.Diagnostics.PdfVectorException)
+        catch (Exception ex) when (ex is InvalidDataException or PdfEngine.Vector.Diagnostics.PdfVectorException and not Parsing.PdfDataNotLoadedException)
         {
             throw new PdfException($"Embedded file {index + 1} could not be copied out of the document.", ex);
         }

@@ -109,6 +109,79 @@ build with the .NET 9 SDK makes only `net9.0`. Each pack also runs package valid
 `net10.0` assemblies must have all the API of the `net9.0` ones. From version 1.0, the pack also
 compares the API with the last released package and fails on a breaking change.
 
+## Changes in 1.0
+
+Version 1.0 changes the API of `0.2.0-preview.1`. Update your code as follows.
+
+### Renamed types
+
+| Before | After |
+| --- | --- |
+| `PdfEngine.Vector.Forms.PdfFieldBehaviour` | `PdfEngine.Vector.Forms.PdfFieldBehavior` |
+| `PdfEngine.Vector.PdfA.PdfAFlavour` | `PdfEngine.Vector.PdfA.PdfAFlavor` |
+| `PdfEngine.Vector.Forms.PdfFormFiller.Appearance` (nested) | `PdfEngine.Vector.Forms.PdfDefaultAppearance` (top-level) |
+| `PdfEngine.Vector.Text.TextRect` | `PdfEngine.Vector.Text.PdfTextRect` |
+| `PdfEngine.Vector.Parsing.MemoryByteSource` | `PdfEngine.Vector.Parsing.PdfMemoryByteSource` |
+| `PdfEngine.Vector.Parsing.FileByteSource` | `PdfEngine.Vector.Parsing.PdfFileByteSource` |
+| `PdfEngine.Vector.Parsing.MemoryRangeReader` | `PdfEngine.Vector.Parsing.PdfMemoryRangeReader` |
+
+### Renamed members
+
+| Before | After |
+| --- | --- |
+| `PdfFormFiller.ParseDA` | `PdfFormFiller.ParseDefaultAppearance` |
+| `PdfFormFiller.Appearance.ColourOps` | `PdfDefaultAppearance.ColorOps` |
+| `PdfAConversionOptions.Flavour` | `PdfAConversionOptions.Flavor` |
+| `PdfAReport.Flavour` | `PdfAReport.Flavor` |
+| `PdfAValidator.ClaimedFlavour` | `PdfAValidator.ClaimedFlavor` |
+| `PdfAValidator.Validate` parameter `flavour` | parameter `flavor` |
+| `PdfPreflightProfile.DeviceIndependentColour` | `PdfPreflightProfile.DeviceIndependentColor` |
+| `PdfPreflightProfile.ListSpotColours` | `PdfPreflightProfile.ListSpotColors` |
+| `PdfStamps.RotatedBounds` parameter `centre` | parameter `center` |
+
+### Moved to a different namespace
+
+| Type | Before | After |
+| --- | --- | --- |
+| `SystemFontCatalog`, `SystemFontFace` | `PdfEngine.Vector.Editing` | `PdfEngine.Vector.Fonts` |
+| `PdfAnnotation`, `PdfAnnotationReader` | `PdfEngine.Vector.Services` | `PdfEngine.Vector.Annotations` |
+| `PdfTextStrings` | `PdfEngine.Vector.Services` | `PdfEngine.Vector.Objects` |
+
+### Other changes
+
+- `PdfFieldValidationException`, `PdfDataNotLoadedException` and `PdfAConversionRefusedException`
+  now derive from `PdfVectorException`. Their `Kind` is one of the new `PdfVectorErrorKind` values
+  `FieldValidation`, `DataNotLoaded` and `ConversionRefused`.
+- `PdfAConversionRefusedException` no longer derives from `InvalidOperationException`. If you catch
+  `InvalidOperationException` around `PdfAConverter.Convert`, also catch `PdfAConversionRefusedException`.
+- If you catch `PdfVectorException` while you read a document that loads by HTTP ranges
+  (`PdfRangedDocument`), let `PdfDataNotLoadedException` through. `PdfRangedDocument` catches it,
+  loads the missing bytes and tries again.
+- `PdfSignatureValidator.RevisionEnds` returns `IReadOnlyList<long>`. Before, it returned `List<long>`.
+- New: `PdfObjectResolver.DecodeStream(PdfStream)` returns the decoded data of a stream. Use it
+  instead of the stream decoder, which is now internal.
+
+### Types and members that are now internal
+
+These were implementation details. They are not part of the 1.0 API:
+
+- Parsing: the lexer, the parser and their tokens, the byte-range loading internals and the
+  cross-reference entries. The constructors and loaders of `PdfXrefTable`, `PdfObjectResolver`,
+  `PdfPageTree` and `PdfPageNode` are internal. Their read members stay public, for example
+  `PdfObjectResolver.Resolve` and `PdfXrefTable.Trailer`.
+- Streams: `PdfStreamDecoder`, `PdfDecodedStream` and `PredictorDecoder`.
+  Use `PdfObjectResolver.DecodeStream`.
+- PDF functions, colour spaces (`PdfColorSpace` and its nested types), the graphics state and the
+  content interpreter.
+- Fonts: `PdfFont`, the font resolver, font program preparation, the standard 14 fonts tables and
+  `TrueTypeFontFile`. `SystemFontCatalog.Load` is internal.
+- PDF/A and XMP internals, the incremental writer, the page tree editor and other writing helpers.
+- The paint observer (`IPdfPaintObserver`, `PdfPaintEvent`, `PdfPaintKind`) and `PdfVectorPage`
+  (use `IPdfPage`).
+- Security handlers: `Create`, `DecryptObject` and `EncryptObject`. You cannot derive your own
+  security handler.
+- `SkiaJpeg` in `PdfEngine.Vector.Skia` and `IPdfVectorPageVisual` in `PdfEngine.Abstractions`.
+
 ## Licence and support
 
 MIT. Report problems and ask questions in the

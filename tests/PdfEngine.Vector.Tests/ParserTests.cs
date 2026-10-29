@@ -23,7 +23,7 @@ public class ParserTests
         ";
 
         byte[] bytes = Encoding.ASCII.GetBytes(pdfText);
-        using var source = new MemoryByteSource(bytes);
+        using var source = new PdfMemoryByteSource(bytes);
         var lexer = new PdfLexer(source);
 
         // 123
@@ -85,7 +85,7 @@ public class ParserTests
     public void Parser_ParsesDictionaryAndArray()
     {
         string text = @"<< /Title (Sample Doc) /PageCount 5 /MediaBox [ 0 0 612 792 ] >>";
-        using var source = new MemoryByteSource(Encoding.ASCII.GetBytes(text));
+        using var source = new PdfMemoryByteSource(Encoding.ASCII.GetBytes(text));
         var lexer = new PdfLexer(source);
         var parser = new PdfParser();
 
@@ -165,7 +165,7 @@ startxref
 %%EOF";
 
         byte[] pdfBytes = Encoding.ASCII.GetBytes(pdfContent.Replace("\r\n", "\n"));
-        using var source = new MemoryByteSource(pdfBytes);
+        using var source = new PdfMemoryByteSource(pdfBytes);
 
         var xref = new PdfXrefTable();
         xref.Load(source);

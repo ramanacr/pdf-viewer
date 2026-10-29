@@ -51,9 +51,9 @@ public sealed class PdfTextPage
         public int Cid;
         public char Unicode;
         public PdfPoint Origin;
-        public TextRect CharBox;
+        public PdfTextRect CharBox;
         public TextObject? TextObject;
-        public TextRect LooseBox;
+        public PdfTextRect LooseBox;
 
         public CharInfo()
         {
@@ -81,7 +81,7 @@ public sealed class PdfTextPage
     private TextOrientation _textlineDir = TextOrientation.Unknown;
     private TextObject? _prevObj;
     private PdfMatrix _prevMatrix = PdfMatrix.Identity;
-    private TextRect _curlineRect;
+    private PdfTextRect _curlineRect;
     private readonly double _pageWidth, _pageHeight;
 
     /// <summary>1-based page number.</summary>
@@ -208,10 +208,10 @@ public sealed class PdfTextPage
     public bool IsHyphen(int index) => At(index).Type == PdfTextCharType.Hyphen;
 
     /// <summary>The character's glyph box (its ink, from the font's outline) in user space.</summary>
-    public TextRect GetCharBox(int index) => At(index).CharBox;
+    public PdfTextRect GetCharBox(int index) => At(index).CharBox;
 
     /// <summary>The character's box from the font box (ascent to descent, so a line's characters line up), in user space.</summary>
-    public TextRect GetLooseCharBox(int index) => At(index).LooseBox;
+    public PdfTextRect GetLooseCharBox(int index) => At(index).LooseBox;
 
     /// <summary>Where the glyph is drawn from, in user space.</summary>
     public PdfPoint GetOrigin(int index) => At(index).Origin;
@@ -550,7 +550,7 @@ public sealed class PdfTextPage
         double fontSize = prev.TextObject != null ? prev.TextObject.FontSize : prev.CharBox.Height;
         if (fontSize == 0) fontSize = 1;
         var origin = new PdfPoint(prev.Origin.X + preWidth * (fontSize / 1000), prev.Origin.Y);
-        var box = TextRect.Point(origin.X, origin.Y);
+        var box = PdfTextRect.Point(origin.X, origin.Y);
         return new CharInfo { Type = PdfTextCharType.Generated, Unicode = unicode, Origin = origin, CharBox = box, LooseBox = box };
     }
 
@@ -567,7 +567,7 @@ public sealed class PdfTextPage
     /// text gets a font-size-wide column cell. Characters without a text object (or of size 0)
     /// keep their glyph box.
     /// </summary>
-    private static TextRect LooseBounds(in CharInfo info, in PdfMatrix matrix, ref PdfMatrix? inverse)
+    private static PdfTextRect LooseBounds(in CharInfo info, in PdfMatrix matrix, ref PdfMatrix? inverse)
     {
         var obj = info.TextObject;
         if (obj == null || obj.FontSize == 0 || info.Type == PdfTextCharType.Piece && info.CharCode == InvalidCode) return info.CharBox;
@@ -579,7 +579,7 @@ public sealed class PdfTextPage
             double offX = (vx - 500) * fs / 1000, offY = vy * fs / 1000;
             double height = font.VertWidth(info.Cid) * fs / 1000;
             double left = info.Origin.X + offX, bottom = info.Origin.Y + offY;
-            return new TextRect(left, bottom, left + fs, bottom + height);
+            return new PdfTextRect(left, bottom, left + fs, bottom + height);
         }
         int ascent = font.TypeAscent, descent = font.TypeDescent;
         if (ascent == descent) return info.CharBox;
@@ -588,7 +588,7 @@ public sealed class PdfTextPage
         // The inverse is the same for every character of an object: the caller keeps it.
         inverse ??= matrix.Inverse();
         var o = inverse.Value.Transform(info.Origin);
-        var loose = new TextRect(o.X, descent * fs / 1000, o.X + width, ascent * fs / 1000).Transform(matrix);
+        var loose = new PdfTextRect(o.X, descent * fs / 1000, o.X + width, ascent * fs / 1000).Transform(matrix);
         // Ink past the advance or the ascent widens it. A font that is not embedded is measured
         // on a stand-in face whose ink is not the reader's: only its width is taken, so a line's
         // characters keep one band.
@@ -639,7 +639,7 @@ public sealed class PdfTextPage
                 if (threshold != 0 && spacing >= threshold)
                 {
                     var origin = matrix.Transform(item.X, item.Y);
-                    var box = TextRect.Point(origin.X, origin.Y);
+                    var box = PdfTextRect.Point(origin.X, origin.Y);
                     _tempText.Append(' ');
                     _tempChars.Add(new CharInfo
                     {
@@ -661,7 +661,7 @@ public sealed class PdfTextPage
                 type = PdfTextCharType.NotUnicode;
             }
             var glyph = font.GetCharBBox(item.Code, item.Cid);
-            var cb = new TextRect(glyph.Left * f + item.X, glyph.Bottom * f + item.Y, glyph.Right * f + item.X, glyph.Top * f + item.Y);
+            var cb = new PdfTextRect(glyph.Left * f + item.X, glyph.Bottom * f + item.Y, glyph.Right * f + item.X, glyph.Top * f + item.Y);
             if (Math.Abs(cb.Top - cb.Bottom) < SizeEpsilon) cb.Top = cb.Bottom + f;
             if (Math.Abs(cb.Right - cb.Left) < SizeEpsilon) cb.Right = cb.Left + obj.GetCharWidth(item.Code, item.Cid);
             var info = new CharInfo
@@ -798,7 +798,7 @@ public sealed class PdfTextPage
         return xUnder ? TextOrientation.Vertical : _textlineDir;
     }
 
-    private static bool EndHorizontalLine(TextRect thisRect, TextRect prevRect)
+    private static bool EndHorizontalLine(PdfTextRect thisRect, PdfTextRect prevRect)
     {
         if (thisRect.Height <= 4.5 || prevRect.Height <= 4.5) return false;
         double top = Math.Min(thisRect.Top, prevRect.Top);
@@ -806,7 +806,7 @@ public sealed class PdfTextPage
         return bottom >= top;
     }
 
-    private static bool EndVerticalLine(TextRect thisRect, TextRect prevRect, TextRect curline, double thisFontSize, double prevFontSize)
+    private static bool EndVerticalLine(PdfTextRect thisRect, PdfTextRect prevRect, PdfTextRect curline, double thisFontSize, double prevFontSize)
     {
         if (thisRect.Width <= thisFontSize * 0.1 || prevRect.Width <= prevFontSize * 0.1) return false;
         double left = Math.Max(thisRect.Left, curline.Left);
@@ -887,9 +887,9 @@ public sealed class PdfTextPage
                     var m = prevObj.Matrix;
                     if (prevItem.X > tempItem.X && _display.A > 0.9 && _display.B < 0.1 && _display.C < 0.1 && _display.D < -0.9 && m.B < 0.1 && m.C < 0.1)
                     {
-                        var re = new TextRect(0, prevObj.Rect.Bottom, 1000, prevObj.Rect.Top);
+                        var re = new PdfTextRect(0, prevObj.Rect.Bottom, 1000, prevObj.Rect.Top);
                         if (re.Contains(obj.Pos)) newline = false;
-                        else if (new TextRect(0, obj.Rect.Bottom, 1000, obj.Rect.Top).Contains(prevObj.Pos)) newline = false;
+                        else if (new PdfTextRect(0, obj.Rect.Bottom, 1000, obj.Rect.Top).Contains(prevObj.Pos)) newline = false;
                     }
                 }
             }
@@ -980,7 +980,7 @@ public sealed class PdfTextPage
         var rect = obj.Rect;
         bool rtl = IsRightToLeft(obj);
         double step = rect.Width / actual.Length;
-        var box = rtl ? new TextRect(rect.Right - step, rect.Bottom, rect.Right, rect.Top) : new TextRect(rect.Left, rect.Bottom, rect.Left + step, rect.Top);
+        var box = rtl ? new PdfTextRect(rect.Right - step, rect.Bottom, rect.Right, rect.Top) : new PdfTextRect(rect.Left, rect.Bottom, rect.Left + step, rect.Top);
         if (rtl) step = -step;
         for (int k = 0; k < actual.Length; k++)
         {

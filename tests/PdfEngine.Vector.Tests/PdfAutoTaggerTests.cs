@@ -567,7 +567,7 @@ public class PdfAutoTaggerTests
     [Fact]
     public void InvalidLanguage_IsRejected()
     {
-        using var doc = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.MemoryByteSource(Page(T("F1", 10, 72, 700, "x"))), "");
+        using var doc = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.PdfMemoryByteSource(Page(T("F1", 10, 72, 700, "x"))), "");
         Assert.Throws<ArgumentException>(() => PdfAutoTagger.Tag(doc, new PdfAutoTagOptions { Language = "en_GB" }));
     }
 

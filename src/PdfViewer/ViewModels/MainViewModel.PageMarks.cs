@@ -11,6 +11,7 @@ using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Editing;
 using PdfViewer.RenderingAdapters;
 using PdfViewer.Services;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfViewer.ViewModels;
 

@@ -145,7 +145,7 @@ All guarded so that Windows behaves exactly as before:
 | Where | What the browser needs | Change |
 |---|---|---|
 | `Text/TextPrefetcher` | `new Thread(...).Start()` throws in single-threaded WebAssembly. | No background worker when `PdfPlatform.CanStartThreads` is false. Page text is built on demand. |
-| `Editing/SystemFontCatalog.Installed`, `Text/TextFontInfo` | There is no font folder to scan. | Empty catalog and index when `PdfPlatform.HasInstalledFonts` is false. Hosts pass their own catalog. |
+| `Fonts/SystemFontCatalog.Installed`, `Text/TextFontInfo` | There is no font folder to scan. | Empty catalog and index when `PdfPlatform.HasInstalledFonts` is false. Hosts pass their own catalog. |
 | `Security/PortableCrypto` | Browser .NET 9 has no MD5 and no AES (they throw `CryptographicException`). | The Standard security handler uses the platform's MD5 and AES where they work and managed ones (RFC 1321, FIPS 197) where they do not. |
 | `Color/DefaultColorProfiles` | No Windows or Adobe profiles. | No change needed: the core reads no profile itself. It asks the registered `IColorProfileProvider`, and the default has none, so DeviceCMYK uses the built-in SWOP model. Only the Windows desktop app registers the Windows profiles. |
 | `Images/PdfImageSource` (JPEG 2000) | — | No thread of its own in this branch: CoreJ2K decodes on the calling thread. Not exercised in the browser yet (no JPX sample). |

@@ -46,7 +46,7 @@ public sealed class PdfNativeDocument : IPdfDocument
         {
             throw new PdfPasswordRequiredException(ex.Message, filePath);
         }
-        catch (PdfVectorException ex) when (ex is not PdfEncryptedDocumentException)
+        catch (PdfVectorException ex) when (ex is not PdfEncryptedDocumentException and not Parsing.PdfDataNotLoadedException)
         {
             throw new PdfCorruptDocumentException(ex.Message, ex, filePath);
         }

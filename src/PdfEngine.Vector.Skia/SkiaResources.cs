@@ -1,5 +1,6 @@
 using PdfEngine.Vector.Editing;
 using SkiaSharp;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Skia;
 

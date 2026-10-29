@@ -18,8 +18,8 @@ internal sealed class PdfiumTextOracle
     public List<char> Unicode = new();
     public List<bool> Generated = new();
     public List<bool> Hyphen = new();
-    public List<TextRect> Boxes = new();
-    public List<TextRect> Loose = new();
+    public List<PdfTextRect> Boxes = new();
+    public List<PdfTextRect> Loose = new();
     private readonly Dictionary<(string, uint), List<(int, int)>> _searches = new();
 
     public int Count => Unicode.Count;
@@ -54,9 +54,9 @@ internal sealed class PdfiumTextOracle
                 o.Generated.Add(FPDFText_IsGenerated(raw, i) == 1);
                 o.Hyphen.Add(FPDFText_IsHyphen(raw, i) == 1);
                 PdfiumNativeBridge.FPDFText_GetCharBox(text, i, out double l, out double r, out double b, out double t);
-                o.Boxes.Add(new TextRect(l, b, r, t));
+                o.Boxes.Add(new PdfTextRect(l, b, r, t));
                 PdfiumNativeBridge.FPDFText_GetLooseCharBox(text, i, out var rect);
-                o.Loose.Add(new TextRect(rect.left, rect.bottom, rect.right, rect.top));
+                o.Loose.Add(new PdfTextRect(rect.left, rect.bottom, rect.right, rect.top));
             }
             foreach (string q in queries)
             {

@@ -5,10 +5,10 @@ using System.Linq;
 using System.Threading;
 using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
-using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfEngine.Vector.Text;
 using Xunit;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Tests;
 

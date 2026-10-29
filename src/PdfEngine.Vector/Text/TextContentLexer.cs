@@ -42,7 +42,7 @@ internal sealed class TextContentLexer
     private readonly int _end;
     private int _pos;
     private readonly int _maxToken;
-    private readonly MemoryByteSource _src;
+    private readonly PdfMemoryByteSource _src;
     private readonly PdfLexer _lexer;
     private readonly PdfParser _parser;
 
@@ -55,7 +55,7 @@ internal sealed class TextContentLexer
         _buf = content;
         _end = content.Length;
         _maxToken = PdfSecurityLimits.Default.MaxTokenLength;
-        _src = new MemoryByteSource(content);
+        _src = new PdfMemoryByteSource(content);
         _lexer = new PdfLexer(_src, PdfSecurityLimits.Default);
         _parser = new PdfParser(PdfSecurityLimits.Default);
     }

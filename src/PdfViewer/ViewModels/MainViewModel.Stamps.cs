@@ -260,7 +260,7 @@ public partial class MainViewModel
     /// </summary>
     internal static Task<ImageSource?> RenderStampPreviewAsync(AnnotationModel model, PdfRect rect, CancellationToken ct = default)
     {
-        PdfEngine.Vector.Services.PdfAnnotation? annotation = null;
+        PdfEngine.Vector.Annotations.PdfAnnotation? annotation = null;
         return RenderPreviewAsync(black =>
         {
             annotation ??= NativeDocumentServices.StampAnnotation(model, rect);
@@ -282,13 +282,13 @@ public partial class MainViewModel
                 byte[]? white = pdf(false);
                 if (white == null) return null;
                 PdfEngine.Geometry.PdfSize size;
-                using (var probe = PdfVectorDocument.Open(new MemoryByteSource(white))) size = probe.PageTree.Pages[0].PageSize;
+                using (var probe = PdfVectorDocument.Open(new PdfMemoryByteSource(white))) size = probe.PageTree.Pages[0].PageSize;
                 double longest = Math.Max(Math.Max(size.Width, size.Height), 1);
                 var request = new RenderRequest { PageNumber = 1, Dpi = Math.Clamp(72 * 600 / longest, 72, 288) };
                 async Task<(byte[] Pixels, int Width, int Height, int Stride)> Draw(bool black)
                 {
                     byte[] bytes = black ? pdf(true) ?? white : white;
-                    using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+                    using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
                     using var page = await VectorPdfRenderer.Shared.RenderPageAsync(doc, request, ct);
                     return (page.Pixels.ToArray(), page.WidthPixels, page.HeightPixels, page.Stride);
                 }

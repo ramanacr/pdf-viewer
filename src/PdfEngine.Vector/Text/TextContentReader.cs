@@ -53,7 +53,7 @@ internal sealed class TextObject
     public int[] Cids = Array.Empty<int>();
     /// <summary>Per item after the first: its position along the line (text space before Tz), or for a kerning item the kerning (1/1000 em).</summary>
     public double[] CharPos = Array.Empty<double>();
-    public TextRect Rect;
+    public PdfTextRect Rect;
     /// <summary>The property lists of the marked-content sequences it is in, outermost first (null for BMC or an unresolved name).</summary>
     public PdfDictionary?[] Marks = Array.Empty<PdfDictionary?>();
     public int Mcid = -1;
@@ -292,8 +292,8 @@ internal sealed class TextContentReader
             var linear = new PdfMatrix(gs.Th, 0, 0, 1, 0, 0) * tm * gs.Ctm;
             var origin = (tm * gs.Ctm).Transform(posX, posY + gs.Rise);
             obj.Matrix = new PdfMatrix(linear.A, linear.B, linear.C, linear.D, origin.X, origin.Y).ToSingle();
-            obj.Rect = new TextRect(minX, minY, maxX, maxY).Transform(obj.Matrix);
-            obj.Rect = new TextRect(TextMatrixMath.F(obj.Rect.Left), TextMatrixMath.F(obj.Rect.Bottom), TextMatrixMath.F(obj.Rect.Right), TextMatrixMath.F(obj.Rect.Top));
+            obj.Rect = new PdfTextRect(minX, minY, maxX, maxY).Transform(obj.Matrix);
+            obj.Rect = new PdfTextRect(TextMatrixMath.F(obj.Rect.Left), TextMatrixMath.F(obj.Rect.Bottom), TextMatrixMath.F(obj.Rect.Right), TextMatrixMath.F(obj.Rect.Top));
             for (int i = 0; i < charPos.Length; i++) charPos[i] = TextMatrixMath.F(charPos[i]);
 
             if (vertical) posY += curpos;

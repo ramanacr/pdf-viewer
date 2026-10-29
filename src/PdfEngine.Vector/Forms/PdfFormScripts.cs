@@ -4,20 +4,21 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using PdfEngine.Vector.Diagnostics;
 
 namespace PdfEngine.Vector.Forms;
 
 public enum PdfFieldFormatKind { None, Number, Percent, Date, Time, Special, Mask }
 
-/// <summary>A value refused by a field's keystroke or validate rule.</summary>
-public sealed class PdfFieldValidationException : Exception
+/// <summary>A value refused by a field's keystroke or validate rule (<see cref="PdfVectorErrorKind.FieldValidation"/>).</summary>
+public sealed class PdfFieldValidationException : PdfVectorException
 {
     public string FieldName { get; }
-    public PdfFieldValidationException(string fieldName, string message) : base(message) => FieldName = fieldName;
+    public PdfFieldValidationException(string fieldName, string message) : base(PdfVectorErrorKind.FieldValidation, message) => FieldName = fieldName;
 }
 
 /// <summary>What a field's scripts ask for, as understood without running them.</summary>
-public sealed class PdfFieldBehaviour
+public sealed class PdfFieldBehavior
 {
     public PdfFieldFormatKind Format { get; init; }
     public int Decimals { get; init; }
@@ -71,7 +72,7 @@ public static class PdfFormScripts
     private static readonly string[] MonthNames = CultureInfo.InvariantCulture.DateTimeFormat.MonthNames[..12];
     private static readonly string[] DayNames = CultureInfo.InvariantCulture.DateTimeFormat.DayNames;
 
-    public static PdfFieldBehaviour Read(PdfFormField field)
+    public static PdfFieldBehavior Read(PdfFormField field)
     {
         var unsupported = new List<string>();
         var calls = new Dictionary<string, (string Name, List<object?> Args)>();
@@ -99,7 +100,7 @@ public static class PdfFormScripts
             };
             if (!known) unsupported.Add(trigger);
         }
-        return new PdfFieldBehaviour
+        return new PdfFieldBehavior
         {
             Format = b.Format, Decimals = b.Decimals, SeparatorStyle = b.Sep, NegativeStyle = b.Neg, Currency = b.Currency,
             CurrencyPrepend = b.CurrencyPrepend, PercentPrepend = b.PercentPrepend, Pattern = b.Pattern, Special = b.Special,
@@ -322,7 +323,7 @@ public static class PdfFormScripts
     }
 
     /// <summary>The field's value as it shows: formatted by its format script, or as it is.</summary>
-    public static PdfFieldDisplay Display(PdfFieldBehaviour b, string value)
+    public static PdfFieldDisplay Display(PdfFieldBehavior b, string value)
     {
         if (value.Length == 0) return new PdfFieldDisplay(value, false);
         switch (b.Format)
@@ -359,7 +360,7 @@ public static class PdfFormScripts
     /// A value typed into the field, checked as its keystroke and validate scripts would on
     /// commit: the value to store, or why it is refused.
     /// </summary>
-    public static (string? Value, string? Error) Accept(PdfFieldBehaviour b, string input)
+    public static (string? Value, string? Error) Accept(PdfFieldBehavior b, string input)
     {
         string text = input.Trim();
         if (text.Length == 0) return (string.Empty, null);
@@ -416,7 +417,7 @@ public static class PdfFormScripts
     }
 
     /// <summary>Whether a character may be typed into the field (its keystroke script's rule).</summary>
-    public static bool AllowsCharacter(PdfFieldBehaviour b, char c) => b.Format switch
+    public static bool AllowsCharacter(PdfFieldBehavior b, char c) => b.Format switch
     {
         PdfFieldFormatKind.Number => char.IsDigit(c) || c is '.' or ',' or '-' or '\'' or ' ' || b.Currency.Contains(c),
         PdfFieldFormatKind.Percent => char.IsDigit(c) || c is '.' or ',' or '-' or '%' or ' ',
@@ -644,7 +645,7 @@ public static class PdfFormScripts
     public static string Canonical(decimal d) => d.ToString("0.############################", CultureInfo.InvariantCulture);
 
     /// <summary>The numbers behind a name: the field's own, or every terminal field under a group name.</summary>
-    private static IEnumerable<decimal> Values(PdfAcroForm form, Dictionary<string, string> current, Dictionary<string, PdfFieldBehaviour> behaviours, string name)
+    private static IEnumerable<decimal> Values(PdfAcroForm form, Dictionary<string, string> current, Dictionary<string, PdfFieldBehavior> behaviours, string name)
     {
         var names = form.Fields.Select(f => f.FullName).Where(n => n == name || n.StartsWith(name + ".", StringComparison.Ordinal)).Distinct();
         foreach (var n in names)

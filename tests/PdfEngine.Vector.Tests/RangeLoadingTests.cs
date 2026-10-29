@@ -204,7 +204,7 @@ public class RangeLoadingTests
     public void Planner_ObjectExtentsRunToTheNextObject_AndRangesMergeAndSplit()
     {
         var bytes = LargePdf(3);
-        using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
         var planner = new PdfRangePlanner(doc.XrefTable, bytes.Length);
         int image = ObjectNumberOfImage(doc, 2);
         var extent = planner.ExtentOf(image)!.Value;
@@ -225,7 +225,7 @@ public class RangeLoadingTests
     public void Planner_PageRanges_HoldThatPagesObjectsOnly()
     {
         var bytes = LargePdf(6);
-        using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
         var planner = new PdfRangePlanner(doc.XrefTable, bytes.Length);
         var ranges = planner.PlanPage(doc.Resolver, doc.PageTree.Pages[3].Dictionary, doc.PageTree.PageObjectNumbers[3]);
 
@@ -246,7 +246,7 @@ public class RangeLoadingTests
     public async Task Ranged_OpensAndDrawsAPage_WithAFractionOfTheFile()
     {
         var bytes = LargePdf(60);
-        var reader = new MemoryRangeReader(bytes);
+        var reader = new PdfMemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 16 * 1024 });
         Assert.Equal(60, ranged.Document.PageCount);
         Assert.False(ranged.IsComplete);
@@ -254,7 +254,7 @@ public class RangeLoadingTests
         long afterOpen = reader.BytesRead;
         Assert.True(afterOpen < bytes.Length / 5, $"open read {afterOpen} of {bytes.Length} bytes");
 
-        using var memory = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        using var memory = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
         foreach (int page in new[] { 1, 37, 60 })
         {
             var (commands, pixels, text) = await ranged.RunAsync(page, async (d, ct) =>
@@ -277,9 +277,9 @@ public class RangeLoadingTests
     public async Task Ranged_FetchesWhatAnOperationMissed_AndRunsItAgain()
     {
         var bytes = LargePdf(20);
-        var reader = new MemoryRangeReader(bytes);
+        var reader = new PdfMemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024 });
-        using var memory = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        using var memory = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
         int image = ObjectNumberOfImage(memory, 15);
         // Page 2's operation also reads page 15's image, which page 2's closure does not hold.
         int runs = 0;
@@ -299,7 +299,7 @@ public class RangeLoadingTests
     public async Task Ranged_ContentStreamsWithIndirectLengths()
     {
         var bytes = LargePdf(12, indirectLength: true);
-        var reader = new MemoryRangeReader(bytes);
+        var reader = new PdfMemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024 });
         string text = await ranged.RunAsync(7, (d, ct) => ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 7, ct).Text));
         Assert.Contains("Page 7 of 12", text);
@@ -310,10 +310,10 @@ public class RangeLoadingTests
     public async Task Ranged_ObjectStreamsAndCrossReferenceStream()
     {
         var plain = LargePdf(15);
-        using var source = PdfVectorDocument.Open(new MemoryByteSource(plain));
+        using var source = PdfVectorDocument.Open(new PdfMemoryByteSource(plain));
         var packed = PdfEngine.Vector.Optimize.PdfOptimizer.Optimize(source, plain, new() { RecompressStreams = false }).Bytes;
         Assert.Contains("/ObjStm", Encoding.Latin1.GetString(packed));
-        var reader = new MemoryRangeReader(packed);
+        var reader = new PdfMemoryRangeReader(packed);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024 });
         Assert.Equal(15, ranged.Document.PageCount);
         // The page dictionaries are packed in object streams and content streams wait for their
@@ -329,11 +329,11 @@ public class RangeLoadingTests
     public async Task Ranged_EncryptedDocument_OpensWithItsPassword()
     {
         var plain = LargePdf(8);
-        using var source = PdfVectorDocument.Open(new MemoryByteSource(plain));
+        using var source = PdfVectorDocument.Open(new PdfMemoryByteSource(plain));
         var encrypted = PdfEngine.Vector.Security.PdfEncryptor.Encrypt(source, new() { UserPassword = "range" }).Bytes;
         await Assert.ThrowsAsync<PdfEngine.Vector.Diagnostics.PdfEncryptedDocumentException>(
-            () => PdfRangedDocument.OpenAsync(new MemoryRangeReader(encrypted), new PdfRangedOptions { TailBytes = 4096 }));
-        using var ranged = await PdfRangedDocument.OpenAsync(new MemoryRangeReader(encrypted), new PdfRangedOptions { TailBytes = 4096 }, password: "range");
+            () => PdfRangedDocument.OpenAsync(new PdfMemoryRangeReader(encrypted), new PdfRangedOptions { TailBytes = 4096 }));
+        using var ranged = await PdfRangedDocument.OpenAsync(new PdfMemoryRangeReader(encrypted), new PdfRangedOptions { TailBytes = 4096 }, password: "range");
         string text = await ranged.RunAsync(5, (d, ct) => ValueTask.FromResult(PdfTextExtractor.LoadPage(d, 5, ct).Text));
         Assert.Contains("Page 5 of 8", text);
     }
@@ -348,7 +348,7 @@ public class RangeLoadingTests
         int end = text.IndexOf('\n', at);
         var broken = Encoding.Latin1.GetBytes(text[..at] + "1234".PadLeft(end - at, '0') + text[end..]);
 
-        var reader = new MemoryRangeReader(broken);
+        var reader = new PdfMemoryRangeReader(broken);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 4096 });
         Assert.NotNull(ranged.FallbackReason);
         Assert.True(ranged.IsComplete);
@@ -363,14 +363,14 @@ public class RangeLoadingTests
     public async Task Ranged_NotAPdf_Throws()
     {
         var junk = Encoding.ASCII.GetBytes(new string('x', 50_000));
-        await Assert.ThrowsAnyAsync<Exception>(() => PdfRangedDocument.OpenAsync(new MemoryRangeReader(junk)));
+        await Assert.ThrowsAnyAsync<Exception>(() => PdfRangedDocument.OpenAsync(new PdfMemoryRangeReader(junk)));
     }
 
     [Fact]
     public async Task Ranged_ReadAll_CopiesFetchedBlocks_AndCompletes()
     {
         var bytes = LargePdf(30);
-        var reader = new MemoryRangeReader(bytes);
+        var reader = new PdfMemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024, CompletionRequestBytes = 64 * 1024 });
         await ranged.RunAsync(1, async (d, ct) => (await d.GetPageDisplayListAsync(1, ct)).Commands.Count);
         long before = reader.BytesRead;
@@ -390,7 +390,7 @@ public class RangeLoadingTests
     public async Task Ranged_SmallCache_StillDrawsEveryPage()
     {
         var bytes = LargePdf(25, imageSide: 128);
-        var reader = new MemoryRangeReader(bytes);
+        var reader = new PdfMemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader,
             new PdfRangedOptions { TailBytes = 8 * 1024, CacheBytes = 200 * 1024, BlockSize = 2048 });
         for (int page = 1; page <= 25; page += 4)
@@ -447,7 +447,7 @@ public class RangeLoadingTests
     public void Closure_ChecksTheByteCapBeforeAskingForARange()
     {
         var bytes = PaddedPdf(4 * 1024 * 1024, afterContent: false);
-        using var doc = PdfVectorDocument.Open(new MemoryByteSource(bytes));
+        using var doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes));
         var planner = new PdfRangePlanner(doc.XrefTable, bytes.Length);
         Assert.True(planner.ExtentOf(1)!.Value.Length > 4 * 1024 * 1024);
         var closure = new PdfObjectClosure(planner, PdfClosureKind.Structure) { MaxBytes = 1024 * 1024 };
@@ -465,7 +465,7 @@ public class RangeLoadingTests
     {
         var bytes = PaddedPdf(6 * 1024 * 1024, afterContent);
         var reads = new List<int>();
-        var reader = new MemoryRangeReader(bytes) { BeforeRead = (_, n) => { lock (reads) reads.Add(n); return ValueTask.CompletedTask; } };
+        var reader = new PdfMemoryRangeReader(bytes) { BeforeRead = (_, n) => { lock (reads) reads.Add(n); return ValueTask.CompletedTask; } };
         const int step = 256 * 1024;
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions
         {
@@ -487,7 +487,7 @@ public class RangeLoadingTests
     public async Task Ranged_ARoundLargerThanTheCap_FallsBack()
     {
         var bytes = LargePdf(20);
-        var reader = new MemoryRangeReader(bytes);
+        var reader = new PdfMemoryRangeReader(bytes);
         using var ranged = await PdfRangedDocument.OpenAsync(reader, new PdfRangedOptions { TailBytes = 8 * 1024, MaxRoundBytes = 200 * 1024, ReadAheadBytes = 512 * 1024 });
         Assert.False(ranged.IsComplete);
         // Page 2's operation reads page 5's image, read ahead by 512 KB: more than one round may fetch.
@@ -508,7 +508,7 @@ public class RangeLoadingTests
             TailBytes = 64 * 1024, CacheBytes = 256 * 1024, MaxRoundBytes = 1024 * 1024,
             InitialData = [(0, bytes.AsMemory(0, 2 * 1024 * 1024))],
         };
-        using var ranged = await PdfRangedDocument.OpenAsync(new MemoryRangeReader(bytes), options);
+        using var ranged = await PdfRangedDocument.OpenAsync(new PdfMemoryRangeReader(bytes), options);
         Assert.Equal(120, ranged.Document.PageCount);
         Assert.Null(ranged.FallbackReason);
         Assert.True(ranged.Cache.EvictedBytes > 0, "nothing was dropped while opening");
@@ -524,7 +524,7 @@ public class RangeLoadingTests
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         bool opened = false;
-        var reader = new MemoryRangeReader(bytes)
+        var reader = new PdfMemoryRangeReader(bytes)
         {
             BeforeRead = async (_, _) =>
             {
@@ -554,7 +554,7 @@ public class RangeLoadingTests
     {
         var bytes = LargePdf(30);
         bool fail = false;
-        var reader = new MemoryRangeReader(bytes)
+        var reader = new PdfMemoryRangeReader(bytes)
         {
             BeforeRead = (offset, _) => Volatile.Read(ref fail) && offset >= bytes.Length / 2
                 ? ValueTask.FromException(new IOException("network down"))

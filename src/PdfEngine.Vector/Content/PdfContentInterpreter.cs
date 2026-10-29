@@ -317,7 +317,7 @@ internal sealed class PdfContentInterpreter
             {
                 Recover();
             }
-            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
+            catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidDataException or FormatException
                                            or IndexOutOfRangeException or ArgumentException or OverflowException
                                            or InvalidOperationException)
             {
@@ -358,7 +358,7 @@ internal sealed class PdfContentInterpreter
         /// operator, nothing is buffered and the stream position is right after it, so operators that
         /// read the stream themselves (inline images) see it as before.
         /// </summary>
-        private sealed class TokenReader(MemoryByteSource src, PdfLexer lexer)
+        private sealed class TokenReader(PdfMemoryByteSource src, PdfLexer lexer)
         {
             private PdfToken _t0, _t1;
             private long _start0, _start1, _end0, _end1;
@@ -411,7 +411,7 @@ internal sealed class PdfContentInterpreter
             PdfRect? textClip = null;
             bool inText = false;
 
-            using var src = new MemoryByteSource(content);
+            using var src = new PdfMemoryByteSource(content);
             var lexer = new PdfLexer(src, _limits);
             var tokens = new TokenReader(src, lexer);
 
@@ -1316,7 +1316,7 @@ internal sealed class PdfContentInterpreter
                         _commands.GetRange(mark, _commands.Count - mark), _features & ~PdfFeatureSet.Fallback, Array.Empty<PdfFallbackToken>());
                     result = new PdfTilingPattern(cell, bbox, Math.Abs(xStep), Math.Abs(yStep));
                 }
-                catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
+                catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidDataException or FormatException
                                                or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
                 {
                     result = null;
@@ -1635,7 +1635,7 @@ internal sealed class PdfContentInterpreter
                 {
                     mask = BuildSoftMask(smd, gs);
                 }
-                catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or FormatException
+                catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidDataException or FormatException
                                                or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
                 {
                     mask = null;
@@ -2143,7 +2143,7 @@ internal sealed class PdfContentInterpreter
                 reason = PdfFallbackReason.ResourceLimit;
                 return null;
             }
-            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or IndexOutOfRangeException or ArgumentException or OverflowException)
+            catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidDataException or IndexOutOfRangeException or ArgumentException or OverflowException)
             {
                 return null;
             }
@@ -2178,7 +2178,7 @@ internal sealed class PdfContentInterpreter
             {
                 stops = SampleStops(sh["Function"], cs, t0, t1);
             }
-            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException or IndexOutOfRangeException or ArgumentException)
+            catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidDataException or IndexOutOfRangeException or ArgumentException)
             {
                 return null;
             }
@@ -2738,7 +2738,7 @@ internal sealed class PdfContentInterpreter
             return id;
         }
 
-        private void ReadInlineImage(MemoryByteSource src, PdfLexer lexer, PdfDictionary resources, GraphicsState gs, bool hidden, int contentId)
+        private void ReadInlineImage(PdfMemoryByteSource src, PdfLexer lexer, PdfDictionary resources, GraphicsState gs, bool hidden, int contentId)
         {
             var entries = new Dictionary<string, PdfObject>(StringComparer.Ordinal);
             while (true)
@@ -2819,13 +2819,13 @@ internal sealed class PdfContentInterpreter
             {
                 return PdfColorSpace.Resolve(csObj, _resolver, resources).NumberOfComponents;
             }
-            catch (Exception ex) when (ex is PdfVectorException or InvalidDataException)
+            catch (Exception ex) when (ex is PdfVectorException and not PdfDataNotLoadedException or InvalidDataException)
             {
                 return -1;
             }
         }
 
-        private static long ScanForEi(MemoryByteSource src, long start)
+        private static long ScanForEi(PdfMemoryByteSource src, long start)
         {
             var span = src.ReadMemory(start, (int)Math.Min(int.MaxValue, src.Length - start)).Span;
             for (int i = 0; i + 1 < span.Length; i++)

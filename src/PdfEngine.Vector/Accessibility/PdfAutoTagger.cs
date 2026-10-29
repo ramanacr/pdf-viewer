@@ -169,7 +169,7 @@ public static class PdfAutoTagger
         byte[] bytes = run.Write();
         var summary = run.Summary();
 
-        using var tagged = PdfVectorDocument.Open(new MemoryByteSource(bytes), document.FilePath);
+        using var tagged = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes), document.FilePath);
         bool? textPreserved = null;
         if (options.VerifyText)
         {

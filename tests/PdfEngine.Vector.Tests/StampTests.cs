@@ -247,7 +247,7 @@ public class StampTests
             new PdfAnnotation { PageNumber = 1, Subtype = "Stamp", Icon = "Custom", Rect = new PdfRect(100, 50, 80, 40), Stamp = new PdfStampAppearance { Image = Picture() } });
         using (doc)
         {
-            var result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavour = PdfAFlavour.A2b });
+            var result = PdfAConverter.Convert(doc, bytes, new PdfAConversionOptions { Flavor = PdfAFlavor.A2b });
             Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues.Select(i => $"{i.RuleId}: {i.Message}")));
             using var converted = await PdfVectorDocument.OpenAsync(result.Bytes);
             var stamps = PdfAnnotationReader.Read(converted, 1).Where(a => a.Subtype == "Stamp").ToList();
@@ -274,7 +274,7 @@ public class StampTests
     public void ThePreview_IsAPageTheSizeOfTheStamp_WithTheStampOnIt()
     {
         var bytes = PdfStamps.Preview(Designed("Draft", new PdfRect(300, 300, 120, 40)));
-        using var doc = PdfVectorDocument.Open(new Parsing.MemoryByteSource(bytes));
+        using var doc = PdfVectorDocument.Open(new Parsing.PdfMemoryByteSource(bytes));
         var size = doc.PageTree.Pages[0].PageSize;
         Assert.Equal(120, size.Width, 3);
         Assert.Equal(40, size.Height, 3);

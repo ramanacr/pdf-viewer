@@ -152,7 +152,7 @@ public partial class MainViewModel
                 SigningTime = DateTimeOffset.Now,
                 ContentsSize = options.TimestampServer != null ? 32768 : 16384,
                 CertificationLevel = options.CertificationLevel,
-                Appearance = options.Appearance is { } look ? look with { Fonts = look.Fonts ?? PdfEngine.Vector.Editing.SystemFontCatalog.Installed } : null,
+                Appearance = options.Appearance is { } look ? look with { Fonts = look.Fonts ?? PdfEngine.Vector.Fonts.SystemFontCatalog.Installed } : null,
             };
             var timestamp = options.TimestampServer is { } server ? TimestampClientFactory(server).AsDelegate() : null;
             signed = await SignWithRoomAsync(doc, current, request, options.Certificate, timestamp);

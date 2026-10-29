@@ -144,7 +144,7 @@ public class AnnotationEditEngineTests
         {
             Assert.Null(PdfStamps.PreviewOfAppearance(doc, 1, 5));
             var bytes = PdfStamps.PreviewOfAppearance(doc, 1, 0, turn: 90)!;
-            using var preview = PdfVectorDocument.Open(new Parsing.MemoryByteSource(bytes));
+            using var preview = PdfVectorDocument.Open(new Parsing.PdfMemoryByteSource(bytes));
             var size = preview.PageTree.Pages[0].PageSize;
             Assert.Equal(40, size.Width, 2);
             Assert.Equal(160, size.Height, 2);
@@ -153,7 +153,7 @@ public class AnnotationEditEngineTests
             Assert.True(left.R > 150 && left.G < 110, $"the red band up the left edge, got {left}");
 
             var black = PdfStamps.PreviewOfAppearance(doc, 1, 0, black: true)!;
-            using var onBlack = PdfVectorDocument.Open(new Parsing.MemoryByteSource(black));
+            using var onBlack = PdfVectorDocument.Open(new Parsing.PdfMemoryByteSource(black));
             using var dark = await Render(await onBlack.GetPageDisplayListAsync(1));
             var corner = At(dark, 0.2, 39.8, 40);
             Assert.True(corner.R < 10 && corner.G < 10 && corner.B < 10, $"a black page, got {corner}");

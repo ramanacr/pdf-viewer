@@ -9,7 +9,6 @@ using PdfEngine.Geometry;
 using PdfEngine.Vector.Annotations;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Objects;
-using PdfEngine.Vector.Services;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.Models;
 using PdfViewer.Services;
@@ -351,7 +350,7 @@ public class MeasureAndStampViewerTests : IDisposable
         var custom = StampLibrary.AddPdfPage(source, 1, "Seal");
         Assert.True(custom.IsPdf);
         Assert.Equal(3.0, custom.Width / custom.Height, 6);
-        using (var kept = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.MemoryByteSource(StampLibrary.Load(custom))))
+        using (var kept = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.PdfMemoryByteSource(StampLibrary.Load(custom))))
             Assert.Equal(1, kept.PageCount);
 
         string path = Drawing("pdf-stamp.pdf");

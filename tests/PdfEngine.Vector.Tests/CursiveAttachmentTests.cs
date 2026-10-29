@@ -9,6 +9,7 @@ using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Fonts.Programs;
 using PdfEngine.Vector.Tests.Fixtures;
 using Xunit;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Tests;
 

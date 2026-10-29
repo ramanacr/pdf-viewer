@@ -405,7 +405,7 @@ internal sealed class TransparencyFlattener
         overrides[rootNumber] = new PdfDictionary(catalog);
 
         byte[] bytes = PdfAConverter.WriteDecrypted(_doc, overrides);
-        using var temp = PdfVectorDocument.Open(new MemoryByteSource(bytes), _doc.FilePath);
+        using var temp = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes), _doc.FilePath);
         foreach (var (job, region, tempPage) in order)
         {
             var window = new PdfPixelWindow(region.GridX, region.GridHeight - region.GridY - region.Height, region.Width, region.Height);
@@ -1144,7 +1144,7 @@ internal sealed class TransparencyFlattener
                 maxX = maxY = double.MinValue;
             }
 
-            using var src = new MemoryByteSource(content);
+            using var src = new PdfMemoryByteSource(content);
             var lexer = new PdfLexer(src, PdfSecurityLimits.Default);
             var parser = new PdfParser(PdfSecurityLimits.Default);
             while (true)

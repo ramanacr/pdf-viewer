@@ -5,6 +5,7 @@ using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using SkiaSharp;
 using Xunit;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Skia.Tests;
 

@@ -146,7 +146,7 @@ internal sealed partial class PdfAChecker
         }
         try
         {
-            using var src = new MemoryByteSource(_file) { Position = offset };
+            using var src = new PdfMemoryByteSource(_file) { Position = offset };
             var lexer = new PdfLexer(src, Limits.PdfSecurityLimits.Default);
             lexer.NextToken(); lexer.NextToken(); lexer.NextToken(); // n g obj
             return new PdfParser(Limits.PdfSecurityLimits.Default).ParseObject(lexer) as PdfDictionary;
@@ -165,7 +165,7 @@ internal sealed partial class PdfAChecker
         {
             try
             {
-                using var src = new Parsing.MemoryByteSource(_file) { Position = t + 7 };
+                using var src = new Parsing.PdfMemoryByteSource(_file) { Position = t + 7 };
                 var lexer = new Parsing.PdfLexer(src, Limits.PdfSecurityLimits.Default);
                 if (new Parsing.PdfParser(Limits.PdfSecurityLimits.Default).ParseObject(lexer) is PdfDictionary d) _rawTrailers.Add(d);
             }

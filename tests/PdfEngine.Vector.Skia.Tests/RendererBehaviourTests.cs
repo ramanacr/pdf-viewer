@@ -2,11 +2,11 @@ using System.Buffers;
 using PdfEngine.Geometry;
 using PdfEngine.Rendering;
 using PdfEngine.Vector.Document;
-using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using SkiaSharp;
 using Xunit;
 using Xunit.Abstractions;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Skia.Tests;
 

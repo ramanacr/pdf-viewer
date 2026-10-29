@@ -44,13 +44,13 @@ public class PdfAConverterFixesTests
                      $"/Widths [{string.Join(" ", widths.Select(Num))}] /Encoding {encoding} /FontDescriptor {descriptor} 0 R >>");
     }
 
-    private static async Task<PdfAConversionResult> Convert(byte[] pdf, PdfAFlavour flavour)
+    private static async Task<PdfAConversionResult> Convert(byte[] pdf, PdfAFlavor flavour)
     {
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavour = flavour });
+        return PdfAConverter.Convert(doc, pdf, new PdfAConversionOptions { Flavor = flavour });
     }
 
-    private static async Task<PdfAReport> Validate(byte[] pdf, PdfAFlavour flavour)
+    private static async Task<PdfAReport> Validate(byte[] pdf, PdfAFlavor flavour)
     {
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
         return PdfAValidator.Validate(doc, pdf, flavour);
@@ -114,10 +114,10 @@ public class PdfAConverterFixesTests
             $"BT /F1 20 Tf 3 Tr 40 120 Td <{A}F000{B}> Tj ET\n",
             $"<< /Font << /F1 {font} 0 R >> /XObject << /Fm1 {form} 0 R >> >>", mediaBox: "[0 0 400 400]", extra: $"/Annots [{annot} 0 R]");
         byte[] pdf = b.Build();
-        Assert.Contains((await Validate(pdf, PdfAFlavour.A2b)).Issues, i => i.RuleId == "6.2.11.8-1");
-        Assert.Contains((await Validate(pdf, PdfAFlavour.A1b)).Issues, i => i.RuleId == "6.3.5-1");
+        Assert.Contains((await Validate(pdf, PdfAFlavor.A2b)).Issues, i => i.RuleId == "6.2.11.8-1");
+        Assert.Contains((await Validate(pdf, PdfAFlavor.A1b)).Issues, i => i.RuleId == "6.3.5-1");
 
-        var result = await Convert(pdf, PdfAFlavour.A2b);
+        var result = await Convert(pdf, PdfAFlavor.A2b);
         Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
         // The page shows 1 + 2 + 2 + 1 (the form) missing glyphs and the appearance 2; the invisible line keeps its text.
         Assert.Contains(result.Changes, c => c.StartsWith("Took out 8 text glyph(s)", StringComparison.Ordinal));
@@ -142,9 +142,9 @@ public class PdfAConverterFixesTests
         int font = SimpleFont(b, new[] { hyphen }, 45, widths, "/WinAnsiEncoding");
         b.AddPage("BT /F1 20 Tf 40 100 Td (-\\255-\\255-) Tj ET", $"<< /Font << /F1 {font} 0 R >> >>", mediaBox: "[0 0 400 200]");
         byte[] pdf = b.Build();
-        Assert.Contains((await Validate(pdf, PdfAFlavour.A2b)).Issues, i => i.RuleId == "6.2.11.5-1");
+        Assert.Contains((await Validate(pdf, PdfAFlavor.A2b)).Issues, i => i.RuleId == "6.2.11.5-1");
 
-        var result = await Convert(pdf, PdfAFlavour.A2b);
+        var result = await Convert(pdf, PdfAFlavor.A2b);
         Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
         Assert.Contains(result.Changes, c => c.StartsWith("Gave codes that share a glyph", StringComparison.Ordinal));
         SameGlyphs(await Glyphs(pdf), await Glyphs(result.Bytes));
@@ -180,9 +180,9 @@ public class PdfAConverterFixesTests
         int font = b.Add($"<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Arial /Encoding /Identity-H /DescendantFonts [{cid} 0 R] >>");
         b.AddPage("BT /F1 20 Tf 40 100 Td <000100020001> Tj ET", $"<< /Font << /F1 {font} 0 R >> >>", mediaBox: "[0 0 400 200]");
         byte[] pdf = b.Build();
-        Assert.Contains((await Validate(pdf, PdfAFlavour.A2b)).Issues, i => i.RuleId == "6.2.11.5-1");
+        Assert.Contains((await Validate(pdf, PdfAFlavor.A2b)).Issues, i => i.RuleId == "6.2.11.5-1");
 
-        var result = await Convert(pdf, PdfAFlavour.A2b);
+        var result = await Convert(pdf, PdfAFlavor.A2b);
         Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
         SameGlyphs(await Glyphs(pdf), await Glyphs(result.Bytes));
         using var doc = await PdfVectorDocument.OpenAsync(result.Bytes);
@@ -219,15 +219,15 @@ public class PdfAConverterFixesTests
     public async Task AnOpaqueDocument_BecomesValidPdfA1b()
     {
         byte[] pdf = Opaque();
-        var result = await Convert(pdf, PdfAFlavour.A1b);
+        var result = await Convert(pdf, PdfAFlavor.A1b);
         Assert.True(result.Report.IsCompliant, string.Join("\n", result.Report.Issues));
         Assert.StartsWith("%PDF-1.4\n", Encoding.Latin1.GetString(result.Bytes, 0, 9));
         Assert.Contains(result.Changes, c => c.StartsWith("Removed optional content", StringComparison.Ordinal));
         Assert.Contains(result.Changes, c => c.StartsWith("Removed embedded files", StringComparison.Ordinal));
         Assert.Contains(result.Changes, c => c.Contains("PDF/A-1B identification", StringComparison.Ordinal));
 
-        var again = await Validate(result.Bytes, PdfAFlavour.A1b);
-        Assert.Equal(PdfAFlavour.A1b, again.Claimed);
+        var again = await Validate(result.Bytes, PdfAFlavor.A1b);
+        Assert.Equal(PdfAFlavor.A1b, again.Claimed);
         Assert.True(again.IsCompliant, string.Join("\n", again.Issues));
         Assert.DoesNotContain("/JavaScript", Encoding.Latin1.GetString(result.Bytes));
         // The text that was in the (shown) layer is still there.
@@ -252,7 +252,7 @@ public class PdfAConverterFixesTests
                 _ => $"/XObject << /Fm1 {group} 0 R >>",
             };
         });
-        var refused = await Assert.ThrowsAsync<PdfAConversionRefusedException>(() => Convert(pdf, PdfAFlavour.A1b));
+        var refused = await Assert.ThrowsAsync<PdfAConversionRefusedException>(() => Convert(pdf, PdfAFlavor.A1b));
         Assert.Contains("does not allow transparency", refused.Message);
         Assert.Contains(kind, refused.Message);
     }
@@ -264,7 +264,7 @@ public class PdfAConverterFixesTests
         b.AddPage("/OC /L1 BDC 1 0 0 rg 40 40 100 100 re f EMC", $"<< /Properties << /L1 {layer} 0 R >> >>", mediaBox: "[0 0 200 200]");
         b.WithCatalog($"/OCProperties << /OCGs [{layer} 0 R] /D << /OFF [{layer} 0 R] /Order [{layer} 0 R] >> >>");
         byte[] pdf = b.Build();
-        var refused = await Assert.ThrowsAsync<PdfAConversionRefusedException>(() => Convert(pdf, PdfAFlavour.A1b));
+        var refused = await Assert.ThrowsAsync<PdfAConversionRefusedException>(() => Convert(pdf, PdfAFlavor.A1b));
         Assert.Contains("hidden", refused.Message);
     }
 }

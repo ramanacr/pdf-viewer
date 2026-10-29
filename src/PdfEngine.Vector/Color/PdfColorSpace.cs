@@ -320,7 +320,7 @@ internal abstract partial class PdfColorSpace
                 {
                     lookupTable = new PdfStreamDecoder(ctx.Limits, ctx.Resolver.Resolve).DecodeStream(stm);
                 }
-                catch (PdfVectorException)
+                catch (PdfVectorException failure) when (failure is not PdfDataNotLoadedException)
                 {
                     return new UnsupportedColorSpace("Indexed", 1, "Indexed lookup stream cannot be decoded.");
                 }
@@ -386,7 +386,7 @@ internal abstract partial class PdfColorSpace
             }
             return (tint, null);
         }
-        catch (PdfVectorException)
+        catch (PdfVectorException failure) when (failure is not PdfDataNotLoadedException)
         {
             return (null, PdfFallbackReason.UnsupportedColorSpace);
         }
@@ -667,7 +667,7 @@ internal abstract partial class PdfColorSpace
         {
             tint.Evaluate(input, output);
         }
-        catch (PdfVectorException)
+        catch (PdfVectorException failure) when (failure is not PdfDataNotLoadedException)
         {
             color = default;
             return false;

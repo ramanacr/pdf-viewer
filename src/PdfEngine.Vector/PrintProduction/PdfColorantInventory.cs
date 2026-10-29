@@ -56,7 +56,7 @@ public sealed class PdfColorantInventory
             {
                 await document.ObservePageAsync(page, collector, cancellationToken).ConfigureAwait(false);
             }
-            catch (PdfVectorException)
+            catch (PdfVectorException failure) when (failure is not Parsing.PdfDataNotLoadedException)
             {
                 // A page that cannot be read contributes what was seen before the failure.
             }
@@ -160,7 +160,7 @@ public sealed class PdfColorantInventory
                 var c = space.ToRgbColor(components);
                 return new PdfColor(c.R, c.G, c.B, 1);
             }
-            catch (PdfVectorException)
+            catch (PdfVectorException failure) when (failure is not Parsing.PdfDataNotLoadedException)
             {
                 return PdfColor.FromGray(0.5f);
             }

@@ -18,6 +18,7 @@ using PdfViewer.Core.Security;
 using PdfViewer.Models;
 using PdfViewer.Services;
 using Xunit;
+using PdfEngine.Vector.Annotations;
 
 namespace PdfViewer.Tests;
 

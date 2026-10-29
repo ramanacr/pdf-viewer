@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Fonts;
@@ -26,7 +27,7 @@ public sealed class PdfAConversionOptions
     /// PDF/A-2b (default), PDF/A-3b or PDF/A-1b. PDF/A-1b does not allow transparency: with a
     /// <see cref="Rasterizer"/> it is flattened, otherwise such a document is refused.
     /// </summary>
-    public PdfAFlavour Flavour { get; init; } = PdfAFlavour.A2b;
+    public PdfAFlavor Flavor { get; init; } = PdfAFlavor.A2b;
     /// <summary>Draws pages for flattening transparency (PDF/A-1b); null refuses documents with transparency instead.</summary>
     public IPdfPageRasterizer? Rasterizer { get; init; }
     /// <summary>Resolutions and limits for flattening.</summary>
@@ -51,9 +52,10 @@ public sealed class PdfAConversionResult
 }
 
 /// <summary>A conversion the target part cannot take without changing how the document looks (PDF/A-1b of a document with transparency).</summary>
-public sealed class PdfAConversionRefusedException : InvalidOperationException
+/// <remarks>Its <see cref="PdfVectorException.Kind"/> is <see cref="PdfVectorErrorKind.ConversionRefused"/>. Before 1.0 it derived from <see cref="InvalidOperationException"/>.</remarks>
+public sealed class PdfAConversionRefusedException : PdfVectorException
 {
-    public PdfAConversionRefusedException(string message) : base(message) { }
+    public PdfAConversionRefusedException(string message) : base(PdfVectorErrorKind.ConversionRefused, message) { }
 }
 
 /// <summary>
@@ -72,7 +74,7 @@ public static class PdfAConverter
     public static PdfAConversionResult Convert(PdfVectorDocument document, byte[] original, PdfAConversionOptions? options = null)
     {
         options ??= new PdfAConversionOptions();
-        if (options.Flavour.Part is not (1 or 2 or 3)) throw new ArgumentException("PDF/A-1, PDF/A-2 and PDF/A-3 are the conversion targets.", nameof(options));
+        if (options.Flavor.Part is not (1 or 2 or 3)) throw new ArgumentException("PDF/A-1, PDF/A-2 and PDF/A-3 are the conversion targets.", nameof(options));
 
         // Form fields whose widgets have no appearance get one first, from their values.
         var changes = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -85,41 +87,41 @@ public static class PdfAConverter
             if (RegenerateWidgetAppearances(document, original) is { } withAppearances)
             {
                 bytes = withAppearances.Bytes;
-                regenerated = doc = PdfVectorDocument.Open(new MemoryByteSource(bytes), document.FilePath);
+                regenerated = doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes), document.FilePath);
                 changes[$"Generated appearances for {withAppearances.Count} form field widget(s)"] = 1;
             }
-            var source = PdfAValidator.Validate(doc, bytes, options.Flavour);
+            var source = PdfAValidator.Validate(doc, bytes, options.Flavor);
             // PDF/A-1b: transparency is flattened when the pages can be drawn (and no hidden layer would show).
-            if (options.Flavour.Part == 1 && options.Rasterizer != null && TransparencyKinds(doc, source).Count > 0 && HiddenLayers(doc) == null
+            if (options.Flavor.Part == 1 && options.Rasterizer != null && TransparencyKinds(doc, source).Count > 0 && HiddenLayers(doc) == null
                 && TransparencyFlattener.Run(doc, options.Rasterizer, options.Flattening) is { } flat)
             {
                 bytes = flat.Bytes;
-                flattened = doc = PdfVectorDocument.Open(new MemoryByteSource(bytes), document.FilePath);
-                source = PdfAValidator.Validate(doc, bytes, options.Flavour);
+                flattened = doc = PdfVectorDocument.Open(new PdfMemoryByteSource(bytes), document.FilePath);
+                source = PdfAValidator.Validate(doc, bytes, options.Flavor);
                 flattening = flat.Report;
                 changes[flat.Report.Summary] = 1;
                 if (flat.Report.GroupsRemoved > 0) changes[$"Removed {flat.Report.GroupsRemoved} transparency group(s) (PDF/A-1 does not allow them)"] = 1;
             }
-            if (options.Flavour.Part == 1 && RefusalForPart1(doc, source) is { } reason) throw new PdfAConversionRefusedException(reason);
+            if (options.Flavor.Part == 1 && RefusalForPart1(doc, source) is { } reason) throw new PdfAConversionRefusedException(reason);
             var conversion = new Conversion(doc, options, source, changes);
             byte[] output = conversion.Run();
-            var result = PdfVectorDocument.Open(new MemoryByteSource(output), document.FilePath);
+            var result = PdfVectorDocument.Open(new PdfMemoryByteSource(output), document.FilePath);
             PdfAReport report;
             try
             {
-                report = PdfAValidator.Validate(result, output, options.Flavour);
+                report = PdfAValidator.Validate(result, output, options.Flavor);
                 // Text showing codes whose glyph the (final) font program lacks: those codes are taken out.
-                if (report.Issues.Any(i => i.RuleId == (options.Flavour.Part == 1 ? "6.3.5-1" : "6.2.11.8-1")))
+                if (report.Issues.Any(i => i.RuleId == (options.Flavor.Part == 1 ? "6.3.5-1" : "6.2.11.8-1")))
                 {
                     var remover = new NotdefGlyphRemover(result);
                     int next = PdfIncrementalWriter.NextObjectNumber(result);
                     remover.Run(() => next++);
                     if (remover.Removed > 0)
                     {
-                        output = Conversion.WriteFile(result, remover.Objects, options.Flavour.Part);
+                        output = Conversion.WriteFile(result, remover.Objects, options.Flavor.Part);
                         result.Dispose();
-                        result = PdfVectorDocument.Open(new MemoryByteSource(output), document.FilePath);
-                        report = PdfAValidator.Validate(result, output, options.Flavour);
+                        result = PdfVectorDocument.Open(new PdfMemoryByteSource(output), document.FilePath);
+                        report = PdfAValidator.Validate(result, output, options.Flavor);
                         changes[$"Took out {remover.Removed} text glyph(s) the fonts do not have (they drew .notdef); the other glyphs keep their places"] = 1;
                     }
                 }
@@ -247,7 +249,7 @@ public static class PdfAConverter
             _decoder = new PdfStreamDecoder(null, _r.Resolve);
             _fonts = options.Fonts ?? SystemFontCatalog.Installed;
             _next = PdfIncrementalWriter.NextObjectNumber(doc);
-            _part = options.Flavour.Part;
+            _part = options.Flavor.Part;
         }
 
         private void Changed(string what) => _changes[what] = _changes.TryGetValue(what, out int n) ? n + 1 : 1;

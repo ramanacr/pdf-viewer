@@ -1,9 +1,9 @@
-using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Tests.Fixtures;
 using PdfViewer.Web.Engine;
 using PdfViewer.Web.Engine.Demo;
 using SkiaSharp;
 using Xunit;
+using PdfEngine.Vector.Fonts;
 
 namespace PdfEngine.Vector.Skia.Tests;
 
