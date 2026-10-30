@@ -391,11 +391,12 @@ public static partial class PdfSignatureValidator
         bool whole = end >= file.Length - 2 || file.AsSpan((int)end).Trim(" \r\n\t\0"u8).IsEmpty;
         int revision = whole ? revisionEnds.Count : Math.Max(1, revisionEnds.Count(e => e <= end + 2));
         var later = PdfLaterChanges.None;
-        bool lockBroken = false;
+        bool lockBroken = false, unverifiable = false;
         if (!whole && integrity)
         {
             var report = await ChangeReportAsync(file, (int)end, password, ct).ConfigureAwait(false);
             later = report.Changes;
+            unverifiable = report.Unverifiable;
             // FieldMDP: the fields this signature locks may not change, whatever else may.
             lockBroken = fieldLock is { } locked && LockedFieldChanged(locked, report);
         }
@@ -485,6 +486,11 @@ public static partial class PdfSignatureValidator
                 (false, true) => " A document timestamp was added afterwards.",
                 _ => string.Empty,
             };
+        }
+        else if (unverifiable)
+        {
+            verdict = PdfSignatureVerdict.ModifiedAfterSigning;
+            summary = "The document was changed after it was signed, and what changed could not be checked. The signed revision itself is intact.";
         }
         else if (lockBroken)
         {

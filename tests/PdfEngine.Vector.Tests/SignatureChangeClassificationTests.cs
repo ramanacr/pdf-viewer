@@ -18,7 +18,7 @@ namespace PdfEngine.Vector.Tests;
 /// the document (page content, form, annotations, metadata, validation data), never by what the
 /// object says it is. Changes a signature does not permit are reported; permitted ones still are.
 /// </summary>
-public class SignatureChangeClassificationTests
+public partial class SignatureChangeClassificationTests
 {
     private const int Dangling = 900;
 
@@ -458,11 +458,11 @@ public class SignatureChangeClassificationTests
         });
     }
 
-    private static async Task<byte[]> SignField(byte[] pdf, string field)
+    private static async Task<byte[]> SignField(byte[] pdf, string field, int? level = null)
     {
         using var cert = Cert();
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        var prepared = PdfSigner.Prepare(doc, pdf, new PdfSignatureRequest { SignerName = "Approver", FieldName = field });
+        var prepared = PdfSigner.Prepare(doc, pdf, new PdfSignatureRequest { SignerName = "Approver", FieldName = field, CertificationLevel = level });
         return prepared.Complete(await PdfCmsSigner.SignAsync(prepared.SignedBytes(), cert));
     }
 
