@@ -337,6 +337,10 @@ public sealed class ViewerAnnotationStore
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": dashPattern is for squares, circles, lines, polygons and polylines: 1 to {ViewerAnnotationPdf.MaxDashCount} numbers from 0 to {ViewerAnnotationPdf.MaxDashLength}, not all 0.");
         if (a.Kind == ViewerAnnotationKind.Stamp ? !ViewerAnnotationPdf.IsStampName(a.StampName) : a.StampName.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a stamp needs a stampName, such as Approved or Draft.");
+        bool stamp = a.Kind == ViewerAnnotationKind.Stamp;
+        if (a.StampTurn is not (0 or 90 or 180 or 270) || !stamp && a.StampTurn != 0
+            || a.StampSubtitle != null && (!stamp || a.StampSubtitle.Length > MaxAuthorLength + 40 || a.StampSubtitle.Any(char.IsControl)))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a stamp's turn is 0, 90, 180 or 270 and its second line one short line.");
         if (a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo.Length is 0 or > MaxIdLength || a.InReplyTo == a.Id : a.InReplyTo.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a reply (and only a reply) answers another annotation.");
     }

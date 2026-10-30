@@ -24,7 +24,7 @@ FILL IN FORMS
 ANNOTATE
 • Highlight, underline and strike out selected text.
 • Draw with your finger, and draw rectangles, ellipses, lines and arrows.
-• Add sticky notes and text boxes.
+• Add sticky notes, text boxes and stamps (Approved, Draft, Confidential and more, also with your name and date).
 • Choose, edit and delete annotations, with undo and redo.
 • A list of all annotations; tap one to go to it.
 • Save into the opened file, or save a copy: your edits are added as an incremental update, so the original content and any signatures stay intact. Certified documents only allow the changes that their certification permits.

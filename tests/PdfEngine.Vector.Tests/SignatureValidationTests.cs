@@ -183,6 +183,29 @@ public class SignatureValidationTests
     }
 
     [Fact]
+    public async Task AStampAddedAfterSigning_WithItsEmbeddedFont_IsAPermittedChange()
+    {
+        // A designed stamp's appearance embeds its font (new font, descriptor and font file objects).
+        using var cert = Certificate("Signer");
+        byte[] signed = await Sign(FormPdfFixture.Build(), cert, new PdfSignatureRequest { SignerName = "Signer", CertificationLevel = 3 });
+        byte[] stamped;
+        using (var doc = await PdfVectorDocument.OpenAsync(signed))
+            stamped = PdfEngine.Vector.Services.PdfAnnotationEditor.Apply(doc, signed, e => e.Add(new PdfEngine.Vector.Annotations.PdfAnnotation
+            {
+                PageNumber = 1, Subtype = "Stamp", Icon = "Approved", Rect = new PdfRect(20, 120, 160, 56),
+                Stamp = new PdfEngine.Vector.Annotations.PdfStampAppearance { Subtitle = "By Jane Doe at 10:42, 25 Oct 2026", Rotation = 90, Width = 56, Height = 160 },
+            }));
+        Assert.Contains("/FontFile", Encoding.Latin1.GetString(stamped, signed.Length, stamped.Length - signed.Length));
+        var check = Assert.Single(await PdfSignatureValidator.ValidateAsync(stamped));
+        Assert.Equal(PdfSignatureVerdict.ValidWithPermittedChanges, check.Verdict);
+        Assert.False(check.LaterChanges.HasFlag(PdfLaterChanges.Other));
+        Assert.True(check.LaterChanges.HasFlag(PdfLaterChanges.Annotations));
+        // Page content changed in the same way is still found.
+        var forged = Assert.Single(await PdfSignatureValidator.ValidateAsync(await ChangeContent(stamped)));
+        Assert.Equal(PdfSignatureVerdict.ModifiedAfterSigning, forged.Verdict);
+    }
+
+    [Fact]
     public async Task ChangingASignedByte_IsInvalid()
     {
         using var cert = Certificate("Signer");

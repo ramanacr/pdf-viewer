@@ -75,6 +75,18 @@ public sealed record ViewerAnnotation
     /// <summary>A stamp's /Name (Approved, Draft, Confidential, …).</summary>
     public string StampName { get; init; } = "";
 
+    /// <summary>
+    /// A new stamp's second line (a dynamic stamp: "By Jane Doe at 10:42, 25 Oct 2026"), or null.
+    /// Written into the appearance it is given; a file's stamp keeps the appearance it has.
+    /// </summary>
+    public string? StampSubtitle { get; init; }
+
+    /// <summary>
+    /// A new stamp's turn in degrees counter-clockwise (0, 90, 180 or 270): its page's /Rotate, so
+    /// that it reads upright as the page is shown. <see cref="Box"/> holds the turned stamp.
+    /// </summary>
+    public int StampTurn { get; init; }
+
     /// <summary>A reply: the id of the annotation it answers. Empty for every other kind.</summary>
     public string InReplyTo { get; init; } = "";
 
@@ -417,6 +429,19 @@ public static class ViewerAnnotationPdf
                 // a file's stamp keeps its own appearance and a /Name this viewer does not write.
                 if (basis == null || IsStampName(basis.Icon)) p.Icon = a.StampName;
                 p.Color = basis?.Color;
+                if (basis == null && (a.StampSubtitle != null || a.StampTurn != 0))
+                {
+                    // Drawn upright at its own size and turned by the form's /Matrix (the engine's turned-stamp path).
+                    int turn = (a.StampTurn % 360 + 360) % 360;
+                    bool quarter = turn is 90 or 270;
+                    p.Stamp = new PdfStampAppearance
+                    {
+                        Subtitle = a.StampSubtitle,
+                        Rotation = turn,
+                        Width = quarter ? a.Box.Height : a.Box.Width,
+                        Height = quarter ? a.Box.Width : a.Box.Height,
+                    };
+                }
                 break;
             case ViewerAnnotationKind.Reply:
                 p.Color = Rgb(a.Color);

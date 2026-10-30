@@ -15,7 +15,7 @@ namespace PdfViewer.Android;
 /// <summary>
 /// Edits: form filling (a tap on a field; text with the soft keyboard, check boxes, radio buttons,
 /// choices), highlight, underline and strike-out on a text selection, freehand ink, rectangles,
-/// ellipses, lines and arrows (a drag), sticky notes and text boxes (a tap), delete, undo and
+/// ellipses, lines and arrows (a drag), sticky notes, text boxes and stamps (a tap), delete, undo and
 /// redo, the annotation list, "Save" and "Save a copy". The rules and the writing are the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
 /// fields, /MaxLen and signed or certified documents); after each change the engine writes the
 /// edits into the document as an incremental update and the pages are drawn again from it. "Save"
@@ -58,6 +58,7 @@ public sealed partial class MainActivity
             (ToolButton("Ellipse", "Ellipse: drag across it from corner to corner", (_, _) => SetTool(PageView.PageTool.Ellipse)), PageView.PageTool.Ellipse),
             (ToolButton("Line", "Line: drag from one end to the other", (_, _) => SetTool(PageView.PageTool.Line)), PageView.PageTool.Line),
             (ToolButton("Arrow", "Arrow: drag from its tail to its point", (_, _) => SetTool(PageView.PageTool.Arrow)), PageView.PageTool.Arrow),
+            (ToolButton("Stamp", "Stamp: choose one, then tap where it goes", (_, _) => StampTool()), PageView.PageTool.Stamp),
         ];
         _undoButton = ToolButton("↶", "Undo", (_, _) => Change(s => s.Undo()));
         _redoButton = ToolButton("↷", "Redo", (_, _) => Change(s => s.Redo()));
@@ -102,6 +103,7 @@ public sealed partial class MainActivity
             AskText("New text box", "", ViewerAnnotationStore.MaxContentsLength, multiline: true, password: false,
                 text => Change(s => s.AddFreeText(page, point, text) is { } a && Picked(a.Id)));
         };
+        _pages.StampRequested += PlaceStamp;
         // A drag shorter than ViewerEditSession.MinShapeSize adds nothing: its outline goes.
         _pages.ShapeDrawn += (tool, page, from, to, outline) => Change(s => tool switch
         {

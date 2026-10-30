@@ -22,9 +22,9 @@ internal sealed class PageView : SkiaView
 {
     /// <summary>
     /// What one finger does on a page: browse (scroll, tap, long press), draw (ink, rectangle,
-    /// ellipse, line, arrow: a drag), or place a note or a text box (a tap).
+    /// ellipse, line, arrow: a drag), or place a note, a text box or a stamp (a tap).
     /// </summary>
-    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text }
+    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text, Stamp }
 
     /// <summary>A tool that draws with a drag of one finger (the page does not scroll under it).</summary>
     public static bool Drags(PageTool tool) => tool is PageTool.Ink or PageTool.Rectangle or PageTool.Ellipse or PageTool.Line or PageTool.Arrow;
@@ -122,6 +122,9 @@ internal sealed class PageView : SkiaView
 
     /// <summary>The text tool was tapped on a page: the page and the point on it.</summary>
     public event Action<int, ViewerPoint>? TextRequested;
+
+    /// <summary>The stamp tool was tapped on a page: the page and the point the stamp is centred on.</summary>
+    public event Action<int, ViewerPoint>? StampRequested;
 
     /// <summary>
     /// A shape tool was dragged: the tool, the page, where the drag started and ended (shown-page
@@ -641,13 +644,13 @@ internal sealed class PageView : SkiaView
     /// <summary>A view point as a point on <paramref name="page"/> (shown-page points; outside the page when the point is).</summary>
     private ViewerPoint ToPage(int page, float x, float y) => _layout!.ToPagePoint(page, x, y);
 
-    /// <summary>A tap with the browse or note tool: a field, an annotation, a place for a note, or nothing.</summary>
+    /// <summary>A tap with the browse, note, text or stamp tool: a field, an annotation, a place for a note, text box or stamp, or nothing.</summary>
     private void Tap(float x, float y)
     {
         if (_layout?.PageAt(x, y) is not var (page, point)) return;
-        if (_tool is PageTool.Note or PageTool.Text)
+        if (_tool is PageTool.Note or PageTool.Text or PageTool.Stamp)
         {
-            (_tool == PageTool.Note ? NoteRequested : TextRequested)?.Invoke(page, point);
+            (_tool switch { PageTool.Note => NoteRequested, PageTool.Text => TextRequested, _ => StampRequested })?.Invoke(page, point);
             return;
         }
         if (Session is not { } session) return;

@@ -635,6 +635,7 @@ public static partial class PdfSignatureValidator
             var rb = before.Resolver;
             var ra = after.Resolver;
             var appearances = AppearanceObjects(after);
+            var appearanceParts = AppearanceParts(after, appearances);
             var dssBefore = DssObjects(before);
             var dssAfter = DssObjects(after);
             int beforeRoot = (before.XrefTable.Trailer?["Root"] as PdfIndirectRef)?.ObjectNumber ?? -1;
@@ -653,7 +654,7 @@ public static partial class PdfSignatureValidator
                 var was = old.IsInUse ? rb.Resolve(number) : null;
                 if (now == null) continue;
                 if (was != null && Same(was, now, rb, ra, 0)) continue; // rewritten, but the same (writers reorder keys, recompress streams)
-                changes |= Classify(number, was, now, afterRoot, appearances, after, dssBefore, dssAfter);
+                changes |= Classify(number, was, now, afterRoot, appearances, appearanceParts, after, dssBefore, dssAfter);
                 if (changes.HasFlag(PdfLaterChanges.Other)) return changes;
             }
             // Pages that disappeared, or were reordered, are content changes.
@@ -662,7 +663,7 @@ public static partial class PdfSignatureValidator
         }
     }
 
-    private static PdfLaterChanges Classify(int number, PdfObject? was, PdfObject now, int root, HashSet<int> appearances, PdfVectorDocument after,
+    private static PdfLaterChanges Classify(int number, PdfObject? was, PdfObject now, int root, HashSet<int> appearances, HashSet<int> appearanceParts, PdfVectorDocument after,
         HashSet<int> dssBefore, HashSet<int> dssAfter)
     {
         var dict = now as PdfDictionary ?? (now as PdfStream)?.Dictionary;
@@ -693,6 +694,8 @@ public static partial class PdfSignatureValidator
                 or "Underline" or "Squiggly" or "StrikeOut" or "Stamp" or "Caret" or "Ink" or "Popup" or "FileAttachment")
             return PdfLaterChanges.Annotations;
         if (appearances.Contains(number)) return PdfLaterChanges.FormFields; // a widget's or annotation's appearance
+        // A new object that only an appearance uses (its embedded font, a picture): part of that appearance.
+        if (was == null && appearanceParts.Contains(number)) return PdfLaterChanges.FormFields;
         if (now is PdfArray && IsAnnotsArray(number, after)) return AnnotsChange(was, now, after);
         if (IsInfoDictionary(number, after)) return PdfLaterChanges.Metadata;
         return PdfLaterChanges.Other;
@@ -849,6 +852,44 @@ public static partial class PdfSignatureValidator
             }
         }
         return set;
+    }
+
+    /// <summary>
+    /// Object numbers the appearance streams use through their dictionaries (the fonts, font
+    /// files, pictures and graphics states in their /Resources), page and document objects left
+    /// out. Only a new object counts as part of an appearance (see <see cref="Classify"/>): a
+    /// changed one may be shared with the signed content.
+    /// </summary>
+    private static HashSet<int> AppearanceParts(PdfVectorDocument doc, HashSet<int> appearances)
+    {
+        var r = doc.Resolver;
+        var parts = new HashSet<int>();
+        var pending = new Stack<PdfObject>();
+        foreach (int n in appearances)
+            if (r.Resolve(n) is PdfStream s) pending.Push(s.Dictionary);
+        while (pending.Count > 0 && parts.Count < 100_000)
+        {
+            switch (pending.Pop())
+            {
+                case PdfIndirectRef ir:
+                    if (parts.Contains(ir.ObjectNumber) || appearances.Contains(ir.ObjectNumber)) break;
+                    var o = r.Resolve(ir.ObjectNumber);
+                    var d = o as PdfDictionary ?? (o as PdfStream)?.Dictionary;
+                    if (d?.GetName("Type") is "Page" or "Pages" or "Catalog" or "Annot") break;
+                    parts.Add(ir.ObjectNumber);
+                    if (d != null) pending.Push(d);
+                    else if (o is PdfArray oa) pending.Push(oa);
+                    break;
+                case PdfDictionary dict:
+                    foreach (var (key, value) in dict.Entries)
+                        if (key is not ("Parent" or "P")) pending.Push(value);
+                    break;
+                case PdfArray array:
+                    foreach (var item in array) pending.Push(item);
+                    break;
+            }
+        }
+        return parts;
     }
 
     private static bool IsAnnotsArray(int number, PdfVectorDocument doc) =>
