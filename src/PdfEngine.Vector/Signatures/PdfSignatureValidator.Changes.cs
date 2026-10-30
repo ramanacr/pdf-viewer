@@ -41,7 +41,9 @@ public static partial class PdfSignatureValidator
             using var before = await PdfVectorDocument.OpenAsync(file.AsSpan(0, revisionEnd).ToArray(), password: password, cancellationToken: ct).ConfigureAwait(false);
             using var after = await PdfVectorDocument.OpenAsync(file, password: password, cancellationToken: ct).ConfigureAwait(false);
             bool repairedBefore = before.WasRepaired, repairedAfter = after.WasRepaired;
-            var budget = new WorkBudget(ct, Math.Max(2_000_000, 64L * (before.XrefTable.Entries.Count + after.XrefTable.Entries.Count)));
+            // The budget grows with the file: a legitimate file is never too large to check, a crafted one cannot run away.
+            long limit = Math.Max(2_000_000, Math.Max(64L * (before.XrefTable.Entries.Count + after.XrefTable.Entries.Count), file.LongLength / 4));
+            var budget = new WorkBudget(ct, limit);
             var beforeMap = new UsageMap(before, null, budget);
             var afterMap = new UsageMap(after, beforeMap, budget);
             var report = new RevisionDiff(beforeMap, afterMap, budget).Run();
@@ -78,12 +80,16 @@ public static partial class PdfSignatureValidator
         PageNodeBit = 5, AnnotsArrayBit = 6, FormBit = 7, CatalogBit = 8, OwnerBase = 9, OwnedBase = 16;
 
     /// <summary>What an annotation or field is, for what changing it (or what it owns) means.</summary>
-    private enum Category { Markup, Field, SignatureNew, SignatureSigned, Timestamp }
+    /// <remarks>
+    /// <see cref="SignatureNew"/>: signed by a signature dictionary new since the signed revision.
+    /// <see cref="SignatureEmpty"/>: a signature field with no signature: like any annotation.
+    /// </remarks>
+    private enum Category { Markup, Field, SignatureNew, SignatureSigned, Timestamp, SignatureEmpty }
 
     /// <summary>How an annotation or field refers to an object it owns.</summary>
     private enum Via { Appearance, Value, Action, Other }
 
-    private const int Categories = 5, Vias = 4;
+    private const int Categories = 6, Vias = 4;
 
     private static int OwnerBit(Category c) => OwnerBase + (int)c;
     private static int OwnedBit(Category c, Via v) => OwnedBase + (int)c * Vias + (int)v;
@@ -123,6 +129,8 @@ public static partial class PdfSignatureValidator
         public readonly Dictionary<int, Owner> Owners = new();
         /// <summary>Objects reached as form fields (from /Fields and /Kids).</summary>
         public readonly HashSet<int> FieldNodes = new();
+        /// <summary>The signature dictionaries held by signed fields of the field tree, direct fields included.</summary>
+        public readonly HashSet<int> SignedValues = new();
         /// <summary>Object numbers referred to that the revision does not define.</summary>
         public readonly HashSet<int> Dangling = new();
         /// <summary>Page tree nodes that are their own objects.</summary>
@@ -204,7 +212,7 @@ public static partial class PdfSignatureValidator
                 {
                     "Pages" or "AcroForm" => -1,
                     "Metadata" => MetadataBit,
-                    "DSS" => DssBit,
+                    "DSS" or "Extensions" => DssBit, // developer extensions are updated with validation data
                     _ => OtherBit,
                 };
                 if (bit >= 0) Walk(value, bit, null);
@@ -259,6 +267,7 @@ public static partial class PdfSignatureValidator
                 if (item is PdfIndirectRef ir && !FieldNodes.Add(ir.ObjectNumber)) continue; // listed twice, or a loop in /Kids
                 if (OwnerOf(item, field: true) is not { } owner) continue;
                 owners.Add(owner);
+                if (owner is { IsSignature: true, Value: not null, ValueNumber: >= 0 }) SignedValues.Add(owner.ValueNumber);
                 if (R.Resolve(owner.Dict["Kids"]) is PdfArray kids) FieldTree(kids, owners, depth + 1);
             }
         }
@@ -320,15 +329,17 @@ public static partial class PdfSignatureValidator
 
         /// <summary>
         /// What changing the annotation or field means: a signature field signed in the signed
-        /// revision is part of what was signed; an invisible document timestamp field with no
-        /// actions is a timestamp; any other signature field is signing.
+        /// revision is part of what was signed; one with no signature is an annotation like any
+        /// other; an invisible document timestamp field with no actions is a timestamp; a field
+        /// signed since is signing.
         /// </summary>
         public Category CategoryOf(Owner owner)
         {
             if (!owner.IsField) return Category.Markup;
             if (!owner.IsSignature) return Category.Field;
-            if (_before == null) return owner.Value != null ? Category.SignatureSigned : Category.SignatureNew;
+            if (_before == null) return owner.Value != null ? Category.SignatureSigned : Category.SignatureEmpty;
             if (_before.WasSigned(owner)) return Category.SignatureSigned;
+            if (owner.Value == null) return Category.SignatureEmpty;
             return IsInvisibleTimestampField(owner.Dict, R) && owner.Dict["A"] == null && owner.Dict["AA"] == null
                 ? Category.Timestamp
                 : Category.SignatureNew;
@@ -340,6 +351,9 @@ public static partial class PdfSignatureValidator
             if (owner.Number >= 0 && Owners.TryGetValue(owner.Number, out var old) && old.IsSignature && old.Value != null) return true;
             return owner.ValueNumber >= 0 && InUse(owner.ValueNumber) && R.Resolve(owner.ValueNumber) is PdfDictionary;
         }
+
+        /// <summary>Whether an object can refer to another: references, dictionaries, arrays and streams.</summary>
+        private static bool Refers(PdfObject o) => o is PdfIndirectRef or PdfDictionary or PdfArray or PdfStream;
 
         private void WalkEntries(PdfDictionary dict, int bit, string? name, params string[] skip)
         {
@@ -403,12 +417,14 @@ public static partial class PdfSignatureValidator
                         {
                             if (pageNode && key is "Annots" or "Kids" or "Parent") continue;
                             if (formAction && key is "Fields" or "T") continue;
-                            stack.Push((value, nm, -1));
+                            if (Refers(value)) stack.Push((value, nm, -1));
                         }
                         continue;
                     }
                     case PdfArray a:
-                        foreach (var item in a) stack.Push((item, nm, -1));
+                        // Numbers, names and strings refer to nothing: not pushed, not counted (a font's /W can hold thousands).
+                        foreach (var item in a)
+                            if (Refers(item)) stack.Push((item, nm, -1));
                         continue;
                 }
             }
@@ -436,6 +452,8 @@ public static partial class PdfSignatureValidator
                     || now.ValueNumber != old.ValueNumber)
                     return Report(changes | PdfLaterChanges.Other);
             }
+            // The same for signed fields written directly in a parent's /Kids: each signature must still be held by a field.
+            if (!before.SignedValues.IsSubsetOf(after.SignedValues)) return Report(changes | PdfLaterChanges.Other);
 
             // Snapshots: reading an object may rebuild a damaged cross-reference table.
             var bEntries = before.Doc.XrefTable.Entries.ToDictionary(e => e.Key, e => e.Value);
@@ -488,7 +506,12 @@ public static partial class PdfSignatureValidator
             if ((Has(CatalogBit) || Has(FormBit)) && now == null) return PdfLaterChanges.Other;
             // A new /Annots array is judged with the page that refers to it.
             if (Has(AnnotsArrayBit) && was != null) changes |= AnnotsChange(was as PdfArray, now as PdfArray);
-            if (Has(FormResourcesBit)) changes |= Unnamed();
+            // Default resources that are new, or only gained entries, change no field (FieldMDP): a
+            // replaced entry shows as a change of the dictionary that holds it. Anything else could change any field.
+            if (Has(FormResourcesBit))
+                changes |= was == null || (was is PdfDictionary oldResources && now is PdfDictionary newResources && AddsOnly(oldResources, newResources, 0))
+                    ? PdfLaterChanges.FormFields
+                    : Unnamed();
             if (Has(MetadataBit)) changes |= PdfLaterChanges.Metadata;
             // Validation data: objects of the DSS that are new, or were validation data already. An
             // existing object of any other kind does not become harmless by being listed in the DSS.
@@ -530,21 +553,25 @@ public static partial class PdfSignatureValidator
         {
             var owner = after.Owners.GetValueOrDefault(number) ?? before.Owners.GetValueOrDefault(number);
             if (category == Category.SignatureSigned) return PdfLaterChanges.Other;
+            // An empty signature field signed since is judged by what it is now (signing, or a timestamp).
+            if (category == Category.SignatureEmpty && now != null
+                && after.Owners.GetValueOrDefault(number)?.Category is Category.SignatureNew or Category.Timestamp)
+                return PdfLaterChanges.None;
             if (category == Category.Field) Name(owner?.FieldName);
             if (now == null) return PdfLaterChanges.Annotations; // removed
             if (now is not PdfDictionary newDict) return PdfLaterChanges.Other;
             if (was == null)
                 return category switch
                 {
-                    Category.Markup or Category.Field => PdfLaterChanges.Annotations, // a new field is not filling one in
                     Category.Timestamp => PdfLaterChanges.DocumentTimestamp,
-                    _ => newDict["A"] != null || newDict["AA"] != null ? PdfLaterChanges.Other : PdfLaterChanges.Signatures,
+                    Category.SignatureNew => newDict["A"] != null || newDict["AA"] != null ? PdfLaterChanges.Other : PdfLaterChanges.Signatures,
+                    _ => PdfLaterChanges.Annotations, // a new field, or an empty signature field, is not filling in or signing
                 };
             if (was is not PdfDictionary oldDict) return PdfLaterChanges.Other;
             var changed = oldDict.Entries.Keys.Union(newDict.Entries.Keys).Where(k => !Same(oldDict[k], newDict[k], null, null, 0)).ToList();
-            if (changed.Contains("AA")) return PdfLaterChanges.Other;
-            if (category == Category.Markup) return PdfLaterChanges.Annotations;
-            if (changed.Contains("A")) return PdfLaterChanges.Other;
+            // Actions change what the document does, whatever annotation holds them.
+            if (changed.Contains("AA") || changed.Contains("A")) return PdfLaterChanges.Other;
+            if (category is Category.Markup or Category.SignatureEmpty) return PdfLaterChanges.Annotations;
             return category switch
             {
                 Category.Field => changed.All(FieldValueKeys.Contains) ? PdfLaterChanges.FormFields : PdfLaterChanges.Annotations,
@@ -557,8 +584,9 @@ public static partial class PdfSignatureValidator
         private PdfLaterChanges OwnedChange(int number, Category category, Via via, PdfObject? was)
         {
             if (category == Category.SignatureSigned) return PdfLaterChanges.Other; // part of a signature already made
+            // An action of a new annotation is part of it; a changed action changes what the document does.
             if (via == Via.Action)
-                return category == Category.Markup && was == null ? PdfLaterChanges.Annotations : PdfLaterChanges.Other;
+                return category is Category.Markup or Category.SignatureEmpty && was == null ? PdfLaterChanges.Annotations : PdfLaterChanges.Other;
             if (category == Category.Field)
             {
                 Name(after.FieldNames.TryGetValue(number, out var n) ? n : before.FieldNames.GetValueOrDefault(number));
@@ -566,7 +594,7 @@ public static partial class PdfSignatureValidator
             }
             return (category, via) switch
             {
-                (Category.Markup, _) => PdfLaterChanges.Annotations,
+                (Category.Markup or Category.SignatureEmpty, _) => PdfLaterChanges.Annotations,
                 (Category.Timestamp, Via.Value or Via.Appearance) => PdfLaterChanges.DocumentTimestamp,
                 (_, Via.Value or Via.Appearance) => PdfLaterChanges.Signatures,
                 _ => PdfLaterChanges.Annotations,
@@ -595,11 +623,25 @@ public static partial class PdfSignatureValidator
             return changes | AnnotsChange(before.R.Resolve(oldNode["Annots"]) as PdfArray, after.R.Resolve(newNode["Annots"]) as PdfArray);
         }
 
-        /// <summary>The catalog, compared entry by entry: only the form, the DSS, the metadata and the pages' annotations may change.</summary>
+        /// <summary>
+        /// The catalog, compared entry by entry: only the form, the DSS, the metadata and the pages'
+        /// annotations may change, and, as validation data updates do, the developer extensions
+        /// (/Extensions) and a higher /Version.
+        /// </summary>
         private PdfLaterChanges CatalogChange(PdfDictionary was, PdfDictionary now)
         {
-            if (!SameExcept(was, now, "AcroForm", "DSS", "Metadata", "Pages")) return PdfLaterChanges.Other;
+            if (!SameExcept(was, now, "AcroForm", "DSS", "Metadata", "Pages", "Extensions", "Version")) return PdfLaterChanges.Other;
             var changes = PdfLaterChanges.None;
+            if (!Same(was["Extensions"], now["Extensions"], null, null, 0)) changes |= PdfLaterChanges.ValidationData;
+            if (!Same(was["Version"], now["Version"], null, null, 0))
+            {
+                static decimal? Version(PdfObject? o) =>
+                    o is PdfName n && decimal.TryParse(n.Value, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+                var oldVersion = Version(was["Version"]);
+                var newVersion = Version(now["Version"]);
+                bool raised = newVersion != null && (was["Version"] == null || (oldVersion != null && newVersion > oldVersion));
+                changes |= raised ? PdfLaterChanges.ValidationData : PdfLaterChanges.Other;
+            }
             if (!Same(was["Pages"], now["Pages"], null, null, 0))
                 changes |= was["Pages"] is PdfDictionary && now["Pages"] is PdfDictionary ? PageNodeChange(was["Pages"], now["Pages"], 0) : PdfLaterChanges.Other;
             if (!Same(was["Metadata"], now["Metadata"], null, null, 0)) changes |= PdfLaterChanges.Metadata;
@@ -628,11 +670,29 @@ public static partial class PdfSignatureValidator
                 changes |= key switch
                 {
                     "SigFlags" => PdfLaterChanges.None,
-                    "NeedAppearances" or "DR" or "DA" or "Q" or "CO" => Unnamed(),
+                    // Asking for appearances, or adding default resources, changes no field's value.
+                    "NeedAppearances" => PdfLaterChanges.FormFields,
+                    "DR" when AddsOnly(before.R.Resolve(was[key]) as PdfDictionary, after.R.Resolve(now[key]) as PdfDictionary, 0) => PdfLaterChanges.FormFields,
+                    "DR" or "DA" or "Q" or "CO" => Unnamed(),
                     _ => PdfLaterChanges.Other, // /XFA among them
                 };
             }
             return changes;
+        }
+
+        /// <summary>Whether <paramref name="now"/> only adds entries to <paramref name="was"/> (directly nested dictionaries likewise).</summary>
+        private bool AddsOnly(PdfDictionary? was, PdfDictionary? now, int depth)
+        {
+            if (now == null || depth > 4) return false;
+            if (was == null) return true;
+            foreach (var (key, value) in was.Entries)
+            {
+                budget.Step();
+                if (Same(value, now[key], null, null, 0)) continue;
+                if (value is PdfDictionary oldSub && now[key] is PdfDictionary newSub && AddsOnly(oldSub, newSub, depth + 1)) continue;
+                return false;
+            }
+            return true;
         }
 
         private PdfLaterChanges AnnotsChange(PdfArray? was, PdfArray? now) => ItemsChange(was, now, annots: true);
@@ -665,7 +725,7 @@ public static partial class PdfSignatureValidator
                 }
                 else
                 {
-                    if (compareDirect && oldDirect.Any(o => Same(o, item, null, null, 0))) continue;
+                    if (compareDirect && oldDirect.Any(o => { budget.Step(); return Same(o, item, null, null, 0); })) continue;
                     owner = item is PdfDictionary d ? after.Describe(d, -1, field: !annots) : null;
                     if (owner != null) owner.Category = after.CategoryOf(owner);
                 }
@@ -690,7 +750,7 @@ public static partial class PdfSignatureValidator
                 }
                 else
                 {
-                    if (compareDirect && newDirect.Any(n => Same(item, n, null, null, 0))) continue;
+                    if (compareDirect && newDirect.Any(n => { budget.Step(); return Same(item, n, null, null, 0); })) continue;
                     owner = item is PdfDictionary d ? before.Describe(d, -1, field: !annots) : null;
                 }
                 if (owner is { IsSignature: true, Value: not null }) return PdfLaterChanges.Other; // a signature removed
