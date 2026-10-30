@@ -19,6 +19,8 @@ public sealed class PdfXrefTable
     private readonly Dictionary<int, PdfXrefEntry> _entries = new();
     private readonly PdfSecurityLimits _limits;
     private PdfDictionary? _trailer;
+    private bool _chainIncomplete;
+    private long _chainEntriesRead;
 
     internal IReadOnlyDictionary<int, PdfXrefEntry> Entries => _entries;
     public PdfDictionary? Trailer => _trailer;
@@ -88,7 +90,9 @@ public sealed class PdfXrefTable
         try
         {
             LoadChain(source);
-            chainOk = _trailer != null && _trailer.ContainsKey("Root") && _entries.Count > 0;
+            // A chain cut short (a /Prev loop or a chain past the limits) would silently lose the
+            // objects that only older sections define, so it is rebuilt by scanning instead.
+            chainOk = !_chainIncomplete && _trailer != null && _trailer.ContainsKey("Root") && _entries.Count > 0;
         }
         catch (PdfResourceLimitException)
         {
@@ -119,17 +123,36 @@ public sealed class PdfXrefTable
         _entries[entry.ObjectNumber] = entry;
     }
 
+    /// <summary>Counts entries read along the /Prev chain; false (and the chain marked incomplete) past the budget.</summary>
+    private bool CountChainEntry()
+    {
+        if (++_chainEntriesRead <= _limits.MaxTrailerChainEntries)
+            return true;
+        _chainIncomplete = true;
+        return false;
+    }
+
     private void LoadChain(IPdfByteSource source)
     {
         long startXref = FindStartXref(source);
-        var visited = new HashSet<long>();
+        var sections = new HashSet<long>();      // offsets of the sections followed through /Prev
+        var visited = new HashSet<long>();       // the same, plus /XRefStm streams of hybrid files
         long currentOffset = startXref;
         int depth = 0;
+        _chainIncomplete = false;
+        _chainEntriesRead = 0;
 
-        while (currentOffset > 0 && depth < _limits.MaxTrailerChainDepth)
+        while (currentOffset > 0 && !_chainIncomplete)
         {
+            if (depth >= _limits.MaxTrailerChainDepth || sections.Contains(currentOffset))
+            {
+                // Too many sections, or a /Prev loop: what was read is not the whole table.
+                _chainIncomplete = true;
+                break;
+            }
+            sections.Add(currentOffset);
             if (!visited.Add(currentOffset))
-                break; // Cycle detected
+                break; // /Prev names the /XRefStm stream already read: nothing more to follow
 
             source.Position = currentOffset;
             var lexer = new PdfLexer(source, _limits);
@@ -155,6 +178,8 @@ public sealed class PdfXrefTable
                 // Classic xref table
                 var sectionFree = new HashSet<int>();
                 ParseClassicXref(lexer, source, sectionFree);
+                if (_chainIncomplete)
+                    break;
 
                 // Parse trailer
                 var trailerToken = lexer.NextToken();
@@ -499,6 +524,8 @@ public sealed class PdfXrefTable
 
             for (int i = 0; i < count; i++)
             {
+                if (!CountChainEntry())
+                    return;
                 int objNum = startObj + i;
                 string? line = ReadLine(source);
                 if (string.IsNullOrWhiteSpace(line))
@@ -597,7 +624,7 @@ public sealed class PdfXrefTable
         {
             for (int i = 0; i < count; i++)
             {
-                if (offset + entrySize > data.Length)
+                if (offset + entrySize > data.Length || !CountChainEntry())
                     return;
 
                 int objNum = startObj + i;

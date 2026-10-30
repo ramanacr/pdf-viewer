@@ -27,8 +27,18 @@ public sealed class PdfSecurityLimits
     /// <summary>Maximum decompression expansion ratio (e.g. 500x).</summary>
     public double MaxDecompressionRatio { get; init; } = 500.0;
 
-    /// <summary>Maximum number of `/Prev` trailer links to follow.</summary>
-    public int MaxTrailerChainDepth { get; init; } = 100;
+    /// <summary>
+    /// Maximum number of `/Prev` trailer links to follow. Real files stay far below it, even after
+    /// thousands of incremental saves. A longer chain, or a `/Prev` loop, makes the reader rebuild the
+    /// cross-reference data by scanning the file (the document then reports it was repaired).
+    /// </summary>
+    public int MaxTrailerChainDepth { get; init; } = 4096;
+
+    /// <summary>
+    /// Maximum cross-reference entries read along the whole `/Prev` chain (all sections together).
+    /// Past it the reader rebuilds the cross-reference data by scanning the file instead.
+    /// </summary>
+    public long MaxTrailerChainEntries { get; init; } = 10_000_000;
 
     /// <summary>Maximum Form XObject recursion depth (PDFium draws up to 40 levels too).</summary>
     public int MaxFormXObjectDepth { get; init; } = 40;
