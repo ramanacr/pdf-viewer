@@ -225,6 +225,12 @@ internal sealed class PdfFontResolver
             differences = _resolver.Resolve(encDict["Differences"]) as PdfArray;
         }
 
+        // ISO 32000-1 Annex D, WinAnsiEncoding footnote: the unused codes above 32 show a bullet
+        // (lists drawn with 0x7F under non-embedded Helvetica). Embedded symbolic programs keep
+        // the plain table, as their codes go straight to the program's own glyphs.
+        if (ReferenceEquals(baseTable, FontEncodings.WinAnsi) && !(isSymbolic && kind != PdfFontProgramKind.None))
+            baseTable = FontEncodings.WinAnsiWithBullets;
+
         var names = new string?[256];
         if (baseTable != null)
             Array.Copy(baseTable, names, 256);

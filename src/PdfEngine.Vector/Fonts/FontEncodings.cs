@@ -16,6 +16,13 @@ internal static class FontEncodings
     public static readonly string?[] WinAnsi = null!;
 
     /// <summary>
+    /// <see cref="WinAnsi"/> with the codes it leaves undefined above 32 (0x7F, 0x81, 0x8D, 0x8F,
+    /// 0x90, 0x9D) read as "bullet", as ISO 32000-1 Annex D (WinAnsiEncoding footnote) and PDFium
+    /// have it. Rendering and text extraction both start from this table.
+    /// </summary>
+    public static readonly string?[] WinAnsiWithBullets = null!;
+
+    /// <summary>
     /// MacRomanEncoding (Annex D.2, MAC column), extended with the Mac OS Roman math glyphs
     /// (notequal, infinity, …) so that text extraction of such fonts is not lossy.
     /// </summary>
@@ -36,6 +43,8 @@ internal static class FontEncodings
     {
         Standard = BuildStandard();
         WinAnsi = BuildWinAnsi();
+        WinAnsiWithBullets = (string?[])WinAnsi.Clone();
+        foreach (int c in new[] { 0x7F, 0x81, 0x8D, 0x8F, 0x90, 0x9D }) WinAnsiWithBullets[c] = "bullet";
         MacRoman = BuildMacRoman();
         Symbol = BuildSymbol();
         ZapfDingbats = BuildZapfDingbats();
