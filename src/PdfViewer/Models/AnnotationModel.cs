@@ -89,6 +89,18 @@ public partial class AnnotationModel : ObservableObject
     [ObservableProperty]
     private double _opacity = 0.5;
 
+    /// <summary>
+    /// The most opacity the overlay gives a highlight it draws (one made here or changed since it
+    /// was loaded). The saved highlight multiplies its colour with the page, so the text under it
+    /// stays dark; the WPF overlay can only blend, and above this the text would fade out.
+    /// </summary>
+    public const double MaxHighlightOverlayOpacity = 0.5;
+
+    /// <summary>The opacity the overlay draws a highlight with: <see cref="Opacity"/>, at most <see cref="MaxHighlightOverlayOpacity"/>.</summary>
+    public double HighlightOverlayOpacity => Math.Clamp(Opacity, 0, MaxHighlightOverlayOpacity);
+
+    partial void OnOpacityChanged(double value) => OnPropertyChanged(nameof(HighlightOverlayOpacity));
+
     [ObservableProperty]
     private double _strokeThickness = 2.0;
 

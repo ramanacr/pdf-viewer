@@ -1635,30 +1635,36 @@
                                                               Background="Transparent"
                                                               MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
                                                             <!-- Highlight: one box, or one band per line of a multi-line highlight -->
-                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
-                                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
-                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                                <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding HighlightOverlayOpacity}">
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                    <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
                                                             </Grid>
 
                                                             <!-- Underline -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
-                                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
-                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                                <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                    <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
                                                             </Grid>
 
                                                             <!-- StrikeOut -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
-                                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      StrokeThickness="2"
-                                                                      VerticalAlignment="Center"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                                <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          StrokeThickness="2"
+                                                                          VerticalAlignment="Center"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                    <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
                                                             </Grid>
 
                                                             <!-- Note -->
@@ -2076,30 +2082,36 @@
                                                   Background="Transparent"
                                                   MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
                                                 <!-- Highlight: one box, or one band per line of a multi-line highlight -->
-                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
-                                                    <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
-                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                    <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding HighlightOverlayOpacity}">
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                                Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                        <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
                                                 </Grid>
 
                                                 <!-- Underline -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
-                                                    <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
-                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                    <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                                Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                        <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
                                                 </Grid>
 
                                                 <!-- StrikeOut -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
-                                                    <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          StrokeThickness="2"
-                                                          VerticalAlignment="Center"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                    <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                              Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              StrokeThickness="2"
+                                                              VerticalAlignment="Center"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                        <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
                                                 </Grid>
 
                                                 <!-- Note -->

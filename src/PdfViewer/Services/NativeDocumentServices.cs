@@ -250,6 +250,12 @@ internal sealed class NativeDocumentServices
             }).ToList();
             model.SetQuads(quads);
         }
+        // The page draws a loaded text markup from its own appearance (a highlight with its
+        // Multiply blend mode, so the text under it stays readable) until it is changed; only
+        // then does the overlay draw it. The overlay cannot multiply: drawn over the page as
+        // well, an opaque highlight hid the text.
+        if (type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
+            model.HasOwnAppearance = a.HasAppearance;
         if (type == AnnotationType.Ink)
         {
             foreach (var stroke in a.InkList.Where(s => s.Count > 0))
