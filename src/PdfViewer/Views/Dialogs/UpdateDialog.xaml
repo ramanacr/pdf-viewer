@@ -240,7 +240,7 @@
                         Height="32"
                         IsDefault="True"
                         Background="{DynamicResource AccentBrush}"
-                        Foreground="White"
+                        Foreground="{DynamicResource OnAccentTextBrush}"
                         BorderThickness="0"
                         FontWeight="SemiBold"
                         Click="PrimaryActionButton_Click" />

@@ -198,7 +198,7 @@
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
             <Button x:Name="SignButton" Content="Sign" Width="100" Height="32" IsDefault="True"
-                    Background="{DynamicResource AccentBrush}" Foreground="White" BorderThickness="0" FontWeight="SemiBold"
+                    Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource OnAccentTextBrush}" BorderThickness="0" FontWeight="SemiBold"
                     Click="SignButton_Click" Margin="0,0,8,0" />
             <Button Content="Cancel" Width="80" Height="32" IsCancel="True" Style="{StaticResource SecondaryButton}" />
         </StackPanel>

@@ -37,7 +37,11 @@ public partial class App : Application
             RecentFilesService.SetSettingsDirectoryForTests(Probe.SettingsDirectory);
             PrivacySettings.SetSettingsDirectoryForTests(Probe.SettingsDirectory);
             SigningSettings.SetDirectoryForTests(Probe.SettingsDirectory);
+            AppearanceSettings.SetSettingsDirectoryForTests(Probe.SettingsDirectory);
         }
+
+        // Before the main window is made, so it opens in the theme the user last chose.
+        ThemeManager.RestoreSavedTheme();
 
         // PDFium is not initialised at startup: only PDFium mode (developer builds) loads it, on first use.
 

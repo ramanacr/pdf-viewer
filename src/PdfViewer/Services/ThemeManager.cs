@@ -57,9 +57,16 @@ public static class ThemeManager
                 merged.Add(dict);
             }
 
+            ApplyControlStyles(app.Resources, theme);
+
             // Only commit the new theme once the resource swap actually succeeded,
             // so CurrentTheme never reports a theme the UI didn't switch to.
             CurrentTheme = theme;
+            FollowTitleBars();
+            foreach (Window window in app.Windows)
+            {
+                ApplyTitleBar(window);
+            }
             ThemeChanged?.Invoke(theme);
         }
         catch (Exception ex)
@@ -68,9 +75,80 @@ public static class ThemeManager
         }
     }
 
+    /// <summary>The user's own switch: changes the theme and remembers it for the next start.</summary>
     public static void ToggleTheme()
     {
         SetTheme(CurrentTheme == AppTheme.Light ? AppTheme.Dark : AppTheme.Light);
+        AppearanceSettings.SaveTheme(CurrentTheme);
+    }
+
+    /// <summary>At startup: puts back the theme the user last chose. With no saved choice the light theme stays.</summary>
+    public static void RestoreSavedTheme()
+    {
+        if (AppearanceSettings.Theme is { } saved && saved != CurrentTheme)
+        {
+            SetTheme(saved);
+        }
+    }
+
+    /// <summary>
+    /// Windows draws parts of its standard controls (drop-downs, combo boxes, the slider, tooltips)
+    /// in fixed light colours. The dark theme restyles them from this dictionary, merged last so it
+    /// wins over Controls.xaml; the light theme takes it out, so Windows' own look is untouched.
+    /// </summary>
+    internal const string DarkControlsSource = "Themes/DarkControls.xaml";
+
+    internal static void ApplyControlStyles(ResourceDictionary resources, AppTheme theme)
+    {
+        var merged = resources.MergedDictionaries;
+        for (int i = merged.Count - 1; i >= 0; i--)
+        {
+            if (merged[i].Source?.OriginalString.Contains("DarkControls.xaml") == true)
+            {
+                merged.RemoveAt(i);
+            }
+        }
+
+        if (theme == AppTheme.Dark)
+        {
+            merged.Add(new ResourceDictionary { Source = new Uri(DarkControlsSource, UriKind.Relative) });
+        }
+    }
+
+    private static bool _followingTitleBars;
+
+    /// <summary>Gives every window opened from now on a title bar in the current theme.</summary>
+    private static void FollowTitleBars()
+    {
+        if (_followingTitleBars) return;
+        _followingTitleBars = true;
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, _) => ApplyTitleBar((Window)sender)));
+    }
+
+    // DWMWA_USE_IMMERSIVE_DARK_MODE: 20 from Windows 10 20H1, 19 before it.
+    private const int DwmUseImmersiveDarkMode = 20;
+    private const int DwmUseImmersiveDarkModeBefore20H1 = 19;
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    /// <summary>Asks Windows for a dark or light title bar to match the theme. Older Windows simply keeps its own.</summary>
+    internal static void ApplyTitleBar(Window window)
+    {
+        var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        if (handle == IntPtr.Zero) return;
+        int dark = CurrentTheme == AppTheme.Dark ? 1 : 0;
+        try
+        {
+            if (DwmSetWindowAttribute(handle, DwmUseImmersiveDarkMode, ref dark, sizeof(int)) != 0)
+            {
+                DwmSetWindowAttribute(handle, DwmUseImmersiveDarkModeBefore20H1, ref dark, sizeof(int));
+            }
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+        }
     }
 
     /// <summary>The theme brushes the icons draw with; see <see cref="FollowHighContrast"/>.</summary>
