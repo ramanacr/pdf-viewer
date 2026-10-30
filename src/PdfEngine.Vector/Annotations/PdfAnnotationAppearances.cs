@@ -223,15 +223,19 @@ public static class PdfAnnotationAppearances
         /// Free text reads upright as the page is shown: on a page with /Rotate (inherited too) the
         /// form is drawn in the shown orientation, at the shown width and height, and turned by
         /// /Matrix the other way, as a turned stamp is, so 12.5.5 fits it to /Rect. Acrobat draws
-        /// free text on a turned page the same way.
+        /// free text on a turned page the same way. Free text with its own /Rotate (Acrobat writes
+        /// it for text added in a turned view) is turned by that instead.
         /// </summary>
         public void UprightOnPage()
         {
-            int rotate = PageRotation();
+            int rotate = OwnRotation() ?? PageRotation();
             if (rotate == 0) return;
             _rotation = rotate;
             if (rotate is 90 or 270) (Width, Height) = (Height, Width);
         }
+
+        /// <summary>The annotation's own /Rotate as 0, 90, 180 or 270; null when it has none.</summary>
+        private int? OwnRotation() => Number("Rotate") is double v ? PdfAnnotation.QuarterTurn(v) : null;
 
         /// <summary>The /Rotate of the annotation's page (/P, inherited through /Parent), as 0, 90, 180 or 270; 0 without /P.</summary>
         private int PageRotation()

@@ -142,19 +142,8 @@ public partial class MainViewModel
         if (page < 1 || page > Pages.Count || points.Count < 2) return null;
         var crop = CropOf(page);
         var vertices = points.Select(Clamp01).ToList();
-        double width = SelectedAnnotationThickness > 0 ? SelectedAnnotationThickness : 1;
-        var model = new AnnotationModel
-        {
-            PageNumber = page,
-            Type = type,
-            ColorHex = SelectedAnnotationColor,
-            StrokeThickness = width,
-            Opacity = 1,
-            Author = SelectedAnnotationAuthor,
-            Title = AnnotationTypeName(type),
-            Contents = string.Empty,
-            LineEndings = type == AnnotationType.Arrow ? new[] { "None", "OpenArrow" } : null,
-        };
+        var model = NewShapeModel(type, page);
+        double width = model.StrokeThickness;
         var bounds = NativeDocumentServices.ShapeBounds(vertices.Select(p => ToPage(p, crop)).ToList(), width, type == AnnotationType.Arrow);
         var box = FromPage(bounds, crop);
         box.Intersect(new Rect(0, 0, 1, 1));
@@ -163,6 +152,36 @@ public partial class MainViewModel
         model.Vertices = vertices;
         AddAnnotation(model);
         StatusText = $"Added {AnnotationTypeName(type).ToLowerInvariant()} on page {page}.";
+        return model;
+    }
+
+    /// <summary>A line, arrow, polygon or connected lines in the chosen colour and line width, not placed yet.</summary>
+    private AnnotationModel NewShapeModel(AnnotationType type, int page) => new()
+    {
+        PageNumber = page,
+        Type = type,
+        ColorHex = SelectedAnnotationColor,
+        StrokeThickness = SelectedAnnotationThickness > 0 ? SelectedAnnotationThickness : 1,
+        Opacity = 1,
+        Author = SelectedAnnotationAuthor,
+        Title = AnnotationTypeName(type),
+        Contents = string.Empty,
+        LineEndings = type == AnnotationType.Arrow ? new[] { "None", "OpenArrow" } : null,
+    };
+
+    /// <summary>
+    /// The shape being drawn as it will look once added, for the preview that follows the pointer:
+    /// the tool's colour, line width (in points), dash and line endings, through
+    /// <paramref name="points"/> (normalized). Its box is the whole page, so
+    /// <see cref="AnnotationModel.ShapeGeometry"/> at the page's drawn size puts it where it is
+    /// drawn. It is not added to the document. Null when no shape tool is on.
+    /// </summary>
+    public AnnotationModel? ShapePreviewModel(IReadOnlyList<Point> points)
+    {
+        if (ActiveAnnotationTool is not { } tool || !IsLineTool(tool) && !IsClickShapeTool(tool)) return null;
+        var model = NewShapeModel(tool, 0);
+        model.SetGeometry(new Rect(0, 0, 1, 1), Array.Empty<Rect>());
+        model.Vertices = points.Select(Clamp01).ToList();
         return model;
     }
 

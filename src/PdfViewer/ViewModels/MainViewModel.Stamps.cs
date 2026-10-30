@@ -206,12 +206,17 @@ public partial class MainViewModel
             (w, h) = PdfStamps.DefaultSize(choice.Label, choice.Dynamic);
         }
 
+        // Upright as the page is shown: turned with the page's /Rotate and the view's turn (Ctrl+R).
+        int upright = UprightTurn(page);
+        double rotation = PdfStamps.NormalizeDegrees(StampRotation + upright);
         var centre = NativeDocumentServices.ToPage(normCentre, crop);
         if (normBox is { Width: > 0, Height: > 0 } box)
         {
             var a = NativeDocumentServices.ToPage(box.TopLeft, crop);
             var b = NativeDocumentServices.ToPage(box.BottomRight, crop);
             double bw = Math.Abs(b.X - a.X), bh = Math.Abs(b.Y - a.Y);
+            // The box is dragged as the page is shown: on a quarter-turned page its width on screen is its height on the page.
+            if (upright is 90 or 270) (bw, bh) = (bh, bw);
             if (bw >= 8 && bh >= 8)
             {
                 centre = new PdfPoint((a.X + b.X) / 2, (a.Y + b.Y) / 2);
@@ -227,14 +232,14 @@ public partial class MainViewModel
                 }
             }
         }
-        var rect = PdfStamps.RotatedBounds(centre, w, h, StampRotation);
+        var rect = PdfStamps.RotatedBounds(centre, w, h, rotation);
         var model = new AnnotationModel
         {
             PageNumber = page,
             Type = AnnotationType.Stamp,
             StampName = choice.Name,
             StampSubtitle = identity != null ? PdfStamps.DynamicLine(identity, DateTime.Now) : null,
-            StampRotation = StampRotation,
+            StampRotation = rotation,
             StampSize = new Size(w, h),
             StampImage = choice.Custom is { IsPdf: false } ? file : null,
             StampPdf = choice.Custom is { IsPdf: true } ? file : null,
@@ -253,6 +258,24 @@ public partial class MainViewModel
         model.StampPreview = await RenderStampPreviewAsync(model, rect);
         return model;
     }
+
+    /// <summary>
+    /// How far a new stamp or text box on <paramref name="page"/> is turned, in degrees
+    /// counter-clockwise (0, 90, 180 or 270), to read upright as the page is shown: the page's own
+    /// /Rotate plus the view's turn (View, Rotate). Acrobat makes them upright in a turned view too.
+    /// </summary>
+    public int UprightTurn(int page) =>
+        page >= 1 && page <= Pages.Count ? PdfEngine.Vector.Annotations.PdfAnnotation.QuarterTurn(Pages[page - 1].OverlayRotationAngle) : 0;
+
+    /// <summary>
+    /// The /Rotate of a new text box on <paramref name="page"/>: in a turned view, the turn that
+    /// makes it read upright there (<see cref="UprightTurn"/>); otherwise null, and the engine
+    /// turns it with the page's own /Rotate as it always has.
+    /// </summary>
+    public int? NewTextBoxRotation(int page) =>
+        page >= 1 && page <= Pages.Count && PdfEngine.Vector.Annotations.PdfAnnotation.QuarterTurn(Pages[page - 1].RotationAngle) != 0
+            ? UprightTurn(page)
+            : null;
 
     /// <summary>
     /// The stamp as the engine draws it into the document, at about twice screen resolution, with

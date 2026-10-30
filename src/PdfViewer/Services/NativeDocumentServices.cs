@@ -282,6 +282,7 @@ internal sealed class NativeDocumentServices
             // opacity, clouds and /RD) until it is changed; only then does the overlay draw it.
             if (type is AnnotationType.Rectangle or AnnotationType.Ellipse) model.HasOwnAppearance = a.HasAppearance;
         }
+        if (type == AnnotationType.FreeText) model.TextRotation = a.TextRotation;
         if (type == AnnotationType.Stamp)
         {
             model.StampName = a.Icon ?? "Draft";
@@ -601,6 +602,8 @@ internal sealed class NativeDocumentServices
             var c = Rgb(m.ColorHex);
             a.Color = null;
             a.DefaultAppearance = $"/Helv 11 Tf 0 0 0 rg {F(c[0])} {F(c[1])} {F(c[2])} RG";
+            // Made in a turned view: turned to read upright there (/Rotate, as Acrobat writes it).
+            a.TextRotation = m.TextRotation;
         }
         return a;
     }
