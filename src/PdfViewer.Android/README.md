@@ -4,8 +4,9 @@ An Android app that runs **the project's own C# PDF engine, `PdfEngine.Vector`, 
 and draws pages with the same portable Skia renderer (`PdfEngine.Vector.Skia`) as the browser
 demo. One pure-C# engine runs on Windows, in the browser and on Android.
 
-Status: **phase 2 of the reader** (a preview, prepared for Google Play: docs/android-release.md): phase 1 reads, phase 2 fills forms
-and annotates. It builds, and it has been run on an Android 13 emulator (see
+Status: **a preview, in a Google Play closed test** (see docs/android-release.md). Phase 1 reads,
+phase 2 fills forms and annotates. Later changes add shapes, text boxes, stamps and **Save** into
+the opened file. It builds, and it has been run on an Android 13 emulator (see
 [what is verified](#what-is-verified)). It has not been run on a physical phone yet.
 
 - **No permissions at all.** The manifest has no `INTERNET` permission and no storage
@@ -286,8 +287,8 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 
 - `tests/PdfEngine.Vector.Tests/PlatformGuardTests.cs`: Android simulated on Windows (font folder,
   alias catalog, threads), family aliases in `Match`, `FindFamily` and `Fallbacks`, the alias
-  table covering every family that substitution asks for, and CFF faces in the Android catalog
-  only.
+  table covering every family that substitution asks for, and CFF faces in the Android and
+  desktop catalogs.
 - `tests/PdfEngine.Vector.Tests/CffSubstituteFontTests.cs` and
   `tests/PdfEngine.Vector.Skia.Tests/CffSubstituteRenderTests.cs`: a CFF font built in code
   (as Noto Sans CJK) is loaded, shaped, measured, embedded as a CFF subset and drawn back.

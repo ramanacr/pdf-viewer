@@ -5,6 +5,6 @@
 | Where the PDF is rendered | In the reader's browser (WebAssembly) | In the reader's browser |
 | Events | Only to the callbacks of your page; nothing is sent anywhere | To your callbacks; optional Adobe Analytics |
 | Embed modes | Full window, sized container, in line, light box | The same |
-| Annotations, comments, save | Highlight, underline, strike-through, note, free text, ink, rectangle, ellipse; annotation manager; XFDF; `SAVE_API` | Available, with more types |
+| Annotations, comments, save | Highlight, underline, strike-through, note, free text, ink, rectangle, ellipse, line, arrow, polygon, connected lines (with fill, dash and line endings), standard stamps; annotation manager; XFDF; `SAVE_API` | Available, with more types |
 | Forms | Fill text, check box, radio, combo and list fields; calculations without JavaScript | Available |
 | Licence | MIT, open source | Adobe terms |
