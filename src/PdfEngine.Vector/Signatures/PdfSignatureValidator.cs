@@ -199,11 +199,13 @@ public static partial class PdfSignatureValidator
         var online = options.OnlineRevocation is { } source ? new PdfLtv.Fetcher(source, cancellationToken) : null;
 
         var results = new List<PdfSignatureCheck>();
+        var signatureChecks = new SignatureCheckCache(); // shared by the change analyses of all the signatures
         foreach (var (field, sig, range) in signed.OrderBy(s => s.Range.Length == 4 ? s.Range[2] + s.Range[3] : long.MaxValue))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var fieldLock = FieldLock(sig, doc.Resolver.Resolve(field.ObjectNumber) as PdfDictionary, doc.Resolver);
-            results.Add(await CheckAsync(file, password, field, sig, range, fieldLock, revisionEnds, certification, options.Roots, material, online, cancellationToken).ConfigureAwait(false));
+            results.Add(await CheckAsync(file, password, field, sig, range, fieldLock, revisionEnds, certification, options.Roots, material, online,
+                signatureChecks, cancellationToken).ConfigureAwait(false));
         }
         await ArchiveLevelsAsync(file, password, results, cancellationToken).ConfigureAwait(false);
         return results;
@@ -290,7 +292,7 @@ public static partial class PdfSignatureValidator
 
     private static async Task<PdfSignatureCheck> CheckAsync(byte[] file, string? password, PdfFormField field, PdfDictionary sig, long[] range,
         (string Action, string[] Fields)? fieldLock, IReadOnlyList<long> revisionEnds, int? certification, X509Certificate2Collection? roots, ValidationMaterial material,
-        PdfLtv.Fetcher? online, CancellationToken ct)
+        PdfLtv.Fetcher? online, SignatureCheckCache signatureChecks, CancellationToken ct)
     {
         string subFilter = sig.GetName("SubFilter") ?? string.Empty;
         var widget = field.Widgets.FirstOrDefault();
@@ -394,7 +396,7 @@ public static partial class PdfSignatureValidator
         bool lockBroken = false, unverifiable = false;
         if (!whole && integrity)
         {
-            var report = await ChangeReportAsync(file, (int)end, password, ct).ConfigureAwait(false);
+            var report = await ChangeReportAsync(file, (int)end, password, ct, signatureChecks).ConfigureAwait(false);
             later = report.Changes;
             unverifiable = report.Unverifiable;
             // FieldMDP: the fields this signature locks may not change, whatever else may.
