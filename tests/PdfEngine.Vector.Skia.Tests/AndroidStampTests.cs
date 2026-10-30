@@ -282,10 +282,9 @@ public class AndroidStampTests
         Assert.True(StartsWith(file!, signed));
         var check = Assert.Single(await PdfSignatureValidator.ValidateAsync(file!));
         Assert.True(check.IntegrityValid, "the signed revision itself is intact");
-        // Known gap (README): the stamp's appearance embeds its font, and this app's validator
-        // currently reports that as a later content change, so the verdict is "modified after
-        // signing" rather than "valid with permitted changes". Tracked separately.
-        Assert.Equal(PdfSignatureVerdict.ModifiedAfterSigning, check.Verdict);
+        // The stamp, its appearance and the font that appearance embeds are a comment, which level 3 permits.
+        Assert.Equal(PdfSignatureVerdict.ValidWithPermittedChanges, check.Verdict);
+        Assert.Equal(PdfLaterChanges.Annotations, check.LaterChanges);
         // The saved file opens, with the stamp.
         Assert.Contains(await ReadBack(file!), a => a is { Kind: ViewerAnnotationKind.Stamp, StampName: "Approved" });
     }

@@ -202,7 +202,8 @@ public static partial class PdfSignatureValidator
         foreach (var (field, sig, range) in signed.OrderBy(s => s.Range.Length == 4 ? s.Range[2] + s.Range[3] : long.MaxValue))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await CheckAsync(file, password, field, sig, range, revisionEnds, certification, options.Roots, material, online, cancellationToken).ConfigureAwait(false));
+            var fieldLock = FieldLock(sig, doc.Resolver.Resolve(field.ObjectNumber) as PdfDictionary, doc.Resolver);
+            results.Add(await CheckAsync(file, password, field, sig, range, fieldLock, revisionEnds, certification, options.Roots, material, online, cancellationToken).ConfigureAwait(false));
         }
         await ArchiveLevelsAsync(file, password, results, cancellationToken).ConfigureAwait(false);
         return results;
@@ -288,7 +289,7 @@ public static partial class PdfSignatureValidator
     }
 
     private static async Task<PdfSignatureCheck> CheckAsync(byte[] file, string? password, PdfFormField field, PdfDictionary sig, long[] range,
-        IReadOnlyList<long> revisionEnds, int? certification, X509Certificate2Collection? roots, ValidationMaterial material,
+        (string Action, string[] Fields)? fieldLock, IReadOnlyList<long> revisionEnds, int? certification, X509Certificate2Collection? roots, ValidationMaterial material,
         PdfLtv.Fetcher? online, CancellationToken ct)
     {
         string subFilter = sig.GetName("SubFilter") ?? string.Empty;
@@ -390,8 +391,14 @@ public static partial class PdfSignatureValidator
         bool whole = end >= file.Length - 2 || file.AsSpan((int)end).Trim(" \r\n\t\0"u8).IsEmpty;
         int revision = whole ? revisionEnds.Count : Math.Max(1, revisionEnds.Count(e => e <= end + 2));
         var later = PdfLaterChanges.None;
+        bool lockBroken = false;
         if (!whole && integrity)
-            later = await LaterChangesAsync(file, (int)end, password, ct).ConfigureAwait(false);
+        {
+            var report = await ChangeReportAsync(file, (int)end, password, ct).ConfigureAwait(false);
+            later = report.Changes;
+            // FieldMDP: the fields this signature locks may not change, whatever else may.
+            lockBroken = fieldLock is { } locked && LockedFieldChanged(locked, report);
+        }
 
         // Trust, at the time the signature was made (a trusted timestamp's time wins over the claimed one).
         // The chain may use the certificates the document's DSS holds, and, with online checks, issuers fetched for it.
@@ -479,10 +486,19 @@ public static partial class PdfSignatureValidator
                 _ => string.Empty,
             };
         }
+        else if (lockBroken)
+        {
+            verdict = PdfSignatureVerdict.ModifiedAfterSigning;
+            summary = "The document was changed after it was signed: a form field this signature locked was filled in or changed ("
+                      + Describe(later) + "). The signed revision itself is intact.";
+        }
         else if (Permitted(later, level))
         {
             verdict = PdfSignatureVerdict.ValidWithPermittedChanges;
             summary = "The signed revision is intact. Later, the document was " + Describe(later) + ", which this signature permits.";
+            // ISO 32000-2 12.8.2.2 lets comments be added over signed content: permitted, but worth saying.
+            if (later.HasFlag(PdfLaterChanges.Annotations))
+                summary += " Comments and stamps added later can cover what was signed; the signed revision shows the document as it was signed.";
         }
         else
         {
@@ -614,115 +630,6 @@ public static partial class PdfSignatureValidator
         return (PdfSignatureTrust.Untrusted, detail, elements);
     }
 
-    /// <summary>
-    /// What later revisions changed: every object whose definition differs between the signed
-    /// revision and the final file, classified by what it is.
-    /// </summary>
-    internal static async Task<PdfLaterChanges> LaterChangesAsync(byte[] file, int revisionEnd, string? password, CancellationToken ct)
-    {
-        PdfVectorDocument before;
-        try
-        {
-            before = await PdfVectorDocument.OpenAsync(file.AsSpan(0, revisionEnd).ToArray(), password: password, cancellationToken: ct).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return PdfLaterChanges.Other; // the signed revision cannot be read on its own
-        }
-        using (before)
-        using (var after = await PdfVectorDocument.OpenAsync(file, password: password, cancellationToken: ct).ConfigureAwait(false))
-        {
-            var rb = before.Resolver;
-            var ra = after.Resolver;
-            var appearances = AppearanceObjects(after);
-            var dssBefore = DssObjects(before);
-            var dssAfter = DssObjects(after);
-            int beforeRoot = (before.XrefTable.Trailer?["Root"] as PdfIndirectRef)?.ObjectNumber ?? -1;
-            int afterRoot = (after.XrefTable.Trailer?["Root"] as PdfIndirectRef)?.ObjectNumber ?? -1;
-            var changes = PdfLaterChanges.None;
-            if (beforeRoot != afterRoot) return PdfLaterChanges.Other;
-
-            foreach (var (number, entry) in after.XrefTable.Entries)
-            {
-                if (!entry.IsInUse) continue;
-                before.XrefTable.Entries.TryGetValue(number, out var old);
-                if (old.IsInUse && old.ByteOffset == entry.ByteOffset && old.CompressedStreamObjectNumber == entry.CompressedStreamObjectNumber
-                    && old.CompressedStreamIndex == entry.CompressedStreamIndex && old.GenerationNumber == entry.GenerationNumber)
-                    continue; // same definition
-                var now = ra.Resolve(number);
-                var was = old.IsInUse ? rb.Resolve(number) : null;
-                if (now == null) continue;
-                if (was != null && Same(was, now, rb, ra, 0)) continue; // rewritten, but the same (writers reorder keys, recompress streams)
-                changes |= Classify(number, was, now, afterRoot, appearances, after, dssBefore, dssAfter);
-                if (changes.HasFlag(PdfLaterChanges.Other)) return changes;
-            }
-            // Pages that disappeared, or were reordered, are content changes.
-            if (before.PageCount != after.PageCount) changes |= PdfLaterChanges.Other;
-            return changes;
-        }
-    }
-
-    private static PdfLaterChanges Classify(int number, PdfObject? was, PdfObject now, int root, HashSet<int> appearances, PdfVectorDocument after,
-        HashSet<int> dssBefore, HashSet<int> dssAfter)
-    {
-        var dict = now as PdfDictionary ?? (now as PdfStream)?.Dictionary;
-        string? type = dict?.GetName("Type");
-        string? subtype = dict?.GetName("Subtype");
-
-        if (type is "XRef" or "ObjStm") return PdfLaterChanges.None;
-        if (type is "Sig" or "DocTimeStamp" || dict?["ByteRange"] != null)
-            return was == null && IsDocTimestamp(dict) ? PdfLaterChanges.DocumentTimestamp : PdfLaterChanges.Signatures;
-        // Validation data: objects of the DSS that are new, or were validation data already. An
-        // existing object of any other kind does not become harmless by being listed in the DSS.
-        if (dssAfter.Contains(number) && (was == null || dssBefore.Contains(number))) return PdfLaterChanges.ValidationData;
-        if (type == "Metadata" || subtype == "XML") return PdfLaterChanges.Metadata;
-        if (number == root && was is PdfDictionary oldRoot && dict != null)
-            return SameExcept(oldRoot, dict, "AcroForm", "DSS", "Metadata", "Perms", "NeedsRendering") ? PdfLaterChanges.None : PdfLaterChanges.Other;
-        if (type == "Page" && was is PdfDictionary oldPage && dict != null)
-        {
-            if (!SameExcept(oldPage, dict, "Annots")) return PdfLaterChanges.Other;
-            return AnnotsChange(oldPage["Annots"], dict["Annots"], after);
-        }
-        if (dict?["Fields"] != null && was is PdfDictionary oldForm && FormGainedOnlyTimestamps(oldForm, dict, after))
-            return PdfLaterChanges.DocumentTimestamp;
-        if (subtype == "Widget" || dict?["FT"] != null || dict?["Fields"] != null || IsFieldNode(dict))
-            return dict?.GetName("FT") == "Sig" && was == null
-                ? IsInvisibleTimestampField(dict, after.Resolver) ? PdfLaterChanges.DocumentTimestamp : PdfLaterChanges.Signatures
-                : PdfLaterChanges.FormFields;
-        if (type == "Annot" || subtype is "Text" or "FreeText" or "Line" or "Square" or "Circle" or "Polygon" or "PolyLine" or "Highlight"
-                or "Underline" or "Squiggly" or "StrikeOut" or "Stamp" or "Caret" or "Ink" or "Popup" or "FileAttachment")
-            return PdfLaterChanges.Annotations;
-        if (appearances.Contains(number)) return PdfLaterChanges.FormFields; // a widget's or annotation's appearance
-        if (now is PdfArray && IsAnnotsArray(number, after)) return AnnotsChange(was, now, after);
-        if (IsInfoDictionary(number, after)) return PdfLaterChanges.Metadata;
-        return PdfLaterChanges.Other;
-    }
-
-    /// <summary>What a page's changed /Annots added or removed: widgets are form (or signature) changes, anything else is commenting.</summary>
-    private static PdfLaterChanges AnnotsChange(PdfObject? before, PdfObject? after, PdfVectorDocument doc)
-    {
-        if (Same(before, after, null, null, 0)) return PdfLaterChanges.None;
-        var r = doc.Resolver;
-        var old = before as PdfArray;
-        var now = r.Resolve(after) as PdfArray;
-        if (now == null) return PdfLaterChanges.Annotations;
-        var changes = PdfLaterChanges.None;
-        var oldItems = old?.Items ?? (IReadOnlyList<PdfObject>)Array.Empty<PdfObject>();
-        foreach (var item in now)
-        {
-            if (oldItems.Any(o => Same(o, item, null, null, 0))) continue;
-            var annot = r.Resolve(item) as PdfDictionary;
-            changes |= annot?.GetName("Subtype") == "Widget"
-                ? annot.GetName("FT") == "Sig"
-                    ? IsInvisibleTimestampField(annot, r) ? PdfLaterChanges.DocumentTimestamp : PdfLaterChanges.Signatures
-                    : PdfLaterChanges.FormFields
-                : PdfLaterChanges.Annotations;
-        }
-        if (oldItems.Count > 0 && oldItems.Any(o => !now.Any(n => Same(o, n, null, null, 0))))
-            changes |= PdfLaterChanges.Annotations; // something was removed
-        return changes;
-    }
-
     private static bool IsDocTimestamp(PdfDictionary? sig) =>
         sig != null && (sig.GetName("Type") == "DocTimeStamp" || sig.GetName("SubFilter") == "ETSI.RFC3161");
 
@@ -739,26 +646,6 @@ public static partial class PdfSignatureValidator
         double Num(int i) => r.Resolve(rect[i]) is PdfObject o && o.TryGetNumber(out double v) ? v : 0;
         return Math.Abs(Num(2) - Num(0)) < 1e-6 || Math.Abs(Num(3) - Num(1)) < 1e-6;
     }
-
-    /// <summary>The form dictionary changed only by gaining invisible document timestamp fields (and signature flags).</summary>
-    private static bool FormGainedOnlyTimestamps(PdfDictionary before, PdfDictionary after, PdfVectorDocument doc)
-    {
-        if (!SameExcept(before, after, "Fields", "SigFlags")) return false;
-        var r = doc.Resolver;
-        var oldFields = (before["Fields"] as PdfArray)?.Items ?? (IReadOnlyList<PdfObject>)Array.Empty<PdfObject>();
-        if (r.Resolve(after["Fields"]) is not PdfArray newFields) return false;
-        if (oldFields.Any(o => !newFields.Any(n => Same(o, n, null, null, 0)))) return false; // a field was removed
-        bool added = false;
-        foreach (var item in newFields)
-        {
-            if (oldFields.Any(o => Same(o, item, null, null, 0))) continue;
-            if (!IsInvisibleTimestampField(r.Resolve(item) as PdfDictionary, r)) return false;
-            added = true;
-        }
-        return added;
-    }
-
-    private static bool IsFieldNode(PdfDictionary? d) => d != null && d["T"] != null && (d["Kids"] != null || d["Parent"] != null) && d["Type"] == null;
 
     private static bool SameExcept(PdfDictionary a, PdfDictionary b, params string[] keys)
     {
@@ -823,71 +710,6 @@ public static partial class PdfSignatureValidator
             if (!Same(x.Entries[k], y.Entries[k], ra, rb, depth + 1)) return false;
         return true;
     }
-
-    /// <summary>Object numbers of every annotation appearance stream (and state dictionaries) in the document.</summary>
-    private static HashSet<int> AppearanceObjects(PdfVectorDocument doc)
-    {
-        var set = new HashSet<int>();
-        var r = doc.Resolver;
-        foreach (var page in doc.PageTree.Pages)
-        {
-            if (page.Dictionary["Annots"] is PdfIndirectRef annotsRef) set.Add(annotsRef.ObjectNumber);
-            if (r.Resolve(page.Dictionary["Annots"]) is not PdfArray annots) continue;
-            foreach (var a in annots)
-            {
-                if (r.Resolve(a) is not PdfDictionary annot || annot["AP"] is not { } apObj) continue;
-                if (apObj is PdfIndirectRef apRef) set.Add(apRef.ObjectNumber);
-                if (r.Resolve(apObj) is not PdfDictionary ap) continue;
-                foreach (var key in new[] { "N", "R", "D" })
-                {
-                    var entry = ap[key];
-                    if (entry is PdfIndirectRef er) set.Add(er.ObjectNumber);
-                    if (r.Resolve(entry) is PdfDictionary states)
-                        foreach (var s in states.Entries.Values)
-                            if (s is PdfIndirectRef sr) set.Add(sr.ObjectNumber);
-                }
-            }
-        }
-        return set;
-    }
-
-    private static bool IsAnnotsArray(int number, PdfVectorDocument doc) =>
-        doc.PageTree.Pages.Any(p => p.Dictionary["Annots"] is PdfIndirectRef a && a.ObjectNumber == number);
-
-    private static bool IsInfoDictionary(int number, PdfVectorDocument doc) =>
-        doc.XrefTable.Trailer?["Info"] is PdfIndirectRef info && info.ObjectNumber == number;
-
-    /// <summary>
-    /// Object numbers of the Document Security Store: the DSS dictionary, its arrays, its VRI
-    /// dictionary and entries, and the certificate, OCSP, CRL and timestamp streams they list.
-    /// </summary>
-    private static HashSet<int> DssObjects(PdfVectorDocument doc)
-    {
-        var set = new HashSet<int>();
-        var r = doc.Resolver;
-        if (r.Resolve(doc.XrefTable.Trailer?["Root"]) is not PdfDictionary root) return set;
-        void Note(PdfObject? o) { if (o is PdfIndirectRef ir) set.Add(ir.ObjectNumber); }
-        void Lists(PdfDictionary d, params string[] keys)
-        {
-            foreach (var key in keys)
-            {
-                Note(d[key]);
-                if (r.Resolve(d[key]) is PdfArray list) foreach (var item in list) Note(item);
-            }
-        }
-        Note(root["DSS"]);
-        if (r.Resolve(root["DSS"]) is not PdfDictionary dss) return set;
-        Lists(dss, "Certs", "OCSPs", "CRLs");
-        Note(dss["VRI"]);
-        if (r.Resolve(dss["VRI"]) is PdfDictionary vri)
-            foreach (var entry in vri.Entries.Values)
-            {
-                Note(entry);
-                if (r.Resolve(entry) is PdfDictionary e) Lists(e, "Cert", "OCSP", "CRL", "TS");
-            }
-        return set;
-    }
-
 
     /// <summary>Byte offsets just past each revision's %%EOF, in order.</summary>
     public static IReadOnlyList<long> RevisionEnds(byte[] file)
