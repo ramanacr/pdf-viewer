@@ -48,6 +48,7 @@ and annotates. It builds, and it has been run on an Android 13 emulator (see
 | Ink and notes | **✎** opens the annotation bar. Its tools scroll sideways; undo, redo, delete and close stay in place. **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. |
 | Shapes | **Rectangle**, **Ellipse**, **Line** and **Arrow**: drag with one finger from one corner (or end) to the other; two fingers still zoom, and the page does not scroll while the tool is on. A drag shorter than 4 points adds nothing. Red, 2 points wide, as in the web viewer; an arrow is a line with `/LE [/None /OpenArrow]`. |
 | Text boxes | **Text**: tap where the box goes, then type. Black 12-point Helvetica on no background, at most 220 points wide and as tall as its text. The box is sized with the fonts and line wrap that the saved appearance uses, so no line is cut off; on a turned page the text reads upright as shown. Tap the box to change its text; the box fits the new text. Text with a character that no font on the device can draw is refused with a message (see limits). |
+| Stamps | **Stamp**: choose one from the list, then tap where it goes. The list is the engine's stamps (`PdfStamps`): Approved, Completed, Confidential, Draft, Final, For Comment, For Public Release, Information Only, Not Approved, Not For Public Release, Preliminary Results, Received, Reviewed, Revised, Void, Expired, Top Secret and As Is, then the dynamic ones (Approved, Confidential, Received, Reviewed, Revised) with a second line "By *name* at 10:42, 25 Oct 2026". The name is asked once (or with **Your name…** in the list) and kept in the app's private preferences (backups are off); it goes into the document only. The stamp is centred on the tap at the engine's usual size for its label, kept on the page, and saved as `/Subtype /Stamp` with its `/Name` and the engine's designed appearance; on a turned page the appearance is turned by its form's `/Matrix`, so the stamp reads upright as shown. Tap it to choose it; **Delete**, undo and redo work as for other annotations. Stamps cannot be moved or resized yet. |
 | Choose, edit, delete | Tap an annotation to choose it (outlined); a note (or any annotation with text) opens its comment to read or change. **Delete** removes the chosen one with its replies. |
 | Undo and redo | **↶** and **↷** in the annotation bar, for every annotation change (the store keeps 100 steps). |
 | Annotation list | **⋮ → Annotations**: every annotation with its page, kind and the start of its text, replies under the annotation they answer; tap one to go to it. |
@@ -258,7 +259,8 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 3. **Selection** is on one page at a time, and the view does not scroll by itself while a handle
    is dragged to the edge. No floating copy toolbar: the bar over the pages holds the actions.
 4. **Not in the app:** printing, a document properties view, and these annotation tools of the web
-   viewer: polygons, connected lines, stamps, replies, moving an annotation, colours, XFDF. Text
+   viewer: polygons, connected lines, picture stamps, replies, moving or resizing an annotation (stamps too), colours,
+   XFDF. Text
    with a character that no font on the device has is refused with a message. CFF2 (variable CFF)
    fonts are not used for new text.
 5. **Recent files** lists only files with a persistable grant (the document picker gives one);
@@ -275,6 +277,10 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 7. **Markup needs a text selection**, so a document that does not allow copying cannot be
    highlighted. A note's icon is 20 points, a small target at fit width. With the draw tool on,
    one finger only draws: scrolling needs the tool off.
+8. **Stamps and text boxes on signed files.** They are saved as an incremental update, so the
+   signed revision's bytes do not change. But this app's signature check may currently report a
+   certified or approval-signed file as "modified after signing" after a stamp or text box is
+   added. This is tracked separately.
 
 ## Tests
 
@@ -300,6 +306,12 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
   and highlights made from touches and read back from the saved file, rectangles, ellipses,
   lines, arrows and text boxes saved with their appearance streams (short drags add nothing), editing and deleting a file's
   own annotation, undo and redo, the annotation list, and one save at a time.
+- `tests/PdfEngine.Vector.Skia.Tests/AndroidStampTests.cs`: the stamp tool's list, every standard stamp
+  placed with a tap and saved (Save a copy) as `/Stamp` with its `/Name` and appearance, dynamic stamps
+  with the name and date (refused without a name), stamps upright on pages turned 90, 180 and 270
+  degrees, kept on the page, undo, redo and delete, and a stamp saved into a certified file as an
+  incremental update after the unchanged signed revision (the current verdict is pinned; see known
+  gap 8).
 - `tests/PdfEngine.Vector.Skia.Tests/AndroidSaveTests.cs`: **Save** (`ViewerSaveBack`): nothing
   to save, no write access, a file changed since it was opened (and replacing it), one save at a
   time, the bytes written being the file as opened plus an incremental update, the dirty state

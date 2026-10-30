@@ -386,6 +386,56 @@ public sealed class ViewerEditSession
         return layout;
     }
 
+    /// <summary>The longest name a dynamic stamp shows (its second line stays within <see cref="ViewerAnnotationStore.MaxStampSubtitleLength"/>).</summary>
+    public const int MaxStampSignerLength = 48;
+
+    /// <summary>
+    /// The stamps a reader can place: the engine's standard stamps (<see cref="PdfStamps.Standard"/>),
+    /// then its dynamic stamps (<see cref="PdfStamps.Dynamic"/>), which add who stamped and when.
+    /// </summary>
+    public static IReadOnlyList<PdfStandardStamp> Stamps { get; } = [.. PdfStamps.Standard, .. PdfStamps.Dynamic];
+
+    /// <summary>
+    /// A stamp centred on a point of the shown page, at the engine's usual size for its label
+    /// (<see cref="PdfStamps.DefaultSize"/>), kept on the page and upright as the page is shown (on
+    /// a page with /Rotate its appearance is turned by its form's /Matrix). A dynamic stamp needs
+    /// <paramref name="signer"/>: its second line names them and <paramref name="when"/> (now when
+    /// null), and they are its author. The name stays in the document; nothing is sent anywhere.
+    /// </summary>
+    public ViewerAnnotation AddStamp(int page, ViewerPoint at, PdfStandardStamp stamp, string? signer = null, DateTime? when = null)
+    {
+        ArgumentNullException.ThrowIfNull(stamp);
+        var g = Geometry(page);
+        if (!Stamps.Contains(stamp)) throw new ViewerAnnotationException("That is not one of the viewer's stamps.");
+        if (!Finite(at)) throw new ViewerAnnotationException("Tap on the page where the stamp goes.");
+        string? subtitle = null;
+        string author = Author;
+        if (stamp.Dynamic)
+        {
+            string name = new string((signer ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+            if (name.Length == 0) throw new ViewerAnnotationException("A stamp with a name and date needs your name.");
+            if (name.Length > MaxStampSignerLength) name = name[..MaxStampSignerLength].TrimEnd();
+            subtitle = PdfStamps.DynamicLine(name, when ?? DateTime.Now);
+            author = name;
+        }
+        var (w, h) = PdfStamps.DefaultSize(stamp.Label, stamp.Dynamic);
+        w = Math.Min(w, g.ShownWidth);
+        h = Math.Min(h, g.ShownHeight);
+        var p = OnPage(at, g);
+        var rect = new ViewerRect(Math.Clamp(p.X - w / 2, 0, g.ShownWidth - w), Math.Clamp(p.Y - h / 2, 0, g.ShownHeight - h), w, h);
+        var a = New(ViewerAnnotationKind.Stamp, page, ClampBox(g.ToUser(rect), g), null) with
+        {
+            StampName = stamp.Name,
+            StampSubtitle = subtitle,
+            StampTurn = g.Rotation is 90 or 180 or 270 ? g.Rotation : 0,
+            Author = author,
+        };
+        return Add(a);
+    }
+
+    /// <summary>The text a stamp shows ("APPROVED"), from its /Name; "STAMP" for a name the viewer does not offer.</summary>
+    public static string StampLabel(string name) => Stamps.FirstOrDefault(s => s.Name == name)?.Label ?? "STAMP";
+
     private static bool Finite(ViewerPoint p) => double.IsFinite(p.X) && double.IsFinite(p.Y);
 
     private static ViewerPoint OnPage(ViewerPoint p, ViewerPageGeometry g) => new(Math.Clamp(p.X, 0, g.ShownWidth), Math.Clamp(p.Y, 0, g.ShownHeight));
@@ -499,7 +549,9 @@ public sealed class ViewerEditSession
         var result = new List<ViewerAnnotationListItem>();
         void Add(ViewerAnnotation a, int level)
         {
-            result.Add(new ViewerAnnotationListItem(a, level, Label(a.Kind), Summary(a.Contents)));
+            // A stamp without a comment is listed by what it shows.
+            string summary = a.Kind == ViewerAnnotationKind.Stamp && string.IsNullOrWhiteSpace(a.Contents) ? StampLabel(a.StampName) : Summary(a.Contents);
+            result.Add(new ViewerAnnotationListItem(a, level, Label(a.Kind), summary));
             // The store keeps threads within the depth limit; the level check is a second guard.
             if (level < ViewerAnnotationStore.MaxReplyDepth)
                 foreach (var r in replies[a.Id]) Add(r, level + 1);

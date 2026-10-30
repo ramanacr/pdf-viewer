@@ -35,6 +35,9 @@ public sealed class ViewerAnnotationStore
     public const int MaxContentsLength = PdfAnnotationLimits.MaxContentsLength;
 
     public const int MaxAuthorLength = PdfAnnotationLimits.MaxTextLength;
+
+    /// <summary>The longest second line of a stamp (a dynamic stamp's name, time and date).</summary>
+    public const int MaxStampSubtitleLength = 80;
     public const int MaxIdLength = 200;
     public const int MaxQuads = PdfAnnotationLimits.MaxQuads;
     public const int MaxInkStrokes = PdfAnnotationLimits.MaxInkStrokes;
@@ -337,6 +340,11 @@ public sealed class ViewerAnnotationStore
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": dashPattern is for squares, circles, lines, polygons and polylines: 1 to {ViewerAnnotationPdf.MaxDashCount} numbers from 0 to {ViewerAnnotationPdf.MaxDashLength}, not all 0.");
         if (a.Kind == ViewerAnnotationKind.Stamp ? !ViewerAnnotationPdf.IsStampName(a.StampName) : a.StampName.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a stamp needs a stampName, such as Approved or Draft.");
+        bool stamp = a.Kind == ViewerAnnotationKind.Stamp;
+        if (a.StampTurn is not (0 or 90 or 180 or 270) || !stamp && a.StampTurn != 0)
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp has a turn, and it is 0, 90, 180 or 270 degrees.");
+        if (a.StampSubtitle != null && (!stamp || a.StampSubtitle.Length > MaxStampSubtitleLength || a.StampSubtitle.Any(char.IsControl)))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp has a second line, one line of at most {MaxStampSubtitleLength} characters.");
         if (a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo.Length is 0 or > MaxIdLength || a.InReplyTo == a.Id : a.InReplyTo.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a reply (and only a reply) answers another annotation.");
     }

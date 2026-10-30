@@ -1,4 +1,5 @@
 Preview 0.2.
 • New annotation tools: rectangles, ellipses, lines, arrows and text boxes.
+• Stamps: Approved, Draft, Confidential and more, also with your name and date.
 • Text boxes can hold Chinese, Japanese and Korean text.
 • Save: your edits are written back into the file you opened, when Android allows it (otherwise save a copy). Signatures stay valid.
