@@ -27,6 +27,7 @@ namespace VectorPdf.Tool;
 /// vectorpdf textsearch &lt;file.pdf&gt; [--query q]   whole-document search, native against PDFium
 /// vectorpdf texthash &lt;dir&gt; --out f.txt   per-page fingerprint of the native text pages (to compare builds)
 /// vectorpdf autotag &lt;dir&gt; [--limit N] [--render-pages N] [--out report.jsonl]   Make Accessible on untagged files: success, text and render equality, PDF/UA failures left
+/// vectorpdf sampledoc [out.pdf] [--preview dir] [--dpi N]   writes samples/SampleDocument.pdf (the app's sample) with the engine's create API; renders its pages to PNG
 /// </summary>
 public static class Program
 {
@@ -70,6 +71,7 @@ public static class Program
             "services" => await ServicesSmoke.RunAsync(args),
             "autotag" => await AutoTagSmoke.RunAsync(args),
             "autotag-show" when args.Length >= 4 => await AutoTagSmoke.ShowAsync(args),
+            "sampledoc" => await SampleDocument.RunAsync(args),
             _ => 2,
         };
     }

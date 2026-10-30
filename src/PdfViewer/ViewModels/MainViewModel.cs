@@ -429,26 +429,42 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     public async Task OpenSampleDocumentAsync()
     {
-        string samplePath = FindSampleDocumentPath();
-        if (!File.Exists(samplePath))
+        string? samplePath = FindSampleDocumentPath();
+        if (samplePath == null)
         {
-            samplePath = SamplePdfGenerator.GenerateSamplePdf(samplePath);
+            // The installed app (installer, portable or Store) carries the sample in its assembly:
+            // write a fresh copy where the user can save changes to it.
+            samplePath = SamplePdfGenerator.DefaultPath;
+            try
+            {
+                SamplePdfGenerator.GenerateSamplePdf(samplePath);
+            }
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && File.Exists(samplePath))
+            {
+                // The copy is open in another tab or window: open that one.
+            }
         }
         await OpenRequestedDocumentAsync(samplePath);
     }
 
-    private static string FindSampleDocumentPath()
+    /// <summary>samples/SampleDocument.pdf of a source checkout, or a copy next to the app; null when there is none.</summary>
+    private static string? FindSampleDocumentPath()
     {
-        var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-        while (dir != null)
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        for (var dir = new DirectoryInfo(baseDir); dir != null; dir = dir.Parent)
         {
             if (File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx")))
             {
-                return Path.Combine(dir.FullName, "samples", "SampleDocument.pdf");
+                string checkout = Path.Combine(dir.FullName, "samples", "SampleDocument.pdf");
+                if (File.Exists(checkout)) return checkout;
+                break;
             }
-            dir = dir.Parent;
         }
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "samples", "SampleDocument.pdf");
+        foreach (string candidate in new[] { Path.Combine(baseDir, "samples", "SampleDocument.pdf"), Path.Combine(baseDir, "SampleDocument.pdf") })
+        {
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     [RelayCommand]

@@ -56,6 +56,26 @@ The corpus runner reads files locally. It writes one JSON line per file (SHA-256
 both engines, fallback reasons, pixel difference). No document content leaves the machine. See
 [eng/vectorpdf/corpus/README.md](https://github.com/ramanacr/pdf-viewer/blob/main/eng/vectorpdf/corpus/README.md).
 
+### The sample document
+
+`samples/SampleDocument.pdf` is the document that **File → Open Sample Demo Document** opens, and
+the Microsoft Store screenshots show it. It has seven pages: a cover, the features, charts and
+shapes, a table, a form, a page of text and a page of comments, with a bookmark for each. Code
+makes it with the engine's own API (`PdfDocumentWriter`, then `PdfAnnotationEditor`), in
+`eng/vectorpdf/tools/VectorPdf.Tool/SampleDocument.cs`. Do not edit the PDF by hand. Change the
+code and make the file again:
+
+```powershell
+dotnet run --project eng/vectorpdf/tools/VectorPdf.Tool -c Release -- sampledoc --preview preview
+```
+
+1. The command writes `samples/SampleDocument.pdf`. The same code always writes the same bytes.
+2. `--preview <folder>` also renders each page to a PNG file (`--dpi`, 110 by default). Look at
+   every page before you commit.
+3. The app embeds the file (`src/PdfViewer/PdfViewer.csproj`), so build the app again.
+   `tests/PdfViewer.Tests/SampleDocumentTests.cs` checks the pages, outline, form and comments,
+   and that the embedded copy is the same file.
+
 ## Package the Windows app
 
 Use PowerShell 7. The script stops under Windows PowerShell 5.1.
@@ -73,7 +93,7 @@ The script writes these files to `publish\`:
 | `System.Speech.dll` | The Read Aloud optional component |
 | `sbom.cyclonedx.json`, `sbom.spdx.json` | The software bill of materials |
 | `THIRD_PARTY_NOTICES.md` | The licences of what ships |
-| `SampleDocument.pdf` | A sample document |
+| `SampleDocument.pdf` | The sample document (File → Open Sample Demo Document). The app also carries it inside, see [The sample document](#the-sample-document) |
 
 The script builds with `-p:PdfiumRenderer=false`, so the payload has no PDFium. It signs the app
 and the installer when a signing certificate is present (see
