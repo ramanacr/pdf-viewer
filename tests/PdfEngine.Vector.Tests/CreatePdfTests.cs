@@ -411,6 +411,61 @@ public class CreatePdfTests
         Assert.Equal(new[] { "Pictures", "Text" }, (await doc.GetBookmarksAsync()).Select(b => b.Title));
     }
 
+    /// <summary>
+    /// Page and catalog entries of the caller's (an annotation, an outline) are written with the
+    /// writer's own, and a fixed date writes the same bytes every time.
+    /// </summary>
+    [Fact]
+    public async Task TheWriter_AddsPageAndCatalogEntries_AndAFixedDateIsReproducible()
+    {
+        static byte[] Write()
+        {
+            using var ms = new MemoryStream();
+            using (var w = new PdfDocumentWriter(ms))
+            {
+                int annot = w.Reserve(), outline = w.Reserve(), item = w.Reserve();
+                int page = w.AddPage(200, 100, Encoding.ASCII.GetBytes("0 0 1 rg 10 10 50 50 re f"),
+                    new PdfDictionary(new Dictionary<string, PdfObject>()),
+                    new Dictionary<string, PdfObject>
+                    {
+                        ["Annots"] = new PdfArray(new PdfObject[] { new PdfIndirectRef(annot) }),
+                        ["MediaBox"] = new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(0), new PdfInteger(9), new PdfInteger(9) }),
+                    });
+                PdfArray Rect(params int[] v) => new(v.Select(n => (PdfObject)new PdfInteger(n)).ToList());
+                w.Write(annot, new PdfDictionary(new Dictionary<string, PdfObject>
+                {
+                    ["Type"] = new PdfName("Annot"), ["Subtype"] = new PdfName("Square"), ["Rect"] = Rect(5, 5, 65, 65),
+                    ["C"] = new PdfArray(new PdfObject[] { new PdfInteger(1), new PdfInteger(0), new PdfInteger(0) }), ["P"] = new PdfIndirectRef(page),
+                }));
+                w.Write(item, new PdfDictionary(new Dictionary<string, PdfObject>
+                {
+                    ["Title"] = PdfObjectWriter.TextString("Start"), ["Parent"] = new PdfIndirectRef(outline),
+                    ["Dest"] = new PdfArray(new PdfObject[] { new PdfIndirectRef(page), new PdfName("Fit") }),
+                }));
+                w.Write(outline, new PdfDictionary(new Dictionary<string, PdfObject>
+                {
+                    ["Type"] = new PdfName("Outlines"), ["First"] = new PdfIndirectRef(item), ["Last"] = new PdfIndirectRef(item), ["Count"] = new PdfInteger(1),
+                }));
+                w.Finish(new PdfCreateInfo { Title = "Entries", Date = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc) },
+                    new Dictionary<string, PdfObject> { ["Outlines"] = new PdfIndirectRef(outline), ["Type"] = new PdfName("NotACatalog") });
+            }
+            return ms.ToArray();
+        }
+
+        byte[] first = Write();
+        Assert.Equal(first, Write());
+        string written = Encoding.Latin1.GetString(first);
+        Assert.True(written.Contains("D:20260102030405+00'00'", StringComparison.Ordinal)
+            || written.Contains(Convert.ToHexString(Encoding.ASCII.GetBytes("D:20260102030405")), StringComparison.OrdinalIgnoreCase),
+            "the fixed date is written as /CreationDate");
+
+        using var doc = await PdfVectorDocument.OpenAsync(first);
+        var info = await doc.GetPageInfoAsync(1);
+        Assert.Equal(200, info.WidthPoints, 3); // the writer's /MediaBox wins over the caller's
+        Assert.Equal("Start", Assert.Single(await doc.GetBookmarksAsync()).Title);
+        Assert.Equal("Square", Assert.Single(PdfEngine.Vector.Annotations.PdfAnnotationReader.Read(doc, 1)).Subtype);
+    }
+
     [Fact]
     public async Task TheWriter_StreamsToANonSeekableOutput_AndRefusesAnEmptyDocument()
     {

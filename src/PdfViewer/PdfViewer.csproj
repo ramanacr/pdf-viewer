@@ -45,6 +45,8 @@
     <Resource Include="assets\app_icon.png" />
     <Resource Include="assets\pdf_file.ico" />
     <Resource Include="assets\pdf_file.png" />
+    <!-- The sample document (SamplePdfGenerator): carried inside the app so every build opens the same one. -->
+    <EmbeddedResource Include="..\..\samples\SampleDocument.pdf" LogicalName="PdfViewer.SampleDocument.pdf" Link="samples\SampleDocument.pdf" />
   </ItemGroup>
 
   <ItemGroup>
