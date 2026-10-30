@@ -278,10 +278,6 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 7. **Markup needs a text selection**, so a document that does not allow copying cannot be
    highlighted. A note's icon is 20 points, a small target at fit width. With the draw tool on,
    one finger only draws: scrolling needs the tool off.
-8. **Stamps and text boxes on signed files.** They are saved as an incremental update, so the
-   signed revision's bytes do not change. But this app's signature check may currently report a
-   certified or approval-signed file as "modified after signing" after a stamp or text box is
-   added. This is tracked separately.
 
 ## Tests
 
