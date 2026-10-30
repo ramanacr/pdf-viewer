@@ -337,7 +337,7 @@ internal sealed class NativeDocumentServices
     private static string LoadedColorHex(PdfAnnotation a, AnnotationType type)
     {
         var colour = PdfAnnotation.ToRgb(a.Color) ?? (a.Subtype == "FreeText" ? StrokeOf(a.DefaultAppearance) : null);
-        return colour is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b)
+        return colour is var (r, g, b) ? PdfAnnotationService.Hex(r, g, b)
             : IsVertexShapeType(type) ? "#00000000"
             : "#FF32CD32";
     }
@@ -349,7 +349,7 @@ internal sealed class NativeDocumentServices
 
     /// <summary>An /IC or /C colour as #RRGGBB; null for none.</summary>
     private static string? HexOf(double[]? colour) =>
-        PdfAnnotation.ToRgb(colour) is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b) : null;
+        PdfAnnotation.ToRgb(colour) is var (r, g, b) ? PdfAnnotationService.Hex(r, g, b) : null;
 
     /// <summary>
     /// The dash of an annotation's border as read: /BS /S /D with its /D (the standard's [3] when
@@ -703,7 +703,7 @@ internal sealed class NativeDocumentServices
 
     /// <summary>#RRGGBB or #AARRGGBB; lime green when it is neither, as the PDFium path wrote it.</summary>
     private static double[] Rgb(string? hex) =>
-        PdfNativeAnnotationService.ParseHex(hex) ?? new[] { 50 / 255.0, 205 / 255.0, 50 / 255.0 };
+        PdfAnnotationService.ParseHex(hex) ?? new[] { 50 / 255.0, 205 / 255.0, 50 / 255.0 };
 
     private static string F(double v) => PdfObjectWriter.FormatReal(Math.Round(v, 4));
 

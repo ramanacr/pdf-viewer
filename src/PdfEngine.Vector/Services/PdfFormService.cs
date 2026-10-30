@@ -17,7 +17,7 @@ public sealed record PdfFormImportResult(int Applied, IReadOnlyList<string> Unkn
 /// Interactive forms without PDFium: fields as the viewer models them, values set with their
 /// appearances regenerated (<see cref="PdfFormFiller"/>), reset, form data exported and imported
 /// as XFDF (ISO 19444-1) or FDF (ISO 32000-2 12.7.8), and flattening. Every change is committed to
-/// the <see cref="PdfNativeDocument"/> as one incremental update, so signatures on earlier
+/// the <see cref="PdfEditableDocument"/> as one incremental update, so signatures on earlier
 /// revisions stay valid.
 /// </summary>
 /// <remarks>
@@ -26,13 +26,13 @@ public sealed record PdfFormImportResult(int Applied, IReadOnlyList<string> Unkn
 /// them; fields with custom scripts are filled as given. Calculated fields are recalculated in the
 /// form's calculation order (/CO) after every change.
 /// </remarks>
-public sealed class PdfNativeFormService : IPdfFormService
+public sealed class PdfFormService : IPdfFormService
 {
     // ------------------------------------------------------------------ reading
 
     public ValueTask<IReadOnlyList<FormFieldModel>> GetFormFieldsAsync(IPdfDocument document, int pageNumber, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
+        var doc = PdfVectorEngine.Require(document);
         cancellationToken.ThrowIfCancellationRequested();
         if (pageNumber < 1 || pageNumber > doc.PageCount)
             throw new ArgumentOutOfRangeException(nameof(pageNumber), $"Page {pageNumber} is outside the document's {doc.PageCount} pages.");
@@ -122,7 +122,7 @@ public sealed class PdfNativeFormService : IPdfFormService
 
     public ValueTask SetFieldValueAsync(IPdfDocument document, string fieldName, string value, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
+        var doc = PdfVectorEngine.Require(document);
         if (string.IsNullOrEmpty(fieldName)) throw new ArgumentException("Field name must be supplied.", nameof(fieldName));
         cancellationToken.ThrowIfCancellationRequested();
         SetValues(doc, new[] { (fieldName, (IReadOnlyList<string>)new[] { value ?? string.Empty }) }, validate: true);
@@ -136,7 +136,7 @@ public sealed class PdfNativeFormService : IPdfFormService
     /// field's own rules apply (a refused value throws <see cref="PdfFieldValidationException"/>);
     /// calculated fields are recalculated either way. Returns the full names of the fields changed.
     /// </summary>
-    public static IReadOnlyList<string> SetValues(PdfNativeDocument doc, IEnumerable<(string Name, IReadOnlyList<string> Values)> values, bool validate)
+    public static IReadOnlyList<string> SetValues(PdfEditableDocument doc, IEnumerable<(string Name, IReadOnlyList<string> Values)> values, bool validate)
     {
         var form = PdfAcroForm.Read(doc.Vector) ?? throw new KeyNotFoundException("The document has no form fields.");
         return Commit(doc, form, Changes(form, values), validate);
@@ -255,7 +255,7 @@ public sealed class PdfNativeFormService : IPdfFormService
     }
 
     /// <summary>Writes the changes (and the recalculated fields) as one revision of the document.</summary>
-    private static IReadOnlyList<string> Commit(PdfNativeDocument doc, PdfAcroForm form, List<PdfFieldChange> changes, bool validate)
+    private static IReadOnlyList<string> Commit(PdfEditableDocument doc, PdfAcroForm form, List<PdfFieldChange> changes, bool validate)
     {
         if (changes.Count == 0) return Array.Empty<string>();
         var prepared = Prepared(form, changes, validate);
@@ -293,7 +293,7 @@ public sealed class PdfNativeFormService : IPdfFormService
 
     public ValueTask ResetFormAsync(IPdfDocument document, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
+        var doc = PdfVectorEngine.Require(document);
         cancellationToken.ThrowIfCancellationRequested();
         Reset(doc);
         return ValueTask.CompletedTask;
@@ -304,7 +304,7 @@ public sealed class PdfNativeFormService : IPdfFormService
     /// read-only goes back to its default (/DV), or empty / off when it has none. Returns the
     /// fields changed.
     /// </summary>
-    public static IReadOnlyList<string> Reset(PdfNativeDocument doc, IReadOnlyCollection<string>? onlyFields = null)
+    public static IReadOnlyList<string> Reset(PdfEditableDocument doc, IReadOnlyCollection<string>? onlyFields = null)
     {
         var form = PdfAcroForm.Read(doc.Vector);
         if (form == null) return Array.Empty<string>();
@@ -329,15 +329,15 @@ public sealed class PdfNativeFormService : IPdfFormService
 
     public async ValueTask ExportFormDataXfdfAsync(IPdfDocument document, string targetXfdfPath, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
+        var doc = PdfVectorEngine.Require(document);
         cancellationToken.ThrowIfCancellationRequested();
         var xfdf = ExportXfdf(doc.Vector, Path.GetFileName(doc.FilePath));
-        await PdfNativeEngine.WriteAsync(targetXfdfPath, Encoding.UTF8.GetBytes(xfdf), cancellationToken).ConfigureAwait(false);
+        await PdfVectorEngine.WriteAsync(targetXfdfPath, Encoding.UTF8.GetBytes(xfdf), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask ImportFormDataXfdfAsync(IPdfDocument document, string sourceXfdfPath, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
+        var doc = PdfVectorEngine.Require(document);
         if (!File.Exists(sourceXfdfPath)) throw new FileNotFoundException($"Form data file not found: {sourceXfdfPath}", sourceXfdfPath);
         byte[] data = await File.ReadAllBytesAsync(sourceXfdfPath, cancellationToken).ConfigureAwait(false);
         Import(doc, data);
@@ -346,9 +346,9 @@ public sealed class PdfNativeFormService : IPdfFormService
     /// <summary>Writes the form data as FDF (12.7.8): the field hierarchy with each value.</summary>
     public async ValueTask ExportFormDataFdfAsync(IPdfDocument document, string targetFdfPath, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
+        var doc = PdfVectorEngine.Require(document);
         cancellationToken.ThrowIfCancellationRequested();
-        await PdfNativeEngine.WriteAsync(targetFdfPath, ExportFdf(doc.Vector, Path.GetFileName(doc.FilePath)), cancellationToken).ConfigureAwait(false);
+        await PdfVectorEngine.WriteAsync(targetFdfPath, ExportFdf(doc.Vector, Path.GetFileName(doc.FilePath)), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Fields that carry form data: every field except push buttons and signatures.</summary>
@@ -448,7 +448,7 @@ public sealed class PdfNativeFormService : IPdfFormService
     /// does not have, and read-only ones, are skipped and reported; the rest are set in one
     /// revision, as given (no keystroke rules), and calculated fields recalculated.
     /// </summary>
-    public static PdfFormImportResult Import(PdfNativeDocument doc, byte[] data)
+    public static PdfFormImportResult Import(PdfEditableDocument doc, byte[] data)
     {
         var values = LooksLikeFdf(data) ? ReadFdf(data) : ReadXfdf(data);
         var form = PdfAcroForm.Read(doc.Vector) ?? throw new KeyNotFoundException("The document has no form fields.");
@@ -579,11 +579,11 @@ public sealed class PdfNativeFormService : IPdfFormService
 
     public async ValueTask FlattenFormFieldsAsync(IPdfDocument document, string targetPath, CancellationToken cancellationToken = default)
     {
-        var doc = PdfNativeEngine.Require(document);
-        PdfNativeEngine.RefuseOriginal(doc, targetPath, "A flattened form");
+        var doc = PdfVectorEngine.Require(document);
+        PdfVectorEngine.RefuseOriginal(doc, targetPath, "A flattened form");
         cancellationToken.ThrowIfCancellationRequested();
         byte[] bytes = Flatten(doc.Vector, doc.Bytes);
-        await PdfNativeEngine.WriteAsync(targetPath, bytes, cancellationToken).ConfigureAwait(false);
+        await PdfVectorEngine.WriteAsync(targetPath, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

@@ -247,7 +247,7 @@ public class EmbedSafetyTests
     private static async Task<byte[]> Fill(byte[] pdf, params (string Name, IReadOnlyList<string> Values)[] values)
     {
         using var doc = await PdfVectorDocument.OpenAsync(pdf);
-        return PdfNativeFormService.Fill(doc, pdf, values, validate: true).Bytes;
+        return PdfFormService.Fill(doc, pdf, values, validate: true).Bytes;
     }
 
     [Fact]
@@ -281,9 +281,9 @@ public class EmbedSafetyTests
         await Fill(pdf, ("zip", ["12345"]));
         var zip = await Assert.ThrowsAsync<ArgumentException>(() => Fill(pdf, ("zip", ["123456"])));
         Assert.Contains("at most 5 characters", zip.Message);
-        await Fill(pdf, ("notes", [new string('x', PdfNativeFormService.MaxValueLength)]));
-        await Assert.ThrowsAsync<ArgumentException>(() => Fill(pdf, ("notes", [new string('x', PdfNativeFormService.MaxValueLength + 1)])));
-        var many = Enumerable.Repeat(("notes", (IReadOnlyList<string>)["x"]), PdfNativeFormService.MaxChanges + 1).ToArray();
+        await Fill(pdf, ("notes", [new string('x', PdfFormService.MaxValueLength)]));
+        await Assert.ThrowsAsync<ArgumentException>(() => Fill(pdf, ("notes", [new string('x', PdfFormService.MaxValueLength + 1)])));
+        var many = Enumerable.Repeat(("notes", (IReadOnlyList<string>)["x"]), PdfFormService.MaxChanges + 1).ToArray();
         await Assert.ThrowsAsync<ArgumentException>(() => Fill(pdf, many));
     }
 

@@ -44,7 +44,7 @@ public class PageArrangementAndAttachmentTests : IDisposable
 #if PDFIUM_RENDERER
         TestEngines.Pdfium => new PdfEngine.Pdfium.Adapters.PdfiumAttachmentService(),
 #endif
-        _ => new PdfNativeAttachmentService(),
+        _ => new PdfAttachmentService(),
     };
 
     /// <summary>
@@ -233,7 +233,7 @@ public class PageArrangementAndAttachmentTests : IDisposable
     [InlineData("", false)]
     public void TestExecutableAttachmentNamesAreRecognised(string name, bool expected)
     {
-        Assert.Equal(expected, PdfNativeAttachmentService.IsExecutableName(name));
+        Assert.Equal(expected, PdfAttachmentService.IsExecutableName(name));
 #if PDFIUM_RENDERER
         Assert.Equal(expected, PdfEngine.Pdfium.Adapters.PdfiumAttachmentService.IsExecutableName(name));
 #endif

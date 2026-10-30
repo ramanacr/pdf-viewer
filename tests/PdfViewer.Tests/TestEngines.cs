@@ -71,23 +71,23 @@ internal static class TestEngines
 
 /// <summary>
 /// <see cref="IPdfEngine"/> over the vector engine, for tests: documents are opened as
-/// <see cref="PdfNativeDocument"/> for the native document services, and text and pages are read
-/// from the document's current revision (its <see cref="PdfNativeDocument.Vector"/>), the way the
+/// <see cref="PdfEditableDocument"/> for the native document services, and text and pages are read
+/// from the document's current revision (its <see cref="PdfEditableDocument.Vector"/>), the way the
 /// viewer reads them in Auto mode.
 /// </summary>
 internal sealed class NativeTestEngine : IPdfEngine
 {
-    private readonly PdfNativeEngine _native;
+    private readonly PdfVectorEngine _native;
 
     public NativeTestEngine()
     {
         Renderer = new NativeRenderer();
         TextService = new NativeText();
-        _native = new PdfNativeEngine(Renderer);
+        _native = new PdfVectorEngine(Renderer);
     }
 
     public string EngineName => _native.EngineName;
-    public string EngineVersion => typeof(PdfNativeEngine).Assembly.GetName().Version?.ToString() ?? "0";
+    public string EngineVersion => typeof(PdfVectorEngine).Assembly.GetName().Version?.ToString() ?? "0";
 
     public async ValueTask<IPdfDocument> OpenDocumentAsync(string filePath, string? password = null, CancellationToken cancellationToken = default) =>
         await _native.OpenDocumentAsync(filePath, password, cancellationToken).ConfigureAwait(false);
@@ -104,14 +104,14 @@ internal sealed class NativeTestEngine : IPdfEngine
     public IPdfPageOrganizerService PageOrganizer => _native.PageOrganizer;
     public IPdfRedactionService RedactionService => _native.RedactionService;
 
-    public PdfNativeAttachmentService AttachmentService => _native.AttachmentService;
-    public PdfNativeSafetyInspector SafetyInspector => _native.SafetyInspector;
-    public PdfNativeSanitizer Sanitizer => _native.Sanitizer;
+    public PdfAttachmentService AttachmentService => _native.AttachmentService;
+    public PdfSafetyInspector SafetyInspector => _native.SafetyInspector;
+    public PdfSanitizer Sanitizer => _native.Sanitizer;
 
     public void Dispose() { }
 
     /// <summary>The document's current parse: a native document is read through its vector document.</summary>
-    internal static IPdfDocument Current(IPdfDocument document) => document is PdfNativeDocument native ? native.Vector : document;
+    internal static IPdfDocument Current(IPdfDocument document) => document is PdfEditableDocument native ? native.Vector : document;
 
     private sealed class NativeRenderer : IPdfRenderer
     {
