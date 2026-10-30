@@ -609,14 +609,20 @@ public sealed partial class Viewer
             }
             case ViewerAnnotationKind.Stamp:
             {
-                // The stamp's usual size, centred on the click and kept on the page.
+                // The stamp's usual size, centred on the click and kept on the page. On a turned page the
+                // stamp turns with it, so it reads upright as the page is shown.
                 var stamp = PdfStamps.Standard.FirstOrDefault(s => s.Name == _stampName) ?? PdfStamps.Standard[0];
                 var (sw, sh) = PdfStamps.DefaultSize(stamp.Label, dynamic: false);
                 var (sx, sy) = Shown(0);
                 sw = Math.Min(sw, width);
                 sh = Math.Min(sh, height);
                 var rect = new ViewerRect(Math.Clamp(sx - sw / 2, 0, width - sw), Math.Clamp(sy - sh / 2, 0, height - sh), sw, sh);
-                a = NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g)) with { StampName = stamp.Name, Color = ViewerAnnotationPdf.DefaultColor(kind) };
+                a = NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g)) with
+                {
+                    StampName = stamp.Name,
+                    StampTurn = g.Rotation is 90 or 180 or 270 ? g.Rotation : 0,
+                    Color = ViewerAnnotationPdf.DefaultColor(kind),
+                };
                 break;
             }
             case ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine:
