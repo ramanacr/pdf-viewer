@@ -125,11 +125,11 @@ public partial class SignatureChangeClassificationTests
         Assert.Equal(PdfSignatureVerdict.ModifiedAfterSigning, check.Verdict);
     }
 
-    // Many signature fields with distinct values, each needing a check over the whole file: past the cap, the changes are unverifiable.
+    // Many signature fields with distinct values that all claim to cover the file: none is the signature of a revision.
     [Fact]
-    public async Task TooManySignaturesToCheck_IsUnverifiable_NotValid()
+    public async Task ManyFakeSignatureFields_AreNotSigning()
     {
-        const int fakes = SignatureCheckCacheMax + 6;
+        const int fakes = 70;
         byte[] signed = await Sign(FormPdfFixture.Build(), 2);
         byte[] forged;
         using (var doc = await PdfVectorDocument.OpenAsync(signed))
@@ -157,10 +157,10 @@ public partial class SignatureChangeClassificationTests
         forged = Encoding.Latin1.GetBytes(text);
         var check = (await PdfSignatureValidator.ValidateAsync(forged)).Single(c => c.CertificationLevel == 2);
         Assert.Equal(PdfSignatureVerdict.ModifiedAfterSigning, check.Verdict);
-        Assert.Contains("could not be checked", check.Summary);
+        Assert.False(check.LaterChanges.HasFlag(PdfLaterChanges.Signatures), "no fake is a signing");
     }
 
-    private const int SignatureCheckCacheMax = 64;
+    private const int SignatureCheckCacheMax = 1024;
 
     [Fact]
     public void SignatureCheckCap_IsTheOneTested() => Assert.Equal(SignatureCheckCacheMax, PdfSignatureValidator.SignatureCheckCache.MaxChecks);

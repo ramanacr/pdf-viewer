@@ -44,12 +44,15 @@ public static partial class PdfSignatureValidator
         {
             using var before = await PdfVectorDocument.OpenAsync(file.AsSpan(0, revisionEnd).ToArray(), password: password, cancellationToken: ct).ConfigureAwait(false);
             using var after = await PdfVectorDocument.OpenAsync(file, password: password, cancellationToken: ct).ConfigureAwait(false);
+            // The revisions the later signatures signed, worked out once per file.
+            await signatures.PrepareAsync(file, password,
+                SignedFields(after).Where(s => s.Range.Length == 4).Select(s => s.Range[2] + s.Range[3]).Where(e => e > revisionEnd), ct).ConfigureAwait(false);
             bool repairedBefore = before.WasRepaired, repairedAfter = after.WasRepaired;
             // The budget grows with the file: a legitimate file is never too large to check, a crafted one cannot run away.
             long limit = Math.Max(2_000_000, Math.Max(64L * (before.XrefTable.Entries.Count + after.XrefTable.Entries.Count), file.LongLength / 4));
             var budget = new WorkBudget(ct, limit);
             var beforeMap = new UsageMap(before, null, budget);
-            var afterMap = new UsageMap(after, beforeMap, budget, file, revisionEnd, signatures);
+            var afterMap = new UsageMap(after, beforeMap, budget, revisionEnd, signatures);
             var report = new RevisionDiff(beforeMap, afterMap, budget).Run();
             // A cross-reference table rebuilt while reading means the entries compared were not the ones read.
             if (before.WasRepaired != repairedBefore || after.WasRepaired != repairedAfter) return PdfChangeReport.Unreadable;
@@ -66,22 +69,179 @@ public static partial class PdfSignatureValidator
     }
 
     /// <summary>
-    /// The signature checks made while analysing one file's changes, shared by the analyses of all
-    /// its signatures: each signature value is verified once. A file that would need more checks
-    /// than <see cref="MaxChecks"/> cannot be analysed (its changes are unverifiable).
+    /// The signing revisions of one file, worked out once and shared by the analyses of all its
+    /// signatures. A file whose signatures end at more than <see cref="MaxChecks"/> places, or
+    /// whose signature checks would hash too much, cannot be analysed (its changes are unverifiable).
     /// </summary>
     internal sealed class SignatureCheckCache
     {
-        public const int MaxChecks = 64;
-        public readonly Dictionary<string, bool> Results = new(StringComparer.Ordinal);
+        public const int MaxChecks = 1024;
+        /// <summary>By byte range end: the revision that signature signed, or null when it is not a signing revision.</summary>
+        internal readonly Dictionary<long, SigningRevision?> Revisions = new();
+        private long _hashed;
+
+        internal async Task PrepareAsync(byte[] file, string? password, IEnumerable<long> ends, CancellationToken ct)
+        {
+            foreach (long end in ends.Distinct())
+            {
+                if (Revisions.ContainsKey(end)) continue;
+                if (Revisions.Count >= MaxChecks) throw new InvalidOperationException("The document holds too many signatures to check.");
+                Revisions[end] = await SigningRevisionAsync(file, password, end, this, ct).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>Counts bytes hashed to check signatures; past a limit that grows with the file, the file is not checked.</summary>
+        internal void Hashed(long bytes, long fileLength)
+        {
+            _hashed += bytes;
+            if (_hashed > Math.Max(1L << 30, 256L * fileLength)) throw new InvalidOperationException("The document's signatures cover too much to check.");
+        }
     }
 
-    /// <summary>A signature dictionary's /ByteRange when it is four non-negative integers in order starting at 0, else null.</summary>
-    private static long[]? SignatureRange(PdfDictionary sig, Parsing.PdfObjectResolver r, long fileLength)
+    /// <summary>An object as a signature signed it: a stream by its dictionary and the hash of its decoded data, anything else as itself.</summary>
+    internal sealed class SignedObject
     {
-        if (r.Resolve(sig["ByteRange"]) is not PdfArray br || br.Count != 4) return null;
-        var range = br.Select(o => r.Resolve(o) is PdfObject v && v.TryGetInteger(out long n) ? n : -1).ToArray();
-        return range[0] != 0 || range.Any(v => v < 0) || range[1] > range[2] || range[2] + range[3] > fileLength ? null : range;
+        private readonly PdfObject? _object;
+        private readonly PdfDictionary? _streamDictionary;
+        private readonly byte[]? _streamHash;
+
+        public SignedObject(PdfObject? obj, Parsing.PdfObjectResolver r)
+        {
+            if (obj is PdfStream s)
+            {
+                _streamDictionary = s.Dictionary;
+                _streamHash = SHA256.HashData(r.DecodeStream(s));
+            }
+            else _object = obj;
+        }
+
+        public bool Matches(PdfObject? now, Parsing.PdfObjectResolver r)
+        {
+            if (_streamDictionary == null) return now is not PdfStream && Same(_object, now, null, null, 0);
+            if (now is not PdfStream s || !SameEntries(_streamDictionary, s.Dictionary, null, null, 0, "Length", "Filter", "DecodeParms", "DL")) return false;
+            try { return SHA256.HashData(r.DecodeStream(s)).AsSpan().SequenceEqual(_streamHash); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { return false; }
+        }
+    }
+
+    /// <summary>
+    /// A signing revision: the revision a signature signed, as its signer saw it (the file up to
+    /// the end of its byte range). It holds the one signature field whose new signature dictionary
+    /// (with /ByteRange and /Contents written directly) has its value in that revision's gap and
+    /// verifies; and the objects that make up that field, as signed: the field, its widgets, the
+    /// signature dictionary and the appearances.
+    /// </summary>
+    internal sealed class SigningRevision
+    {
+        public int Holder, Value;
+        public readonly Dictionary<int, SignedObject> Objects = new();
+    }
+
+    private static async Task<SigningRevision?> SigningRevisionAsync(byte[] file, string? password, long end, SignatureCheckCache cache, CancellationToken ct)
+    {
+        if (end <= 0 || end > file.Length) return null;
+        // The signed bytes must end a revision: %%EOF, then only line ends.
+        int t = (int)end;
+        while (t > 0 && file[t - 1] is (byte)'\r' or (byte)'\n' or (byte)' ' or (byte)'\t' or 0) t--;
+        if (t < 5 || !file.AsSpan(t - 5, 5).SequenceEqual("%%EOF"u8)) return null;
+        long previous = RevisionEnds(file).Where(e => e <= t - 5).DefaultIfEmpty(0).Max();
+
+        PdfVectorDocument doc;
+        try
+        {
+            doc = await PdfVectorDocument.OpenAsync(file.AsSpan(0, (int)end).ToArray(), password: password, cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
+        {
+            return null;
+        }
+        using (doc)
+        {
+            var r = doc.Resolver;
+            var entries = doc.XrefTable.Entries;
+            long Offset(int number) =>
+                !entries.TryGetValue(number, out var e) || !e.IsInUse ? -1
+                : !e.IsCompressed ? e.ByteOffset
+                : entries.TryGetValue(e.CompressedStreamObjectNumber, out var s) && s.IsInUse && !s.IsCompressed ? s.ByteOffset : -1;
+
+            // The signature fields of the form, as the signer saw it, whose signature ends here.
+            var root = r.Resolve(doc.XrefTable.Trailer?["Root"]) as PdfDictionary;
+            var form = r.Resolve(root?["AcroForm"]) as PdfDictionary;
+            var candidates = new List<(int Holder, PdfDictionary Field, int Value, PdfDictionary Sig, long[] Range)>();
+            var holdersOfValue = new Dictionary<int, int>();
+            var visited = new HashSet<int>();
+            var stack = new Stack<(PdfObject Item, int Depth)>();
+            if (r.Resolve(form?["Fields"]) is PdfArray fields) foreach (var f in fields) stack.Push((f, 0));
+            while (stack.Count > 0)
+            {
+                var (item, depth) = stack.Pop();
+                if (item is not PdfIndirectRef ir || depth > 32 || !visited.Add(ir.ObjectNumber) || visited.Count > 100_000) continue;
+                if (r.Resolve(ir) is not PdfDictionary field) continue;
+                if (field["V"] is PdfIndirectRef vr)
+                {
+                    holdersOfValue[vr.ObjectNumber] = holdersOfValue.GetValueOrDefault(vr.ObjectNumber) + 1;
+                    if (r.Resolve(vr) is PdfDictionary sig && sig["ByteRange"] is PdfArray { Count: 4 } br && br.All(o => o is PdfInteger)
+                        && br.Select(o => o.TryGetInteger(out long n) ? n : -1).ToArray() is { } range && range[2] + range[3] == end)
+                        candidates.Add((ir.ObjectNumber, field, vr.ObjectNumber, sig, range));
+                }
+                if (r.Resolve(field["Kids"]) is PdfArray kids) foreach (var k in kids) stack.Push((k, depth + 1));
+            }
+            if (candidates.Count != 1) return null;
+            var (holder, holderDict, value, sigDict, byteRange) = candidates[0];
+            if (holdersOfValue.GetValueOrDefault(value) != 1) return null;
+            // The value lies in this revision, inside its signature dictionary, which (with the field) this revision wrote.
+            if (byteRange[0] != 0 || byteRange[1] >= byteRange[2] || byteRange[1] <= previous || sigDict["Contents"] is not PdfString contents) return null;
+            if (!entries.TryGetValue(value, out var valueEntry) || !valueEntry.IsInUse || valueEntry.IsCompressed
+                || valueEntry.ByteOffset <= previous || valueEntry.ByteOffset >= byteRange[1])
+                return null;
+            if (Offset(holder) <= previous) return null;
+            // The gap holds this dictionary's /Contents (an encrypted file's strings are read decrypted, so there only the offsets are compared).
+            if (doc.Security == null && (ContentsFromGap(file, byteRange[1], byteRange[2], trim: false) is not { } gap
+                                         || !gap.AsSpan().SequenceEqual(contents.RawBytes.Span)))
+                return null;
+            cache.Hashed(byteRange[1] + byteRange[3], file.Length);
+            if (!SignatureIntact(file, sigDict, byteRange, new WorkBudget(ct, long.MaxValue))) return null;
+
+            var revision = new SigningRevision { Holder = holder, Value = value };
+            void Add(int number) { if (!revision.Objects.ContainsKey(number)) revision.Objects[number] = new SignedObject(r.Resolve(number), r); }
+            Add(holder);
+            Add(value);
+            // The widgets: the field itself, or its kids that are not fields; and everything their appearances refer to.
+            var widgets = new List<(int Number, PdfDictionary Dict)>();
+            if (r.Resolve(holderDict["Kids"]) is PdfArray widgetKids)
+            {
+                foreach (var k in widgetKids)
+                    if (k is PdfIndirectRef kr && r.Resolve(kr) is PdfDictionary kd && kd["T"] == null) widgets.Add((kr.ObjectNumber, kd));
+            }
+            else widgets.Add((holder, holderDict));
+            var seen = new HashSet<int>();
+            foreach (var (number, dict) in widgets)
+            {
+                Add(number);
+                var pending = new Stack<PdfObject>();
+                if (dict["AP"] is { } ap) pending.Push(ap);
+                while (pending.Count > 0)
+                {
+                    if (seen.Count > 100_000) return null;
+                    switch (pending.Pop())
+                    {
+                        case PdfIndirectRef ar:
+                            if (!seen.Add(ar.ObjectNumber)) continue;
+                            Add(ar.ObjectNumber);
+                            if (r.Resolve(ar) is { } resolved) pending.Push(resolved);
+                            continue;
+                        case PdfStream s: pending.Push(s.Dictionary); continue;
+                        case PdfDictionary d:
+                            foreach (var v in d.Entries.Values) if (v is PdfIndirectRef or PdfDictionary or PdfArray) pending.Push(v);
+                            continue;
+                        case PdfArray a:
+                            foreach (var v in a) if (v is PdfIndirectRef or PdfDictionary or PdfArray) pending.Push(v);
+                            continue;
+                    }
+                }
+            }
+            return revision;
+        }
     }
 
     /// <summary>What identifies a signature value: its byte range and the hash of its /Contents.</summary>
@@ -185,6 +345,7 @@ public static partial class PdfSignatureValidator
         public string? FieldName;             // the field's full name
         public PdfDictionary? Value;          // a signature field's signature dictionary
         public int ValueNumber = -1;
+        public int HolderNumber = -1;         // the field dictionary holding /V (itself or a parent); -1 when direct
         public Category Category;
     }
 
@@ -214,7 +375,6 @@ public static partial class PdfSignatureValidator
         private readonly WorkBudget _budget;
         private readonly HashSet<(int, int)> _walked = new();
 
-        private readonly byte[]? _file;
         private readonly long _signedEnd;
         private readonly SignatureCheckCache? _signatures;
         /// <summary>Signature values, by object and by value (byte range and contents): how many annotations or fields hold each.</summary>
@@ -225,17 +385,14 @@ public static partial class PdfSignatureValidator
         /// <summary>The form's default resources (/DR) and their category dictionaries, where they are their own objects.</summary>
         public readonly HashSet<int> ResourceDictionaries = new(), ResourceCategories = new();
 
-        /// <param name="file">The final file, for the map of the final revision: new signatures are checked against it.</param>
-        /// <param name="signedEnd">Where the signed revision ends: a new signature must cover more.</param>
-        /// <param name="signatures">Signature checks shared by the analyses of the file's signatures.</param>
-        public UsageMap(PdfVectorDocument doc, UsageMap? before, WorkBudget budget, byte[]? file = null, long signedEnd = 0,
-            SignatureCheckCache? signatures = null)
+        /// <param name="signedEnd">For the final revision's map: where the signed revision ends (a new signature must sign a later revision).</param>
+        /// <param name="signatures">For the final revision's map: the file's signing revisions.</param>
+        public UsageMap(PdfVectorDocument doc, UsageMap? before, WorkBudget budget, long signedEnd = 0, SignatureCheckCache? signatures = null)
         {
             Doc = doc;
             R = doc.Resolver;
             _before = before;
             _budget = budget;
-            _file = file;
             _signedEnd = signedEnd;
             _signatures = signatures;
             var trailer = doc.XrefTable.Trailer;
@@ -412,11 +569,17 @@ public static partial class PdfSignatureValidator
             var names = new List<string>();
             var seen = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
             PdfDictionary? node = d;
+            int nodeNumber = number;
             for (int depth = 0; node != null && depth < 32 && seen.Add(node); depth++)
             {
                 type ??= node.GetName("FT");
-                value ??= node["V"];
+                if (value == null && node["V"] is { } v)
+                {
+                    value = v;
+                    owner.HolderNumber = nodeNumber; // the field that holds the value
+                }
                 if (node["T"] is PdfString t) names.Add(t.AsDecodedString());
+                nodeNumber = node["Parent"] is PdfIndirectRef parent ? parent.ObjectNumber : -1;
                 node = R.Resolve(node["Parent"]) as PdfDictionary;
             }
             names.Reverse();
@@ -449,12 +612,11 @@ public static partial class PdfSignatureValidator
             // A copy of a signature the signed revision already held is not a new signature.
             string key = ValueKey(owner.Value);
             if (_before.SignatureValueKeys.Contains(key)) return Category.SignatureSigned;
-            // The signature value must be this field's alone, and the field must be part of what that signature signed.
+            // The signature value must be this field's alone.
             if ((owner.ValueNumber >= 0 && _holdersByObject.GetValueOrDefault(owner.ValueNumber) != 1) || _holdersByValue.GetValueOrDefault(key) != 1)
                 return Category.SignatureEmpty;
-            if (_file == null || SignatureRange(owner.Value, R, _file.LongLength) is not { } range || range[2] + range[3] <= _signedEnd
-                || !SignedWithItsSignature(owner, range) || !Intact(owner.Value, range, key))
-                return Category.SignatureEmpty;
+            // And the field must be the one its signature's own revision signed, as it was signed.
+            if (!SignedInItsRevision(owner)) return Category.SignatureEmpty;
             return IsInvisibleTimestampField(owner.Dict, R) && owner.Dict["A"] == null && owner.Dict["AA"] == null
                 ? Category.Timestamp
                 : Category.SignatureNew;
@@ -467,66 +629,23 @@ public static partial class PdfSignatureValidator
             return SignatureKey(br, sig, R);
         }
 
-        /// <summary>Whether a signature value verifies; each value is verified once per file, and only so many values per file.</summary>
-        private bool Intact(PdfDictionary sig, long[] range, string key)
-        {
-            var cache = _signatures!;
-            if (cache.Results.TryGetValue(key, out bool known)) return known;
-            if (cache.Results.Count >= SignatureCheckCache.MaxChecks)
-                throw new InvalidOperationException("The document holds too many signatures to check.");
-            bool intact = SignatureIntact(_file!, sig, range, _budget);
-            cache.Results[key] = intact;
-            return intact;
-        }
-
         /// <summary>
-        /// Whether the field, the fields above it, its signature dictionary and its appearance were
-        /// all written in the bytes its signature covers: before the end of its byte range, and not
-        /// in the gap that holds the signature value.
+        /// Whether the field is the one its signature's own revision signed (<see cref="SigningRevision"/>),
+        /// that revision comes after the signed one, and the field, its widgets, its signature
+        /// dictionary and its appearance are still what that signature signed (compared by content,
+        /// so an unchanged rewrite elsewhere in the file is no change).
         /// </summary>
-        private bool SignedWithItsSignature(Owner owner, long[] range)
+        private bool SignedInItsRevision(Owner owner)
         {
-            bool Covered(int number)
-            {
-                if (!Doc.XrefTable.Entries.TryGetValue(number, out var entry) || !entry.IsInUse) return false;
-                long offset = entry.ByteOffset;
-                if (entry.IsCompressed)
-                {
-                    if (!Doc.XrefTable.Entries.TryGetValue(entry.CompressedStreamObjectNumber, out var stream) || !stream.IsInUse || stream.IsCompressed) return false;
-                    offset = stream.ByteOffset;
-                }
-                return offset >= 0 && (offset < range[1] || (offset >= range[2] && offset < range[2] + range[3]));
-            }
-
-            if (!Covered(owner.Number) || (owner.ValueNumber >= 0 && !Covered(owner.ValueNumber))) return false;
-            var seen = new HashSet<int>();
-            for (var node = owner.Dict["Parent"]; node is PdfIndirectRef parent && seen.Count < 32 && seen.Add(parent.ObjectNumber);
-                 node = (R.Resolve(parent) as PdfDictionary)?["Parent"])
-                if (!Covered(parent.ObjectNumber)) return false;
-            // The appearance, and everything it refers to.
-            var visited = new HashSet<int>();
-            var stack = new Stack<PdfObject>();
-            if (owner.Dict["AP"] is { } ap) stack.Push(ap);
-            while (stack.Count > 0)
+            if (_signatures == null || owner.Value == null || owner.HolderNumber < 0) return false;
+            if (owner.Value["ByteRange"] is not PdfArray { Count: 4 } br || !br[2].TryGetInteger(out long b2) || !br[3].TryGetInteger(out long b3)) return false;
+            long end = b2 + b3;
+            if (end <= _signedEnd || !_signatures.Revisions.TryGetValue(end, out var revision) || revision == null) return false;
+            if (revision.Holder != owner.HolderNumber || revision.Value != owner.ValueNumber || !revision.Objects.ContainsKey(owner.Number)) return false;
+            foreach (var (number, signed) in revision.Objects)
             {
                 _budget.Step();
-                switch (stack.Pop())
-                {
-                    case PdfIndirectRef ir:
-                        if (Structural.Contains(ir.ObjectNumber) || !visited.Add(ir.ObjectNumber)) continue;
-                        if (!Covered(ir.ObjectNumber)) return false;
-                        if (R.Resolve(ir) is { } resolved) stack.Push(resolved);
-                        continue;
-                    case PdfStream s:
-                        stack.Push(s.Dictionary);
-                        continue;
-                    case PdfDictionary d:
-                        foreach (var value in d.Entries.Values) if (Refers(value)) stack.Push(value);
-                        continue;
-                    case PdfArray a:
-                        foreach (var item in a) if (Refers(item)) stack.Push(item);
-                        continue;
-                }
+                if (!InUse(number) || !signed.Matches(R.Resolve(number), R)) return false;
             }
             return true;
         }
