@@ -7,7 +7,7 @@ permalink: /features/
 
 This page lists what the Windows app (PDF Viewer Native) does, with its menus and keyboard
 shortcuts. For downloads and an overview, see the [README](https://github.com/ramanacr/pdf-viewer#readme).
-For the browser demo and the Android proof of concept, see their own READMEs
+For the browser demo and the Android app (a preview), see their own READMEs
 ([web](https://github.com/ramanacr/pdf-viewer/blob/main/src/PdfViewer.Web/README.md),
 [Android](https://github.com/ramanacr/pdf-viewer/blob/main/src/PdfViewer.Android/README.md)).
 
@@ -238,6 +238,13 @@ When a PDF names a font but does not embed it, the app draws the text with an in
   the text, or the font name.
 - Hyphenated font names such as `MS-Gothic,Bold` are recognised. ZapfDingbats is drawn with
   Segoe UI Symbol.
+- The app reads the fonts in `C:\Windows\Fonts` and the fonts installed for the current user only
+  (`%LOCALAPPDATA%\Microsoft\Windows\Fonts`). OpenType fonts with CFF outlines (`.otf`, for
+  example Source Han Sans) are read too.
+- Text that you type (text boxes, form fields, page text editing, signature appearances) can use
+  these fonts. A TrueType font is used first when it has the characters. An installed CFF font
+  is used only for characters that no TrueType fallback font has, and the app embeds only the
+  glyphs it uses. Installed CFF icon and symbol fonts are not used as fallback fonts.
 
 ## Windows integration
 

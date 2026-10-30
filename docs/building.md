@@ -182,7 +182,7 @@ src/
   PdfViewer/                   the WPF app
   PdfViewer.Web.Engine/        UI-free engine layer of the web demo and the Android app
   PdfViewer.Web/               the web demo (Blazor WebAssembly)
-  PdfViewer.Android/           the Android proof of concept (.NET for Android)
+  PdfViewer.Android/           the Android app (.NET for Android)
   Installer/                   the setup and uninstall program
 tests/
   PdfEngine.Vector.Tests/      engine tests

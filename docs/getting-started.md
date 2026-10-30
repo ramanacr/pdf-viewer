@@ -50,8 +50,9 @@ Read [Use the engine as a library](developers.md) and the [API reference]({{ '/a
 
 ## Android
 
-The Android app is a proof of concept. Build it from source, or take the APK artifact of the
-`android.yml` workflow. See [its README]({{ site.links.repo }}/blob/main/src/PdfViewer.Android/README.md).
+The Android app is a preview, in a Google Play closed test. It reads, fills forms, annotates
+(markup, ink, notes, shapes, text boxes and stamps) and saves into the opened file or as a copy.
+Build it from source, or take the APK artifact of the `android.yml` workflow. See [its README]({{ site.links.repo }}/blob/main/src/PdfViewer.Android/README.md).
 
 ## Build it yourself
 

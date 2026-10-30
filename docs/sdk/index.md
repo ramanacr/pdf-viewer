@@ -411,7 +411,7 @@ With `showAnnotationTools` (full window and light box), a second toolbar shows t
 | Rectangle, ellipse | Drag the shape. |
 | Line, arrow | Drag from the start to the end. The arrow has an open arrowhead at its end. |
 | Polygon, connected lines | Click each point. Double-click or press `Enter` to end; `Esc` cancels. |
-| Stamp | Pick a stamp (Approved, Draft, Confidential and the other standard ones) and click where it goes. |
+| Stamp | Pick a stamp (Approved, Draft, Confidential and the other standard ones) and click where it goes. On a turned page (`/Rotate`), the stamp reads upright as the page is shown. |
 
 The colour buttons set the colour of the next annotation, or change the selected one (a stamp
 keeps the colour of its kind).

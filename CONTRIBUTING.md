@@ -2,7 +2,7 @@
 
 Thank you for your interest. This project is a Windows PDF viewer with its own PDF engine, written
 in C# and released under the [MIT licence](LICENSE). The same engine also runs in a browser
-(web demo), on Android (proof of concept), and as NuGet packages. Contributions of all sizes are welcome: bug
+(web demo), on Android (preview), and as NuGet packages. Contributions of all sizes are welcome: bug
 reports, test files you are allowed to share, documentation fixes and code.
 
 ## Before you start
@@ -55,7 +55,7 @@ dotnet run --project src/PdfViewer
 | `src/PdfEngine.Vector.Windows` | The WPF fallback renderer. |
 | `src/PdfViewer`, `src/PdfViewer.Core` | The WPF application and its view models. |
 | `src/PdfViewer.Web.Engine` | The UI-free engine layer of the web demo and the Android app. |
-| `src/PdfViewer.Web`, `src/PdfViewer.Android` | The web demo (Blazor WebAssembly) and the Android proof of concept. |
+| `src/PdfViewer.Web`, `src/PdfViewer.Android` | The web demo (Blazor WebAssembly) and the Android app (preview). |
 | `src/PdfEngine.Pdfium` | PDFium, used only in development and test builds as a reference. |
 | `tests/` | xUnit test projects. |
 | `eng/`, `scripts/` | Build, release, packaging and corpus tools. |

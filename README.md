@@ -22,8 +22,8 @@ The published app contains no PDFium.
 | **Windows app** | Released on the Microsoft Store | [Get it from Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62) (Store ID 9N6QDM774R62). Microsoft signs the package, and the Store installs updates. See [Microsoft Store build](docs/microsoft-store.md). |
 | **Windows, without the Store** | Released (latest: [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases/latest)) | For a machine without the Store: `PdfViewer.exe` (portable app) or `PdfViewerSetup.exe` (installer). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). The files are signed with the project's self-signed certificate, so SmartScreen can show a warning. See the [code signing policy](CODE_SIGNING_POLICY.md). |
 | **Web demo** | Live | [ramanacr.github.io/pdf-viewer/demo/](https://ramanacr.github.io/pdf-viewer/demo/). Runs in the tab as WebAssembly; nothing is uploaded. |
-| **Android** | Proof of concept | Build from source, or take the APK artifact of the `android.yml` workflow. See [its README](src/PdfViewer.Android/README.md). |
-| **NuGet packages** | Preview (`0.2.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). |
+| **Android** | Preview, in a Google Play closed test | Build from source, or take the APK artifact of the `android.yml` workflow. See [its README](src/PdfViewer.Android/README.md). |
+| **NuGet packages** | Preview (`0.2.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). The source on `main` also targets `net10.0` and renames some API before 1.0: see [Changes in 1.0](docs/developers.md#changes-in-10). |
 | **Web embed SDK** | Preview (npm [`pdfviewer-embed`](https://www.npmjs.com/package/pdfviewer-embed)) | `npm install pdfviewer-embed`. An API like the Adobe PDF Embed API. See [Web embed SDK](https://ramanacr.github.io/pdf-viewer/sdk/). |
 
 Release binaries are Authenticode-signed with the project's own self-signed certificate, so
@@ -59,7 +59,8 @@ shortcuts are in [docs/features.md](docs/features.md).
   PDF/UA-1 accessibility check, and **Make Accessible** (auto-tagging).
 - **Select and search:** word-processor text selection, search with a results list, and OCR for
   scanned pages (Windows OCR, on this computer).
-- **Comment and measure:** highlights, notes, shapes and ink; distance, perimeter and area
+- **Comment and measure:** highlights, notes, ink, and shapes (rectangle, ellipse, line, arrow,
+  polygon, connected lines) with fill, dash and line endings; distance, perimeter and area
   measuring with snapping; standard, dynamic and custom stamps; annotation edit handles.
 - **Edit:** text and images in place, page organisation, merge and split, headers, footers,
   watermarks and Bates numbers, reduce file size, compare documents.
@@ -70,7 +71,8 @@ shortcuts are in [docs/features.md](docs/features.md).
 - **Print production:** print with live preview, Output Preview (separations, overprint, total
   ink) and Preflight.
 - **Text in fonts that a PDF does not embed:** Arabic and Indic shaping, a fallback font for each
-  missing character, and the right Chinese, Japanese or Korean font for the language.
+  missing character, and the right Chinese, Japanese or Korean font for the language. Installed
+  OpenType (`.otf`) fonts and fonts installed for the current user only are used too.
 
 ## Platforms
 
@@ -81,9 +83,11 @@ shortcuts are in [docs/features.md](docs/features.md).
   dark theme. Fonts that a PDF does not embed come from self-hosted Liberation and Noto fonts,
   with Arabic and Indic shaping. There are no cookies, no analytics and no third-party requests.
   See [its README](src/PdfViewer.Web/README.md) for features and limits.
-- **Android proof of concept** (`src/PdfViewer.Android`): .NET for Android with the same engine and
-  Skia renderer. It reads, fills forms and annotates (highlight, ink, notes), and saves a copy. It
-  asks for no permission. See [its README](src/PdfViewer.Android/README.md).
+- **Android app** (`src/PdfViewer.Android`, preview): .NET for Android with the same engine and
+  Skia renderer. It reads and fills forms. It annotates with highlight, underline, strike-through,
+  ink, notes, rectangles, ellipses, lines, arrows, text boxes (Chinese, Japanese and Korean too)
+  and standard and dynamic stamps. It saves into the opened file or saves a copy. It asks for no
+  permission. See [its README](src/PdfViewer.Android/README.md).
 
 All three use the same engine. See [Architecture](docs/architecture.md).
 
@@ -102,7 +106,8 @@ Console.WriteLine(await new PdfVectorTextService().ExtractPageTextAsync(doc, 1))
 ```
 
 The packages are `PdfEngine.Abstractions`, `PdfEngine.Vector` and `PdfEngine.Vector.Skia`. The
-API can change before version 1.0. A full example (search, and a page saved as PNG) is in
+API can change before version 1.0. The changes made so far on `main` are in
+[Changes in 1.0](docs/developers.md#changes-in-10). A full example (search, and a page saved as PNG) is in
 [Use the engine as a library](docs/developers.md).
 
 ## Build from source

@@ -1,9 +1,10 @@
 # PdfEngine.Vector.Skia
 
 A portable renderer for the vector engine's display list (`IPdfDisplayList`), built on
-[SkiaSharp](https://github.com/mono/SkiaSharp) 3.116.1 (MIT). It targets plain `net9.0` and draws on
-Skia's CPU raster canvas, so it has no dependency on Windows, Direct2D or a GPU. It draws the pages
-of the web demo (src/PdfViewer.Web) and of the Android proof of concept (src/PdfViewer.Android),
+[SkiaSharp](https://github.com/mono/SkiaSharp) 3.116.1 (MIT). It targets plain `net9.0` (and `net10.0`
+when the .NET 10 SDK builds it) and draws on Skia's CPU raster canvas, so it has no dependency on
+Windows, Direct2D or a GPU. It draws the pages of the web demo (src/PdfViewer.Web) and of the
+Android app (src/PdfViewer.Android),
 and it is published on nuget.org as the package `PdfEngine.Vector.Skia` (see `PACKAGE_README.md`).
 The Windows app uses the Direct2D backend instead.
 

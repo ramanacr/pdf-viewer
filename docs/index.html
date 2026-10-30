@@ -60,9 +60,9 @@ description: A private, script-free PDF viewer and editor for Windows, with its 
       </div>
       <div class="card">
         <span class="card-icon">{% include icon.html name="android" %}</span>
-        <span class="tag">Proof of concept</span>
+        <span class="tag">Preview</span>
         <h3>Android</h3>
-        <p>Build from source, or take the APK artifact of the <code>android.yml</code> workflow.</p>
+        <p>Reads, fills forms, annotates with shapes, text boxes and stamps, and saves into the opened file. In a Google Play closed test. Build from source, or take the APK artifact of the <code>android.yml</code> workflow.</p>
         <div class="card-links">
           <a href="{{ site.links.repo }}/blob/main/src/PdfViewer.Android/README.md">Android README {% include icon.html name="arrow" %}</a>
         </div>
@@ -93,7 +93,7 @@ description: A private, script-free PDF viewer and editor for Windows, with its 
       </a>
       <a class="feature" href="{{ '/features/' | relative_url }}#comments-measuring-and-stamps">
         <h3>{% include icon.html name="comment" %} Comment and measure</h3>
-        <p>Highlights, notes, shapes and ink; distance, perimeter and area measuring with snapping; standard, dynamic and custom stamps; annotation edit handles.</p>
+        <p>Highlights, notes, ink, and shapes with fill, dash and line endings; distance, perimeter and area measuring with snapping; standard, dynamic and custom stamps; annotation edit handles.</p>
       </a>
       <a class="feature" href="{{ '/features/' | relative_url }}#editing-and-page-organisation">
         <h3>{% include icon.html name="edit" %} Edit</h3>
@@ -113,7 +113,7 @@ description: A private, script-free PDF viewer and editor for Windows, with its 
       </a>
       <a class="feature" href="{{ '/features/' | relative_url }}#text-in-fonts-that-a-pdf-does-not-embed">
         <h3>{% include icon.html name="type" %} Fonts a PDF does not embed</h3>
-        <p>Arabic and Indic shaping, a fallback font for each missing character, and the right Chinese, Japanese or Korean font for the language.</p>
+        <p>Arabic and Indic shaping, a fallback font for each missing character, and the right Chinese, Japanese or Korean font for the language. Installed OpenType (.otf) and per-user fonts are used too.</p>
       </a>
     </div>
     <p class="section-more"><a class="button" href="{{ '/features/' | relative_url }}">All features, user guide and keyboard shortcuts {% include icon.html name="arrow" %}</a></p>
@@ -162,7 +162,7 @@ description: A private, script-free PDF viewer and editor for Windows, with its 
       <div class="card">
         <span class="card-icon">{% include icon.html name="package" %}</span>
         <h3>NuGet packages</h3>
-        <p><code>PdfEngine.Abstractions</code>, <code>PdfEngine.Vector</code> and <code>PdfEngine.Vector.Skia</code>. Open, read, search, edit and save PDF files, and draw pages with Skia.</p>
+        <p><code>PdfEngine.Abstractions</code>, <code>PdfEngine.Vector</code> and <code>PdfEngine.Vector.Skia</code>. Open, read, search, edit and save PDF files, and draw pages with Skia. For .NET 9; the source on <code>main</code> also targets .NET 10.</p>
         <div class="snippet"><pre><code>dotnet add package PdfEngine.Vector.Skia --prerelease</code></pre></div>
         <div class="card-links">
           <a href="{{ '/developers/' | relative_url }}">Use the engine as a library {% include icon.html name="arrow" %}</a>
