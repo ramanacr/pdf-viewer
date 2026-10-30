@@ -24,7 +24,9 @@ public partial class SignatureChangeClassificationTests
     }, Encoding.Latin1.GetBytes("1 1 1 rg 0 0 300 400 re f 0 g BT /Helv 30 Tf 20 200 Td (FORGED) Tj ET"));
 
     /// <summary>After signing: a signature field with no signature, over the whole page, with an appearance.</summary>
-    private static async Task<byte[]> AddEmptySignatureWidget(byte[] signed)
+    /// <param name="value">"none", or a placeholder signature dictionary as /V: "direct" or "indirect".</param>
+    /// <param name="inFields">Whether the field is also listed in the form's /Fields.</param>
+    private static async Task<byte[]> AddEmptySignatureWidget(byte[] signed, string value = "none", bool inFields = true)
     {
         using var doc = await PdfVectorDocument.OpenAsync(signed);
         var page = doc.PageTree.Pages[0];
@@ -32,16 +34,68 @@ public partial class SignatureChangeClassificationTests
         var root = (PdfDictionary)doc.Resolver.Resolve(RootNumber(doc))!;
         int formNo = ((PdfIndirectRef)root["AcroForm"]!).ObjectNumber;
         var form = (PdfDictionary)doc.Resolver.Resolve(formNo)!;
-        int ap = PdfIncrementalWriter.NextObjectNumber(doc), field = ap + 1;
-        return PdfIncrementalWriter.Append(signed, doc, new Dictionary<int, PdfObject>
+        int ap = PdfIncrementalWriter.NextObjectNumber(doc), field = ap + 1, sig = ap + 2;
+        var widget = Dict(("Type", new PdfName("Annot")), ("Subtype", new PdfName("Widget")), ("FT", new PdfName("Sig")),
+            ("T", PdfObjectWriter.TextString("overlay")), ("Rect", Nums(0, 0, 300, 400)), ("F", new PdfInteger(4)),
+            ("P", new PdfIndirectRef(pageNo)), ("AP", Dict(("N", new PdfIndirectRef(ap)))));
+        var placeholder = Dict(("Type", new PdfName("Sig")));
+        var objects = new Dictionary<int, PdfObject>
         {
             [ap] = Overlay(),
-            [field] = Dict(("Type", new PdfName("Annot")), ("Subtype", new PdfName("Widget")), ("FT", new PdfName("Sig")),
-                ("T", PdfObjectWriter.TextString("overlay")), ("Rect", Nums(0, 0, 300, 400)), ("F", new PdfInteger(4)),
-                ("P", new PdfIndirectRef(pageNo)), ("AP", Dict(("N", new PdfIndirectRef(ap))))),
             [pageNo] = With(page.Dictionary, "Annots", new PdfArray(((PdfArray)doc.Resolver.Resolve(page.Dictionary["Annots"])!).Items.Append(new PdfIndirectRef(field)).ToArray())),
-            [formNo] = With(form, "Fields", new PdfArray(((PdfArray)doc.Resolver.Resolve(form["Fields"])!).Items.Append(new PdfIndirectRef(field)).ToArray())),
-        });
+        };
+        if (value == "direct") widget = With(widget, "V", placeholder);
+        if (value == "indirect")
+        {
+            widget = With(widget, "V", new PdfIndirectRef(sig));
+            objects[sig] = placeholder;
+        }
+        objects[field] = widget;
+        if (inFields)
+            objects[formNo] = With(form, "Fields", new PdfArray(((PdfArray)doc.Resolver.Resolve(form["Fields"])!).Items.Append(new PdfIndirectRef(field)).ToArray()));
+        return PdfIncrementalWriter.Append(signed, doc, objects);
+    }
+
+    // A real document timestamp is permitted at level 1; an action added to its field afterwards is not.
+    [Fact]
+    public async Task DocumentTimestamp_WithAnActionAdded_IsNotPermittedAtLevel1()
+    {
+        using var pki = new TestPki();
+        using var tsaCert = pki.Issue("Test Time Authority", eku: "1.3.6.1.5.5.7.3.8");
+        var tsa = new FakeTimestampAuthority(tsaCert, new DateTimeOffset(DateTime.UtcNow.AddMinutes(-3).Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero));
+        tsa.Chain.Add(TestPki.Public(pki.Intermediate));
+        byte[] certified = await Sign(FormPdfFixture.Build(), 1);
+        byte[] stamped = (await PdfDocumentTimestamp.AddAsync(certified, tsa)).Bytes;
+        var before = (await PdfSignatureValidator.ValidateAsync(stamped)).Single(c => !c.IsDocumentTimestamp);
+        Assert.Equal(PdfSignatureVerdict.Valid, before.Verdict);
+        Assert.Equal(PdfLaterChanges.DocumentTimestamp, before.LaterChanges);
+
+        int field;
+        using (var doc = await PdfVectorDocument.OpenAsync(stamped))
+            field = PdfSignatureValidator.SignedFields(doc).Single(s => s.Sig.GetName("SubFilter") == "ETSI.RFC3161").Field.ObjectNumber;
+        byte[] withAction;
+        using (var doc = await PdfVectorDocument.OpenAsync(stamped))
+            withAction = PdfIncrementalWriter.Append(stamped, doc, new Dictionary<int, PdfObject>
+            {
+                [field] = With((PdfDictionary)doc.Resolver.Resolve(field)!, "AA", Dict(("PO", JavaScript()))),
+            });
+        var after = (await PdfSignatureValidator.ValidateAsync(withAction)).Single(c => !c.IsDocumentTimestamp);
+        Assert.Equal(PdfSignatureVerdict.ModifiedAfterSigning, after.Verdict);
+    }
+
+    // A signature field with a placeholder value, in the form or not, is not a signature: the overlay is an annotation.
+    [Theory]
+    [InlineData("direct", false)]
+    [InlineData("indirect", false)]
+    [InlineData("direct", true)]
+    [InlineData("indirect", true)]
+    public async Task SignatureFieldWithAPlaceholderValue_IsNotSigning(string value, bool inFields)
+    {
+        byte[] signed = await Sign(FormPdfFixture.Build(), 2);
+        var checks = await PdfSignatureValidator.ValidateAsync(await AddEmptySignatureWidget(signed, value, inFields));
+        var certification = checks.Single(c => c.FieldName != "overlay");
+        Assert.Equal(PdfSignatureVerdict.ModifiedAfterSigning, certification.Verdict);
+        Assert.Equal(PdfLaterChanges.Annotations, certification.LaterChanges);
     }
 
     // A signature field counts as signing only when it holds a new signature; an empty one is an annotation.
@@ -140,10 +194,30 @@ public partial class SignatureChangeClassificationTests
         return await Fill(changed, "notes");
     }
 
-    // FieldMDP: new default resources and asking for appearances leave a locked field as it was; replacing its font does not.
+    // A locked field whose /DA names a font the default resources lack: adding that font changes how the field looks.
+    [Theory]
+    [InlineData("zip", false)]
+    [InlineData("person.name", true)]
+    public async Task DefaultResourceAddedForALockedFieldsFont_BreaksTheLock(string locked, bool permitted)
+    {
+        byte[] prepared = await PreparedWithSignatureField("Include", locked);
+        using (var doc = await PdfVectorDocument.OpenAsync(prepared))
+        {
+            int zip = PdfEngine.Vector.Forms.PdfAcroForm.Read(doc)!["zip"]!.ObjectNumber;
+            prepared = PdfIncrementalWriter.Append(prepared, doc, new Dictionary<int, PdfObject>
+            {
+                [zip] = With(With((PdfDictionary)doc.Resolver.Resolve(zip)!, "DA", PdfObjectWriter.TextString("/Cour 12 Tf 0 g")), "V", PdfObjectWriter.TextString("99999")),
+            });
+        }
+        byte[] signed = await SignField(prepared, "approver");
+        var check = Assert.Single(await PdfSignatureValidator.ValidateAsync(await ChangeFormThenFillNotes(signed, "AddFont")));
+        Assert.Equal(permitted ? PdfSignatureVerdict.ValidWithPermittedChanges : PdfSignatureVerdict.ModifiedAfterSigning, check.Verdict);
+    }
+
+    // FieldMDP: new default resources no field uses leave a locked field as it was; asking for appearances or replacing its font does not.
     [Theory]
     [InlineData("AddFont", true)]
-    [InlineData("NeedAppearances", true)]
+    [InlineData("NeedAppearances", false)] // a viewer then makes every field's appearance again, the locked one's included
     [InlineData("ReplaceFont", false)]
     public async Task FormUpdates_AndFieldLocks(string change, bool permitted)
     {

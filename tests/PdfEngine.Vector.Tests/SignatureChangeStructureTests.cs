@@ -367,11 +367,11 @@ public partial class SignatureChangeClassificationTests
         });
     }
 
-    // Only the timestamp itself is permitted at level 1: an action on its field is not.
+    // A placeholder that only looks like a document timestamp is not one (a real one: DocumentTimestamp_WithAnActionAdded_IsNotPermittedAtLevel1).
     [Theory]
-    [InlineData(false, true)]
+    [InlineData(false, false)]
     [InlineData(true, false)]
-    public async Task InvisibleTimestampField_WithAnAction_IsNotPermittedAtLevel1(bool withAction, bool permitted)
+    public async Task InvisibleTimestampField_PlaceholderOrWithAction_IsNotPermittedAtLevel1(bool withAction, bool permitted)
     {
         byte[] signed = await Sign(FormPdfFixture.Build(), 1);
         var checks = await PdfSignatureValidator.ValidateAsync(await AddInvisibleTimestampField(signed, withAction));
