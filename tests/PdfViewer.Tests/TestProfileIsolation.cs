@@ -8,7 +8,7 @@ namespace PdfViewer.Tests;
 
 /// <summary>
 /// Keeps the test run out of the user's profile. Opening a document adds it to the recent files,
-/// and the viewer keeps its privacy, signing, stamp and scale settings under
+/// and the viewer keeps its privacy, signing, theme, stamp and scale settings under
 /// %LOCALAPPDATA%\PdfViewerNative. Before any test runs, every one of those stores is pointed at a
 /// folder of this run's own under the temp folder, which is deleted when the run ends. The .pdf
 /// file association goes under an HKCU key of the run's own for the same reason: registering
@@ -30,6 +30,7 @@ internal static class TestProfileIsolation
         RecentFilesService.SetSettingsDirectoryForTests(Directory);
         PrivacySettings.SetSettingsDirectoryForTests(Directory);
         SigningSettings.SetDirectoryForTests(Directory);
+        AppearanceSettings.SetSettingsDirectoryForTests(Directory);
         ShellIntegrationService.SetClassesRootForTests(RegistryRoot + @"\Classes");
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
@@ -50,6 +51,7 @@ public class TestProfileIsolationTests
         Assert.False(IsUnderProfile(RecentFilesService.CurrentSettingsDirectory));
         Assert.False(IsUnderProfile(PrivacySettings.CurrentSettingsDirectory));
         Assert.False(IsUnderProfile(SigningSettings.Directory));
+        Assert.False(IsUnderProfile(AppearanceSettings.CurrentSettingsDirectory));
         Assert.False(ShellIntegrationService.ClassesRoot.Equals(@"Software\Classes", StringComparison.OrdinalIgnoreCase));
     }
 

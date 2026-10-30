@@ -506,8 +506,8 @@ public class NativeDocumentServicesViewerTests : IDisposable
     public async Task ArrangePages_Natively_MatchesWhatPdfiumWrote()
     {
         string source = TestPdfBuilder.CreateSimplePdf(P("arrange.pdf"), 4, "Tok");
-        await using (var doc = await PdfNativeDocument.OpenAsync(source))
-            await new PdfNativePageOrganizerService().ArrangePagesAsync(doc, Arrangement, P("by_native.pdf"));
+        await using (var doc = await PdfEditableDocument.OpenAsync(source))
+            await new PdfPageOrganizerService().ArrangePagesAsync(doc, Arrangement, P("by_native.pdf"));
         using var native = TestEngines.Create(TestEngines.Native);
         Assert.Equal(PdfiumGoldens.Load<List<ArrangedPage>>("NativeServices_ArrangedByPdfium"), await Pages(native, P("by_native.pdf")));
         await using var b = await native.OpenDocumentAsync(P("by_native.pdf"));
@@ -524,8 +524,8 @@ public class NativeDocumentServicesViewerTests : IDisposable
         using IPdfEngine pdfium = new PdfiumEngine();
         await using (var doc = await pdfium.OpenDocumentAsync(source))
             await pdfium.PageOrganizer.ArrangePagesAsync(doc, arrangement, P("by_pdfium.pdf"));
-        await using (var doc = await PdfNativeDocument.OpenAsync(source))
-            await new PdfNativePageOrganizerService().ArrangePagesAsync(doc, arrangement, P("by_native.pdf"));
+        await using (var doc = await PdfEditableDocument.OpenAsync(source))
+            await new PdfPageOrganizerService().ArrangePagesAsync(doc, arrangement, P("by_native.pdf"));
         PdfiumGoldens.Verify("NativeServices_ArrangedByPdfium", await Pages(pdfium, P("by_pdfium.pdf")));
 
         await using var a = await pdfium.OpenDocumentAsync(P("by_pdfium.pdf"));
@@ -548,7 +548,7 @@ public class NativeDocumentServicesViewerTests : IDisposable
     {
         string a = TestPdfBuilder.CreateSimplePdf(P("a.pdf"), 2, "Alpha");
         string b = TestPdfBuilder.CreateSimplePdf(P("b.pdf"), 3, "Beta");
-        var organizer = new PdfNativePageOrganizerService();
+        var organizer = new PdfPageOrganizerService();
         await organizer.MergeDocumentsAsync(new[] { a, b }, P("merged.pdf"));
         using IPdfEngine check = TestEngines.Create(reader);
         await using (var merged = await check.OpenDocumentAsync(P("merged.pdf")))
@@ -560,7 +560,7 @@ public class NativeDocumentServicesViewerTests : IDisposable
             Assert.Equal(new[] { 1, 3 }, outline.Select(o => o.TargetPageNumber));
         }
 
-        await using var doc = await PdfNativeDocument.OpenAsync(P("merged.pdf"));
+        await using var doc = await PdfEditableDocument.OpenAsync(P("merged.pdf"));
         await organizer.SplitDocumentAsync(doc, new[] { 2, 3 }, P("split"), "part");
         await organizer.ExtractPagesAsync(doc, new[] { 5, 1 }, P("extract.pdf"));
         await using (var first = await check.OpenDocumentAsync(Path.Combine(P("split"), "part_part001.pdf")))
@@ -583,14 +583,14 @@ public class NativeDocumentServicesViewerTests : IDisposable
     {
         var expected = PdfiumGoldens.Load<Attachments>("NativeServices_Attachments");
         string path = TestPdfBuilder.CreateAttachmentPdf(P("att.pdf"), "the payload");
-        await using var ndoc = await PdfNativeDocument.OpenAsync(path);
-        var service = new PdfNativeAttachmentService();
+        await using var ndoc = await PdfEditableDocument.OpenAsync(path);
+        var service = new PdfAttachmentService();
         Assert.Equal(expected.Files, await service.GetAttachmentsAsync(ndoc));
         long written = await service.ExtractAttachmentAsync(ndoc, 0, P("out.bin"));
         Assert.Equal(expected.FirstFile, await File.ReadAllBytesAsync(P("out.bin")));
         Assert.Equal(written, new FileInfo(P("out.bin")).Length);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await service.ExtractAttachmentAsync(ndoc, 5, P("none.bin")));
-        Assert.Equal(expected.ExecutableNames, ExecutableNameSamples.Select(PdfNativeAttachmentService.IsExecutableName));
+        Assert.Equal(expected.ExecutableNames, ExecutableNameSamples.Select(PdfAttachmentService.IsExecutableName));
     }
 
 #if PDFIUM_RENDERER
@@ -602,8 +602,8 @@ public class NativeDocumentServicesViewerTests : IDisposable
         using IPdfEngine pdfium = new PdfiumEngine();
         await using var pdoc = await pdfium.OpenDocumentAsync(path);
         var expected = await new PdfiumAttachmentService().GetAttachmentsAsync(pdoc);
-        await using var ndoc = await PdfNativeDocument.OpenAsync(path);
-        var service = new PdfNativeAttachmentService();
+        await using var ndoc = await PdfEditableDocument.OpenAsync(path);
+        var service = new PdfAttachmentService();
         var actual = await service.GetAttachmentsAsync(ndoc);
         Assert.Equal(expected, actual);
         long written = await service.ExtractAttachmentAsync(ndoc, 0, P("out.bin"));
@@ -613,7 +613,7 @@ public class NativeDocumentServicesViewerTests : IDisposable
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await service.ExtractAttachmentAsync(ndoc, 5, P("none.bin")));
 
         foreach (var name in ExecutableNameSamples)
-            Assert.Equal(PdfiumAttachmentService.IsExecutableName(name), PdfNativeAttachmentService.IsExecutableName(name));
+            Assert.Equal(PdfiumAttachmentService.IsExecutableName(name), PdfAttachmentService.IsExecutableName(name));
 
         PdfiumGoldens.Verify("NativeServices_Attachments", new Attachments(expected.ToList(), await File.ReadAllBytesAsync(P("out_pdfium.bin")),
             ExecutableNameSamples.Select(PdfiumAttachmentService.IsExecutableName).ToList()));

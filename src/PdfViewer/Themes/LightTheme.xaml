@@ -37,4 +37,17 @@
     <SolidColorBrush x:Key="IconBrush" Color="{StaticResource TextPrimaryColor}" />
     <SolidColorBrush x:Key="IconAccentBrush" Color="{StaticResource AccentColor}" />
 
+    <!--
+        Keys the dark control styles (DarkControls.xaml) also read. In the light theme the
+        controls keep Windows' own look, so these only repeat what the light theme already drew.
+    -->
+    <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ControlBorderBrush" Color="#ABADB3" />
+    <SolidColorBrush x:Key="SliderTrackBrush" Color="#D6D6D6" />
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#6D6D6D" />
+    <!-- Text on an accent-coloured button. -->
+    <SolidColorBrush x:Key="OnAccentTextBrush" Color="White" />
+    <!-- Items of a menu that sets its own item style keep the system menu text colour, as before. -->
+    <StaticResource x:Key="MenuPopupTextBrush" ResourceKey="{x:Static SystemColors.MenuTextBrushKey}" />
+
 </ResourceDictionary>

@@ -339,7 +339,7 @@
                             Height="30"
                             FontWeight="SemiBold"
                             Background="{DynamicResource AccentBrush}"
-                            Foreground="White"
+                            Foreground="{DynamicResource OnAccentTextBrush}"
                             BorderThickness="0" />
                 </StackPanel>
             </Grid>

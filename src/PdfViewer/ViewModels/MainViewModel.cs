@@ -429,26 +429,42 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     public async Task OpenSampleDocumentAsync()
     {
-        string samplePath = FindSampleDocumentPath();
-        if (!File.Exists(samplePath))
+        string? samplePath = FindSampleDocumentPath();
+        if (samplePath == null)
         {
-            samplePath = SamplePdfGenerator.GenerateSamplePdf(samplePath);
+            // The installed app (installer, portable or Store) carries the sample in its assembly:
+            // write a fresh copy where the user can save changes to it.
+            samplePath = SamplePdfGenerator.DefaultPath;
+            try
+            {
+                SamplePdfGenerator.GenerateSamplePdf(samplePath);
+            }
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && File.Exists(samplePath))
+            {
+                // The copy is open in another tab or window: open that one.
+            }
         }
         await OpenRequestedDocumentAsync(samplePath);
     }
 
-    private static string FindSampleDocumentPath()
+    /// <summary>samples/SampleDocument.pdf of a source checkout, or a copy next to the app; null when there is none.</summary>
+    private static string? FindSampleDocumentPath()
     {
-        var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-        while (dir != null)
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        for (var dir = new DirectoryInfo(baseDir); dir != null; dir = dir.Parent)
         {
             if (File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx")))
             {
-                return Path.Combine(dir.FullName, "samples", "SampleDocument.pdf");
+                string checkout = Path.Combine(dir.FullName, "samples", "SampleDocument.pdf");
+                if (File.Exists(checkout)) return checkout;
+                break;
             }
-            dir = dir.Parent;
         }
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "samples", "SampleDocument.pdf");
+        foreach (string candidate in new[] { Path.Combine(baseDir, "samples", "SampleDocument.pdf"), Path.Combine(baseDir, "SampleDocument.pdf") })
+        {
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
     }
 
     [RelayCommand]
@@ -1164,6 +1180,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void TogglePanTool()
     {
         IsPanningEnabled = !IsPanningEnabled;
+    }
+
+    /// <summary>
+    /// The Hand tool is a tool like the others: turning it on turns off the annotation tool (and
+    /// drops the polygon or connected lines being drawn), the measuring tool, the stamp, signature
+    /// placing and redaction marking, so the next click on the page pans and adds nothing.
+    /// </summary>
+    partial void OnIsPanningEnabledChanged(bool value)
+    {
+        if (!value) return;
+        ActiveAnnotationTool = null;
+        ActiveMeasureTool = null;
+        ActiveStamp = null;
+        IsPlacingSignature = false;
+        IsMarkingRedaction = false;
     }
 
     [RelayCommand]
@@ -2379,7 +2410,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 // The revision the viewer holds (a decrypted copy for certificate encryption).
                 using var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(bytes, filePath,
                     password: _docService.IsDecryptedCopy ? null : _openPassword);
-                DocumentSafety = await Task.Run(() => PdfEngine.Vector.Services.PdfNativeSafetyInspector.Inspect(vector));
+                DocumentSafety = await Task.Run(() => PdfEngine.Vector.Services.PdfSafetyInspector.Inspect(vector));
             }
 #if PDFIUM_RENDERER
             else
@@ -2552,8 +2583,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         string sourcePath = _docService.CurrentFilePath;
         if (UseNativeDocumentServices)
         {
-            await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
-            return await new PdfEngine.Vector.Services.PdfNativeSanitizer().SanitizeAsync(doc, targetPath);
+            await using var doc = await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(sourcePath, _openPassword);
+            return await new PdfEngine.Vector.Services.PdfSanitizer().SanitizeAsync(doc, targetPath);
         }
 #if PDFIUM_RENDERER
         using var engine = new PdfEngine.Pdfium.PdfiumEngine();
@@ -2815,8 +2846,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             if (UseNativeDocumentServices)
             {
-                await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
-                await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().ArrangePagesAsync(doc, arrangement, target.FileName);
+                await using var doc = await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(sourcePath, _openPassword);
+                await new PdfEngine.Vector.Services.PdfPageOrganizerService().ArrangePagesAsync(doc, arrangement, target.FileName);
             }
 #if PDFIUM_RENDERER
             else
@@ -2874,8 +2905,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             else
 #endif
             {
-                doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
-                service = new PdfEngine.Vector.Services.PdfNativeAttachmentService();
+                doc = await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(sourcePath, _openPassword);
+                service = new PdfEngine.Vector.Services.PdfAttachmentService();
             }
             using var engineScope = engine;
             await using var docScope = doc;
@@ -3135,7 +3166,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             if (UseNativeDocumentServices)
             {
-                await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().MergeDocumentsAsync(picker.FileNames, target.FileName);
+                await new PdfEngine.Vector.Services.PdfPageOrganizerService().MergeDocumentsAsync(picker.FileNames, target.FileName);
             }
 #if PDFIUM_RENDERER
             else
@@ -3219,7 +3250,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
         }
 #endif
-        return (new PdfEngine.Vector.Services.PdfNativePageOrganizerService(), await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(path, _openPassword), null);
+        return (new PdfEngine.Vector.Services.PdfPageOrganizerService(), await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(path, _openPassword), null);
     }
 
     /// <summary>

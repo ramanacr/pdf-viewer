@@ -159,6 +159,7 @@
                 <MenuItem Header="Open _Recent" ItemsSource="{Binding RecentFiles}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Recent}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                     <MenuItem.ItemContainerStyle>
                         <Style TargetType="MenuItem">
+                            <Setter Property="Foreground" Value="{DynamicResource MenuPopupTextBrush}" />
                             <Setter Property="Header" Value="{Binding}" />
                             <Setter Property="Command" Value="{Binding DataContext.OpenRecentFileCommand, RelativeSource={RelativeSource AncestorType=Menu}}" />
                             <Setter Property="CommandParameter" Value="{Binding}" />
@@ -285,6 +286,7 @@
                     <MenuItem Header="_Custom" ItemsSource="{Binding CustomStamps}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Stamp}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                         <MenuItem.ItemContainerStyle>
                             <Style TargetType="MenuItem">
+                                <Setter Property="Foreground" Value="{DynamicResource MenuPopupTextBrush}" />
                                 <Setter Property="Header" Value="{Binding Name}" />
                                 <Setter Property="Command" Value="{Binding DataContext.ActiveDocument.ChooseStampCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                 <Setter Property="CommandParameter" Value="{Binding Id, StringFormat=C:{0}}" />
@@ -296,6 +298,7 @@
                     <MenuItem Header="_Remove Custom Stamp" ItemsSource="{Binding CustomStamps}"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Delete}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon>
                         <MenuItem.ItemContainerStyle>
                             <Style TargetType="MenuItem">
+                                <Setter Property="Foreground" Value="{DynamicResource MenuPopupTextBrush}" />
                                 <Setter Property="Header" Value="{Binding Name}" />
                                 <Setter Property="Command" Value="{Binding DataContext.ActiveDocument.RemoveCustomStampCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                                 <Setter Property="CommandParameter" Value="{Binding}" />
@@ -872,7 +875,7 @@
                         Padding="12,0"
                         Margin="6,0,4,0"
                         Background="{DynamicResource AccentBrush}"
-                        Foreground="White"
+                        Foreground="{DynamicResource OnAccentTextBrush}"
                         BorderThickness="0"
                         Command="{Binding ExecuteSearchCommand}" />
 
@@ -1265,7 +1268,7 @@
                                         Width="150"
                                         Height="36"
                                         Background="{DynamicResource AccentBrush}"
-                                        Foreground="White"
+                                        Foreground="{DynamicResource OnAccentTextBrush}"
                                         BorderThickness="0"
                                         FontWeight="SemiBold"
                                         Command="{Binding OpenFileDialogCommand}"
@@ -1635,30 +1638,36 @@
                                                               Background="Transparent"
                                                               MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
                                                             <!-- Highlight: one box, or one band per line of a multi-line highlight -->
-                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
-                                                                <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
-                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                                <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                            <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding HighlightOverlayOpacity}">
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                    <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
                                                             </Grid>
 
                                                             <!-- Underline -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
-                                                                <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
-                                                                        Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                                <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                    <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
                                                             </Grid>
 
                                                             <!-- StrikeOut -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
-                                                                <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                                      Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      StrokeThickness="2"
-                                                                      VerticalAlignment="Center"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                                <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          StrokeThickness="2"
+                                                                          VerticalAlignment="Center"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                                    <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
                                                             </Grid>
 
                                                             <!-- Note -->
@@ -1679,6 +1688,13 @@
                                                                     Background="#20FFFFFF"
                                                                     Padding="4"
                                                                     Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=FreeText}">
+                                                                <!-- Upright as the page is shown: turned back by its /Rotate (or the page's) -->
+                                                                <Border.LayoutTransform>
+                                                                    <MultiBinding Converter="{StaticResource TextTurnConverter}">
+                                                                        <Binding Path="TextRotation" />
+                                                                        <Binding Path="DataContext.IntrinsicRotation" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    </MultiBinding>
+                                                                </Border.LayoutTransform>
                                                                 <TextBlock Text="{Binding Contents}"
                                                                            Foreground="{DynamicResource TextPrimaryBrush}"
                                                                            FontSize="11"
@@ -1688,21 +1704,33 @@
                                                             <!-- Rectangle Shape (one read from the file is drawn by the page until it is changed) -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}">
                                                                 <Rectangle Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                           StrokeThickness="{Binding StrokeThickness}"
                                                                            StrokeDashArray="{Binding StrokeDashArray}"
                                                                            Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                            Opacity="{Binding Opacity}"
-                                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}" />
+                                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Rectangle.StrokeThickness>
+                                                                        <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                            <Binding Path="StrokeThickness" />
+                                                                            <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                        </MultiBinding>
+                                                                    </Rectangle.StrokeThickness>
+                                                                </Rectangle>
                                                             </Grid>
 
                                                             <!-- Ellipse Shape -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}">
                                                                 <Ellipse Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                         StrokeThickness="{Binding StrokeThickness}"
                                                                          StrokeDashArray="{Binding StrokeDashArray}"
                                                                          Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                          Opacity="{Binding Opacity}"
-                                                                         Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}" />
+                                                                         Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Ellipse.StrokeThickness>
+                                                                        <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                            <Binding Path="StrokeThickness" />
+                                                                            <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                        </MultiBinding>
+                                                                    </Ellipse.StrokeThickness>
+                                                                </Ellipse>
                                                             </Grid>
 
                                                             <!-- Freehand Ink. Without this the pen tool stored a stroke
@@ -1710,12 +1738,18 @@
                                                             <Path Data="{Binding InkStrokes, Converter={StaticResource InkStrokesConverter}}"
                                                                   Stretch="Fill"
                                                                   Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                  StrokeThickness="{Binding StrokeThickness}"
                                                                   StrokeLineJoin="Round"
                                                                   StrokeStartLineCap="Round"
                                                                   StrokeEndLineCap="Round"
                                                                   Opacity="{Binding Opacity}"
-                                                                  Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}" />
+                                                                  Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}">
+                                                                <Path.StrokeThickness>
+                                                                    <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                        <Binding Path="StrokeThickness" />
+                                                                        <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                    </MultiBinding>
+                                                                </Path.StrokeThickness>
+                                                            </Path>
 
                                                             <!-- Measurement: its line or outline and its result (one read from the file is drawn by the page) -->
                                                             <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Measurement}">
@@ -1734,11 +1768,16 @@
                                                             <Grid Visibility="{Binding IsVertexShape, Converter={StaticResource BoolToVis}}">
                                                                 <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                                       Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      StrokeThickness="{Binding StrokeThickness}"
                                                                       StrokeDashArray="{Binding StrokeDashArray}"
                                                                       Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                       Opacity="{Binding Opacity}"
                                                                       Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Path.StrokeThickness>
+                                                                        <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                            <Binding Path="StrokeThickness" />
+                                                                            <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                        </MultiBinding>
+                                                                    </Path.StrokeThickness>
                                                                     <Path.Data>
                                                                         <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Body">
                                                                             <Binding />
@@ -1751,16 +1790,22 @@
                                                                             <Binding Path="LineEndings" />
                                                                             <Binding Path="InteriorColorHex" />
                                                                             <Binding Path="Type" />
+                                                                            <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                         </MultiBinding>
                                                                     </Path.Data>
                                                                 </Path>
                                                                 <!-- The line endings: drawn solid, as the engine draws them on a dashed line -->
                                                                 <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                                       Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                                      StrokeThickness="{Binding StrokeThickness}"
                                                                       Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                       Opacity="{Binding Opacity}"
                                                                       Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                                    <Path.StrokeThickness>
+                                                                        <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                            <Binding Path="StrokeThickness" />
+                                                                            <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                                                        </MultiBinding>
+                                                                    </Path.StrokeThickness>
                                                                     <Path.Data>
                                                                         <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Ends">
                                                                             <Binding />
@@ -1773,6 +1818,7 @@
                                                                             <Binding Path="LineEndings" />
                                                                             <Binding Path="InteriorColorHex" />
                                                                             <Binding Path="Type" />
+                                                                            <Binding Path="DataContext.DisplayScale" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                                                         </MultiBinding>
                                                                     </Path.Data>
                                                                 </Path>
@@ -2039,30 +2085,36 @@
                                                   Background="Transparent"
                                                   MouseLeftButtonDown="Annotation_MouseLeftButtonDown">
                                                 <!-- Highlight: one box, or one band per line of a multi-line highlight -->
-                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding Opacity}">
-                                                    <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
-                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                    <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Highlight}" Opacity="{Binding HighlightOverlayOpacity}">
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Border Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" CornerRadius="2"
+                                                                Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                        <Path Data="{Binding HighlightGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
                                                 </Grid>
 
                                                 <!-- Underline -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Underline}">
-                                                    <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
-                                                            Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                    <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Border BorderBrush="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" BorderThickness="0,0,0,2"
+                                                                Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                        <Path Data="{Binding UnderlineGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
                                                 </Grid>
 
                                                 <!-- StrikeOut -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=StrikeOut}">
-                                                    <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
-                                                          Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          StrokeThickness="2"
-                                                          VerticalAlignment="Center"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
-                                                    <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    <Grid Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Line X1="0" Y1="0.5" X2="1" Y2="0.5" Stretch="Fill"
+                                                              Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              StrokeThickness="2"
+                                                              VerticalAlignment="Center"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource InverseBoolToVis}}" />
+                                                        <Path Data="{Binding StrikeOutGeometry}" Stretch="Fill" Fill="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
+                                                              Visibility="{Binding HasQuads, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
                                                 </Grid>
 
                                                 <!-- Note -->
@@ -2083,6 +2135,13 @@
                                                         Background="#20FFFFFF"
                                                         Padding="4"
                                                         Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=FreeText}">
+                                                    <!-- Upright as the page is shown: turned back by its /Rotate (or the page's) -->
+                                                    <Border.LayoutTransform>
+                                                        <MultiBinding Converter="{StaticResource TextTurnConverter}">
+                                                            <Binding Path="TextRotation" />
+                                                            <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.IntrinsicRotation" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        </MultiBinding>
+                                                    </Border.LayoutTransform>
                                                     <TextBlock Text="{Binding Contents}"
                                                                Foreground="{DynamicResource TextPrimaryBrush}"
                                                                FontSize="11"
@@ -2092,33 +2151,51 @@
                                                 <!-- Rectangle Shape (one read from the file is drawn by the page until it is changed) -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Rectangle}">
                                                     <Rectangle Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                               StrokeThickness="{Binding StrokeThickness}"
                                                                StrokeDashArray="{Binding StrokeDashArray}"
                                                                Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                                Opacity="{Binding Opacity}"
-                                                               Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}" />
+                                                               Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Rectangle.StrokeThickness>
+                                                            <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                <Binding Path="StrokeThickness" />
+                                                                <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                            </MultiBinding>
+                                                        </Rectangle.StrokeThickness>
+                                                    </Rectangle>
                                                 </Grid>
 
                                                 <!-- Ellipse Shape -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ellipse}">
                                                     <Ellipse Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                             StrokeThickness="{Binding StrokeThickness}"
                                                              StrokeDashArray="{Binding StrokeDashArray}"
                                                              Fill="{Binding FillColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                              Opacity="{Binding Opacity}"
-                                                             Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}" />
+                                                             Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Ellipse.StrokeThickness>
+                                                            <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                <Binding Path="StrokeThickness" />
+                                                                <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                            </MultiBinding>
+                                                        </Ellipse.StrokeThickness>
+                                                    </Ellipse>
                                                 </Grid>
 
                                                 <!-- Freehand Ink -->
                                                 <Path Data="{Binding InkStrokes, Converter={StaticResource InkStrokesConverter}}"
                                                       Stretch="Fill"
                                                       Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                      StrokeThickness="{Binding StrokeThickness}"
                                                       StrokeLineJoin="Round"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
                                                       Opacity="{Binding Opacity}"
-                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}" />
+                                                      Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Ink}">
+                                                    <Path.StrokeThickness>
+                                                        <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                            <Binding Path="StrokeThickness" />
+                                                            <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                        </MultiBinding>
+                                                    </Path.StrokeThickness>
+                                                </Path>
 
                                                 <!-- Measurement: its line or outline and its result (one read from the file is drawn by the page) -->
                                                 <Grid Visibility="{Binding Type, Converter={StaticResource EnumToVis}, ConverterParameter=Measurement}">
@@ -2137,11 +2214,16 @@
                                                 <Grid Visibility="{Binding IsVertexShape, Converter={StaticResource BoolToVis}}">
                                                     <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                           Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          StrokeThickness="{Binding StrokeThickness}"
                                                           StrokeDashArray="{Binding StrokeDashArray}"
                                                           Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                           Opacity="{Binding Opacity}"
                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Path.StrokeThickness>
+                                                            <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                <Binding Path="StrokeThickness" />
+                                                                <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                            </MultiBinding>
+                                                        </Path.StrokeThickness>
                                                         <Path.Data>
                                                             <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Body">
                                                                 <Binding />
@@ -2154,16 +2236,22 @@
                                                                 <Binding Path="LineEndings" />
                                                                 <Binding Path="InteriorColorHex" />
                                                                 <Binding Path="Type" />
+                                                                <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                             </MultiBinding>
                                                         </Path.Data>
                                                     </Path>
                                                     <!-- The line endings: drawn solid, as the engine draws them on a dashed line -->
                                                     <Path Stretch="None" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                           Stroke="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}"
-                                                          StrokeThickness="{Binding StrokeThickness}"
                                                           Fill="{Binding InteriorColorHex, Converter={StaticResource HexToBrushConverter}}"
                                                           Opacity="{Binding Opacity}"
                                                           Visibility="{Binding IsDrawnByPage, Converter={StaticResource InverseBoolToVis}}">
+                                                        <Path.StrokeThickness>
+                                                            <MultiBinding Converter="{StaticResource ScaledStrokeConverter}">
+                                                                <Binding Path="StrokeThickness" />
+                                                                <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                                            </MultiBinding>
+                                                        </Path.StrokeThickness>
                                                         <Path.Data>
                                                             <MultiBinding Converter="{StaticResource ShapeGeometryConverter}" ConverterParameter="Ends">
                                                                 <Binding />
@@ -2176,6 +2264,7 @@
                                                                 <Binding Path="LineEndings" />
                                                                 <Binding Path="InteriorColorHex" />
                                                                 <Binding Path="Type" />
+                                                                <Binding Path="DataContext.ActiveDocument.SingleCurrentPage.DisplayScale" RelativeSource="{RelativeSource AncestorType=Window}" />
                                                             </MultiBinding>
                                                         </Path.Data>
                                                     </Path>

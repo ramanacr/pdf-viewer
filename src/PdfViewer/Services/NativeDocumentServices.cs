@@ -250,6 +250,12 @@ internal sealed class NativeDocumentServices
             }).ToList();
             model.SetQuads(quads);
         }
+        // The page draws a loaded text markup from its own appearance (a highlight with its
+        // Multiply blend mode, so the text under it stays readable) until it is changed; only
+        // then does the overlay draw it. The overlay cannot multiply: drawn over the page as
+        // well, an opaque highlight hid the text.
+        if (type is AnnotationType.Highlight or AnnotationType.Underline or AnnotationType.StrikeOut)
+            model.HasOwnAppearance = a.HasAppearance;
         if (type == AnnotationType.Ink)
         {
             foreach (var stroke in a.InkList.Where(s => s.Count > 0))
@@ -282,6 +288,7 @@ internal sealed class NativeDocumentServices
             // opacity, clouds and /RD) until it is changed; only then does the overlay draw it.
             if (type is AnnotationType.Rectangle or AnnotationType.Ellipse) model.HasOwnAppearance = a.HasAppearance;
         }
+        if (type == AnnotationType.FreeText) model.TextRotation = a.TextRotation;
         if (type == AnnotationType.Stamp)
         {
             model.StampName = a.Icon ?? "Draft";
@@ -337,7 +344,7 @@ internal sealed class NativeDocumentServices
     private static string LoadedColorHex(PdfAnnotation a, AnnotationType type)
     {
         var colour = PdfAnnotation.ToRgb(a.Color) ?? (a.Subtype == "FreeText" ? StrokeOf(a.DefaultAppearance) : null);
-        return colour is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b)
+        return colour is var (r, g, b) ? PdfAnnotationService.Hex(r, g, b)
             : IsVertexShapeType(type) ? "#00000000"
             : "#FF32CD32";
     }
@@ -349,7 +356,7 @@ internal sealed class NativeDocumentServices
 
     /// <summary>An /IC or /C colour as #RRGGBB; null for none.</summary>
     private static string? HexOf(double[]? colour) =>
-        PdfAnnotation.ToRgb(colour) is var (r, g, b) ? PdfNativeAnnotationService.Hex(r, g, b) : null;
+        PdfAnnotation.ToRgb(colour) is var (r, g, b) ? PdfAnnotationService.Hex(r, g, b) : null;
 
     /// <summary>
     /// The dash of an annotation's border as read: /BS /S /D with its /D (the standard's [3] when
@@ -601,6 +608,8 @@ internal sealed class NativeDocumentServices
             var c = Rgb(m.ColorHex);
             a.Color = null;
             a.DefaultAppearance = $"/Helv 11 Tf 0 0 0 rg {F(c[0])} {F(c[1])} {F(c[2])} RG";
+            // Made in a turned view: turned to read upright there (/Rotate, as Acrobat writes it).
+            a.TextRotation = m.TextRotation;
         }
         return a;
     }
@@ -703,7 +712,7 @@ internal sealed class NativeDocumentServices
 
     /// <summary>#RRGGBB or #AARRGGBB; lime green when it is neither, as the PDFium path wrote it.</summary>
     private static double[] Rgb(string? hex) =>
-        PdfNativeAnnotationService.ParseHex(hex) ?? new[] { 50 / 255.0, 205 / 255.0, 50 / 255.0 };
+        PdfAnnotationService.ParseHex(hex) ?? new[] { 50 / 255.0, 205 / 255.0, 50 / 255.0 };
 
     private static string F(double v) => PdfObjectWriter.FormatReal(Math.Round(v, 4));
 

@@ -18,8 +18,8 @@ namespace PdfViewer.ViewModels;
 public partial class MainViewModel
 {
     /// <summary>The current revision, opened for a form edit (a decrypted copy needs no password).</summary>
-    private async Task<PdfNativeDocument> OpenCurrentRevisionAsync() =>
-        await PdfNativeDocument.OpenAsync(_docService.CurrentBytes ?? throw new InvalidOperationException("No document is open."),
+    private async Task<PdfEditableDocument> OpenCurrentRevisionAsync() =>
+        await PdfEditableDocument.OpenAsync(_docService.CurrentBytes ?? throw new InvalidOperationException("No document is open."),
             _docService.CurrentFilePath, _docService.IsDecryptedCopy ? null : _openPassword);
 
     /// <summary>A form edit is allowed: the document has a form, permits filling, and can take an update.</summary>
@@ -58,7 +58,7 @@ public partial class MainViewModel
         try
         {
             await using var doc = await OpenCurrentRevisionAsync();
-            var allFields = PdfNativeFormService.ReadAllFields(doc.Vector);
+            var allFields = PdfFormService.ReadAllFields(doc.Vector);
             if (allFields.Count == 0)
             {
                 StatusText = "This document has no form fields.";
@@ -90,7 +90,7 @@ public partial class MainViewModel
                 StatusText = "No form values changed.";
                 return;
             }
-            PdfNativeFormService.SetValues(doc, changes, validate: true);
+            PdfFormService.SetValues(doc, changes, validate: true);
             await AdoptFormRevisionAsync(doc.Bytes);
             StatusText = $"Filled {changes.Count} field(s). Save to keep the values.";
         }
@@ -129,7 +129,7 @@ public partial class MainViewModel
         {
             byte[] data = await File.ReadAllBytesAsync(path);
             await using var doc = await OpenCurrentRevisionAsync();
-            var result = PdfNativeFormService.Import(doc, data);
+            var result = PdfFormService.Import(doc, data);
             if (result.Applied > 0) await AdoptFormRevisionAsync(doc.Bytes);
             string skipped = result.UnknownFields.Count + result.ReadOnlyFields.Count > 0
                 ? $" {result.UnknownFields.Count} name(s) not in this form and {result.ReadOnlyFields.Count} read-only field(s) were skipped."
@@ -167,8 +167,8 @@ public partial class MainViewModel
             await using var doc = await OpenCurrentRevisionAsync();
             string href = Path.GetFileName(_docService.CurrentFilePath);
             byte[] data = string.Equals(Path.GetExtension(path), ".fdf", StringComparison.OrdinalIgnoreCase)
-                ? PdfNativeFormService.ExportFdf(doc.Vector, href)
-                : System.Text.Encoding.UTF8.GetBytes(PdfNativeFormService.ExportXfdf(doc.Vector, href));
+                ? PdfFormService.ExportFdf(doc.Vector, href)
+                : System.Text.Encoding.UTF8.GetBytes(PdfFormService.ExportXfdf(doc.Vector, href));
             await File.WriteAllBytesAsync(path, data);
             StatusText = $"Form data exported to {Path.GetFileName(path)}.";
             return true;
@@ -192,7 +192,7 @@ public partial class MainViewModel
         try
         {
             await using var doc = await OpenCurrentRevisionAsync();
-            var changed = PdfNativeFormService.Reset(doc);
+            var changed = PdfFormService.Reset(doc);
             if (doc.IsModified) await AdoptFormRevisionAsync(doc.Bytes);
             StatusText = $"Reset {changed.Count} field(s) to their default values.";
         }
@@ -228,7 +228,7 @@ public partial class MainViewModel
         try
         {
             await using var doc = await OpenCurrentRevisionAsync();
-            byte[] flat = await Task.Run(() => PdfNativeFormService.Flatten(doc.Vector, doc.Bytes));
+            byte[] flat = await Task.Run(() => PdfFormService.Flatten(doc.Vector, doc.Bytes));
             await File.WriteAllBytesAsync(path, flat);
             StatusText = $"Flattened form saved to {Path.GetFileName(path)}.";
             return true;

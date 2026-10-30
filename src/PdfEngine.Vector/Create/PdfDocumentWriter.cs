@@ -19,6 +19,8 @@ public sealed record PdfCreateInfo
     public string? Subject { get; init; }
     public string? Creator { get; init; }
     public string Producer { get; init; } = "PdfEngine.Vector";
+    /// <summary>The creation and modification date; the current time when null. With a fixed date, the same pages are written as the same bytes.</summary>
+    public DateTime? Date { get; init; }
 }
 
 /// <summary>
@@ -93,20 +95,27 @@ public sealed class PdfDocumentWriter : IDisposable
     }
 
     /// <summary>Adds a page of the given size, drawing <paramref name="content"/> with <paramref name="resources"/>.</summary>
-    public int AddPage(double width, double height, byte[] content, PdfDictionary resources)
+    public int AddPage(double width, double height, byte[] content, PdfDictionary resources) =>
+        AddPage(width, height, content, resources, null);
+
+    /// <summary>
+    /// Adds a page as <see cref="AddPage(double, double, byte[], PdfDictionary)"/> does, with more entries in
+    /// its dictionary, such as /Annots (whose objects can be written before or after the page, with numbers
+    /// from <see cref="Reserve"/>). The writer's own entries (/Type, /Parent, /MediaBox, /Resources, /Contents) win.
+    /// </summary>
+    public int AddPage(double width, double height, byte[] content, PdfDictionary resources, IReadOnlyDictionary<string, PdfObject>? entries)
     {
         if (_finished) throw new InvalidOperationException("The document is already finished.");
         int contents = content.Length > 512
             ? AddDeflated(new Dictionary<string, PdfObject>(), s => s.Write(content))
             : Add(PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>(), content));
-        int page = Add(new PdfDictionary(new Dictionary<string, PdfObject>
-        {
-            ["Type"] = new PdfName("Page"),
-            ["Parent"] = new PdfIndirectRef(PagesNumber),
-            ["MediaBox"] = new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(0), Number(width), Number(height) }),
-            ["Resources"] = resources,
-            ["Contents"] = new PdfIndirectRef(contents),
-        }));
+        var pageEntries = entries != null ? new Dictionary<string, PdfObject>(entries) : new Dictionary<string, PdfObject>();
+        pageEntries["Type"] = new PdfName("Page");
+        pageEntries["Parent"] = new PdfIndirectRef(PagesNumber);
+        pageEntries["MediaBox"] = new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(0), Number(width), Number(height) });
+        pageEntries["Resources"] = resources;
+        pageEntries["Contents"] = new PdfIndirectRef(contents);
+        int page = Add(new PdfDictionary(pageEntries));
         _pages.Add(page);
         return page;
     }
@@ -215,7 +224,13 @@ public sealed class PdfDocumentWriter : IDisposable
     }
 
     /// <summary>Writes the page tree, the catalog, the information dictionary and the cross-reference table.</summary>
-    public void Finish(PdfCreateInfo? info = null)
+    public void Finish(PdfCreateInfo? info = null) => Finish(info, null);
+
+    /// <summary>
+    /// Finishes the document as <see cref="Finish(PdfCreateInfo?)"/> does, with more entries in its catalog,
+    /// such as /Outlines, /AcroForm or /PageMode. /Type and /Pages are the writer's own.
+    /// </summary>
+    public void Finish(PdfCreateInfo? info, IReadOnlyDictionary<string, PdfObject>? catalogEntries)
     {
         if (_finished) throw new InvalidOperationException("The document is already finished.");
         if (_pages.Count == 0) throw new InvalidOperationException("A document needs at least one page.");
@@ -227,12 +242,14 @@ public sealed class PdfDocumentWriter : IDisposable
             ["Kids"] = new PdfArray(_pages.Select(p => (PdfObject)new PdfIndirectRef(p)).ToList()),
             ["Count"] = new PdfInteger(_pages.Count),
         }));
-        var catalogEntries = new Dictionary<string, PdfObject> { ["Type"] = new PdfName("Catalog"), ["Pages"] = new PdfIndirectRef(PagesNumber) };
-        if (!string.IsNullOrWhiteSpace(info.Title))
-            catalogEntries["ViewerPreferences"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["DisplayDocTitle"] = PdfBoolean.True });
-        int catalog = Add(new PdfDictionary(catalogEntries));
+        var catalogDict = catalogEntries != null ? new Dictionary<string, PdfObject>(catalogEntries) : new Dictionary<string, PdfObject>();
+        catalogDict["Type"] = new PdfName("Catalog");
+        catalogDict["Pages"] = new PdfIndirectRef(PagesNumber);
+        if (!string.IsNullOrWhiteSpace(info.Title) && !catalogDict.ContainsKey("ViewerPreferences"))
+            catalogDict["ViewerPreferences"] = new PdfDictionary(new Dictionary<string, PdfObject> { ["DisplayDocTitle"] = PdfBoolean.True });
+        int catalog = Add(new PdfDictionary(catalogDict));
 
-        string now = PdfTextStrings.FormatDate(DateTime.Now);
+        string now = PdfTextStrings.FormatDate(info.Date ?? DateTime.Now);
         var infoEntries = new Dictionary<string, PdfObject>();
         void Text(string key, string? value) { if (!string.IsNullOrWhiteSpace(value)) infoEntries[key] = PdfObjectWriter.TextString(value); }
         Text("Title", info.Title);

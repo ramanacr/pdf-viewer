@@ -259,8 +259,7 @@ internal static class SimpleFontUnicode
 
     private static string?[] BuildWinAnsi()
     {
-        var t = (string?[])FontEncodings.WinAnsi.Clone();
-        foreach (int c in new[] { 0x7F, 0x81, 0x8D, 0x8F, 0x90, 0x9D }) t[c] = "bullet";
+        var t = (string?[])FontEncodings.WinAnsiWithBullets.Clone();
         t[0xA0] = "space";
         t[0xAD] = "hyphen";
         return t;

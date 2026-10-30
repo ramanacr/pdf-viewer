@@ -74,6 +74,23 @@ public class FontTests
     }
 
     [Fact]
+    public void WinAnsiEncoding_UndefinedCodesAreBullets_UnlessDifferencesDefineThem()
+    {
+        // ISO 32000-1 Annex D, WinAnsiEncoding footnote: unused codes above 32 show a bullet.
+        var font = Resolve(SimpleFont("Helvetica", ("Encoding", N("WinAnsiEncoding"))));
+        foreach (int code in new[] { 0x7F, 0x81, 0x8D, 0x8F, 0x90, 0x9D })
+            Assert.Equal("bullet", font.GetGlyphName(code));
+
+        var differences = Dict(("Type", N("Encoding")), ("BaseEncoding", N("WinAnsiEncoding")), ("Differences", A(I(0x7F), N("H"))));
+        var overridden = Resolve(SimpleFont("Helvetica", ("Encoding", differences)));
+        Assert.Equal("H", overridden.GetGlyphName(0x7F));
+        Assert.Equal("bullet", overridden.GetGlyphName(0x81));
+
+        var standard = Resolve(SimpleFont("Helvetica"));
+        Assert.Null(standard.GetGlyphName(0x7F));
+    }
+
+    [Fact]
     public void MacRomanEncoding_MapsHighCodes()
     {
         var font = Resolve(SimpleFont("Helvetica", ("Encoding", N("MacRomanEncoding"))));

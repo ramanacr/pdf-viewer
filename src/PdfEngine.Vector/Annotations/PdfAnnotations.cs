@@ -79,6 +79,18 @@ public sealed class PdfAnnotation
     public double[]? CalloutLine { get; set; }
     public string? RichContents { get; set; }
 
+    /// <summary>
+    /// Free text's /Rotate (written by Acrobat, read by other viewers too): 0, 90, 180 or 270
+    /// degrees counter-clockwise the text is turned on the page, so it reads upright in a view
+    /// turned that far clockwise. Null when absent: the appearance then follows the page's own
+    /// /Rotate. Only free text carries it.
+    /// </summary>
+    public int? TextRotation { get; set; }
+
+    /// <summary>A turn in degrees as 0, 90, 180 or 270 (to the nearest quarter turn).</summary>
+    public static int QuarterTurn(double degrees) =>
+        double.IsFinite(degrees) && Math.Abs(degrees) < 1e6 ? ((int)Math.Round(degrees / 90) * 90 % 360 + 360) % 360 : 0;
+
     /// <summary>The /Popup annotation's object number (0 when none), its rectangle and /Open.</summary>
     public int PopupObjectNumber { get; set; }
     public PdfRect? PopupRect { get; set; }
@@ -215,6 +227,9 @@ public static class PdfAnnotationReader
             a.BorderWidth = Number(border[2]);
             if (border.Count >= 4) a.BorderDash ??= PdfDocumentInfo.Numbers(r.Resolve(border[3]), r);
         }
+
+        if (a.Subtype == "FreeText" && Number(d["Rotate"]) is double turn)
+            a.TextRotation = PdfAnnotation.QuarterTurn(turn);
 
         if (r.Resolve(d["LE"]) is PdfArray le)
             a.LineEndings = le.Select(e => (r.Resolve(e) as PdfName)?.Value ?? "None").ToArray();

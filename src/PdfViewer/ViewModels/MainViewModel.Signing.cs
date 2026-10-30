@@ -60,7 +60,7 @@ public partial class MainViewModel
     // Placing a signature, marking for redaction and drawing annotations exclude each other.
     partial void OnIsPlacingSignatureChanged(bool value)
     {
-        if (value) { ActiveAnnotationTool = null; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null; }
+        if (value) { ActiveAnnotationTool = null; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null; IsPanningEnabled = false; }
     }
 
     partial void OnActiveAnnotationToolChanged(AnnotationType? value)
@@ -68,7 +68,7 @@ public partial class MainViewModel
         OnShapeToolChanged(value);
         if (value != null)
         {
-            IsPlacingSignature = false; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null;
+            IsPlacingSignature = false; IsMarkingRedaction = false; ActiveMeasureTool = null; ActiveStamp = null; IsPanningEnabled = false;
             // Drawing starts a new action: the text selection ends, and the status with it.
             if (HasTextSelection) ClearSelection();
         }

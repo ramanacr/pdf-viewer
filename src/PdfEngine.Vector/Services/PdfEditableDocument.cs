@@ -9,15 +9,15 @@ namespace PdfEngine.Vector.Services;
 /// An open document that can be changed in memory: every edit is committed as an incremental
 /// update of <see cref="Bytes"/> and the document re-read from the result, so page count, pages
 /// and outline always describe what a save would write. Implements the engine-neutral
-/// <see cref="IPdfDocument"/> for the native document services.
+/// <see cref="IPdfDocument"/> for the engine's own document services.
 /// </summary>
-public sealed class PdfNativeDocument : IPdfDocument
+public sealed class PdfEditableDocument : IPdfDocument
 {
     private readonly object _sync = new();
     private PdfVectorDocument _vector;
     private bool _disposed;
 
-    private PdfNativeDocument(string filePath, byte[] bytes, PdfVectorDocument vector, string? password)
+    private PdfEditableDocument(string filePath, byte[] bytes, PdfVectorDocument vector, string? password)
     {
         FilePath = filePath;
         Bytes = bytes;
@@ -26,7 +26,7 @@ public sealed class PdfNativeDocument : IPdfDocument
         OriginalBytes = bytes;
     }
 
-    public static async ValueTask<PdfNativeDocument> OpenAsync(string filePath, string? password = null, CancellationToken cancellationToken = default)
+    public static async ValueTask<PdfEditableDocument> OpenAsync(string filePath, string? password = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path cannot be null or empty.", nameof(filePath));
         if (!File.Exists(filePath)) throw new FileNotFoundException($"PDF file not found: {filePath}", filePath);
@@ -34,13 +34,13 @@ public sealed class PdfNativeDocument : IPdfDocument
         return await OpenAsync(bytes, filePath, password, cancellationToken).ConfigureAwait(false);
     }
 
-    public static async ValueTask<PdfNativeDocument> OpenAsync(byte[] bytes, string filePath = "", string? password = null, CancellationToken cancellationToken = default)
+    public static async ValueTask<PdfEditableDocument> OpenAsync(byte[] bytes, string filePath = "", string? password = null, CancellationToken cancellationToken = default)
     {
         if (bytes == null || bytes.Length == 0) throw new ArgumentException("PDF bytes cannot be null or empty.", nameof(bytes));
         try
         {
             var vector = await PdfVectorDocument.OpenAsync(bytes, filePath, cancellationToken: cancellationToken, password: password).ConfigureAwait(false);
-            return new PdfNativeDocument(filePath, bytes, vector, password);
+            return new PdfEditableDocument(filePath, bytes, vector, password);
         }
         catch (PdfEncryptedDocumentException ex) when (ex.PasswordRequired)
         {
@@ -149,7 +149,7 @@ public sealed class PdfNativeDocument : IPdfDocument
 
     private void ThrowIfDisposed()
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(PdfNativeDocument));
+        if (_disposed) throw new ObjectDisposedException(nameof(PdfEditableDocument));
     }
 
     public void Dispose()

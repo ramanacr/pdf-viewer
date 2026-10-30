@@ -164,6 +164,14 @@ public partial class MainViewModel
         _ => type.ToString(),
     };
 
+    /// <summary>
+    /// The heading of the comment and style editor for an annotation of this type: "Add Text Box"
+    /// when it is being created, "Edit Polygon" when it already exists. The window title stays
+    /// generic; the heading says what is being edited.
+    /// </summary>
+    public static string EditDialogHeading(AnnotationType type, bool isNew) =>
+        (isNew ? "Add " : "Edit ") + (type == AnnotationType.Note ? "Sticky Note" : AnnotationTypeName(type));
+
     private void RecordAnnotationChange(string name, List<AnnotationChange> changes)
     {
         if (changes.Count == 0) return;

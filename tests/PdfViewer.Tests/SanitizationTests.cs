@@ -45,7 +45,7 @@ public class SanitizationTests : IDisposable
 #if PDFIUM_RENDERER
         TestEngines.Pdfium => new PdfiumSafetyInspector(),
 #endif
-        _ => new PdfNativeSafetyInspector(),
+        _ => new PdfSafetyInspector(),
     };
 
     private static IPdfSanitizer Sanitizer(string engine, IPdfSafetyInspector? inspector = null) => engine switch
@@ -53,7 +53,7 @@ public class SanitizationTests : IDisposable
 #if PDFIUM_RENDERER
         TestEngines.Pdfium => new PdfiumSanitizer(inspector ?? new PdfiumSafetyInspector()),
 #endif
-        _ => new PdfNativeSanitizer(inspector ?? new PdfNativeSafetyInspector()),
+        _ => new PdfSanitizer(inspector ?? new PdfSafetyInspector()),
     };
 
     [Theory, MemberData(nameof(TestEngines.Names), MemberType = typeof(TestEngines))]

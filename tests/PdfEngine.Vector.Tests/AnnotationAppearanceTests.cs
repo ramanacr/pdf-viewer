@@ -651,6 +651,33 @@ public class AnnotationAppearanceTests
     }
 
     [Theory]
+    [InlineData(0, 90, 90)]    // text added in a view turned a quarter clockwise
+    [InlineData(0, 270, 270)]
+    [InlineData(90, 0, 0)]     // its own /Rotate wins over the page's
+    [InlineData(90, 180, 180)]
+    public async Task FreeText_WithItsOwnRotate_IsTurnedByIt(int pageRotate, int ownRotate, int expected)
+    {
+        var page = D(("Type", N("Page")), ("Rotate", new PdfInteger(pageRotate)));
+        var annot = Annot("FreeText", new[] { 20.0, 20, 60, 180 }, ("Contents", S("Upright")), ("DA", S("/Helv 12 Tf 0 g")),
+            ("Border", A(0, 0, 0)), ("P", page), ("Rotate", new PdfInteger(ownRotate)));
+        var form = await Generate(annot);
+        Assert.NotNull(form);
+        var bbox = Assert.IsType<PdfArray>(form!.Dictionary["BBox"]).Select(o => o.TryGetNumber(out double v) ? v : double.NaN).ToArray();
+        Assert.Equal(expected is 90 or 270 ? new[] { 0.0, 0, 160, 40 } : new[] { 0.0, 0, 40, 160 }, bbox);
+        if (expected == 0)
+        {
+            Assert.False(form.Dictionary.Entries.ContainsKey("Matrix"));
+        }
+        else
+        {
+            var m = Assert.IsType<PdfArray>(form.Dictionary["Matrix"]).Select(o => o.TryGetNumber(out double v) ? v : double.NaN).ToArray();
+            double a = expected * Math.PI / 180;
+            Assert.Equal(Math.Cos(a), m[0], 5);
+            Assert.Equal(Math.Sin(a), m[1], 5);
+        }
+    }
+
+    [Theory]
     [InlineData("一二三四五六七八九十一二三四五六七八九十一二三四五")]
     [InlineData("MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM")]
     [InlineData("Please review the totals on this page before Friday, and check the dates.\nThanks")]
