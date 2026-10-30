@@ -1182,6 +1182,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
         IsPanningEnabled = !IsPanningEnabled;
     }
 
+    /// <summary>
+    /// The Hand tool is a tool like the others: turning it on turns off the annotation tool (and
+    /// drops the polygon or connected lines being drawn), the measuring tool, the stamp, signature
+    /// placing and redaction marking, so the next click on the page pans and adds nothing.
+    /// </summary>
+    partial void OnIsPanningEnabledChanged(bool value)
+    {
+        if (!value) return;
+        ActiveAnnotationTool = null;
+        ActiveMeasureTool = null;
+        ActiveStamp = null;
+        IsPlacingSignature = false;
+        IsMarkingRedaction = false;
+    }
+
     [RelayCommand]
     public void ToggleTheme()
     {

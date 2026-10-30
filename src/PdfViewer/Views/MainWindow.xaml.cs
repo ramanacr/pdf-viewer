@@ -1339,7 +1339,7 @@ public partial class MainWindow : Window
                 _previewShape = new System.Windows.Shapes.Rectangle
                 {
                     Stroke = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!,
-                    StrokeThickness = _vm.SelectedAnnotationThickness
+                    StrokeThickness = PdfViewer.Converters.ScaledStrokeConverter.Scaled(_vm.SelectedAnnotationThickness, page.DisplayScale)
                 };
             }
             else if (_vm.ActiveAnnotationTool == AnnotationType.Ellipse)
@@ -1347,7 +1347,7 @@ public partial class MainWindow : Window
                 _previewShape = new System.Windows.Shapes.Ellipse
                 {
                     Stroke = (Brush)new BrushConverter().ConvertFrom(_vm.SelectedAnnotationColor)!,
-                    StrokeThickness = _vm.SelectedAnnotationThickness
+                    StrokeThickness = PdfViewer.Converters.ScaledStrokeConverter.Scaled(_vm.SelectedAnnotationThickness, page.DisplayScale)
                 };
             }
             else if (_vm.ActiveAnnotationTool == AnnotationType.Underline)
@@ -1789,6 +1789,8 @@ public partial class MainWindow : Window
 
                 if (_vm.ActiveAnnotationTool.Value == AnnotationType.FreeText)
                 {
+                    // In a turned view the text box reads upright on screen, as in Acrobat.
+                    annot.TextRotation = _vm.NewTextBoxRotation(page.PageNumber);
                     var dialog = new EditCommentDialog(annot, isNew: true) { Owner = this };
                     if (dialog.ShowDialog() == true && dialog.IsConfirmed)
                     {

@@ -32,7 +32,8 @@ public partial class EditCommentDialog : Window
         InitializeComponent();
 
         Annotation = annotation;
-        DialogHeaderTextBlock.Text = isNew ? "Add Comment / Sticky Note" : "Edit Comment / Sticky Note";
+        // The heading names what is edited ("Edit Polygon", "Add Text Box"); the window title stays generic.
+        DialogHeaderTextBlock.Text = PdfViewer.ViewModels.MainViewModel.EditDialogHeading(annotation.Type, isNew);
 
         TitleTextBox.Text = string.IsNullOrWhiteSpace(annotation.Title) ? "Note" : annotation.Title;
         CommentTextBox.Text = annotation.Contents;

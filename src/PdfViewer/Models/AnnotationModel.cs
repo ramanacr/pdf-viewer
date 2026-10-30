@@ -274,10 +274,13 @@ public partial class AnnotationModel : ObservableObject
     /// <paramref name="width"/> by <paramref name="height"/> pixels, with its line endings drawn at
     /// the size the engine draws them (arrows nine line widths long at 30 degrees, other shapes
     /// six line widths across). <paramref name="body"/> and <paramref name="ends"/> choose the
-    /// parts: the engine dashes the lines but draws the endings solid. Null when it has too few points.
+    /// parts: the engine dashes the lines but draws the endings solid. <paramref name="scale"/> is
+    /// screen pixels per point (the zoom): the endings are sized in line widths, which are points.
+    /// Null when it has too few points.
     /// </summary>
-    public System.Windows.Media.Geometry? ShapeGeometry(double width, double height, bool body = true, bool ends = true)
+    public System.Windows.Media.Geometry? ShapeGeometry(double width, double height, bool body = true, bool ends = true, double scale = 1)
     {
+        if (!(scale > 0) || !double.IsFinite(scale)) scale = 1;
         if (!IsVertexShape || _vertices.Count < 2 || Width <= 0 || Height <= 0 || width <= 0 || height <= 0) return null;
         Point Local(Point p) => new((p.X - X) / Width * width, (p.Y - Y) / Height * height);
         var points = _vertices.Select(Local).ToList();
@@ -291,8 +294,8 @@ public partial class AnnotationModel : ObservableObject
         }
         if (ends && HasLineEndings)
         {
-            Ending(path, StartEnding, points[0], points[0] - points[1], filled);
-            Ending(path, EndEnding, points[^1], points[^1] - points[^2], filled);
+            Ending(path, StartEnding, points[0], points[0] - points[1], filled, scale);
+            Ending(path, EndEnding, points[^1], points[^1] - points[^2], filled, scale);
         }
         path.Freeze();
         return path;
@@ -303,13 +306,13 @@ public partial class AnnotationModel : ObservableObject
     /// line, as the engine draws it (a closed one filled with /IC). The screen's y axis points
     /// down, so the side vector is turned the other way to match the page.
     /// </summary>
-    private void Ending(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward, bool filled)
+    private void Ending(System.Windows.Media.PathGeometry path, string style, Point tip, Vector outward, bool filled, double scale)
     {
         if (style == "None" || outward.Length < 1e-9) return;
         outward.Normalize();
         var d = outward;
         var n = new Vector(d.Y, -d.X);
-        double s = Math.Max(StrokeThickness, 1);
+        double s = Math.Max(StrokeThickness, 1) * scale;
         double half = 3 * s, arrow = 9 * s;
         var back = d * (arrow * Math.Cos(Math.PI / 6));
         var side = n * (arrow * Math.Sin(Math.PI / 6));
@@ -353,6 +356,14 @@ public partial class AnnotationModel : ObservableObject
     /// <summary>A measurement's scale and units (its /Measure).</summary>
     [ObservableProperty]
     private PdfEngine.Vector.Annotations.PdfMeasure? _measure;
+
+    /// <summary>
+    /// Free text's turn on the page (its /Rotate): 0, 90, 180 or 270 degrees counter-clockwise, so
+    /// it reads upright in a view turned that far clockwise. Null when it has none: it then turns
+    /// with the page's own /Rotate. Text boxes made in a turned view get the view's turn.
+    /// </summary>
+    [ObservableProperty]
+    private int? _textRotation;
 
     /// <summary>A stamp's /Name (for a custom stamp, its library name).</summary>
     [ObservableProperty]

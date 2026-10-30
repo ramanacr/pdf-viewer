@@ -23,6 +23,8 @@
             <converters:HexToBrushConverter x:Key="HexToBrushConverter" />
             <converters:InkStrokesConverter x:Key="InkStrokesConverter" />
             <converters:ShapeGeometryConverter x:Key="ShapeGeometryConverter" />
+            <converters:ScaledStrokeConverter x:Key="ScaledStrokeConverter" />
+            <converters:TextTurnConverter x:Key="TextTurnConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

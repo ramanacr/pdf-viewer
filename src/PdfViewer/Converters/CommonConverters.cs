@@ -229,14 +229,62 @@ public class InkStrokesConverter : IValueConverter
 /// A line, arrow, polygon or connected lines drawn over its box: values are the annotation and
 /// the box's drawn width and height (further values, such as its points and line width, only make
 /// the binding update when they change). The parameter "Body" draws only the lines (which may be
-/// dashed), "Ends" only the line endings (always solid); none draws both.
+/// dashed), "Ends" only the line endings (always solid); none draws both. The value at
+/// <see cref="ScaleIndex"/>, when given, is the page's zoom (pixels per point), which sizes the
+/// endings as the engine draws them at that zoom.
 /// </summary>
 public class ShapeGeometryConverter : IMultiValueConverter
 {
+    /// <summary>Where the page's display scale is among the values (after the ones that only trigger updates).</summary>
+    public const int ScaleIndex = 10;
+
     public object? Convert(object[] values, Type targetType, object parameter, CultureInfo culture) =>
         values.Length >= 3 && values[0] is PdfViewer.Models.AnnotationModel a && values[1] is double w && values[2] is double h
-            ? a.ShapeGeometry(w, h, body: parameter as string != "Ends", ends: parameter as string != "Body")
+            ? a.ShapeGeometry(w, h, body: parameter as string != "Ends", ends: parameter as string != "Body",
+                scale: values.Length > ScaleIndex && values[ScaleIndex] is double s ? s : 1)
             : null;
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotImplementedException();
+}
+
+/// <summary>
+/// The turn of free text drawn over its box: values are its /Rotate (degrees counter-clockwise,
+/// null when it has none) and the page's own /Rotate, which applies when it has none. The text is
+/// turned back by that much, so with the overlay turned with the page it reads upright, as the
+/// engine draws it.
+/// </summary>
+public class TextTurnConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        double turn = Angle(values.Length > 0 && values[0] is int own ? own : null, values.Length > 1 && values[1] is int page ? page : 0);
+        var transform = new System.Windows.Media.RotateTransform(turn);
+        transform.Freeze();
+        return transform;
+    }
+
+    /// <summary>The clockwise screen angle that turns free text with this /Rotate (or, without one, the page's) upright.</summary>
+    public static double Angle(int? textRotation, int pageRotation) =>
+        -PdfEngine.Vector.Annotations.PdfAnnotation.QuarterTurn(textRotation ?? pageRotation);
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotImplementedException();
+}
+
+/// <summary>
+/// An annotation's line width on screen: its width in points (first value) times the page's
+/// display scale in pixels per point (second value), so the overlay draws it as wide as the page
+/// will once it is saved, at any zoom. A dash in line widths (<c>StrokeDashArray</c>) then scales with it.
+/// </summary>
+public class ScaledStrokeConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) =>
+        Scaled(values.Length > 0 && values[0] is double width ? width : 0, values.Length > 1 && values[1] is double scale ? scale : 1);
+
+    /// <summary>The width <paramref name="points"/> wide drawn at <paramref name="scale"/> pixels per point.</summary>
+    public static double Scaled(double points, double scale) =>
+        double.IsFinite(points) && points > 0 ? points * (double.IsFinite(scale) && scale > 0 ? scale : 1) : 0;
 
     public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
         throw new NotImplementedException();
