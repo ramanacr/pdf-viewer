@@ -174,7 +174,7 @@
                         IsDefault="True"
                         IsCancel="True"
                         Background="{DynamicResource AccentBrush}"
-                        Foreground="White"
+                        Foreground="{DynamicResource OnAccentTextBrush}"
                         BorderThickness="0"
                         Click="CloseButton_Click" />
             </StackPanel>

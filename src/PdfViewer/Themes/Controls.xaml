@@ -120,7 +120,7 @@
                                         <Thumb>
                                             <Thumb.Template>
                                                 <ControlTemplate TargetType="Thumb">
-                                                    <Border Background="{DynamicResource BorderBrush}"
+                                                    <Border Background="{DynamicResource ScrollBarThumbBrush}"
                                                             CornerRadius="5"
                                                             Margin="2" />
                                                 </ControlTemplate>
@@ -145,7 +145,7 @@
                                         <Thumb>
                                             <Thumb.Template>
                                                 <ControlTemplate TargetType="Thumb">
-                                                    <Border Background="{DynamicResource BorderBrush}"
+                                                    <Border Background="{DynamicResource ScrollBarThumbBrush}"
                                                             CornerRadius="5"
                                                             Margin="2" />
                                                 </ControlTemplate>

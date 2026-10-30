@@ -113,7 +113,7 @@
         <!-- Action Buttons -->
         <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Cancel" Width="85" Height="32" Margin="0,0,8,0" IsCancel="True" Click="CancelButton_Click" />
-            <Button Content="Export" Width="85" Height="32" IsDefault="True" Background="{DynamicResource AccentBrush}" Foreground="White" BorderThickness="0" Click="ExportButton_Click" />
+            <Button Content="Export" Width="85" Height="32" IsDefault="True" Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource OnAccentTextBrush}" BorderThickness="0" Click="ExportButton_Click" />
         </StackPanel>
     </Grid>
 </Window>
