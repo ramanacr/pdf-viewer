@@ -386,8 +386,8 @@ public sealed class ViewerEditSession
         return layout;
     }
 
-    /// <summary>The longest name a dynamic stamp shows.</summary>
-    public const int MaxStampSignerLength = 64;
+    /// <summary>The longest name a dynamic stamp shows (its second line stays within <see cref="ViewerAnnotationStore.MaxStampSubtitleLength"/>).</summary>
+    public const int MaxStampSignerLength = 48;
 
     /// <summary>
     /// The stamps a reader can place: the engine's standard stamps (<see cref="PdfStamps.Standard"/>),

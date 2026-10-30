@@ -277,6 +277,10 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 7. **Markup needs a text selection**, so a document that does not allow copying cannot be
    highlighted. A note's icon is 20 points, a small target at fit width. With the draw tool on,
    one finger only draws: scrolling needs the tool off.
+8. **Stamps and text boxes on signed files.** They are saved as an incremental update, so the
+   signed revision's bytes do not change. But this app's signature check may currently report a
+   certified or approval-signed file as "modified after signing" after a stamp or text box is
+   added. This is tracked separately.
 
 ## Tests
 
@@ -305,8 +309,9 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 - `tests/PdfEngine.Vector.Skia.Tests/AndroidStampTests.cs`: the stamp tool's list, every standard stamp
   placed with a tap and saved (Save a copy) as `/Stamp` with its `/Name` and appearance, dynamic stamps
   with the name and date (refused without a name), stamps upright on pages turned 90, 180 and 270
-  degrees, kept on the page, undo, redo and delete, and a stamp saved into a certified file whose
-  signature stays valid.
+  degrees, kept on the page, undo, redo and delete, and a stamp saved into a certified file as an
+  incremental update after the unchanged signed revision (the current verdict is pinned; see known
+  gap 8).
 - `tests/PdfEngine.Vector.Skia.Tests/AndroidSaveTests.cs`: **Save** (`ViewerSaveBack`): nothing
   to save, no write access, a file changed since it was opened (and replacing it), one save at a
   time, the bytes written being the file as opened plus an incremental update, the dirty state
