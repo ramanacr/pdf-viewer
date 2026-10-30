@@ -293,9 +293,9 @@ public static class DocServicesSmoke
         Tally open, Tally renders, Dictionary<string, object?> record)
     {
         int n = sourceOracle.PageCount;
-        await using var native = await PdfNativeDocument.OpenAsync(source, name);
-        await using var original = await PdfNativeDocument.OpenAsync(source, name);
-        var organizer = new PdfNativePageOrganizerService();
+        await using var native = await PdfEditableDocument.OpenAsync(source, name);
+        await using var original = await PdfEditableDocument.OpenAsync(source, name);
+        var organizer = new PdfPageOrganizerService();
         int rotation = (int)(await native.GetPageInfoAsync(1)).RotationDegrees;
         await organizer.RotatePageAsync(native, 1, (PdfEngine.Rendering.PageRotation)((rotation + 90) % 360));
         if (n > 1) await organizer.DeletePageAsync(native, n);

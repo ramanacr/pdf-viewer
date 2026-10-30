@@ -540,8 +540,8 @@ public class NativeDocumentServicesTests
     public async Task PageTree_RotateDeleteInsert_InPlace_MatchPdfium()
     {
         var bytes = ThreePages();
-        await using var native = await PdfNativeDocument.OpenAsync(bytes);
-        var organizer = new PdfNativePageOrganizerService();
+        await using var native = await PdfEditableDocument.OpenAsync(bytes);
+        var organizer = new PdfPageOrganizerService();
         await organizer.RotatePageAsync(native, 1, PageRotation.Rotate270);
         await organizer.DeletePageAsync(native, 2);                 // from the nested node
         await organizer.InsertBlankPageAsync(native, 1, 100, 150);   // becomes page 2
@@ -565,7 +565,7 @@ public class NativeDocumentServicesTests
         Assert.Equal(0, PdfiumOracle.MeanDifference(source.Render(2), oracle.Render(2)), 3);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await using var single = await PdfNativeDocument.OpenAsync(Raw("<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>"));
+            await using var single = await PdfEditableDocument.OpenAsync(Raw("<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>"));
             await organizer.DeletePageAsync(single, 1);
         });
     }
@@ -719,9 +719,9 @@ public class NativeDocumentServicesTests
         Directory.CreateDirectory(dir);
         try
         {
-            await using var native = await PdfNativeDocument.OpenAsync(bytes, Path.Combine(dir, "source.pdf"));
-            await new PdfNativePageOrganizerService().RotatePageAsync(native, 2, PageRotation.Rotate180);
-            var save = new PdfNativeSaveService();
+            await using var native = await PdfEditableDocument.OpenAsync(bytes, Path.Combine(dir, "source.pdf"));
+            await new PdfPageOrganizerService().RotatePageAsync(native, 2, PageRotation.Rotate180);
+            var save = new PdfSaveService();
             string inc = Path.Combine(dir, "inc.pdf"), full = Path.Combine(dir, "full.pdf");
             await save.SaveAsync(native, inc, new PdfEngine.Save.SaveOptions { Mode = PdfEngine.Save.SaveMode.Incremental });
             await save.SaveAsync(native, full, new PdfEngine.Save.SaveOptions { Mode = PdfEngine.Save.SaveMode.FullRewrite });
@@ -747,9 +747,9 @@ public class NativeDocumentServicesTests
         var b = new VectorPdfBuilder();
         b.AddPage("0 0 1 rg 0 0 100 100 re f", mediaBox: "[0 0 150 150]");
         var donor = b.Build();
-        await using var native = await PdfNativeDocument.OpenAsync(target);
-        await using var other = await PdfNativeDocument.OpenAsync(donor);
-        await new PdfNativePageOrganizerService().InsertPagesAsync(native, 1, other, new[] { 1, 1 });
+        await using var native = await PdfEditableDocument.OpenAsync(target);
+        await using var other = await PdfEditableDocument.OpenAsync(donor);
+        await new PdfPageOrganizerService().InsertPagesAsync(native, 1, other, new[] { 1, 1 });
         using var oracle = new PdfiumOracle(native.Bytes);
         Assert.Equal(5, oracle.PageCount);
         Assert.Equal((150.0, 150.0), oracle.PageSize(1));

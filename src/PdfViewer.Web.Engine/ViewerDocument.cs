@@ -1122,7 +1122,7 @@ public sealed class ViewerDocument : IAsyncDisposable
             if (formValues.Count > 0)
             {
                 if (doc == null) opened.Add(doc = await OpenRevisionAsync(bytes, cancellationToken).ConfigureAwait(false));
-                var (withValues, changed) = PdfEngine.Vector.Services.PdfNativeFormService.Fill(doc, bytes, formValues, validate: true);
+                var (withValues, changed) = PdfEngine.Vector.Services.PdfFormService.Fill(doc, bytes, formValues, validate: true);
                 filled = changed;
                 if (!ReferenceEquals(withValues, bytes))
                 {

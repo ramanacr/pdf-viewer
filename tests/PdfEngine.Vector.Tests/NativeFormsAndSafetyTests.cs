@@ -61,8 +61,8 @@ public class NativeFormsAndSafetyTests : IDisposable
     {
         string path = Save(FormPdfFixture.Build(), "form.pdf");
         var pdfium = await PdfiumFields(path);
-        await using var doc = await PdfNativeDocument.OpenAsync(path);
-        var native = PdfNativeFormService.ReadAllFields(doc.Vector);
+        await using var doc = await PdfEditableDocument.OpenAsync(path);
+        var native = PdfFormService.ReadAllFields(doc.Vector);
 
         // One entry per widget, in /Annots order.
         Assert.Equal(pdfium.Count, native.Count);
@@ -96,14 +96,14 @@ public class NativeFormsAndSafetyTests : IDisposable
     public async Task SetValues_RegenerateAppearances_AsAnIncrementalUpdate_PdfiumReadsThem()
     {
         byte[] original = FormPdfFixture.Build();
-        await using var doc = await PdfNativeDocument.OpenAsync(original);
-        var service = new PdfNativeFormService();
+        await using var doc = await PdfEditableDocument.OpenAsync(original);
+        var service = new PdfFormService();
         await service.SetFieldValueAsync(doc, "person.name", "Ada Lovelace");
         await service.SetFieldValueAsync(doc, "zip", "75001");
         await service.SetFieldValueAsync(doc, "agree", "Yes");
         await service.SetFieldValueAsync(doc, "colour", "Blue");
         await service.SetFieldValueAsync(doc, "city", "Rome"); // display text maps to the export value
-        PdfNativeFormService.SetValues(doc, new[] { ("fruit", (IReadOnlyList<string>)new[] { "Banana" }) }, validate: true);
+        PdfFormService.SetValues(doc, new[] { ("fruit", (IReadOnlyList<string>)new[] { "Banana" }) }, validate: true);
 
         Assert.True(doc.Bytes.AsSpan(0, original.Length).SequenceEqual(original), "the original bytes stay as they were");
         var form = PdfAcroForm.Read(doc.Vector)!;
@@ -129,21 +129,21 @@ public class NativeFormsAndSafetyTests : IDisposable
     [Fact]
     public async Task SetValue_RefusesReadOnlyAndUnknownFields_AndValidates()
     {
-        await using var doc = await PdfNativeDocument.OpenAsync(FormPdfFixture.Build());
-        var service = new PdfNativeFormService();
+        await using var doc = await PdfEditableDocument.OpenAsync(FormPdfFixture.Build());
+        var service = new PdfFormService();
         await Assert.ThrowsAsync<KeyNotFoundException>(async () => await service.SetFieldValueAsync(doc, "nope", "x"));
-        Assert.Throws<ArgumentException>(() => PdfNativeFormService.SetValues(doc, new[] { ("colour", (IReadOnlyList<string>)new[] { "Green" }) }, validate: true));
+        Assert.Throws<ArgumentException>(() => PdfFormService.SetValues(doc, new[] { ("colour", (IReadOnlyList<string>)new[] { "Green" }) }, validate: true));
 
-        await using var scripted = await PdfNativeDocument.OpenAsync(ScriptedFormFixture.Build());
-        Assert.Throws<PdfFieldValidationException>(() => PdfNativeFormService.SetValues(scripted, new[] { ("price", (IReadOnlyList<string>)new[] { "5000" }) }, validate: true));
+        await using var scripted = await PdfEditableDocument.OpenAsync(ScriptedFormFixture.Build());
+        Assert.Throws<PdfFieldValidationException>(() => PdfFormService.SetValues(scripted, new[] { ("price", (IReadOnlyList<string>)new[] { "5000" }) }, validate: true));
         Assert.False(scripted.IsModified);
     }
 
     [Fact]
     public async Task CalculatedFields_AreRecalculated_InCalculationOrder_WithoutRunningScript()
     {
-        await using var doc = await PdfNativeDocument.OpenAsync(ScriptedFormFixture.Build());
-        var changed = PdfNativeFormService.SetValues(doc, new[]
+        await using var doc = await PdfEditableDocument.OpenAsync(ScriptedFormFixture.Build());
+        var changed = PdfFormService.SetValues(doc, new[]
         {
             ("qty", (IReadOnlyList<string>)new[] { "3" }),
             ("price", (IReadOnlyList<string>)new[] { "2.5" }),
@@ -157,8 +157,8 @@ public class NativeFormsAndSafetyTests : IDisposable
     public async Task Xfdf_And_Fdf_RoundTrip_FieldValues()
     {
         byte[] original = FormPdfFixture.Build();
-        await using var filled = await PdfNativeDocument.OpenAsync(original);
-        PdfNativeFormService.SetValues(filled, new[]
+        await using var filled = await PdfEditableDocument.OpenAsync(original);
+        PdfFormService.SetValues(filled, new[]
         {
             ("person.name", (IReadOnlyList<string>)new[] { "Grace Hopper ü" }),
             ("notes", (IReadOnlyList<string>)new[] { "line one\nline two" }),
@@ -169,15 +169,15 @@ public class NativeFormsAndSafetyTests : IDisposable
         }, validate: false);
         var expected = PdfAcroForm.Read(filled.Vector)!.Fields.ToDictionary(f => f.FullName, f => (f.Value, string.Join("|", f.Values)));
 
-        string xfdf = PdfNativeFormService.ExportXfdf(filled.Vector, "form.pdf");
+        string xfdf = PdfFormService.ExportXfdf(filled.Vector, "form.pdf");
         Assert.Contains("<field name=\"person\">", xfdf);
-        byte[] fdf = PdfNativeFormService.ExportFdf(filled.Vector, "form.pdf");
+        byte[] fdf = PdfFormService.ExportFdf(filled.Vector, "form.pdf");
         Assert.StartsWith("%FDF-1.2", Encoding.ASCII.GetString(fdf));
 
         foreach (var data in new[] { Encoding.UTF8.GetBytes(xfdf), fdf })
         {
-            await using var fresh = await PdfNativeDocument.OpenAsync(original);
-            var result = PdfNativeFormService.Import(fresh, data);
+            await using var fresh = await PdfEditableDocument.OpenAsync(original);
+            var result = PdfFormService.Import(fresh, data);
             Assert.Empty(result.UnknownFields);
             var actual = PdfAcroForm.Read(fresh.Vector)!.Fields.ToDictionary(f => f.FullName, f => (f.Value, string.Join("|", f.Values)));
             Assert.Equal(expected, actual);
@@ -188,19 +188,19 @@ public class NativeFormsAndSafetyTests : IDisposable
     public void Fdf_WrittenByAnotherProducer_IsRead()
     {
         string fdf = "%FDF-1.2\n1 0 obj\n<< /FDF << /Fields [ << /T (person) /Kids [ << /T (name) /V (Nested) >> ] >> << /T (agree) /V /Yes >> << /T (fruit) /V [(Apple) (Cherry)] >> ] >> >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n";
-        var values = PdfNativeFormService.ReadFdf(Encoding.ASCII.GetBytes(fdf));
+        var values = PdfFormService.ReadFdf(Encoding.ASCII.GetBytes(fdf));
         Assert.Equal(("person.name", "Nested"), (values[0].Name, values[0].Values[0]));
         Assert.Equal("Yes", values.Single(v => v.Name == "agree").Values[0]);
         Assert.Equal(new[] { "Apple", "Cherry" }, values.Single(v => v.Name == "fruit").Values);
-        Assert.Throws<InvalidDataException>(() => PdfNativeFormService.ReadXfdf(Encoding.ASCII.GetBytes("<not xml")));
+        Assert.Throws<InvalidDataException>(() => PdfFormService.ReadXfdf(Encoding.ASCII.GetBytes("<not xml")));
     }
 
     [Fact]
     public async Task Reset_ReturnsFieldsToTheirDefaults()
     {
-        await using var doc = await PdfNativeDocument.OpenAsync(FormPdfFixture.Build());
-        PdfNativeFormService.SetValues(doc, new[] { ("zip", (IReadOnlyList<string>)new[] { "12345" }), ("agree", (IReadOnlyList<string>)new[] { "Yes" }) }, validate: false);
-        await new PdfNativeFormService().ResetFormAsync(doc);
+        await using var doc = await PdfEditableDocument.OpenAsync(FormPdfFixture.Build());
+        PdfFormService.SetValues(doc, new[] { ("zip", (IReadOnlyList<string>)new[] { "12345" }), ("agree", (IReadOnlyList<string>)new[] { "Yes" }) }, validate: false);
+        await new PdfFormService().ResetFormAsync(doc);
         var form = PdfAcroForm.Read(doc.Vector)!;
         Assert.Equal(string.Empty, form["zip"]!.Value);
         Assert.False(form["agree"]!.IsChecked);
@@ -210,8 +210,8 @@ public class NativeFormsAndSafetyTests : IDisposable
     [Fact]
     public async Task Flatten_DrawsTheFieldsIntoThePage_AsPdfiumShowsTheFilledForm()
     {
-        await using var doc = await PdfNativeDocument.OpenAsync(FormPdfFixture.Build());
-        PdfNativeFormService.SetValues(doc, new[]
+        await using var doc = await PdfEditableDocument.OpenAsync(FormPdfFixture.Build());
+        PdfFormService.SetValues(doc, new[]
         {
             ("person.name", (IReadOnlyList<string>)new[] { "Flattened Name" }),
             ("notes", (IReadOnlyList<string>)new[] { "Notes" }),
@@ -222,13 +222,13 @@ public class NativeFormsAndSafetyTests : IDisposable
             ("fruit", (IReadOnlyList<string>)new[] { "Apple" }),
         }, validate: false);
         string flatPath = Path.Combine(_dir, "flat.pdf");
-        await new PdfNativeFormService().FlattenFormFieldsAsync(doc, flatPath);
+        await new PdfFormService().FlattenFormFieldsAsync(doc, flatPath);
         byte[] flat = File.ReadAllBytes(flatPath);
 
         using (var flattened = await PdfVectorDocument.OpenAsync(flat))
         {
             Assert.Null(PdfAcroForm.Read(flattened));
-            Assert.Empty(PdfNativeFormService.ReadAllFields(flattened));
+            Assert.Empty(PdfFormService.ReadAllFields(flattened));
         }
         // PDFium's page rendering never draws widgets (only FPDF_FFLDraw does), so the filled form
         // is drawn by the engine; the flattened page, with nothing left to fill, by both.
@@ -283,8 +283,8 @@ public class NativeFormsAndSafetyTests : IDisposable
         using (var engine = new PdfiumEngine())
         await using (var doc = await engine.OpenDocumentAsync(path))
             pdfium = await new PdfiumSafetyInspector().InspectAsync(doc);
-        await using var nativeDoc = await PdfNativeDocument.OpenAsync(path);
-        var native = await new PdfNativeSafetyInspector().InspectAsync(nativeDoc);
+        await using var nativeDoc = await PdfEditableDocument.OpenAsync(path);
+        var native = await new PdfSafetyInspector().InspectAsync(nativeDoc);
 
         Assert.Equal(pdfium.IsClean, native.IsClean);
         foreach (var f in pdfium.Findings)
@@ -307,8 +307,8 @@ public class NativeFormsAndSafetyTests : IDisposable
         string path = Save(ActiveContent(), "active2.pdf");
         string cleanPath = Path.Combine(_dir, "active2.clean.pdf");
         SanitizationResult result;
-        await using (var doc = await PdfNativeDocument.OpenAsync(path))
-            result = await new PdfNativeSanitizer().SanitizeAsync(doc, cleanPath);
+        await using (var doc = await PdfEditableDocument.OpenAsync(path))
+            result = await new PdfSanitizer().SanitizeAsync(doc, cleanPath);
 
         Assert.Equal(1, result.PageCount);
         Assert.Contains(result.Changes, c => c.Kind == SanitizedContentKind.DocumentScript);
@@ -340,8 +340,8 @@ public class NativeFormsAndSafetyTests : IDisposable
         using (var engine = new PdfiumEngine())
         await using (var doc = await engine.OpenDocumentAsync(path))
             pdfium = await new PdfiumSanitizer().SanitizeAsync(doc, Path.Combine(_dir, "p.clean.pdf"));
-        await using var nativeDoc = await PdfNativeDocument.OpenAsync(path);
-        var native = await new PdfNativeSanitizer().SanitizeAsync(nativeDoc, Path.Combine(_dir, "n.clean.pdf"));
+        await using var nativeDoc = await PdfEditableDocument.OpenAsync(path);
+        var native = await new PdfSanitizer().SanitizeAsync(nativeDoc, Path.Combine(_dir, "n.clean.pdf"));
         foreach (var c in pdfium.Changes)
             Assert.True(native.Changes.Single(n => n.Kind == c.Kind).Count >= c.Count, c.Kind.ToString());
         Assert.Equal(pdfium.SideEffects.Count(s => s.Contains("fillable")), native.SideEffects.Count(s => s.Contains("fillable")));
@@ -351,12 +351,12 @@ public class NativeFormsAndSafetyTests : IDisposable
     public async Task CleanCopy_RefusesTheOriginal_AndDiscardsAnUnverifiedCopy()
     {
         string path = Save(ActiveContent(), "active4.pdf");
-        await using var doc = await PdfNativeDocument.OpenAsync(path);
-        var ex = await Assert.ThrowsAsync<PdfSanitizationException>(async () => await new PdfNativeSanitizer().SanitizeAsync(doc, path));
+        await using var doc = await PdfEditableDocument.OpenAsync(path);
+        var ex = await Assert.ThrowsAsync<PdfSanitizationException>(async () => await new PdfSanitizer().SanitizeAsync(doc, path));
         Assert.Contains("cannot overwrite the original", ex.Message);
 
         string target = Path.Combine(_dir, "dirty.pdf");
-        var dirty = new PdfNativeSanitizer(new AlwaysDirty());
+        var dirty = new PdfSanitizer(new AlwaysDirty());
         var fail = await Assert.ThrowsAsync<PdfSanitizationException>(async () => await dirty.SanitizeAsync(doc, target));
         Assert.Contains("still contained active content", fail.Message);
         Assert.False(File.Exists(target));
@@ -407,13 +407,13 @@ public class NativeFormsAndSafetyTests : IDisposable
             using (var engine = new PdfiumEngine())
             await using (var doc = await engine.OpenDocumentAsync(path))
                 pdfium = await engine.SignatureService.GetSignaturesAsync(doc);
-            await using var nativeDoc = await PdfNativeDocument.OpenAsync(path);
-            var native = await new PdfNativeSignatureService().GetSignaturesAsync(nativeDoc);
+            await using var nativeDoc = await PdfEditableDocument.OpenAsync(path);
+            var native = await new PdfSignatureService().GetSignaturesAsync(nativeDoc);
             Assert.Equal(expected, Assert.Single(pdfium).Status);
             var n = Assert.Single(native);
             Assert.Equal(expected, n.Status);
             Assert.Equal("Approve", n.Reason);
-            Assert.Equal(expected, await new PdfNativeSignatureService().VerifySignatureAsync(nativeDoc, n.FieldName));
+            Assert.Equal(expected, await new PdfSignatureService().VerifySignatureAsync(nativeDoc, n.FieldName));
         }
     }
 
@@ -423,8 +423,8 @@ public class NativeFormsAndSafetyTests : IDisposable
         var b = new VectorPdfBuilder();
         int helv = b.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
         b.AddPage("BT /F1 18 Tf 20 350 Td (SECRETWORD) Tj ET BT /F1 18 Tf 20 100 Td (KEEPWORD) Tj ET", $"<< /Font << /F1 {helv} 0 R >> >>", mediaBox: "[0 0 300 400]");
-        await using var doc = await PdfNativeDocument.OpenAsync(b.Build());
-        var service = new PdfNativeRedactionService();
+        await using var doc = await PdfEditableDocument.OpenAsync(b.Build());
+        var service = new PdfRedactionService();
         // Top of the page, normalized from the top-left corner: covers the first line only.
         await service.AddPendingRedactionAsync(doc, new PdfEngine.Redaction.RedactionArea { PageNumber = 1, Bounds = new PdfEngine.Geometry.PdfRect(0, 0, 1, 0.25) });
         var pending = await service.GetPendingRedactionsAsync(doc);

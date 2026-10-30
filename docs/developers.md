@@ -124,6 +124,17 @@ Version 1.0 changes the API of `0.2.0-preview.1`. Update your code as follows.
 | `PdfEngine.Vector.Parsing.MemoryByteSource` | `PdfEngine.Vector.Parsing.PdfMemoryByteSource` |
 | `PdfEngine.Vector.Parsing.FileByteSource` | `PdfEngine.Vector.Parsing.PdfFileByteSource` |
 | `PdfEngine.Vector.Parsing.MemoryRangeReader` | `PdfEngine.Vector.Parsing.PdfMemoryRangeReader` |
+| `PdfEngine.Vector.Services.PdfNativeEngine` | `PdfEngine.Vector.Services.PdfVectorEngine` |
+| `PdfEngine.Vector.Services.PdfNativeDocument` | `PdfEngine.Vector.Services.PdfEditableDocument` |
+| `PdfEngine.Vector.Services.PdfNativeAnnotationService` | `PdfEngine.Vector.Services.PdfAnnotationService` |
+| `PdfEngine.Vector.Services.PdfNativeAttachmentService` | `PdfEngine.Vector.Services.PdfAttachmentService` |
+| `PdfEngine.Vector.Services.PdfNativeFormService` | `PdfEngine.Vector.Services.PdfFormService` |
+| `PdfEngine.Vector.Services.PdfNativePageOrganizerService` | `PdfEngine.Vector.Services.PdfPageOrganizerService` |
+| `PdfEngine.Vector.Services.PdfNativeRedactionService` | `PdfEngine.Vector.Services.PdfRedactionService` |
+| `PdfEngine.Vector.Services.PdfNativeSaveService` | `PdfEngine.Vector.Services.PdfSaveService` |
+| `PdfEngine.Vector.Services.PdfNativeSignatureService` | `PdfEngine.Vector.Services.PdfSignatureService` |
+| `PdfEngine.Vector.Services.PdfNativeSafetyInspector` | `PdfEngine.Vector.Services.PdfSafetyInspector` |
+| `PdfEngine.Vector.Services.PdfNativeSanitizer` | `PdfEngine.Vector.Services.PdfSanitizer` |
 
 ### Renamed members
 

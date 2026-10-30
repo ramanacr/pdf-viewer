@@ -14,8 +14,8 @@ namespace VectorPdf.Tool;
 ///
 /// The M10 native services against PDFium's adapters on a corpus. Forms: on every file with
 /// widgets, the widget list PdfiumFormService reads (count, page, rectangle, partial name, own
-/// value, check state) against PdfNativeFormService. Safety: the PdfiumSafetyInspector report
-/// against PdfNativeSafetyInspector, kind by kind (the native script count may only be higher).
+/// value, check state) against PdfFormService. Safety: the PdfiumSafetyInspector report
+/// against PdfSafetyInspector, kind by kind (the native script count may only be higher).
 /// Every Nth file is sanitized natively and the copy checked by PDFium's inspector (clean, same
 /// page count). Field values and names are compared, never written; the report holds file names,
 /// counts and kinds only.
@@ -54,8 +54,8 @@ public static class ServicesSmoke
             catch (Exception) { skipped++; continue; }
             await using (pdoc)
             {
-                PdfNativeDocument ndoc;
-                try { ndoc = await PdfNativeDocument.OpenAsync(file); }
+                PdfEditableDocument ndoc;
+                try { ndoc = await PdfEditableDocument.OpenAsync(file); }
                 catch (Exception) { skipped++; continue; }
                 await using (ndoc)
                 {
@@ -65,7 +65,7 @@ public static class ServicesSmoke
                         // Forms.
                         var pf = new List<FormFieldModel>();
                         for (int p = 1; p <= pdoc.PageCount; p++) pf.AddRange(await engine.FormService.GetFormFieldsAsync(pdoc, p));
-                        var nf = PdfNativeFormService.ReadAllFields(ndoc.Vector);
+                        var nf = PdfFormService.ReadAllFields(ndoc.Vector);
                         if (pf.Count > 0 || nf.Count > 0)
                         {
                             formFiles++;
@@ -94,7 +94,7 @@ public static class ServicesSmoke
 
                         // Safety.
                         var ps = await pdfiumInspector.InspectAsync(pdoc);
-                        var ns = PdfNativeSafetyInspector.Inspect(ndoc.Vector);
+                        var ns = PdfSafetyInspector.Inspect(ndoc.Vector);
                         safetyFiles++;
                         // The engine never calls clean what PDFium does not (it may find more).
                         bool safeOk = !(ns.IsClean && !ps.IsClean);
@@ -123,7 +123,7 @@ public static class ServicesSmoke
                             bool ok;
                             try
                             {
-                                var result = await new PdfNativeSanitizer().SanitizeAsync(ndoc, target);
+                                var result = await new PdfSanitizer().SanitizeAsync(ndoc, target);
                                 await using var written = await engine.OpenDocumentAsync(target);
                                 ok = (await pdfiumInspector.InspectAsync(written)).IsClean && written.PageCount == pdoc.PageCount && result.PageCount == pdoc.PageCount;
                             }

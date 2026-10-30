@@ -2379,7 +2379,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 // The revision the viewer holds (a decrypted copy for certificate encryption).
                 using var vector = await PdfEngine.Vector.Document.PdfVectorDocument.OpenAsync(bytes, filePath,
                     password: _docService.IsDecryptedCopy ? null : _openPassword);
-                DocumentSafety = await Task.Run(() => PdfEngine.Vector.Services.PdfNativeSafetyInspector.Inspect(vector));
+                DocumentSafety = await Task.Run(() => PdfEngine.Vector.Services.PdfSafetyInspector.Inspect(vector));
             }
 #if PDFIUM_RENDERER
             else
@@ -2552,8 +2552,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         string sourcePath = _docService.CurrentFilePath;
         if (UseNativeDocumentServices)
         {
-            await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
-            return await new PdfEngine.Vector.Services.PdfNativeSanitizer().SanitizeAsync(doc, targetPath);
+            await using var doc = await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(sourcePath, _openPassword);
+            return await new PdfEngine.Vector.Services.PdfSanitizer().SanitizeAsync(doc, targetPath);
         }
 #if PDFIUM_RENDERER
         using var engine = new PdfEngine.Pdfium.PdfiumEngine();
@@ -2815,8 +2815,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             if (UseNativeDocumentServices)
             {
-                await using var doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
-                await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().ArrangePagesAsync(doc, arrangement, target.FileName);
+                await using var doc = await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(sourcePath, _openPassword);
+                await new PdfEngine.Vector.Services.PdfPageOrganizerService().ArrangePagesAsync(doc, arrangement, target.FileName);
             }
 #if PDFIUM_RENDERER
             else
@@ -2874,8 +2874,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             else
 #endif
             {
-                doc = await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(sourcePath, _openPassword);
-                service = new PdfEngine.Vector.Services.PdfNativeAttachmentService();
+                doc = await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(sourcePath, _openPassword);
+                service = new PdfEngine.Vector.Services.PdfAttachmentService();
             }
             using var engineScope = engine;
             await using var docScope = doc;
@@ -3135,7 +3135,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             if (UseNativeDocumentServices)
             {
-                await new PdfEngine.Vector.Services.PdfNativePageOrganizerService().MergeDocumentsAsync(picker.FileNames, target.FileName);
+                await new PdfEngine.Vector.Services.PdfPageOrganizerService().MergeDocumentsAsync(picker.FileNames, target.FileName);
             }
 #if PDFIUM_RENDERER
             else
@@ -3219,7 +3219,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
         }
 #endif
-        return (new PdfEngine.Vector.Services.PdfNativePageOrganizerService(), await PdfEngine.Vector.Services.PdfNativeDocument.OpenAsync(path, _openPassword), null);
+        return (new PdfEngine.Vector.Services.PdfPageOrganizerService(), await PdfEngine.Vector.Services.PdfEditableDocument.OpenAsync(path, _openPassword), null);
     }
 
     /// <summary>
