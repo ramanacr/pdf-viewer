@@ -15,7 +15,7 @@ secrets. GitHub builds the signed bundle; the owner uploads it in Play Console b
 | Part | What it does |
 |---|---|
 | `src/PdfViewer.Android/PdfViewer.Android.csproj` | `net10.0-android`, so the app targets **API level 36**. A Release build makes an **Android App Bundle** (`.aab`); `-p:AndroidPackageFormat=apk` makes an APK. |
-| `.github/workflows/android.yml` | On each change: builds an APK signed with a throwaway debug key, checks that there is no permission and that the target is API 36, checks the listing text lengths. Not for a store. |
+| `.github/workflows/android.yml` | On each change: builds an APK signed with a throwaway debug key, checks that there is no permission and that the target is API 36, checks the listing text lengths. Not for a store. It also builds an `.aab` and checks that it holds the native debug symbols. |
 | `.github/workflows/android-release.yml` | On a tag `android-v*` or a manual run: builds the **signed** `.aab` (for Play) and a signed universal `.apk` (for a GitHub release), in the protected environment `play`, with the upload key from secrets. It uploads both as a workflow artifact. **It never uploads to Google Play.** |
 | `fastlane/metadata/android/en-US/` | The listing: title, short and full description, release notes, icon, feature graphic, phone screenshots. Google Play and F-Droid read the same files ([F-Droid and IzzyOnDroid](android-fdroid.md)). |
 | `store/play/` | Play Console settings and the answers for the Data safety form and the content rating questionnaire. |
@@ -48,6 +48,50 @@ SkiaSharp 3.116.1 included, have 16 KB aligned segments. After the first upload,
 The run fails if `changelogs/<versionCode>.txt` does not exist, so a code always has its release
 notes. Play refuses a `versionCode` that it has seen before, and F-Droid and IzzyOnDroid need it to
 grow too. So for each release, add the next file (`2.txt`, `3.txt`, ...) with its notes, then tag.
+
+### Native debug symbols
+
+Play Console warns "This App Bundle contains native code, and you've not uploaded debug symbols"
+when a bundle has native libraries (`.so`) and no symbol files for them. Play reads the symbols from
+the bundle folder `BUNDLE-METADATA/com.android.tools.build.debugsymbols/<abi>/`, and uses them to
+show function names in native crash reports
+([Include native symbols in your release build](https://developer.android.com/build/include-native-symbols)).
+
+.NET for Android does not fill this folder. It passes each `AndroidAppBundleMetaDataFile` item to
+bundletool as bundle metadata
+([.NET for Android build items](https://learn.microsoft.com/dotnet/android/building-apps/build-items#androidappbundlemetadatafile)).
+`src/PdfViewer.Android/NativeDebugSymbols.targets` adds these items to each Release bundle, so
+**no manual upload is necessary**:
+
+| Bundle entry (per ABI: `arm64-v8a`, `x86_64`) | Source |
+|---|---|
+| `libmonodroid.so.sym` | The .NET for Android runtime host from the runtime pack. It is not stripped (it has a symbol table). |
+| `libxamarin-app.so.dbg` | `libxamarin-app.dbg.so`, the unstripped copy (with DWARF debug information) that the build keeps of the generated `libxamarin-app.so`. |
+
+The other native libraries (`libmonosgen-2.0.so`, `libSystem.*.so`, `libSkiaSharp.so` and the AOT
+images of the assemblies) come **stripped** from their NuGet packages, so the build has no symbols
+for them. Crashes in them show addresses only. The Android workflow (`android.yml`) builds a bundle
+on each change and fails if one of the four entries is missing; the release workflow checks the
+signed bundle too. To see them yourself: `unzip -l <bundle>.aab | grep debugsymbols`.
+
+If Play still shows the warning after an upload of a bundle with these entries, it is about the
+stripped libraries above. It is a warning only: it does not block a release.
+
+### Deobfuscation file (R8 is off)
+
+Play Console also says "There is no deobfuscation file associated with this App Bundle". A
+deobfuscation file (`mapping.txt`) exists only when R8 or ProGuard shrinks and renames the
+**Java/Kotlin** code. This app leaves `AndroidLinkTool` empty, so R8 does not run: the `.dex` code
+keeps its names (it is about 32 KB of generated Java glue for the C# code), and Play's stack traces
+are already readable. The C# code is trimmed by the .NET trimmer (ILLink), which does not rename
+anything, so it needs no mapping file either. The warning is information only.
+
+R8 stays off on purpose: it would save almost nothing on 32 KB of `.dex`, and its keep rules for the
+Java glue are a risk of a crash at run time that no CI check would catch. If R8 is turned on later
+(`<AndroidLinkTool>r8</AndroidLinkTool>`), .NET for Android writes `mapping.txt` and puts it in the
+bundle as `BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map` by itself
+([`AndroidProguardMappingFile`](https://learn.microsoft.com/dotnet/android/building-apps/build-properties#androidproguardmappingfile)),
+and the warning goes away.
 
 ## Steps for the owner
 

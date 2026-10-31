@@ -112,3 +112,27 @@ jobs:
         path: src/PdfViewer.Android/bin/Release/net10.0-android/*-Signed.apk
         if-no-files-found: error
         retention-days: 14
+
+    # The Play bundle must carry the native debug symbols (NativeDebugSymbols.targets), or Play Console
+    # warns that the bundle has native code without debug symbols. Same build, as an .aab signed with
+    # the runner's debug key; the store bundle is built by android-release.yml.
+    - name: Build the app bundle and check its native debug symbols
+      shell: bash
+      run: |
+        dotnet build src/PdfViewer.Android/PdfViewer.Android.csproj -f net10.0-android -c Release \
+          -p:AndroidPackageFormat=aab \
+          -p:AndroidSdkDirectory="$ANDROID_SDK_ROOT" -p:JavaSdkDirectory="$JAVA_HOME_21_X64"
+        aab=$(ls src/PdfViewer.Android/bin/Release/net10.0-android/*-Signed.aab)
+        unzip -l "$aab" | grep -E "base/lib/|BUNDLE-METADATA/" | tee "$RUNNER_TEMP/aab-list.txt"
+        dir=BUNDLE-METADATA/com.android.tools.build.debugsymbols
+        for abi in arm64-v8a x86_64; do
+          for f in libmonodroid.so.sym libxamarin-app.so.dbg; do
+            grep -q " $dir/$abi/$f\$" "$RUNNER_TEMP/aab-list.txt" || { echo "::error::$dir/$abi/$f is missing from the bundle"; exit 1; }
+          done
+        done
+        {
+          echo "### Native debug symbols in the app bundle"
+          echo '```'
+          grep "$dir/" "$RUNNER_TEMP/aab-list.txt"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
