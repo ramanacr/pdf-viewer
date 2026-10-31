@@ -13,8 +13,10 @@ namespace PdfViewer.Web.Engine;
 /// (a whole face, or one Unicode slice of a CJK face) with the code points its cmap maps. A
 /// character is looked up in the faces in index order, script and symbol faces first; the CJK
 /// faces share most characters, so the language of the text picks which of them comes first.
-/// An entry can also give the file's size and SHA-256; a fetched file must then match both
-/// (<see cref="Entry.Matches"/>), so a truncated or altered file never reaches Skia.
+/// Every entry must give the file's size and SHA-256, and a fetched file must match both
+/// (<see cref="Entry.Matches"/>); an entry without them matches nothing, so its file is treated as
+/// missing. This catches corrupted, partial or mismatched (stale cached) copies before they reach
+/// Skia. It is not protection against tampering: the index comes from the same origin as the files.
 /// </summary>
 public sealed partial class BundledFontIndex
 {
@@ -34,20 +36,21 @@ public sealed partial class BundledFontIndex
             Sha256 = sha256;
         }
 
-        /// <summary>The file's length in bytes, when the index gives it.</summary>
+        /// <summary>The file's length in bytes; null when the index leaves it out (then nothing matches).</summary>
         public long? Size { get; }
 
-        /// <summary>The file's SHA-256 (lower-case hex), when the index gives it.</summary>
+        /// <summary>The file's SHA-256 (lower-case hex); null when the index leaves it out (then nothing matches).</summary>
         public string? Sha256 { get; }
 
         /// <summary>
-        /// Whether fetched bytes are this file: the size and the SHA-256 that the index gives, when
-        /// it gives them. The size is checked first, so most wrong files are refused without hashing.
+        /// Whether fetched bytes are this file: they have the size and the SHA-256 that the index
+        /// gives. Fails closed: an entry without both matches nothing. The size is checked first,
+        /// so most wrong copies are refused without hashing.
         /// </summary>
         public bool Matches(ReadOnlySpan<byte> data)
         {
-            if (Size is { } size && data.Length != size) return false;
-            return Sha256 == null || Convert.ToHexStringLower(SHA256.HashData(data)) == Sha256;
+            if (Size is not { } size || Sha256 == null || data.Length != size) return false;
+            return Convert.ToHexStringLower(SHA256.HashData(data)) == Sha256;
         }
 
         public SystemFontFace Face { get; }
@@ -108,8 +111,10 @@ public sealed partial class BundledFontIndex
     /// <summary>
     /// Reads an index (version 1). Each face's "ranges" are pairs [gap, extra]: a run of extra + 1
     /// code points that starts gap code points after the end of the previous run (the first after
-    /// -1). Optional "size" (bytes) and "sha256" (lower-case hex) describe the file; when they are
-    /// there, they must be valid. Entries with a file name that is not a plain name are left out.
+    /// -1). "size" (bytes) and "sha256" (lower-case hex) describe the file; the index must give both
+    /// for every file. A bad value makes the whole index invalid; an entry without them is kept for
+    /// lookup, but its file is never accepted (<see cref="Entry.Matches"/>). Entries with a file name
+    /// that is not a plain name are left out.
     /// </summary>
     /// <param name="directory">Folder of the files relative to the fonts folder ("noto"); it prefixes each face's path.</param>
     /// <exception cref="FormatException">The data is not an index this version reads.</exception>

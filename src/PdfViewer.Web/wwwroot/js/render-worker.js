@@ -9,6 +9,8 @@
 // Messages in:  { op: 'open', id, bytes, password } | { op: 'render', id, page, scale, night } | { op: 'close', id }
 // Messages out: { op: 'ready' } | { op: 'failed', message } | { id, ok, result | message }
 
+import { fontFilePath } from './font-base.js?v=10';
+
 const queue = [];
 let exports = null;
 
@@ -35,19 +37,17 @@ function deliver(id, view, width, height, scale, interpretMs, drawMs, textWithou
     pending.set(id, { pixels: new ImageData(new Uint8ClampedArray(bytes.buffer), width, height), width, height, scale, interpretMs, drawMs, textWithoutFont, imagesNotDecoded });
 }
 
-// The embed SDK's fontBaseUrl, as viewer.js passed it: an absolute path on this origin, or the
-// default folder next to the app.
-const fontBase = (() => {
-    const value = new URL(import.meta.url).searchParams.get('fonts');
-    return value && value.length <= 512 && /^\/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*\/)*$/.test(value)
-        && !value.split('/').some(s => s === '.' || s === '..') ? value : '../fonts/';
-})();
+// The frame's font folder (EmbedFrame.FontBase), as viewer.js passed it in this worker's address;
+// font-base.js checks it again. Without one, the default folder next to the app. The page's
+// Content-Security-Policy does not cover this worker, so this check is what keeps font requests
+// on this origin.
+const fontBase = new URL(import.meta.url).searchParams.get('fonts');
 
-async function fetchFont(file) {
-    const parts = String(file).split('/');
-    if (parts.some(p => p === '' || p === '.' || p === '..')) return -1;
+async function fetchFont(file, reload) {
+    const path = fontFilePath(file, fontBase, '../fonts/');
+    if (path === null) return -1;
     try {
-        const response = await fetch(new URL(fontBase + parts.map(encodeURIComponent).join('/'), import.meta.url), { credentials: 'same-origin' });
+        const response = await fetch(new URL(path, import.meta.url), { credentials: 'same-origin', cache: reload === true ? 'reload' : 'default' });
         if (!response.ok) return -1;
         const bytes = new Uint8Array(await response.arrayBuffer());
         fonts.set(file, bytes);

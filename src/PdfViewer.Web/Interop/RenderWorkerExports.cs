@@ -28,7 +28,7 @@ internal static partial class RenderWorkerExports
             _doc = null;
             await old.DisposeAsync();
         }
-        _fonts ??= OnDemandFontSource.Bundled(FetchFontAsync);
+        _fonts ??= OnDemandFontSource.Bundled((file, _) => FetchFontAsync(file, false), (file, _) => FetchFontAsync(file, true));
         _doc = await ViewerDocument.OpenAsync(bytes, string.IsNullOrEmpty(password) ? null : password, new ViewerOptions
         {
             MaxFileBytes = 512L * 1024 * 1024,
@@ -60,9 +60,10 @@ internal static partial class RenderWorkerExports
         }
     }
 
-    private static async Task<byte[]?> FetchFontAsync(string file, CancellationToken cancellationToken)
+    /// <summary>A bundled font file from this origin; with <paramref name="reload"/>, past the HTTP cache.</summary>
+    private static async Task<byte[]?> FetchFontAsync(string file, bool reload)
     {
-        int length = await FetchFont(file);
+        int length = await FetchFont(file, reload);
         if (length < 0) return null;
         var bytes = new byte[length];
         TakeFont(file, bytes);
@@ -76,7 +77,7 @@ internal static partial class RenderWorkerExports
     /// <summary>Fetches a bundled font file (same origin); its length, or -1. <see cref="TakeFont"/> copies it out.</summary>
     [JSImport("fetchFont", ModuleName)]
     [return: JSMarshalAs<JSType.Promise<JSType.Number>>]
-    private static partial Task<int> FetchFont(string file);
+    private static partial Task<int> FetchFont(string file, bool reload);
 
     [JSImport("takeFont", ModuleName)]
     private static partial void TakeFont(string file, [JSMarshalAs<JSType.MemoryView>] Span<byte> into);

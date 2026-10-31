@@ -126,10 +126,13 @@ internal static partial class CanvasInterop
 
     // The opt-in render worker (index.html?renderInWorker=1, wwwroot/js/render-worker.js).
 
-    /// <summary>Starts the render worker: true once its runtime is up, false when it cannot start.</summary>
+    /// <summary>
+    /// Starts the render worker: true once its runtime is up, false when it cannot start. The worker
+    /// fetches fonts from <paramref name="fontBase"/> (<see cref="PdfViewer.Web.Engine.Embed.EmbedFrame.FontBase"/>), or the default folder when null.
+    /// </summary>
     [JSImport("startRenderWorker", ModuleName)]
     [return: JSMarshalAs<JSType.Promise<JSType.Boolean>>]
-    public static partial Task<bool> StartRenderWorker();
+    public static partial Task<bool> StartRenderWorker(string? fontBase);
 
     /// <summary>Opens a copy of the document in the worker (the script copies the bytes before it returns); its page count.</summary>
     [JSImport("workerOpen", ModuleName)]

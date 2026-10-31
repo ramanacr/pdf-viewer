@@ -88,11 +88,17 @@ Open Font License 1.1. They are files in the viewer's `fonts/` folder, next to `
 
 1. The viewer fetches a font file only when a page needs a character from it. A document that
    embeds its fonts fetches none.
-2. Every request goes to the viewer's own origin. The viewer's Content-Security-Policy
-   (`connect-src 'self'`) blocks any other host, so no font request goes to Google Fonts or to
-   another third party.
-3. The viewer checks each Noto file against the size and SHA-256 in `fonts/noto/index.json`. A
-   file that does not match is not used, and its text is reported as missing.
+2. Every request goes to the viewer's own origin, so no font request goes to Google Fonts or to
+   another third party. The path check in the viewer and in its render worker enforces this
+   (`EmbedFrame.ParseFontBase` and `js/font-base.js`: only a plain absolute path is used). The
+   viewer page's Content-Security-Policy (`connect-src 'self'`) is extra defence on the main
+   page; a meta Content-Security-Policy does not apply inside the dedicated render worker.
+3. The viewer checks each Noto file against the size and SHA-256 in `fonts/noto/index.json`,
+   which must give both for every file. This catches corrupted, partial or mismatched (for
+   example stale cached) copies; it is not protection against tampering, because the index comes
+   from the same origin as the files. A copy that does not match is fetched once more past the
+   browser's HTTP cache. If that copy does not match either, it is not used, and its text is
+   reported as missing.
 
 When you host the viewer, publish it with the Noto fonts: run `eng/webdemo/noto_fonts.py` as in
 the viewer's [README](https://github.com/ramanacr/pdf-viewer/tree/main/src/PdfViewer.Web#run-locally).
@@ -111,7 +117,8 @@ new PdfViewer.View({
 ```
 
 A relative `fontBaseUrl` is taken from the viewer's folder. A URL on another origin throws
-`INVALID_ARGUMENT`: the viewer could not fetch from it, and fonts never come from a third party.
+`INVALID_ARGUMENT`: the viewer takes only a path on its own origin, and fonts never come from a
+third party.
 
 ### Production
 

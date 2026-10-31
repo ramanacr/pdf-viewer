@@ -45,6 +45,10 @@ public class NotoFontTests
         return list.ToArray();
     }
 
+    /// <summary>
+    /// An index as the script writes it. A file that the fake fetch serves (by an installed stand-in
+    /// face) gets that stand-in's size and SHA-256, so it is accepted; the others get neither.
+    /// </summary>
     private static byte[] IndexJson(params (string File, string Family, string Group, (int, int)[] Runs)[] faces)
     {
         var sb = new StringBuilder("{\"version\":1,\"faces\":[");
@@ -52,10 +56,37 @@ public class NotoFontTests
         {
             var f = faces[i];
             if (i > 0) sb.Append(',');
-            sb.Append($"{{\"file\":\"{f.File}\",\"family\":\"{f.Family}\",\"group\":\"{f.Group}\",\"ranges\":[{string.Join(",", Encode(f.Runs))}]}}");
+            sb.Append($"{{\"file\":\"{f.File}\",\"family\":\"{f.Family}\",\"group\":\"{f.Group}\",\"ranges\":[{string.Join(",", Encode(f.Runs))}]");
+            if (StandIn(f.File) is { } stand)
+            {
+                var (size, sha) = StandInDigest(stand);
+                sb.Append($",\"size\":{size},\"sha256\":\"{sha}\"");
+            }
+            sb.Append('}');
         }
         return Encoding.UTF8.GetBytes(sb.Append("]}").ToString());
     }
+
+    /// <summary>The installed Windows face that serves a Noto file name in these tests (same script), or null.</summary>
+    private static string? StandIn(string notoFile) => notoFile switch
+    {
+        Arabic => "arial.ttf",
+        Devanagari => "Nirmala.ttc",
+        Symbols => "seguisym.ttf",
+        ScCore or ScRest => "msyh.ttc",
+        TcCore => "msjh.ttc",
+        JpCore => "msgothic.ttc",
+        KrCore => "malgun.ttf",
+        _ => null,
+    };
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Size, string Sha256)> Digests = new();
+
+    private static (long Size, string Sha256) StandInDigest(string stand) => Digests.GetOrAdd(stand, s =>
+    {
+        byte[] data = File.ReadAllBytes(Path.Combine(WindowsFonts, s));
+        return (data.Length, Sha256Hex(data));
+    });
 
     private const string Arabic = "NotoSansArabic-Regular.ttf", Devanagari = "NotoSansDevanagari-Regular.ttf", Symbols = "NotoSansSymbols2-Regular.ttf";
     private const string Thai = "NotoSansThai-Regular.ttf", Sinhala = "NotoSansSinhala-Regular.ttf";
@@ -89,8 +120,10 @@ public class NotoFontTests
         Assert.True(arabic.Covers(0x0600) && arabic.Covers(0x06FF) && arabic.Covers(0xFB50) && arabic.Covers(0xFEFF));
         Assert.False(arabic.Covers(0x05FF) || arabic.Covers(0x0700) || arabic.Covers(0xFE6F) || arabic.Covers(0xFF00));
         Assert.Equal(new[] { false, false, false, false, false, true, true, true, true, true }, index.Entries.Select(e => e.IsCjk));
-        // An index without sizes and hashes (as before they were written): nothing to check against.
-        Assert.All(index.Entries, e => Assert.True(e.Size == null && e.Sha256 == null && e.Matches(new byte[] { 1, 2, 3 })));
+        // Files with a stand-in carry its size and SHA-256; Thai and Sinhala carry neither here.
+        Assert.Equal(StandInDigest("arial.ttf").Size, arabic.Size);
+        Assert.Equal(StandInDigest("arial.ttf").Sha256, arabic.Sha256);
+        Assert.All(index.Entries.Where(e => e.Group is "thai" or "sinhala"), e => Assert.True(e.Size == null && e.Sha256 == null));
         Assert.Same(index.Entries[1], index.EntryOf("noto/" + Devanagari));
         Assert.Null(index.EntryOf(Devanagari));
         Assert.Null(index.EntryOf("noto/NotoSansLao-Regular.ttf"));
@@ -155,6 +188,35 @@ public class NotoFontTests
     }
 
     [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void Index_EntryWithoutSizeOrSha256_MatchesNothing(bool withSize, bool withSha)
+    {
+        byte[] file = Enumerable.Range(0, 300).Select(i => (byte)i).ToArray();
+        string extra = (withSize ? $",\"size\":{file.Length}" : "") + (withSha ? $",\"sha256\":\"{Sha256Hex(file)}\"" : "");
+        var entry = BundledFontIndex.Parse(Encoding.UTF8.GetBytes(
+            $"{{\"version\":1,\"faces\":[{{\"file\":\"a.ttf\",\"family\":\"A\",\"group\":\"arabic\",\"ranges\":[0,1]{extra}}}]}}"), "noto").Entries.Single();
+        // Kept for lookup, but fails closed: not even the right bytes are accepted.
+        Assert.True(entry.Covers(0));
+        Assert.False(entry.Matches(file));
+        Assert.False(entry.Matches(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Fact]
+    public async Task FetchedFile_WhoseEntryLacksSizeAndSha256_IsRefused()
+    {
+        byte[] index = Encoding.UTF8.GetBytes(
+            $"{{\"version\":1,\"faces\":[{{\"file\":\"{Arabic}\",\"family\":\"Noto Sans Arabic\",\"group\":\"arabic\",\"ranges\":[{string.Join(",", Encode((0x0600, 0x06FF)))}]}}]}}");
+        var fetch = new FakeFetch { Index = index };
+        var fonts = OnDemandFontSource.Bundled(fetch.FetchAsync, fetch.ReloadAsync);
+        await using var doc = await ViewerDocument.OpenAsync(UnicodePage(("ArialUnicode", null, ArabicText)), options: new ViewerOptions { Fonts = fonts });
+        Assert.Equal(1, (await doc.RenderPageAsync(1, 1.0)).TextRegionsWithoutFont);
+        Assert.Equal(new[] { "noto/" + Arabic }, fetch.Reloads);
+        Assert.DoesNotContain("noto/" + Arabic, fonts.LoadedFiles);
+    }
+
+    [Theory]
     [InlineData("\"size\":0")]
     [InlineData("\"size\":-5")]
     [InlineData("\"size\":\"12\"")]
@@ -205,6 +267,35 @@ public class NotoFontTests
         Assert.Equal(new[] { "noto/index.json", "noto/" + Arabic }, fetch.NotoRequests.Order());
         Assert.False(fonts.HasPendingRequests);
         Assert.DoesNotContain("noto/" + Arabic, fonts.LoadedFiles);
+    }
+
+    /// <summary>
+    /// A bad copy in the HTTP cache: the first fetch is damaged, so the file is read once more past
+    /// the cache (<see cref="OnDemandFontSource.Reload"/>). A good second copy is drawn; a bad one is
+    /// refused for the session, and neither read is repeated.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FetchedFile_ThatDiffers_IsReloadedOncePastTheCache(bool reloadIsGood)
+    {
+        byte[] stand = File.ReadAllBytes(Path.Combine(WindowsFonts, "arial.ttf"));
+        var fetch = new FakeFetch
+        {
+            Index = VerifiedIndex(stand.Length, Sha256Hex(stand)),
+            Alter = (_, bytes) => bytes[..^4],
+            AlterReloads = !reloadIsGood,
+        };
+        var fonts = OnDemandFontSource.Bundled(fetch.FetchAsync, fetch.ReloadAsync);
+        await using var doc = await ViewerDocument.OpenAsync(UnicodePage(("ArialUnicode", null, ArabicText)), options: new ViewerOptions { Fonts = fonts });
+        var bitmap = await doc.RenderPageAsync(1, 1.0);
+        Assert.Equal(reloadIsGood ? 0 : 1, bitmap.TextRegionsWithoutFont);
+        Assert.Equal(reloadIsGood, Ink(bitmap) > 100);
+        Assert.Equal(reloadIsGood ? 0 : 1, (await doc.RenderPageAsync(1, 1.5)).TextRegionsWithoutFont);
+        Assert.Equal(new[] { "noto/" + Arabic }, fetch.Reloads);
+        Assert.Equal(new[] { "noto/index.json", "noto/" + Arabic, "noto/" + Arabic }, fetch.NotoRequests.Order());
+        Assert.Equal(reloadIsGood, fonts.LoadedFiles.Contains("noto/" + Arabic));
+        Assert.False(fonts.HasPendingRequests);
     }
 
     [Fact]
@@ -273,11 +364,25 @@ public class NotoFontTests
         /// <summary>Changes a Noto font file on its way (a damaged download), by its name.</summary>
         public Func<string, byte[], byte[]>? Alter { get; init; }
 
+        /// <summary>Whether <see cref="Alter"/> damages the copy read past the cache too.</summary>
+        public bool AlterReloads { get; init; }
+
+        /// <summary>Files read again past the cache (<see cref="ReloadAsync"/>), in order.</summary>
+        public List<string> Reloads { get; } = new();
+
         public async Task<byte[]?> FetchAsync(string file, CancellationToken cancellationToken)
         {
             var data = await FetchUnalteredAsync(file, cancellationToken);
             return data != null && Alter != null && file.StartsWith("noto/", StringComparison.Ordinal) && !file.EndsWith(".json", StringComparison.Ordinal)
                 ? Alter(file, data) : data;
+        }
+
+        /// <summary>The second read past the HTTP cache: a fresh copy, damaged only with <see cref="AlterReloads"/>.</summary>
+        public async Task<byte[]?> ReloadAsync(string file, CancellationToken cancellationToken)
+        {
+            Reloads.Add(file);
+            var data = await FetchUnalteredAsync(file, cancellationToken);
+            return data != null && AlterReloads && Alter != null ? Alter(file, data) : data;
         }
 
         private Task<byte[]?> FetchUnalteredAsync(string file, CancellationToken cancellationToken)
@@ -290,17 +395,7 @@ public class NotoFontTests
                 return Task.FromResult<byte[]?>(File.ReadAllBytes(Path.Combine(NotoDirectory, name)));
             if (name == "index.json")
                 return Task.FromResult(FailIndex ? null : Index ?? TestIndex());
-            string? stand = name switch
-            {
-                Arabic => "arial.ttf",
-                Devanagari => "Nirmala.ttc",
-                Symbols => "seguisym.ttf",
-                ScCore or ScRest => "msyh.ttc",
-                TcCore => "msjh.ttc",
-                JpCore => "msgothic.ttc",
-                KrCore => "malgun.ttf",
-                _ => null,
-            };
+            string? stand = StandIn(name);
             return Task.FromResult(stand == null ? null : File.ReadAllBytes(Path.Combine(WindowsFonts, stand)));
         }
 

@@ -128,11 +128,12 @@ public sealed partial class Viewer : IAsyncDisposable
 
     public Viewer()
     {
-        _bundledFonts = OnDemandFontSource.Bundled(FetchBundledFontAsync);
+        _bundledFonts = OnDemandFontSource.Bundled((file, ct) => FetchBundledFontAsync(file, false, ct), (file, ct) => FetchBundledFontAsync(file, true, ct));
     }
 
-    private async Task<byte[]?> FetchBundledFontAsync(string file, CancellationToken cancellationToken) =>
-        _module == null ? null : await _module.InvokeAsync<byte[]?>("fetchFont", cancellationToken, file, _frame?.FontBase);
+    /// <summary>A bundled font file from this origin; with <paramref name="reload"/>, past the HTTP cache.</summary>
+    private async Task<byte[]?> FetchBundledFontAsync(string file, bool reload, CancellationToken cancellationToken) =>
+        _module == null ? null : await _module.InvokeAsync<byte[]?>("fetchFont", cancellationToken, file, _frame?.FontBase, reload);
 
     /// <summary>
     /// The bundled font families and their licence files (SIL Open Font License 1.1), for the About

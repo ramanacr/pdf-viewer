@@ -71,7 +71,15 @@ def download(url, expected_sha, expected_size, cache_dir):
             return data
     print(f"downloading {url}", file=sys.stderr)
     with urllib.request.urlopen(url, timeout=300) as response:
-        data = response.read()
+        # At most one byte more than pinned: a larger answer is refused without reading it all.
+        parts, total = [], 0
+        while total <= expected_size:
+            chunk = response.read(min(1 << 20, expected_size + 1 - total))
+            if not chunk:
+                break
+            parts.append(chunk)
+            total += len(chunk)
+        data = b"".join(parts)
     if len(data) != expected_size:
         fail(f"{url}: {len(data)} bytes, the manifest pins {expected_size}")
     actual = sha256(data)

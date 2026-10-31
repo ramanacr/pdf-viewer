@@ -62,7 +62,7 @@ jobs:
         node --check publish/web/wwwroot/pdfviewer-embed.mjs
         node --check docs/sdk/examples/large-pdf.js
         node --check eng/webdemo/serve.mjs
-        node --test tests/sdk/embed-range.test.mjs tests/sdk/embed-fonts.test.mjs
+        node --test tests/sdk/embed-range.test.mjs tests/sdk/embed-fonts.test.mjs tests/sdk/font-base.test.mjs
 
     # Noto fonts for the scripts that the committed Liberation fonts lack (Arabic, Hebrew, Indic,
     # Sinhala, Thai, symbols, math, CJK). They are not committed: eng/webdemo/noto_fonts.py downloads
@@ -108,7 +108,8 @@ jobs:
           test -s "publish/web/wwwroot/fonts/noto/OFL-$id.txt"
           grep -q "fonts/noto/OFL-$id.txt" src/PdfViewer.Web/Components/Viewer.razor.cs || { echo "::error::Viewer.razor.cs FontNotices lacks OFL-$id.txt"; exit 1; }
         done
-        # The first load fetches no font: the page and the runtime's boot list name none.
+        # A static check, not a browser test: index.html and the JSON files in _framework (the
+        # runtime's boot list) name no font file, so nothing loads a font before a page needs one.
         if grep -q 'fonts/' publish/web/wwwroot/index.html || grep -rqs --include='*.json' -e '\.ttf' -e '\.otf' publish/web/wwwroot/_framework; then
           echo "::error::index.html or the boot list names a font file: fonts must load only when a page needs them"
           exit 1

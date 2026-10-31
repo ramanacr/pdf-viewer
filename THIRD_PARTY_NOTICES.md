@@ -224,7 +224,7 @@ License: SIL Open Font License 1.1. Published with the web demo in `fonts/noto`,
 | Noto Sans Symbols 2 2.008 | https://github.com/notofonts/symbols/releases/tag/NotoSansSymbols2-v2.008 | `unhinted/ttf/NotoSansSymbols2-Regular.ttf` |
 | Noto Sans SC, TC, JP, KR 2.004 | https://github.com/notofonts/noto-cjk/releases/tag/Sans2.004 (`18_NotoSansSC.zip`, `19_NotoSansTC.zip`, `16_NotoSansJP.zip`, `17_NotoSansKR.zip`) | `NotoSansSC-Regular.otf` and the others, sliced |
 
-The size and SHA-256 of every archive, and the SHA-256 of every file taken from it, are in `eng/webdemo/noto-fonts.json`. The published `fonts/noto/index.json` gives the size and SHA-256 of every file as shipped, and the app refuses a fetched file that does not match. Copyright lines, as in the licence files and the name tables (ID 0):
+The size and SHA-256 of every archive, and the SHA-256 of every file taken from it, are in `eng/webdemo/noto-fonts.json`. The published `fonts/noto/index.json` gives the size and SHA-256 of every file as shipped, so that the app can refuse corrupted, partial or mismatched cached copies (this is not tamper protection: the index comes from the same origin as the files). Copyright lines, as in the licence files and the name tables (ID 0):
 
 ```text
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/<script repository>)

@@ -115,8 +115,10 @@
     /**
      * The fontBaseUrl option as the path the viewer is given, or null for the default (the fonts/
      * folder next to the viewer). A relative URL is taken from the viewer's folder. It must be on
-     * the viewer's origin: the viewer's Content-Security-Policy lets it fetch from there only, and
-     * no font request ever goes to a third party.
+     * the viewer's origin, so no font request ever goes to a third party: the viewer and its render
+     * worker take only a plain absolute path (EmbedFrame.ParseFontBase, js/font-base.js). The
+     * viewer page's Content-Security-Policy is extra defence on the main page only; a meta CSP does
+     * not apply inside the render worker.
      */
     function fontBasePath(fontBaseUrl, base) {
         if (fontBaseUrl === undefined || fontBaseUrl === null) return null;

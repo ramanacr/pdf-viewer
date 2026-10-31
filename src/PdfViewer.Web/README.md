@@ -42,7 +42,7 @@ Status: a demo, and the viewer of the [web embed SDK](#embed-sdk) (`wwwroot/pdfv
 | Encrypted PDFs | Password prompt. RC4 and AES (128 and 256) open, see [crypto](#cryptography). |
 | Night pages | The engine's night mode: the page inverted after drawing (`I`). |
 | Theme | System, light or dark (`D`), independent of night pages. |
-| Bundled fonts | Text in fonts a PDF does not embed is drawn with the Liberation fonts 2.1.5 (Sans, Serif, Mono; regular, bold, italic, bold italic; SIL Open Font License 1.1), shipped in `wwwroot/fonts` with their licence (`OFL.txt`). Characters Liberation lacks come from Noto fonts (Arabic, Hebrew, nine Indic scripts, Sinhala, Thai, Math, Symbols 2, and Chinese, Japanese and Korean in Unicode slices; SIL Open Font License 1.1), added to `fonts/noto` when the site is published. Each file is fetched from the demo's own site the first time a page needs it, checked against the size and SHA-256 in `fonts/noto/index.json`, and kept for the session. See [fonts](#fonts). |
+| Bundled fonts | Text in fonts a PDF does not embed is drawn with the Liberation fonts 2.1.5 (Sans, Serif, Mono; regular, bold, italic, bold italic; SIL Open Font License 1.1), shipped in `wwwroot/fonts` with their licence (`OFL.txt`). Characters Liberation lacks come from Noto fonts (Arabic, Hebrew, nine Indic scripts, Sinhala, Thai, Math, Symbols 2, and Chinese, Japanese and Korean in Unicode slices; SIL Open Font License 1.1), added to `fonts/noto` when the site is published. Each file is fetched from the demo's own site the first time a page needs it, checked against the size and SHA-256 in `fonts/noto/index.json` (to catch corrupted, partial or mismatched copies), and kept for the session. See [fonts](#fonts). |
 | Device fonts | Chromium browsers can lend the page the fonts installed on the device (Local Font Access API, after the browser asks), for text the bundled fonts do not cover. |
 | Accessibility | Toolbar with labels and keyboard access, live status for search and page changes, focus outlines, reduced motion respected, each page labelled "Page n of m". |
 | Layout | Responsive: below 760 px the toolbar compacts and the side panel overlays the pages. |
@@ -236,8 +236,9 @@ path can make the native link exceed the 260-character path limit; a short path 
    add 4.4 MB (Liberation: 12 faces of 280 to 420 KB) and about 21 MB (Noto: 58 files and a
    144 KB index) to the published site, but none of them is part of the first load: a file is
    downloaded only when a page draws text from it. There is no size gate for the demo; the web
-   demo workflow writes these sizes to its step summary, and fails when `index.html` or the
-   runtime's boot list names a font file.
+   demo workflow writes these sizes to its step summary. It also has a static check (not a
+   browser test): it fails when `index.html` or a JSON file in `_framework` (the runtime's boot
+   list) names a font file.
 5. **Speed.** The engine runs in the .NET interpreter, so interpreting a page into a display
    list is slower than on the desktop; Skia's drawing is native code. See the measurements
    below. Trimming is on (the Blazor default for publish) and works. AOT is not enabled: an AOT
@@ -302,14 +303,19 @@ not embed:
    the language's national character set (GB 2312 level 1, Big5 level 1, JIS X 0208 level 1,
    KS X 1001 hangul), kana and CJK punctuation, then the face's other characters in code point
    order, 2000 per slice. Typical text needs only the core slice (0.3 to 1.3 MB).
-   The index gives the size and SHA-256 of every file. After a fetch, the app checks both
-   (`BundledFontIndex.Entry.Matches`): a truncated or altered file is refused and not asked for
-   again, and the text it would draw is reported as missing, as when a fetch fails. A fetched
-   file is kept in memory for the session; the browser's HTTP cache keeps it between visits (the
-   app does not use Cache Storage).
-7. **Privacy.** Every font is fetched from the demo's own site (`fonts/…`, same origin, allowed
-   by the page's `connect-src 'self'`). There are no requests to fonts.googleapis.com,
-   fonts.gstatic.com or any other host. An embedded viewer does the same from its own origin;
+   The index must give the size and SHA-256 of every file. After a fetch, the app checks both
+   (`BundledFontIndex.Entry.Matches`); an entry without them matches nothing. This catches
+   corrupted, partial or mismatched (for example stale cached) copies. It is not protection
+   against tampering: the index comes from the same origin as the files. A copy that does not
+   match is fetched once more past the HTTP cache (`cache: 'reload'`); if that copy does not
+   match either, the file is not asked for again in the session, and the text it would draw is
+   reported as missing, as when a fetch fails. A fetched file is kept in memory for the
+   session; the browser's HTTP cache keeps it between visits (the app does not use Cache Storage).
+7. **Privacy.** Every font is fetched from the demo's own site (`fonts/…`, same origin). The
+   path check in `wwwroot/js/font-base.js`, used by the page and by the render worker, keeps
+   every font request on that origin; the page's `connect-src 'self'` is extra defence on the
+   main page (a meta Content-Security-Policy does not apply inside the render worker). There
+   are no requests to fonts.googleapis.com, fonts.gstatic.com or any other host. An embedded viewer does the same from its own origin;
    the embed SDK's `fontBaseUrl` can move the folder, but only to another path on that origin
    (see [docs/sdk](../../docs/sdk/index.md#self-hosted-fonts)).
 8. **Where the Noto files come from.** They are not in the repository.
