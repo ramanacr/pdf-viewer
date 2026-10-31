@@ -89,4 +89,15 @@ public sealed class PdfSecurityLimits
 
     /// <summary>Maximum color space nesting depth (Indexed base, Separation/DeviceN alternate, named references).</summary>
     public int MaxColorSpaceNestingDepth { get; init; } = 8;
+
+    /// <summary>
+    /// Ceiling on the pixel count of one render buffer, shared by every raster backend (Direct2D,
+    /// WPF, Skia). Past it the stride x height product (4 bytes a pixel) leaves int range, so a
+    /// page whose MediaBox, UserUnit or requested resolution asks for more is refused with a
+    /// <see cref="Diagnostics.PdfResourceLimitException"/> whose <c>LimitName</c> is
+    /// <c>"MaxRenderPixelCount"</c>, before any buffer is allocated. Far above any real viewport or
+    /// export; zoomed-in views render regions. A constant, not a setting: the buffer size cannot
+    /// go past it.
+    /// </summary>
+    public const long MaxRenderPixelCount = int.MaxValue / 4;
 }

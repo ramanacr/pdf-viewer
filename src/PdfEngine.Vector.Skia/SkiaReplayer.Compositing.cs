@@ -19,7 +19,7 @@ internal sealed partial class SkiaReplayer
     /// <summary>A transparent offscreen surface (optionally starting as a copy of <paramref name="initial"/>, same size).</summary>
     private static Surface NewSurface(int w, int h, SKBitmap? initial = null)
     {
-        var bitmap = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var bitmap = SkiaVectorRenderer.NewBitmap(w, h);
         if (initial != null)
             initial.GetPixelSpan().CopyTo(bitmap.GetPixelSpan());
         else
@@ -36,7 +36,7 @@ internal sealed partial class SkiaReplayer
     /// <summary>Copies the pixels under a device rectangle of a surface (no Skia layer may be pending on it).</summary>
     private static SKBitmap CopyRegion(SKBitmap source, int x0, int y0, int w, int h)
     {
-        var copy = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var copy = SkiaVectorRenderer.NewBitmap(w, h);
         var src = source.GetPixelSpan();
         var dst = copy.GetPixelSpan();
         int srcStride = source.RowBytes, dstStride = copy.RowBytes;
@@ -289,7 +289,7 @@ internal sealed partial class SkiaReplayer
             replayer = new SkiaReplayer(_res, mask.Content, null, _ct);
             _maskReplayers[mask] = replayer;
         }
-        var bitmap = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var bitmap = SkiaVectorRenderer.NewBitmap(w, h);
         using var canvas = new SKCanvas(bitmap);
         var bc = mask.Backdrop;
         canvas.Clear(mask.Luminosity ? new SKColor(ToByte(bc.R), ToByte(bc.G), ToByte(bc.B), 255) : SKColors.Transparent);
@@ -357,7 +357,7 @@ internal sealed partial class SkiaReplayer
     {
         double xs = pattern.XStep, ys = pattern.YStep;
         var box = pattern.BBox;
-        using var bitmap = new SKBitmap(new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Premul));
+        using var bitmap = SkiaVectorRenderer.NewBitmap(bw, bh);
         using (var canvas = new SKCanvas(bitmap))
         {
             canvas.Clear(SKColors.Transparent);

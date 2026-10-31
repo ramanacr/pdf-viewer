@@ -51,7 +51,7 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
     /// stride x height product (4 bytes a pixel) leaves int range. A page whose MediaBox or
     /// UserUnit asks for more is refused with a typed error before any bitmap is allocated.
     /// </summary>
-    internal const long MaxRenderPixelCount = int.MaxValue / 4;
+    internal const long MaxRenderPixelCount = PdfEngine.Vector.Limits.PdfSecurityLimits.MaxRenderPixelCount;
 
     private readonly StaRenderThread _sta = new("PdfVectorRender");
     private readonly WpfFontCache _fonts = new();
