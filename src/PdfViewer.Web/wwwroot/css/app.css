@@ -451,6 +451,11 @@ kbd {
 .pages[data-tool="note"] .page, .pages[data-tool="freetext"] .page, .pages[data-tool="ink"] .page,
 .pages[data-tool="square"] .page, .pages[data-tool="circle"] .page, .pages[data-tool="line"] .page, .pages[data-tool="arrow"] .page,
 .pages[data-tool="polygon"] .page, .pages[data-tool="polyline"] .page, .pages[data-tool="stamp"] .page { cursor: crosshair; }
+/* Links on a page: a pointer and the target as a tooltip; Tab reaches them, Enter follows them. */
+.link-hit { position: absolute; cursor: pointer; border-radius: 2px; }
+.link-hit:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.pages:not([data-tool="select"]) .link-hit { pointer-events: none; }
+.link-url { overflow-wrap: anywhere; font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; max-height: 8em; overflow: auto; }
 .annot-hit {
     position: absolute; border-radius: 2px; cursor: move;
     outline: 1px solid transparent; outline-offset: 1px;

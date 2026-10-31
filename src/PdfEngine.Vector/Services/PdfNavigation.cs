@@ -82,20 +82,16 @@ public sealed class PdfNavigation
 {
     private readonly PdfVectorDocument _doc;
     private readonly PdfObjectResolver _r;
-    private readonly Dictionary<int, int> _pageIndexByObject = new();
-    private readonly Dictionary<PdfDictionary, int> _pageIndexByDict = new(ReferenceEqualityComparer.Instance);
+    // Built when a destination first names a page: a document opened by ranges does not read
+    // every page dictionary just to have a navigation (its links, for one, need none of them).
+    private Dictionary<int, int>? _pageIndexByObject;
+    private Dictionary<PdfDictionary, int>? _pageIndexByDict;
     private Dictionary<string, PdfObject?>? _namedTree;
 
     public PdfNavigation(PdfVectorDocument document)
     {
         _doc = document;
         _r = document.Resolver;
-        var tree = document.PageTree;
-        for (int i = 0; i < tree.Count; i++)
-        {
-            if (tree.PageObjectNumbers[i] > 0) _pageIndexByObject.TryAdd(tree.PageObjectNumbers[i], i);
-            _pageIndexByDict.TryAdd(tree.Pages[i].Dictionary, i);
-        }
     }
 
     public PdfVectorDocument Document => _doc;
@@ -103,9 +99,33 @@ public sealed class PdfNavigation
     /// <summary>The 0-based index of a page given by reference or dictionary, or -1.</summary>
     public int PageIndexOf(PdfObject? page)
     {
-        if (page is PdfIndirectRef r && _pageIndexByObject.TryGetValue(r.ObjectNumber, out int byNumber))
-            return byNumber;
-        return _r.Resolve(page) is PdfDictionary d && _pageIndexByDict.TryGetValue(d, out int byDict) ? byDict : -1;
+        var tree = _doc.PageTree;
+        if (page is PdfIndirectRef r)
+        {
+            if (_pageIndexByObject == null)
+            {
+                var byObject = new Dictionary<int, int>();
+                for (int i = 0; i < tree.Count; i++)
+                    if (tree.PageObjectNumbers[i] > 0) byObject.TryAdd(tree.PageObjectNumbers[i], i);
+                _pageIndexByObject = byObject;
+            }
+            if (_pageIndexByObject.TryGetValue(r.ObjectNumber, out int byNumber)) return byNumber;
+        }
+        if (_r.Resolve(page) is not PdfDictionary d) return -1;
+        if (tree.IsLazy)
+        {
+            // A page given as a direct object: only the pages read already are compared.
+            for (int i = 0; i < tree.Count; i++)
+                if (tree.LoadedPage(i) is { } loaded && ReferenceEquals(loaded.Dictionary, d)) return i;
+            return -1;
+        }
+        if (_pageIndexByDict == null)
+        {
+            var byDict = new Dictionary<PdfDictionary, int>(ReferenceEqualityComparer.Instance);
+            for (int i = 0; i < tree.Count; i++) byDict.TryAdd(tree.Pages[i].Dictionary, i);
+            _pageIndexByDict = byDict;
+        }
+        return _pageIndexByDict.TryGetValue(d, out int byDict2) ? byDict2 : -1;
     }
 
     /// <summary>

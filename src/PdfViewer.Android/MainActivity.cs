@@ -192,6 +192,7 @@ public sealed partial class MainActivity : Activity
         _pages = new PageView(this);
         _pages.PageChanged += (page, count) => _pageIndicator.Text = count > 0 ? $"{page} / {count}" : "";
         _pages.Problem += message => Toast.MakeText(this, message, ToastLength.Short)?.Show();
+        _pages.LinkTapped += OnLinkTapped;
         _pages.SelectionChanged += active => _selectionBar.Visibility = active ? ViewStates.Visible : ViewStates.Gone;
         ConnectEdits();
         frame.AddView(_pages, Fill());
@@ -665,6 +666,7 @@ public sealed partial class MainActivity : Activity
         _onDisk = bytes;
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
+        _linkBack.Clear();
         StartEdits(session);
         if (view is { } v) _pages.RestoreView(v.TopLeft, v.Zoom);
         // Files the app may open again (a persisted grant) go to the top of the recent list.
@@ -834,6 +836,8 @@ public sealed partial class MainActivity : Activity
             ShowAnnotateBar(false);
             return;
         }
+        // Back to where a link was followed from, before leaving the document.
+        if (GoBackByLink()) return;
         if (_session?.IsDirty == true)
         {
             AfterDiscard(Finish);

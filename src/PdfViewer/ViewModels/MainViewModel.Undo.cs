@@ -214,6 +214,13 @@ public partial class MainViewModel
     /// </summary>
     private void ApplyAnnotationChanges(IReadOnlyList<AnnotationChange> changes, bool forward)
     {
+        // The comments panel is brought up to date once, after the whole change.
+        using (DeferCommentThreads())
+            ApplyAnnotationChangesNow(changes, forward);
+    }
+
+    private void ApplyAnnotationChangesNow(IReadOnlyList<AnnotationChange> changes, bool forward)
+    {
         foreach (var c in changes)
         {
             if (c.Target(forward) != null) continue;
@@ -235,7 +242,8 @@ public partial class MainViewModel
         // Each page's list is its drawing order, so it is put back in its own order.
         foreach (var c in kept.OrderBy(c => c.PageIndex))
         {
-            if (c.Model.PageNumber < 1 || c.Model.PageNumber > Pages.Count) continue;
+            // A reply is not drawn on the page: the comments panel lists it under its parent.
+            if (c.Model.IsReply || c.Model.PageNumber < 1 || c.Model.PageNumber > Pages.Count) continue;
             var onPage = Pages[c.Model.PageNumber - 1].AnnotationsOnPage;
             onPage.Insert(c.PageIndex < 0 ? onPage.Count : Math.Min(c.PageIndex, onPage.Count), c.Model);
         }

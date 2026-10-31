@@ -972,6 +972,25 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return new ObservableCollection<BookmarkItem>();
     }
 
+    // Links are document data, read from the vector parse whichever engine draws the pages.
+    private PdfEngine.Vector.Services.PdfNavigation? _navigation;
+
+    public IReadOnlyList<PageLink> GetPageLinks(int pageNumber)
+    {
+        var doc = _vectorDoc;
+        if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount) return Array.Empty<PageLink>();
+        try
+        {
+            var nav = _navigation;
+            if (nav == null || !ReferenceEquals(nav.Document, doc)) _navigation = nav = new PdfEngine.Vector.Services.PdfNavigation(doc);
+            return NativeDocumentServices.Links(doc, pageNumber, nav);
+        }
+        catch (Exception ex) when (ex is PdfVectorException or InvalidOperationException)
+        {
+            return Array.Empty<PageLink>(); // a damaged annotation array: no links rather than an error
+        }
+    }
+
     // ------------------------------------------------------------------ text (native text page, M9)
 
     /// <summary>
@@ -1281,6 +1300,10 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             ? PdfEngine.Vector.Annotations.PdfStamps.PreviewOfAppearance(native, origin.Page, origin.Index, turn, black)
             : null;
 
+    public bool SaveWouldInvalidateSignatures(AnnotationSaveMode mode) =>
+        mode != AnnotationSaveMode.ExportXfdf && NativeDocument is { } native && CurrentBytes is { } bytes
+        && NativeDocumentServices.WouldInvalidateSignatures(native, bytes, flatten: mode == AnnotationSaveMode.Flattened);
+
     public List<AnnotationModel> LoadExistingAnnotations()
     {
         _hiddenAnnotations = Array.Empty<int>();
@@ -1305,7 +1328,8 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         AnnotationSaveMode mode,
         IEnumerable<AnnotationModel> annotations,
         string? originalPath = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool allowInvalidatingSignatures = false)
     {
         if (NativeDocument is not { } native || CurrentBytes is not { } bytes)
         {
@@ -1338,7 +1362,7 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
             // The revision the bytes hold (a decrypted copy has no password); its object numbers are the loaded ones.
             using var editing = await PdfVectorDocument.OpenAsync(bytes, CurrentFilePath, cancellationToken: ct,
                 password: IsDecryptedCopy ? null : _password).ConfigureAwait(false);
-            return _native.Save(editing, bytes, list, flatten: mode == AnnotationSaveMode.Flattened);
+            return _native.Save(editing, bytes, list, flatten: mode == AnnotationSaveMode.Flattened, allowInvalidatingSignatures);
         }, ct).ConfigureAwait(false);
 
         string? directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(targetPath));

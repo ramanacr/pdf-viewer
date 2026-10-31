@@ -524,6 +524,50 @@ public partial class AnnotationModel : ObservableObject
     public System.Windows.Media.Geometry? UnderlineGeometry => MarkupGeometry(r => new Rect(r.X, r.Bottom - r.Height * 0.08, r.Width, r.Height * 0.08));
     public System.Windows.Media.Geometry? StrikeOutGeometry => MarkupGeometry(r => new Rect(r.X, r.Y + r.Height * 0.46, r.Width, r.Height * 0.08));
 
+    // ------------------------------------------------------------------ comment threads (ISO 32000-2 12.5.6.4)
+
+    /// <summary>
+    /// The comment this one answers (its /IRT, with /RT /R): the parent's <see cref="Id"/>, or
+    /// null for a comment that answers none. A reply is a note with no drawing on the page: the
+    /// comments panel lists it under the comment it answers. Set when it is made or read, never
+    /// changed afterwards.
+    /// </summary>
+    public Guid? InReplyToId
+    {
+        get => _inReplyToId;
+        set
+        {
+            _inReplyToId = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsReply));
+            OnPropertyChanged(nameof(IsStateChange));
+        }
+    }
+    private Guid? _inReplyToId;
+
+    /// <summary>
+    /// A reply's /State and /StateModel: a review status set on the comment it answers
+    /// ("Accepted" in the "Review" model), as Acrobat writes it. Null for an ordinary reply.
+    /// </summary>
+    public string? State { get; set; }
+    public string? StateModel
+    {
+        get => _stateModel;
+        set
+        {
+            _stateModel = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsStateChange));
+        }
+    }
+    private string? _stateModel;
+
+    /// <summary>A reply to another comment (it has an <see cref="InReplyToId"/>).</summary>
+    public bool IsReply => _inReplyToId != null;
+
+    /// <summary>A reply that sets a status (/StateModel) rather than saying something.</summary>
+    public bool IsStateChange => IsReply && !string.IsNullOrEmpty(_stateModel);
+
     public string DisplaySummary => $"{Type} on Page {PageNumber}" +
         (!string.IsNullOrWhiteSpace(Contents) ? $": \"{Contents}\"" : string.Empty);
 }

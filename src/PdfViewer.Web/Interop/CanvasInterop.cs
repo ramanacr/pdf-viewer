@@ -69,6 +69,16 @@ internal static partial class CanvasInterop
     [JSImport("scrollToLocation", ModuleName)]
     public static partial void ScrollToLocation(int page, double x, double y);
 
+    [JSImport("openExternal", ModuleName)]
+    public static partial bool OpenExternal(string url);
+
+    [JSImport("setLinkBack", ModuleName)]
+    public static partial void SetLinkBack(bool value);
+
+    [JSImport("viewLocation", ModuleName)]
+    [return: JSMarshalAs<JSType.Array<JSType.Number>>]
+    public static partial double[] ViewLocation();
+
     [JSImport("setSelectionText", ModuleName)]
     public static partial void SetSelectionText(string? text);
 

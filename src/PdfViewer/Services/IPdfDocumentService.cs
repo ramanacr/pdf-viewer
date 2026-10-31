@@ -139,6 +139,12 @@ public interface IPdfDocumentService : IDisposable
     ObservableCollection<BookmarkItem> ExtractBookmarks();
 
     /// <summary>
+    /// The page's link annotations (/Link) with where they go, in /Annots order. Engines that
+    /// cannot read them return none.
+    /// </summary>
+    IReadOnlyList<PageLink> GetPageLinks(int pageNumber) => Array.Empty<PageLink>();
+
+    /// <summary>
     /// Searches the document for text query with match coordinates and snippet text.
     /// </summary>
     Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default);
@@ -227,12 +233,21 @@ public interface IPdfDocumentService : IDisposable
     bool IsDrawnAsLoaded(AnnotationModel annotation) => annotation.HasOwnAppearance;
 
     /// <summary>
-    /// Saves the document with annotations applied.
+    /// Saving in <paramref name="mode"/> would break the document's signatures: it is signed and
+    /// the save cannot be an incremental update (a repaired file, or a flattened save).
+    /// </summary>
+    bool SaveWouldInvalidateSignatures(AnnotationSaveMode mode) => false;
+
+    /// <summary>
+    /// Saves the document with annotations applied. A save that would break the document's
+    /// signatures throws <see cref="SignedSaveException"/> unless
+    /// <paramref name="allowInvalidatingSignatures"/> says the user agreed to it.
     /// </summary>
     Task SaveAnnotatedDocumentAsync(
         string targetPath,
         AnnotationSaveMode mode,
         IEnumerable<AnnotationModel> annotations,
         string? originalPath = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool allowInvalidatingSignatures = false);
 }

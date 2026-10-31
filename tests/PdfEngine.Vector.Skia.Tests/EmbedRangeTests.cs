@@ -25,7 +25,7 @@ public class EmbedRangeTests
     }
 
     /// <summary>A PDF of <paramref name="pages"/> pages, each with text and its own uncompressed image, written page by page.</summary>
-    internal static byte[] ImagePdf(int pages, int side = 96, Func<int, string>? mediaBox = null)
+    internal static byte[] ImagePdf(int pages, int side = 96, Func<int, string>? mediaBox = null, Func<int, string>? pageExtra = null)
     {
         var objects = new List<byte[]>();
         int Add(string head, byte[]? data = null)
@@ -52,7 +52,7 @@ public class EmbedRangeTests
             var pixels = new byte[side * side * 3];
             random.NextBytes(pixels);
             int image = Add($"<< /Type /XObject /Subtype /Image /Width {side} /Height {side} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {pixels.Length} >>", pixels);
-            kids.Add(Add($"<< /Type /Page /Parent 2 0 R /MediaBox {mediaBox?.Invoke(p) ?? "[0 0 612 792]"} /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {content} 0 R >>"));
+            kids.Add(Add($"<< /Type /Page /Parent 2 0 R /MediaBox {mediaBox?.Invoke(p) ?? "[0 0 612 792]"} /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {content} 0 R {pageExtra?.Invoke(p)} >>"));
         }
         objects[1] = Encoding.ASCII.GetBytes($"<< /Type /Pages /Kids [{string.Join(" ", kids.Select(k => $"{k} 0 R"))}] /Count {pages} >>");
         objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"u8.ToArray();
@@ -292,6 +292,29 @@ public class EmbedRangeTests
         await using var whole = await ViewerDocument.OpenAsync(file);
         var expected = await whole.RenderPageAsync(1, 0.5);
         Assert.Equal(expected.Pixels.ToArray(), first.Pixels.ToArray());
+    }
+
+    [Fact]
+    public async Task RangedDocument_LinksOfAPageAreReadWithoutDownloadingTheRest()
+    {
+        var file = ImagePdf(80, pageExtra: p => p == 42
+            ? "/Annots [<< /Type /Annot /Subtype /Link /Rect [72 700 300 740] /A << /S /Named /N /NextPage >> >> " +
+              "<< /Type /Annot /Subtype /Link /Rect [72 600 300 640] /A << /S /URI /URI (https://example.org/) >> >>]"
+            : "");
+        var (reader, _) = Connect(file);
+        await using var doc = await ViewerDocument.OpenRangedAsync(reader, rangeOptions: new PdfRangedOptions { TailBytes = 16 * 1024 });
+        Assert.False(doc.IsComplete);
+
+        var links = await doc.GetLinksAsync(42);
+        Assert.Equal(2, links.Count);
+        Assert.Equal(PdfEngine.Vector.Services.PdfLinkTargetKind.NextPage, links[0].Target.Kind);
+        Assert.Equal(new ViewerLocation(43), ViewerLinks.Destination(links[0].Target, 42, doc.Geometry));
+        Assert.Equal("https://example.org/", links[1].Target.Uri);
+        Assert.Empty(await doc.GetLinksAsync(7));
+
+        // Only the pages' bytes were fetched, not the file.
+        Assert.False(doc.IsComplete);
+        Assert.True(reader.BytesReceived < file.Length / 5, $"{reader.BytesReceived} of {file.Length} bytes for the links");
     }
 
     [Fact]

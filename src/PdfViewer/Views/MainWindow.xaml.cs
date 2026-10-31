@@ -180,6 +180,8 @@ public partial class MainWindow : Window
         };
         document.ScrollToPageAction = ScrollToPage;
         document.ScrollToMatchAction = ScrollToMatch;
+        document.ScrollToLocationAction = ScrollToLocation;
+        document.CaptureViewFunc = CaptureView;
         document.GetViewportSizeFunc = () =>
         {
             // The whole width, with the vertical bar's width kept free: the fit then holds
@@ -580,7 +582,8 @@ public partial class MainWindow : Window
     {
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
 
-        if (_shell.ActiveDocument != null && TryEditSelectedAnnotationWithKeyboard(e))
+        // In the comments panel, Tab, Enter and Delete are the panel's own (its buttons), not the selected annotation's.
+        if (_shell.ActiveDocument != null && !CommentsPanel.IsKeyboardFocusWithin && TryEditSelectedAnnotationWithKeyboard(e))
         {
             e.Handled = true;
             return;
@@ -697,17 +700,25 @@ public partial class MainWindow : Window
             || _vm.IsPlacingSignature || _vm.IsMarkingRedaction)
         {
             _vm.SelectedAnnotation = null;
+            _vm.FocusedLink = null;
             return false;
         }
         var mods = Keyboard.Modifiers;
+        // A link that has the keyboard: Enter or Space follows it, Esc lets go of it.
+        if (TryFollowFocusedLinkWithKeyboard(e, mods)) return true;
         if (e.Key == Key.Tab && (mods & ~ModifierKeys.Shift) == ModifierKeys.None
-            && (_vm.SelectedAnnotation != null || IsDocumentFocused()))
+            && (_vm.SelectedAnnotation != null || _vm.FocusedLink != null || IsDocumentFocused()))
         {
-            bool found = _vm.SelectNextAnnotation(backwards: mods == ModifierKeys.Shift);
+            // The page's annotations, then its links.
+            bool found = _vm.MoveKeyboardFocus(backwards: mods == ModifierKeys.Shift);
             if (found && _vm.SelectedAnnotation is { } next)
             {
                 if (next.PageNumber != _vm.CurrentPageNumber) ScrollToPage(next.PageNumber);
                 Keyboard.Focus(DocumentScrollViewer);
+            }
+            else if (found && _vm.FocusedLink is { } link)
+            {
+                FocusLinkHotspot(link);
             }
             return found;
         }
@@ -724,6 +735,14 @@ public partial class MainWindow : Window
                 return true;
             case Key.Enter when plain:
                 _vm.EditSelectedAnnotation();
+                return true;
+            case Key.Apps when plain:
+            // Shift+F10 arrives as F10; it is also matched as a system key, in case Windows reports it as one.
+            case Key.F10 when shift:
+            case Key.System when e.SystemKey == Key.F10 && shift:
+                // The annotation's menu (reply, status, edit, delete), as a right-click opens it.
+                if (_vm.SelectedAnnotation is { } selected && _vm.AllAnnotations.Contains(selected))
+                    OpenAnnotationMenu(selected, DocumentScrollViewer, System.Windows.Controls.Primitives.PlacementMode.Center);
                 return true;
             case Key.Left when plain || shift:
                 _vm.NudgeSelectedAnnotation(-1, 0, shift);
@@ -954,6 +973,9 @@ public partial class MainWindow : Window
             _panStartPoint = e.GetPosition(DocumentScrollViewer);
             _panStartHOffset = DocumentScrollViewer.HorizontalOffset;
             _panStartVOffset = DocumentScrollViewer.VerticalOffset;
+            // With the hand tool, a click (not a drag) on a link follows it.
+            NoteLinkPress(e.ChangedButton == MouseButton.Left && PageCanvasUnder(e) is { } under ? LinkUnder(under.Canvas, under.Page, e) : null,
+                _panStartPoint);
             DocumentScrollViewer.Cursor = Cursors.SizeAll;
             DocumentScrollViewer.CaptureMouse();
             e.Handled = true;
@@ -992,6 +1014,7 @@ public partial class MainWindow : Window
         {
             var currentPoint = e.GetPosition(DocumentScrollViewer);
             var delta = currentPoint - _panStartPoint;
+            CancelLinkPressIfDragged(currentPoint);
 
             DocumentScrollViewer.ScrollToHorizontalOffset(_panStartHOffset - delta.X);
             DocumentScrollViewer.ScrollToVerticalOffset(_panStartVOffset - delta.Y);
@@ -1007,6 +1030,8 @@ public partial class MainWindow : Window
             DocumentScrollViewer.ReleaseMouseCapture();
             DocumentScrollViewer.Cursor = _vm.IsPanningEnabled ? Cursors.Hand : Cursors.Arrow;
             e.Handled = true;
+            if (e.ChangedButton == MouseButton.Left) FollowPendingLink();
+            else _pendingLinkClick = null;
         }
     }
 
@@ -1214,6 +1239,7 @@ public partial class MainWindow : Window
 
         // A click on the page, away from the selected annotation's handles, lets go of it.
         _vm.SelectedAnnotation = null;
+        _vm.FocusedLink = null;
 
         // Placing a signature, or marking an area for redaction: drag a box.
         if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
@@ -1397,6 +1423,9 @@ public partial class MainWindow : Window
                     : normClickX >= a.X && normClickX <= a.X + a.Width &&
                       normClickY >= a.Y && normClickY <= a.Y + a.Height)
                 : null;
+            // A click on a link follows it on release; a drag from it still selects text.
+            NoteLinkPress(_pendingAnnotationClick == null && e.ClickCount == 1 && Keyboard.Modifiers == ModifierKeys.None
+                ? LinkUnder(canvas, page, e) : null, clickPos);
 
             if (!page.IsTextExtracted)
                 _ = page.LoadTextSegmentsAsync(_vm.DocumentService);
@@ -1577,6 +1606,7 @@ public partial class MainWindow : Window
             if (_pendingAnnotationClick != null &&
                 (Math.Abs(currentPoint.X - _textSelectStartPoint.X) > 4 || Math.Abs(currentPoint.Y - _textSelectStartPoint.Y) > 4))
                 _pendingAnnotationClick = null; // it became a drag
+            CancelLinkPressIfDragged(currentPoint);
             ExtendSelectionToPointer();
             return;
         }
@@ -1585,6 +1615,10 @@ public partial class MainWindow : Window
         if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction || _vm.IsPlacingStamp)
         {
             canvas.Cursor = Cursors.Cross;
+        }
+        else if (UpdateLinkHover(canvas, page, e))
+        {
+            // A link: hand cursor and its target in a tooltip.
         }
         else if (_vm.ActiveAnnotationTool == null && !_vm.IsPanningEnabled)
         {
@@ -1604,6 +1638,7 @@ public partial class MainWindow : Window
     {
         if (sender is Canvas canvas && !_isSelectingText && !_isDrawingAnnotation)
         {
+            HideLinkToolTip();
             canvas.Cursor = null;
         }
     }
@@ -1823,6 +1858,7 @@ public partial class MainWindow : Window
                 Keyboard.Focus(DocumentScrollViewer);
                 return;
             }
+            if (FollowPendingLink()) return;
             _vm.UpdateSelectionFromPages();
         }
     }
@@ -1840,16 +1876,124 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AnnotationItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    // ------------------------------------------------------------------ the comments panel
+
+    /// <summary>A comment in the panel, clicked or chosen with Enter: the page shows it, selected.</summary>
+    private void CommentThread_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is ListBox listBox && listBox.SelectedItem is AnnotationModel annot)
+        if (sender is FrameworkElement { Tag: AnnotationModel annot })
         {
             _vm.CurrentPageNumber = annot.PageNumber;
             ScrollToPage(annot.PageNumber);
             _vm.SelectAnnotation(annot);
+            // The keys now act on the selected annotation (Delete, Enter, arrows, the Menu key), as after Tab on the page.
+            Keyboard.Focus(DocumentScrollViewer);
+        }
+    }
+
+    /// <summary>A comment in the panel, double-clicked: its comment editor opens.</summary>
+    private void CommentThread_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: AnnotationModel annot } && _vm.AllAnnotations.Contains(annot))
+        {
             EditExistingAnnotation(annot);
             e.Handled = true;
         }
+    }
+
+    /// <summary>The Status button opens its menu of review statuses under it (with the keyboard too).</summary>
+    private void CommentStatusButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { ContextMenu: { } menu } button)
+        {
+            menu.PlacementTarget = button;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+    }
+
+    /// <summary>
+    /// A reply box (or a reply being edited) takes the keyboard focus when it opens; when it
+    /// closes with the focus in it, the focus goes to the button that opened it (its Tag), so
+    /// the keyboard user stays in the thread.
+    /// </summary>
+    private void CommentTextBox_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is not TextBox box) return;
+        if (box.IsVisible)
+        {
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
+            {
+                if (!box.IsVisible) return;
+                box.Focus();
+                box.CaretIndex = box.Text.Length;
+            });
+        }
+        else if (box.IsKeyboardFocusWithin || Keyboard.FocusedElement == null || ReferenceEquals(Keyboard.FocusedElement, this))
+        {
+            var back = box.Tag as UIElement;
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
+            {
+                if (back is { IsVisible: true }) back.Focus();
+            });
+        }
+    }
+
+    /// <summary>
+    /// A right-click on an annotation on the page (or the menu key with one selected): its own
+    /// menu, to reply, set its status, edit or delete it. Anywhere else the page's menu opens.
+    /// </summary>
+    private void PageCanvas_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is not Canvas canvas || canvas.Tag is not PageViewModel page || _vm.ActiveAnnotationTool != null) return;
+        var at = Mouse.GetPosition(canvas);
+        var annot = AnnotationAt(page, new Point(at.X / page.UnrotatedDisplayWidth, at.Y / page.UnrotatedDisplayHeight));
+        if (annot == null) return;
+        e.Handled = true;
+        _vm.SelectAnnotation(annot);
+        OpenAnnotationMenu(annot, canvas, System.Windows.Controls.Primitives.PlacementMode.MousePoint);
+    }
+
+    /// <summary>The topmost of the page's annotations under a point of the normalized page, or null.</summary>
+    private static AnnotationModel? AnnotationAt(PageViewModel page, Point p) =>
+        page.AnnotationsOnPage.LastOrDefault(a => a.HasQuads
+            ? a.Quads.Any(q => q.Contains(p))
+            : p.X >= a.X && p.X <= a.X + a.Width && p.Y >= a.Y && p.Y <= a.Y + a.Height);
+
+    /// <summary>The menu of an annotation on the page: Reply, Set Status, Edit Comment, Delete.</summary>
+    private void OpenAnnotationMenu(AnnotationModel annot, UIElement target, System.Windows.Controls.Primitives.PlacementMode placement)
+    {
+        var document = _vm;
+        MenuItem Item(string header, Action action, string? glyph = null)
+        {
+            var item = new MenuItem { Header = header };
+            if (glyph != null) item.Icon = new TextBlock { Text = glyph, Style = (Style)FindResource("MenuGlyph") };
+            item.Click += (_, _) => action();
+            return item;
+        }
+        var menu = new ContextMenu();
+        menu.Items.Add(Item("_Reply", () => document.BeginReply(annot), Themes.IconGlyphs.Note));
+        var status = new MenuItem { Header = "Set _Status", Icon = new TextBlock { Text = Themes.IconGlyphs.Check, Style = (Style)FindResource("MenuGlyph") } };
+        string? current = document.ReviewStateOf(annot);
+        foreach (var state in MainViewModel.ReviewStates)
+        {
+            var item = Item("_" + state, () => document.SetReviewState(annot, state));
+            // The current status is marked: a check, bold, and "current" for screen readers. The others have no mark.
+            if (string.Equals(current ?? "None", state, StringComparison.Ordinal))
+            {
+                item.Icon = new TextBlock { Text = Themes.IconGlyphs.Check, Style = (Style)FindResource("MenuGlyph") };
+                item.FontWeight = FontWeights.SemiBold;
+                System.Windows.Automation.AutomationProperties.SetItemStatus(item, "Current status");
+            }
+            status.Items.Add(item);
+        }
+        menu.Items.Add(status);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item("_Edit Comment...", () => EditExistingAnnotation(annot), Themes.IconGlyphs.EditContent));
+        menu.Items.Add(Item("_Delete", () => document.DeleteAnnotation(annot), Themes.IconGlyphs.Delete));
+        menu.PlacementTarget = target;
+        menu.Placement = placement;
+        menu.IsOpen = true;
     }
 
     private void EditAnnotationButton_Click(object sender, RoutedEventArgs e)

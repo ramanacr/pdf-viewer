@@ -27,7 +27,7 @@ public sealed partial class Viewer : IAsyncDisposable
 {
     private enum ZoomMode { FitWidth, FitPage, Custom }
     private enum Panel { Outline, Thumbnails, Results, Comments }
-    private enum Dialog { None, Help, Password }
+    private enum Dialog { None, Help, Password, Link }
 
     private static readonly double[] ZoomPresets = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
     private const double MinZoom = 0.1, MaxZoom = 8;
@@ -165,7 +165,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=7");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=8");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {
@@ -228,7 +228,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (_dialog != _focusedDialog)
         {
             _focusedDialog = _dialog;
-            CanvasInterop.FocusElement(_dialog switch { Dialog.Help => "dialog-close", Dialog.Password => "password-input", _ => "pages" }, select: false);
+            CanvasInterop.FocusElement(_dialog switch { Dialog.Help => "dialog-close", Dialog.Password => "password-input", Dialog.Link => "link-cancel", _ => "pages" }, select: false);
         }
         _ = PumpAsync();
     }
@@ -551,6 +551,11 @@ public sealed partial class Viewer : IAsyncDisposable
         _cache.Clear();
         _renderTimes.Clear();
         ForgetSelection();
+        _linksByPage.Clear();
+        _linksLoading.Clear();
+        _linkBack.Clear();
+        SyncLinkBack();
+        _linksFor = null;
         _thumbsDrawn.Clear();
         _thumbsVisible.Clear();
         _docBytes = null;
@@ -572,6 +577,7 @@ public sealed partial class Viewer : IAsyncDisposable
         _lastViewportTicks = Environment.TickCount64;
         _visible.Clear();
         foreach (int p in visible) _visible.Add(p);
+        LoadLinks(visible);
         if (_doc != null && current != _currentPage && current >= 1 && current <= _doc.PageCount)
         {
             _currentPage = current;
@@ -1062,6 +1068,7 @@ public sealed partial class Viewer : IAsyncDisposable
             case "save": await SaveAsync("shortcut"); break;
             case "escape":
                 if (_dialog == Dialog.Password) CancelPassword();
+                else if (_dialog == Dialog.Link) CancelPendingLink();
                 else if (_dialog != Dialog.None) _dialog = Dialog.None;
                 else if (_moreOpen) CloseMoreMenu();
                 else if (_doc != null && _sidebarOpen && CanvasInterop.IsNarrow()) CloseDrawer();
@@ -1084,6 +1091,7 @@ public sealed partial class Viewer : IAsyncDisposable
             case "next-page": GoToPage(_currentPage + 1); break;
             case "previous-page": GoToPage(_currentPage - 1); break;
             case "first-page": GoToPage(1); break;
+            case "back": GoBackByLink(); break;
             case "last-page": GoToPage(_doc?.PageCount ?? 1); break;
             case "toggle-theme": CycleTheme(); break;
             case "toggle-night": ToggleNight(); break;
