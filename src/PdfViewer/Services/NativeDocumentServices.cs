@@ -157,19 +157,52 @@ internal sealed class NativeDocumentServices
     public List<AnnotationModel> Load(PdfVectorDocument doc)
     {
         _loaded.Clear();
-        var list = new List<AnnotationModel>();
+        var read = new List<PdfAnnotation>();
+        var models = new List<(PdfAnnotation Annotation, AnnotationModel Model)>();
         for (int p = 1; p <= doc.PageCount; p++)
         {
             var crop = doc.PageTree.Pages[p - 1].CropBox;
             foreach (var a in PdfAnnotationReader.Read(doc, p))
             {
-                if (ToModel(a, crop, doc) is not { } model) continue;
-                _loaded[model.Id] = (p, a.Index, a.ObjectNumber, Fingerprint(model));
-                list.Add(model);
+                read.Add(a);
+                if (ToModel(a, crop, doc) is { } model) models.Add((a, model));
             }
         }
-        return list;
+        LinkReplies(read, models);
+        foreach (var (a, model) in models) _loaded[model.Id] = (a.PageNumber, a.Index, a.ObjectNumber, Fingerprint(model));
+        return models.Select(m => m.Model).ToList();
     }
+
+    /// <summary>
+    /// Comment threads (12.5.6.4): a note whose /IRT chain reaches a thread's first annotation
+    /// (the engine's test: no loops, within the depth limit, /RT R or absent) and whose parent the
+    /// viewer shows becomes a reply to that parent, with its /State and /StateModel. A reply to an
+    /// annotation the viewer does not show (a caret, a link) stays a note of its own.
+    /// </summary>
+    private static void LinkReplies(IReadOnlyList<PdfAnnotation> read, IReadOnlyList<(PdfAnnotation Annotation, AnnotationModel Model)> models)
+    {
+        var roots = PdfAnnotationThreads.Roots(read);
+        if (roots.Count == 0) return;
+        var byNumber = new Dictionary<int, AnnotationModel>();
+        foreach (var (a, m) in models)
+            if (a.ObjectNumber > 0) byNumber.TryAdd(a.ObjectNumber, m);
+        foreach (var (a, m) in models)
+        {
+            if (m.Type != AnnotationType.Note || !roots.ContainsKey(a.ObjectNumber)
+                || !byNumber.TryGetValue(a.InReplyTo, out var parent) || ReferenceEquals(parent, m)) continue;
+            m.InReplyToId = parent.Id;
+            m.State = a.State;
+            m.StateModel = a.StateModel;
+            // A reply has no subject of its own unless the file gives one (none is written back).
+            if (string.IsNullOrEmpty(a.Subject)) m.Title = string.Empty;
+        }
+    }
+
+    /// <summary>/F of a reply made here: Print, NoZoom and NoRotate, as Acrobat writes replies (and the web viewer).</summary>
+    internal const int ReplyFlags = 4 | 8 | 16;
+
+    /// <summary>/F of a status set here: hidden as well, as Acrobat writes them; the comments panel shows them.</summary>
+    internal const int StateFlags = 2 | ReplyFlags;
 
     private static AnnotationType? TypeOf(PdfAnnotation a) => a.Measure != null && PdfMeasurements.KindOf(a.Subtype) != null
         ? AnnotationType.Measurement
@@ -540,10 +573,14 @@ internal sealed class NativeDocumentServices
         var update = new PdfUpdate(doc, bytes);
         var editor = new PdfAnnotationEditor(update);
         var handled = new HashSet<Guid>();
+        // Where each kept annotation is (for a new reply's /IRT): its object number, else its place.
+        var kept = new Dictionary<Guid, (int Page, int Index, int ObjectNumber)>();
+        var deleted = new List<(int Page, int Index, int Depth)>();
         for (int p = 1; p <= doc.PageCount; p++)
         {
             var crop = doc.PageTree.Pages[p - 1].CropBox;
-            foreach (var existing in PdfAnnotationReader.Read(doc, p))
+            var onPage = PdfAnnotationReader.Read(doc, p);
+            foreach (var existing in onPage)
             {
                 if (!IsManaged(existing, doc)) continue;
                 if (byOrigin.TryGetValue((p, existing.Index), out var origin) && origin.ObjectNumber == existing.ObjectNumber
@@ -552,16 +589,82 @@ internal sealed class NativeDocumentServices
                     string now = Fingerprint(model);
                     if (now != origin.Fingerprint)
                         editor.Modify(Changed(existing, model, crop, geometryChanged: Geometry(now) != Geometry(origin.Fingerprint)));
+                    kept[origin.Id] = (p, existing.Index, existing.ObjectNumber);
                     continue;
                 }
-                editor.Delete(p, existing.Index, cascadeReplies: false);
+                deleted.Add((p, existing.Index, ReplyDepth(existing, onPage)));
             }
         }
-        foreach (var model in models.Where(m => !handled.Contains(m.Id)))
-            editor.Add(New(model, doc.PageTree.Pages[model.PageNumber - 1].CropBox));
+        // Replies before the comments they answer, so a deleted comment's deleted replies are
+        // removed, not first turned into notes of their own (the editor detaches replies it keeps).
+        foreach (var (p, index, _) in deleted.OrderByDescending(d => d.Depth))
+            editor.Delete(p, index, cascadeReplies: false);
+
+        // New comments before new replies, each reply after the one it answers, so /IRT can name it.
+        foreach (var model in models.Where(m => !handled.Contains(m.Id)).OrderBy(m => ThreadDepth(m, byId)))
+        {
+            var annotation = New(model, doc.PageTree.Pages[model.PageNumber - 1].CropBox);
+            if (model.InReplyToId is { } parentId && byId.TryGetValue(parentId, out var parent) && parent.PageNumber == model.PageNumber
+                && kept.TryGetValue(parent.Id, out var at))
+            {
+                // A parent written directly in /Annots is made an object first, so /IRT can refer to it.
+                int number = at.ObjectNumber > 0 ? at.ObjectNumber : editor.MakeIndirect(at.Page, at.Index);
+                kept[parent.Id] = (at.Page, at.Index, number);
+                MakeReply(annotation, model, number);
+            }
+            int self = editor.Add(annotation);
+            kept[model.Id] = (model.PageNumber, -1, self);
+        }
         if (flatten) editor.FlattenAll();
         editor.Finish();
         return update.Commit(forceFullRewrite: flatten || !IsSigned(doc));
+    }
+
+    /// <summary>How many /IRT steps lead from the annotation to one on its page that answers none (0 for that one; a chain that loops or leaves the page ends).</summary>
+    private static int ReplyDepth(PdfAnnotation a, IReadOnlyList<PdfAnnotation> page)
+    {
+        int depth = 0;
+        var current = a;
+        while (current.InReplyTo > 0 && depth <= PdfAnnotationLimits.MaxReplyDepth)
+        {
+            var parent = page.FirstOrDefault(o => o.ObjectNumber == current.InReplyTo);
+            if (parent == null || ReferenceEquals(parent, a)) break;
+            current = parent;
+            depth++;
+        }
+        return depth;
+    }
+
+    /// <summary>How many replies lead from the model to the comment its thread starts at (0 for that comment).</summary>
+    private static int ThreadDepth(AnnotationModel m, IReadOnlyDictionary<Guid, AnnotationModel> byId)
+    {
+        int depth = 0;
+        var current = m;
+        while (current.InReplyToId is { } parent && depth <= PdfAnnotationLimits.MaxReplyDepth && byId.TryGetValue(parent, out var p) && !ReferenceEquals(p, m))
+        {
+            current = p;
+            depth++;
+        }
+        return depth;
+    }
+
+    /// <summary>
+    /// A new reply (12.5.6.4): /IRT to its parent and /RT /R, a comment icon, the flags Acrobat
+    /// writes; a status also gets /State and /StateModel and is hidden. The editor gives a reply
+    /// whose parent is on its page an empty appearance, so no reader draws a second note there.
+    /// </summary>
+    private static void MakeReply(PdfAnnotation a, AnnotationModel m, int parentNumber)
+    {
+        a.InReplyTo = parentNumber;
+        a.ReplyType = "R";
+        a.Icon = "Comment";
+        a.BorderWidth = null;
+        a.Flags = m.IsStateChange ? StateFlags : ReplyFlags;
+        if (m.IsStateChange)
+        {
+            a.State = m.State;
+            a.StateModel = m.StateModel;
+        }
     }
 
     /// <summary>The document carries a signed signature field (FPDF_GetSignatureCount).</summary>
