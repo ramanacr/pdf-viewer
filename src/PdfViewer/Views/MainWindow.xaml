@@ -2053,6 +2053,7 @@
                                                 </Canvas.ContextMenu>
                                             </Canvas>
                                             <views:FormFieldsLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 7. form fields: real editors over the page -->
+                                            <views:PageLinksLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 7b. links, for screen readers -->
                                             <views:RedactionMarksLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 8. areas marked for redaction -->
                                             <views:ContentEditLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 9. paragraphs and images being edited -->
                                             <views:AnnotationEditLayer Page="{Binding}" Width="{Binding UnrotatedDisplayWidth}" Height="{Binding UnrotatedDisplayHeight}" /><!-- 10. the selected annotation's handles -->
@@ -2500,6 +2501,7 @@
                                     </Canvas.ContextMenu>
                                 </Canvas>
                                 <views:FormFieldsLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
+                                <views:PageLinksLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 <views:RedactionMarksLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 <views:ContentEditLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />
                                 <views:AnnotationEditLayer Page="{Binding SingleCurrentPage}" Width="{Binding SingleCurrentPage.UnrotatedDisplayWidth}" Height="{Binding SingleCurrentPage.UnrotatedDisplayHeight}" />

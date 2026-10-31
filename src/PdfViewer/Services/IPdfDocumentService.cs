@@ -139,6 +139,12 @@ public interface IPdfDocumentService : IDisposable
     ObservableCollection<BookmarkItem> ExtractBookmarks();
 
     /// <summary>
+    /// The page's link annotations (/Link) with where they go, in /Annots order. Engines that
+    /// cannot read them return none.
+    /// </summary>
+    IReadOnlyList<PageLink> GetPageLinks(int pageNumber) => Array.Empty<PageLink>();
+
+    /// <summary>
     /// Searches the document for text query with match coordinates and snippet text.
     /// </summary>
     Task<List<SearchMatch>> SearchTextAsync(string query, bool matchCase = false, CancellationToken ct = default);

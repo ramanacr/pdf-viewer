@@ -114,6 +114,70 @@ internal sealed class PageView : SkiaView
     /// <summary>A tap on a page away from fields and annotations.</summary>
     public event Action? EmptyTapped;
 
+    /// <summary>A tap on a link (the browse tool), away from fields and annotations.</summary>
+    public event Action<ViewerLink>? LinkTapped;
+
+    // The links of pages in view, read once per page and document (ViewerLinks, shared with the web viewer).
+    private readonly Dictionary<int, IReadOnlyList<ViewerLink>> _links = new();
+    private readonly HashSet<int> _linksLoading = new();
+
+    private void EnsureLinks(int page)
+    {
+        var doc = _doc;
+        if (doc == null || _links.ContainsKey(page) || !_linksLoading.Add(page)) return;
+        _ = LoadLinksAsync(doc, page);
+    }
+
+    private async Task LoadLinksAsync(ViewerDocument doc, int page)
+    {
+        IReadOnlyList<ViewerLink> links;
+        try
+        {
+            links = await Task.Run(() => doc.GetLinksAsync(page));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            links = Array.Empty<ViewerLink>(); // a damaged annotation array: no links on the page
+        }
+        if (_doc != doc) return;
+        _linksLoading.Remove(page);
+        _links[page] = links;
+    }
+
+    /// <summary>The topmost link at a point of a page (shown-page points), with a finger's slack; null when none or not read yet.</summary>
+    private ViewerLink? LinkAt(int page, ViewerPoint point)
+    {
+        if (_doc == null || _layout == null || page < 1 || page > _doc.Geometry.Count) return null;
+        if (!_links.TryGetValue(page, out var links))
+        {
+            EnsureLinks(page);
+            return null;
+        }
+        return ViewerLinks.At(links, _doc.Geometry[page - 1], point, slack: 8 * Density / _layout.PixelsPerPoint);
+    }
+
+    /// <summary>Scrolls to a place a link goes to: the page, and the destination's point at the top of the view.</summary>
+    public void GoToLocation(ViewerLocation location)
+    {
+        if (_layout == null || _doc == null) return;
+        _scroller.ForceFinished(true);
+        int page = Math.Clamp(location.Page, 1, _doc.PageCount);
+        if (location.X == null && location.Y == null)
+        {
+            _layout.GoTo(page);
+        }
+        else
+        {
+            var info = _doc.Pages[page - 1];
+            double u = info.Width > 0 && location.X is { } x ? Math.Clamp(x / info.Width, 0, 1) : _layout.AnchorAt(0, 0).U;
+            double v = info.Height > 0 ? Math.Clamp((location.Y ?? 0) / info.Height, 0, 1) : 0;
+            _layout.Restore(new PageAnchor(page, location.X == null ? 0 : u, v), _layout.Zoom);
+        }
+        ReportPage();
+        Invalidate();
+        RequestRender();
+    }
+
     /// <summary>The ink tool drew a stroke: its page and its points on the shown page.</summary>
     public event Action<int, IReadOnlyList<ViewerPoint>>? InkDrawn;
 
@@ -216,6 +280,8 @@ internal sealed class PageView : SkiaView
         _toldMissingFonts = false;
         _pendingView = null;
         _textLayouts.Clear();
+        _links.Clear();
+        _linksLoading.Clear();
         _imageGeneration.Clear();
         _pendingInk.Clear();
         _stroke = null;
@@ -575,6 +641,7 @@ internal sealed class PageView : SkiaView
         double scale = _layout.PixelsPerPoint;
         int current = _layout.CurrentPage;
         var visible = _layout.VisiblePages().OrderBy(p => Math.Abs(p - current)).ToList();
+        foreach (int page in visible) EnsureLinks(page);
 
         foreach (int page in visible)
             if (BaseJob(page) is { } job) return job;
@@ -653,12 +720,14 @@ internal sealed class PageView : SkiaView
             (_tool switch { PageTool.Note => NoteRequested, PageTool.Text => TextRequested, _ => StampRequested })?.Invoke(page, point);
             return;
         }
-        if (Session is not { } session) return;
-        if (session.WidgetAt(page, point) is { } widget)
+        var session = Session;
+        if (session?.WidgetAt(page, point) is { } widget)
             FieldTapped?.Invoke(widget);
-        else if (session.AnnotationAt(page, point, slack: 8 * Density / _layout.PixelsPerPoint) is { } annotation)
+        else if (session?.AnnotationAt(page, point, slack: 8 * Density / _layout.PixelsPerPoint) is { } annotation)
             AnnotationTapped?.Invoke(annotation);
-        else
+        else if (_tool == PageTool.Browse && LinkAt(page, point) is { } link)
+            LinkTapped?.Invoke(link);
+        else if (session != null)
             EmptyTapped?.Invoke();
     }
 

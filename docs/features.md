@@ -38,8 +38,15 @@ For the browser demo and the Android app (a preview), see their own READMEs
 - **Night mode** (`Ctrl+Shift+N`) inverts the pages. It is separate from the light and dark
   theme of the window.
 - **Full screen** (`F11`; `F11` or `Esc` to exit).
-- **Navigation history** (`Alt+Left`, `Alt+Right`). Bookmarks, search hits and the page box are
-  recorded. Ordinary scrolling is not, so "back" never undoes your reading.
+- **Navigation history** (`Alt+Left`, `Alt+Right`). Bookmarks, search hits, links and the page box
+  are recorded, with the exact place in view. Ordinary scrolling is not, so "back" never undoes
+  your reading.
+- **Links on pages.** The pointer becomes a hand over a link, and a tooltip shows where it goes
+  ("Go to page 3" or the URL). A click follows it when no drawing tool is in use (a drag still
+  selects text). A link to a place in the document scrolls there. A web link (`http`, `https`,
+  `mailto`) opens in your browser only after a dialog shows the full URL with its site in bold.
+  Links to other files or programs, and document JavaScript, are never followed. The web viewer
+  and the Android app do the same (Back, `Alt+Left` or the system Back key returns).
 - **Bookmarks** (the document outline) as a tree, and **page thumbnails** in the sidebar
   (`Ctrl+B` shows or hides it).
 - **Document tabs.** Open several documents (`Ctrl+Tab` and `Ctrl+Shift+Tab` switch, `Ctrl+W`

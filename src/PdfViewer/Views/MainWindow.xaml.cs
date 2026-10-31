@@ -180,6 +180,8 @@ public partial class MainWindow : Window
         };
         document.ScrollToPageAction = ScrollToPage;
         document.ScrollToMatchAction = ScrollToMatch;
+        document.ScrollToLocationAction = ScrollToLocation;
+        document.CaptureViewFunc = CaptureView;
         document.GetViewportSizeFunc = () =>
         {
             // The whole width, with the vertical bar's width kept free: the fit then holds
@@ -698,17 +700,25 @@ public partial class MainWindow : Window
             || _vm.IsPlacingSignature || _vm.IsMarkingRedaction)
         {
             _vm.SelectedAnnotation = null;
+            _vm.FocusedLink = null;
             return false;
         }
         var mods = Keyboard.Modifiers;
+        // A link that has the keyboard: Enter or Space follows it, Esc lets go of it.
+        if (TryFollowFocusedLinkWithKeyboard(e, mods)) return true;
         if (e.Key == Key.Tab && (mods & ~ModifierKeys.Shift) == ModifierKeys.None
-            && (_vm.SelectedAnnotation != null || IsDocumentFocused()))
+            && (_vm.SelectedAnnotation != null || _vm.FocusedLink != null || IsDocumentFocused()))
         {
-            bool found = _vm.SelectNextAnnotation(backwards: mods == ModifierKeys.Shift);
+            // The page's annotations, then its links.
+            bool found = _vm.MoveKeyboardFocus(backwards: mods == ModifierKeys.Shift);
             if (found && _vm.SelectedAnnotation is { } next)
             {
                 if (next.PageNumber != _vm.CurrentPageNumber) ScrollToPage(next.PageNumber);
                 Keyboard.Focus(DocumentScrollViewer);
+            }
+            else if (found && _vm.FocusedLink is { } link)
+            {
+                FocusLinkHotspot(link);
             }
             return found;
         }
@@ -963,6 +973,9 @@ public partial class MainWindow : Window
             _panStartPoint = e.GetPosition(DocumentScrollViewer);
             _panStartHOffset = DocumentScrollViewer.HorizontalOffset;
             _panStartVOffset = DocumentScrollViewer.VerticalOffset;
+            // With the hand tool, a click (not a drag) on a link follows it.
+            NoteLinkPress(e.ChangedButton == MouseButton.Left && PageCanvasUnder(e) is { } under ? LinkUnder(under.Canvas, under.Page, e) : null,
+                _panStartPoint);
             DocumentScrollViewer.Cursor = Cursors.SizeAll;
             DocumentScrollViewer.CaptureMouse();
             e.Handled = true;
@@ -1001,6 +1014,7 @@ public partial class MainWindow : Window
         {
             var currentPoint = e.GetPosition(DocumentScrollViewer);
             var delta = currentPoint - _panStartPoint;
+            CancelLinkPressIfDragged(currentPoint);
 
             DocumentScrollViewer.ScrollToHorizontalOffset(_panStartHOffset - delta.X);
             DocumentScrollViewer.ScrollToVerticalOffset(_panStartVOffset - delta.Y);
@@ -1016,6 +1030,8 @@ public partial class MainWindow : Window
             DocumentScrollViewer.ReleaseMouseCapture();
             DocumentScrollViewer.Cursor = _vm.IsPanningEnabled ? Cursors.Hand : Cursors.Arrow;
             e.Handled = true;
+            if (e.ChangedButton == MouseButton.Left) FollowPendingLink();
+            else _pendingLinkClick = null;
         }
     }
 
@@ -1223,6 +1239,7 @@ public partial class MainWindow : Window
 
         // A click on the page, away from the selected annotation's handles, lets go of it.
         _vm.SelectedAnnotation = null;
+        _vm.FocusedLink = null;
 
         // Placing a signature, or marking an area for redaction: drag a box.
         if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
@@ -1406,6 +1423,9 @@ public partial class MainWindow : Window
                     : normClickX >= a.X && normClickX <= a.X + a.Width &&
                       normClickY >= a.Y && normClickY <= a.Y + a.Height)
                 : null;
+            // A click on a link follows it on release; a drag from it still selects text.
+            NoteLinkPress(_pendingAnnotationClick == null && e.ClickCount == 1 && Keyboard.Modifiers == ModifierKeys.None
+                ? LinkUnder(canvas, page, e) : null, clickPos);
 
             if (!page.IsTextExtracted)
                 _ = page.LoadTextSegmentsAsync(_vm.DocumentService);
@@ -1586,6 +1606,7 @@ public partial class MainWindow : Window
             if (_pendingAnnotationClick != null &&
                 (Math.Abs(currentPoint.X - _textSelectStartPoint.X) > 4 || Math.Abs(currentPoint.Y - _textSelectStartPoint.Y) > 4))
                 _pendingAnnotationClick = null; // it became a drag
+            CancelLinkPressIfDragged(currentPoint);
             ExtendSelectionToPointer();
             return;
         }
@@ -1594,6 +1615,10 @@ public partial class MainWindow : Window
         if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction || _vm.IsPlacingStamp)
         {
             canvas.Cursor = Cursors.Cross;
+        }
+        else if (UpdateLinkHover(canvas, page, e))
+        {
+            // A link: hand cursor and its target in a tooltip.
         }
         else if (_vm.ActiveAnnotationTool == null && !_vm.IsPanningEnabled)
         {
@@ -1613,6 +1638,7 @@ public partial class MainWindow : Window
     {
         if (sender is Canvas canvas && !_isSelectingText && !_isDrawingAnnotation)
         {
+            HideLinkToolTip();
             canvas.Cursor = null;
         }
     }
@@ -1832,6 +1858,7 @@ public partial class MainWindow : Window
                 Keyboard.Focus(DocumentScrollViewer);
                 return;
             }
+            if (FollowPendingLink()) return;
             _vm.UpdateSelectionFromPages();
         }
     }
