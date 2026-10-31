@@ -132,7 +132,8 @@ Android builds, CI and releases: see [Build from source](docs/building.md).
 Contributions are welcome: bug reports, test files you may share, documentation and code. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) for the set-up, the project rules and the tests. Issues
 labelled [good first issue](https://github.com/ramanacr/pdf-viewer/labels/good%20first%20issue)
-are a good start. Everyone follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+are a good start, and [ROADMAP.md](ROADMAP.md) lists what is planned next. Everyone follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
