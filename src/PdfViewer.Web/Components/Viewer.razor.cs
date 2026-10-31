@@ -177,7 +177,8 @@ public sealed partial class Viewer : IAsyncDisposable
             else
             {
                 _theme = CanvasInterop.ReadSetting("theme") is "light" or "dark" ? CanvasInterop.ReadSetting("theme")! : "system";
-                _sidebarOpen = CanvasInterop.ReadSetting("sidebar") != "closed";
+                // A phone starts with the drawer closed: it would cover the first page.
+                _sidebarOpen = !CanvasInterop.IsNarrow() && CanvasInterop.ReadSetting("sidebar") != "closed";
                 CanvasInterop.SetTheme(_theme);
                 _status = "Ready";
             }
@@ -446,7 +447,7 @@ public sealed partial class Viewer : IAsyncDisposable
         try
         {
             await FinishOpenAsync(doc);
-            if (Embedded && _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0)
+            if (Embedded && _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0 && !CanvasInterop.IsNarrow())
             {
                 _sidebarOpen = true;
                 _panel = Panel.Outline;
@@ -847,9 +848,22 @@ public sealed partial class Viewer : IAsyncDisposable
     private void ToggleSidebar()
     {
         _sidebarOpen = !_sidebarOpen;
-        if (!Embedded) CanvasInterop.WriteSetting("sidebar", _sidebarOpen ? "open" : "closed");
+        // On a phone the panel is a drawer over the pages: opening it there is not a preference to keep.
+        if (!Embedded && !CanvasInterop.IsNarrow()) CanvasInterop.WriteSetting("sidebar", _sidebarOpen ? "open" : "closed");
         if (_sidebarOpen && _panel == Panel.Thumbnails) ShowThumbnails();
         _refit = true;
+    }
+
+    /// <summary>On a phone, the drawer closes once the reader has picked a place to go, so the page shows.</summary>
+    private void CloseDrawer()
+    {
+        if (_sidebarOpen && CanvasInterop.IsNarrow()) _sidebarOpen = false;
+    }
+
+    private void GoToPageFromPanel(int page)
+    {
+        GoToPage(page);
+        CloseDrawer();
     }
 
     private void ToggleNight()
@@ -990,6 +1004,7 @@ public sealed partial class Viewer : IAsyncDisposable
             case "escape":
                 if (_dialog == Dialog.Password) CancelPassword();
                 else if (_dialog != Dialog.None) _dialog = Dialog.None;
+                else if (_doc != null && _sidebarOpen && CanvasInterop.IsNarrow()) CloseDrawer();
                 else if (_editingId != null) CancelEditing();
                 else if (_selectedId != null) Unselect(user: true);
                 else if (_tool != Tool.Select) SetTool(Tool.Select);

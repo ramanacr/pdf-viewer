@@ -260,6 +260,11 @@ export function hasLocalFonts() {
     return typeof window.queryLocalFonts === 'function';
 }
 
+/** The width below which app.css shows the side panel as a drawer over the pages. */
+export function isNarrow() {
+    return window.matchMedia('(max-width: 760px)').matches;
+}
+
 /**
  * Hands the engine the device's fonts of the given families (Local Font Access API; the browser
  * asks the user first). The files go to the .NET runtime in this tab and nowhere else. Returns the

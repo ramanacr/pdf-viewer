@@ -74,9 +74,15 @@
 
 * { box-sizing: border-box; }
 
+html {
+    -webkit-text-size-adjust: 100%;   /* no text inflation when a phone turns to landscape */
+    text-size-adjust: 100%;
+}
+
 html, body {
     margin: 0;
     height: 100%;
+    height: 100dvh;                   /* the visible height on phones, whose address bar comes and goes */
     background: var(--bg);
     color: var(--text);
     font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -128,9 +134,18 @@ a { color: var(--accent); }
     flex-direction: column;
 }
 
+/* Notched phones (index.html has viewport-fit=cover): the bars keep their controls out of the
+   safe-area insets; max() keeps the usual padding where there is no inset. */
+:root {
+    --inset-top: env(safe-area-inset-top, 0px);
+    --inset-right: env(safe-area-inset-right, 0px);
+    --inset-bottom: env(safe-area-inset-bottom, 0px);
+    --inset-left: env(safe-area-inset-left, 0px);
+}
+
 .toolbar {
     display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
-    padding: 6px 12px;
+    padding: max(6px, var(--inset-top)) max(12px, var(--inset-right)) 6px max(12px, var(--inset-left));
     background: var(--surface);
     border-bottom: 1px solid var(--border);
 }
@@ -144,19 +159,19 @@ a { color: var(--accent); }
 }
 
 .privacy-bar {
-    margin: 0; padding: 4px 12px;
+    margin: 0; padding: 4px max(12px, var(--inset-right)) 4px max(12px, var(--inset-left));
     display: flex; align-items: center; gap: 6px;
     font-size: 12.5px; color: var(--muted);
     background: var(--surface-2); border-bottom: 1px solid var(--border);
 }
 .privacy-bar .icon { width: 16px; height: 16px; color: var(--accent); flex: none; }
 
-.body { display: flex; flex: 1; min-height: 0; }
+.body { display: flex; flex: 1; min-height: 0; position: relative; }
 
 .pages {
     flex: 1; min-width: 0;
     overflow: auto;
-    padding: 16px;
+    padding: 16px max(16px, var(--inset-right)) 16px max(16px, var(--inset-left));
     display: flex; flex-direction: column; align-items: safe center; gap: 16px;
     outline: none;
 }
@@ -226,7 +241,7 @@ html.embed-inline .boot { min-height: 240px; }
 
 .statusbar {
     display: flex; gap: 16px; align-items: center;
-    padding: 4px 12px; min-height: 28px;
+    padding: 4px max(12px, var(--inset-right)) max(4px, var(--inset-bottom)) max(12px, var(--inset-left)); min-height: 28px;
     font-size: 12.5px; color: var(--muted);
     background: var(--surface); border-top: 1px solid var(--border);
     white-space: nowrap; overflow: hidden;
@@ -276,7 +291,7 @@ button:disabled:hover { background: transparent; border-color: transparent; }
 
 .banner {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    padding: 8px max(12px, var(--inset-right)) 8px max(12px, var(--inset-left)); border-bottom: 1px solid var(--border);
 }
 .banner p { margin: 0; flex: 1; }
 .banner.error { background: var(--danger-bg); color: var(--danger-text); }
@@ -288,8 +303,10 @@ button:disabled:hover { background: transparent; border-color: transparent; }
 .sidebar {
     width: 280px; flex: none;
     display: flex; flex-direction: column; min-height: 0;
+    padding-left: var(--inset-left);
     background: var(--surface); border-right: 1px solid var(--border);
 }
+.sidebar-backdrop { display: none; }
 .tabs { display: flex; border-bottom: 1px solid var(--border); }
 .tabs button {
     flex: 1; padding: 8px; border: 0; background: transparent; cursor: pointer;
@@ -362,7 +379,8 @@ body.dropping .drop-overlay { display: flex; }
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 60; }
 .dialog {
     position: fixed; z-index: 61; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+    width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow: auto;
+    overscroll-behavior: contain;
     background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--page-shadow);
     padding: 16px 20px 20px;
@@ -393,12 +411,21 @@ kbd {
     .search-count { min-width: 0; }
     .icon-button { width: 36px; height: 36px; }
     .privacy-bar { font-size: 11.5px; }
+    /* The side panel is a drawer over the pages, below the toolbars: the toolbar's panel button
+       stays in view to close it, and so does a tap beside it (.sidebar-backdrop) or Esc. */
     .sidebar {
-        position: fixed; z-index: 40; top: 0; bottom: 0; left: 0;
-        width: min(300px, 85vw); box-shadow: var(--page-shadow);
+        position: absolute; z-index: 40; top: 0; bottom: 0; left: 0;
+        width: min(320px, 85vw); box-shadow: var(--page-shadow);
+    }
+    .sidebar-backdrop {
+        display: block; position: absolute; inset: 0; z-index: 39;
+        background: rgba(0, 0, 0, 0.35);
     }
     .status-perf { display: none; }
-    .pages { padding: 8px; gap: 8px; }
+    .status-file { max-width: 55%; }
+    .pages { padding: 8px max(8px, var(--inset-right)) 8px max(8px, var(--inset-left)); gap: 8px; }
+    .dialog { padding: 12px 16px 16px; }
+    .shortcuts td:first-child { white-space: normal; padding-right: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -408,7 +435,7 @@ kbd {
 /* Annotation tools (Viewer.Annotations.cs): a second toolbar, overlays on the pages. */
 .annot-toolbar {
     display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
-    padding: 4px 12px;
+    padding: 4px max(12px, var(--inset-right)) 4px max(12px, var(--inset-left));
     background: var(--surface-2); border-bottom: 1px solid var(--border);
 }
 .annot-toolbar .group { display: flex; align-items: center; gap: 2px; }
@@ -464,3 +491,46 @@ textarea.form-field { resize: none; overflow: hidden; }
 .form-field.choice { cursor: pointer; appearance: none; color: transparent; }
 .form-field.choice:focus { color: #000; }
 .form-field.choice option { color: #000; background: #fff; }
+
+/* ------------------------------------------------------------ phones and short screens */
+
+/* After the annotation toolbar's own rules, so these win. The tools stay on one row that scrolls
+   sideways inside itself: a wider row made the whole page wider than a phone's screen. */
+@media (max-width: 760px), (max-height: 500px) {
+    .annot-toolbar {
+        position: relative;   /* contains the absolutely placed .visually-hidden labels */
+        flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
+        scrollbar-width: thin; gap: 4px 10px;
+    }
+    .annot-toolbar > .group { flex: none; }
+    /* With a document open the pages need the height; the start page says the same thing. */
+    .app:has(.page) .privacy-bar { display: none; }
+}
+
+/* A phone held sideways: the main toolbar is one row too, so the pages keep some height. */
+@media (max-height: 500px) and (min-width: 761px) {
+    .toolbar {
+        position: relative;   /* else its .visually-hidden labels, scrolled past the edge, widen the page */
+        flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin;
+    }
+    .toolbar > .group { flex: none; }
+    .toolbar .label, .brand { display: none; }
+}
+
+/* Touch screens: controls at least 44 x 44 CSS pixels. */
+@media (pointer: coarse) {
+    .icon-button { width: 44px; height: 44px; }
+    .button { min-height: 44px; }
+    .page-box input, .zoom-select, .search-box, .annot-toolbar select, .field input { min-height: 44px; }
+    /* Fields at 16 px: iOS Safari zooms the page in when a smaller field gets the focus. */
+    .app :is(input, select, textarea):not(.form-field) { font-size: 16px; }
+    .check { min-height: 44px; padding: 0 8px; }
+    .check input { width: 20px; height: 20px; }
+    .tabs button, .outline-entry, .result { min-height: 44px; }
+    .outline-entry { align-items: center; }
+    /* The colour dots keep their size; an invisible ring makes each a 44 px target. */
+    .annot-toolbar .swatches { gap: 20px; padding: 0 10px; }
+    .swatch { position: relative; width: 24px; height: 24px; }
+    .swatch::after { content: ""; position: absolute; inset: -12px; border-radius: 50%; }
+    .dialog-actions .button, .annot-editor-actions .button { min-width: 44px; }
+}

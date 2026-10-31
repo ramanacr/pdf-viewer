@@ -300,7 +300,7 @@
                                 int number = pv.Number;
                                 <li>
                                     <button type="button" class="thumb@(number == _currentPage ? " current" : "")" id="thumb-@number" data-thumb="@number"
-                                            aria-label="@($"Page {number}")" aria-current="@(number == _currentPage ? "page" : null)" @onclick="() => GoToPage(number)">
+                                            aria-label="@($"Page {number}")" aria-current="@(number == _currentPage ? "page" : null)" @onclick="() => GoToPageFromPanel(number)">
                                         <span class="thumb-page" style="width:@Px(tw);height:@Px(th)"><canvas></canvas></span>
                                         <span class="thumb-number">@number</span>
                                     </button>
@@ -318,7 +318,7 @@
                         }
                         else
                         {
-                            <OutlineTree Items="_outline" CurrentPage="_currentPage" OnSelect="p => GoToPage(p)" />
+                            <OutlineTree Items="_outline" CurrentPage="_currentPage" OnSelect="p => GoToPageFromPanel(p)" />
                         }
                     </div>
                 }
@@ -337,7 +337,7 @@
                                     int index = i;
                                     var hit = _hits[i];
                                     <li>
-                                        <button type="button" class="result@(index == _currentHit ? " current" : "")" aria-current="@(index == _currentHit ? "true" : null)" @onclick="() => SelectHit(index)">
+                                        <button type="button" class="result@(index == _currentHit ? " current" : "")" aria-current="@(index == _currentHit ? "true" : null)" @onclick="() => { SelectHit(index); CloseDrawer(); }">
                                             <span class="result-page">Page @hit.Page</span>
                                             <span class="result-text">@hit.Before<mark>@hit.Match</mark>@hit.After</span>
                                         </button>
@@ -348,6 +348,8 @@
                     </div>
                 }
             </aside>
+            @* Phones only (app.css): the side panel is a drawer over the pages; a tap beside it closes it. *@
+            <div class="sidebar-backdrop" aria-hidden="true" @onclick="ToggleSidebar"></div>
         }
 
         <main id="pages" class="@PagesClass" tabindex="-1" aria-label="@(_doc == null ? "Start" : "Document pages")">

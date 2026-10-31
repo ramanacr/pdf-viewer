@@ -170,7 +170,8 @@ public sealed partial class Viewer
         _reportedPage = 0;
         _reportedZoom = 0;
         // Only the panels this config shows; open when the document has an outline to show.
-        _sidebarOpen = _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0;
+        // Not in a phone-narrow frame, where the panel is a drawer that would cover the first page.
+        _sidebarOpen = _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0 && !CanvasInterop.IsNarrow();
         _panel = _config.ShowBookmarks && _outline.Count > 0 ? Panel.Outline : _config.ShowThumbnails ? Panel.Thumbnails : Panel.Results;
         _refit = true;
         Post(EmbedProtocol.Ok(request, w =>

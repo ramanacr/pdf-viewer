@@ -282,6 +282,8 @@ code, kbd, pre, samp { font-family: var(--font-mono); font-size: 0.9em; }
 }
 @media (max-width: 480px) {
   .hero-actions .button { flex: 1 1 100%; }
+  /* A long label ("All features, user guide and keyboard shortcuts") wraps instead of widening the page. */
+  .button { white-space: normal; text-align: center; max-width: 100%; }
 }
 
 /* Cards */

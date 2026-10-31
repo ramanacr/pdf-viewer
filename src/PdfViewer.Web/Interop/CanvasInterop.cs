@@ -52,6 +52,10 @@ internal static partial class CanvasInterop
     [JSImport("hasLocalFonts", ModuleName)]
     public static partial bool HasLocalFonts();
 
+    /// <summary>True when the view is phone-narrow: the side panel is then a drawer over the pages (app.css).</summary>
+    [JSImport("isNarrow", ModuleName)]
+    public static partial bool IsNarrow();
+
     [JSImport("drawThumbnail", ModuleName)]
     public static partial void DrawThumbnail(int page, [JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bgra, int width, int height);
 
