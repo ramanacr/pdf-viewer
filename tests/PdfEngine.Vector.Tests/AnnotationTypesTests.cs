@@ -360,6 +360,12 @@ public class AnnotationTypesTests
             "<text page=\"0\" rect=\"10,10,30,30\" name=\"q\" state=\"Accepted\" statemodel=\"Review\"/>" +
             "<text page=\"0\" rect=\"10,10,30,30\" name=\"a\" inreplyto=\"q\" state=\"Accepted\"/></annots></xfdf>");
         Assert.All(odd, a => Assert.Null(a.StateModel));
+
+        // A status name past the limit is not cut to fit: the reply is skipped.
+        var tooLong = PdfAnnotationXfdf.ImportWithReport("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"q\"/>" +
+            $"<text page=\"0\" rect=\"10,10,30,30\" name=\"a\" inreplyto=\"q\" state=\"{new string('x', PdfAnnotationXfdf.MaxStateLength + 1)}\" statemodel=\"Review\"/></annots></xfdf>");
+        Assert.Equal((1, 1), (tooLong.Annotations.Count, tooLong.Skipped));
     }
 
     [Fact]

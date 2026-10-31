@@ -97,7 +97,10 @@ public sealed record ViewerAnnotation
     public string State { get; init; } = "";
     public string StateModel { get; init; } = "";
 
-    /// <summary>A reply that sets a status on the annotation it answers (it has a state model) rather than saying something.</summary>
+    /// <summary>
+    /// A reply that sets a status on the annotation it answers (it has a state model) rather than
+    /// saying something. Read from a file only when it is hidden (/F with the Hidden bit, as Acrobat writes it).
+    /// </summary>
     public bool IsStatus => Kind == ViewerAnnotationKind.Reply && StateModel.Length > 0;
 
     /// <summary>The line (or text, for free text) colour.</summary>
@@ -294,10 +297,12 @@ public static class ViewerAnnotationPdf
         {
             if (kind != ViewerAnnotationKind.Note || p.ReplyType is not (null or "R") || string.IsNullOrEmpty(parentId)) return null;
             kind = ViewerAnnotationKind.Reply;
-            status = IsStateName(p.State) && IsStateName(p.StateModel);
+            // A status is hidden, as Acrobat writes it (/F 30); a visible reply with /State is an ordinary reply.
+            status = (p.Flags & 2) != 0 && IsStateName(p.State) && IsStateName(p.StateModel);
         }
         if ((p.Flags & 2) != 0 && !status) return null;
-        if (!double.IsFinite(p.Rect.X) || !double.IsFinite(p.Rect.Y) || p.Rect.Width < 0 || p.Rect.Height < 0) return null;
+        if (!double.IsFinite(p.Rect.X) || !double.IsFinite(p.Rect.Y) || !double.IsFinite(p.Rect.Width) || !double.IsFinite(p.Rect.Height)
+            || !double.IsFinite(p.Rect.Right) || !double.IsFinite(p.Rect.Bottom) || p.Rect.Width < 0 || p.Rect.Height < 0) return null;
         // A shape needs its points: a line its /L, a polygon at least three and a polyline two vertices, all finite.
         double[] vertices = kind switch
         {

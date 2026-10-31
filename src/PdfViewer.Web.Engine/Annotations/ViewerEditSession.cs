@@ -508,10 +508,12 @@ public sealed class ViewerEditSession
         return true;
     }
 
+    /// <summary>An annotation the reader makes here: added, and remembered as made on this device.</summary>
     private ViewerAnnotation Add(ViewerAnnotation a)
     {
         CheckCanAnnotate();
         var added = Store.Add([a])[0];
+        MadeHere.Add(added.Id);
         _edits.Edit();
         return added;
     }
@@ -594,8 +596,30 @@ public sealed class ViewerEditSession
     /// <summary>The state model of review statuses (/StateModel /Review).</summary>
     public const string ReviewStateModel = "Review";
 
-    /// <summary>An annotation the reader made under their own name (their name is set and is its author): they may change and delete it.</summary>
-    public bool IsOwn(ViewerAnnotation a) => Author.Length > 0 && string.Equals(a.Author, Author, StringComparison.Ordinal);
+    /// <summary>
+    /// The ids of the annotations made on this device: those this session makes are added, and a
+    /// viewer adds the ones it kept from earlier sessions. An annotation imported from XFDF or read
+    /// from a file is not among them, even when it carries the reader's name.
+    /// </summary>
+    public ISet<string> MadeHere { get; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// An annotation the reader may change and delete as their own: made on this device
+    /// (<see cref="MadeHere"/>) under the name they have now (set, and its author). A name alone
+    /// is not enough: anyone can write any name into a file.
+    /// </summary>
+    public bool IsOwn(ViewerAnnotation a) =>
+        Author.Length > 0 && string.Equals(a.Author, Author, StringComparison.Ordinal) && MadeHere.Contains(a.Id);
+
+    /// <summary>
+    /// What deleting annotation <paramref name="id"/> also deletes: the number of replies under it
+    /// (statuses not counted) and how many of them other people wrote (not the reader's own).
+    /// </summary>
+    public (int Replies, int ByOthers) DeletedWith(string id)
+    {
+        var replies = Store.DeletedWith(id).Where(a => !a.IsStatus).ToList();
+        return (replies.Count, replies.Count(a => !IsOwn(a)));
+    }
 
     /// <summary>
     /// A reply to annotation <paramref name="parentId"/> (a comment or a reply) with the reader's

@@ -383,9 +383,12 @@ public static class PdfAnnotationXfdf
         {
             a.InReplyToName = parent;
             a.ReplyType = string.Equals(e["replyType"], "group", StringComparison.OrdinalIgnoreCase) ? "Group" : null;
-            // A status: both names, short, without control characters (else the reply is an ordinary one).
-            if (Limit(e["state"], MaxStateLength) is { Length: > 0 } state && Limit(e["statemodel"], MaxStateLength) is { Length: > 0 } model
-                && !state.Any(char.IsControl) && !model.Any(char.IsControl))
+            // A status: both names, at most MaxStateLength characters, no control characters. A name
+            // that breaks these rules is not cut to fit: the annotation is skipped (counted).
+            string? state = e["state"], model = e["statemodel"];
+            bool BadName(string? s) => s != null && (s.Length > MaxStateLength || s.Any(char.IsControl));
+            if (BadName(state) || BadName(model)) return null;
+            if (state is { Length: > 0 } && model is { Length: > 0 })
             {
                 a.State = state;
                 a.StateModel = model;

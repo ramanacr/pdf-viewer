@@ -14,16 +14,20 @@ public sealed record ViewerSnapshotItem(string? KeptId, ViewerAnnotation? Annota
 /// app in the background, so that a new process opens the document with the same edits pending
 /// (<see cref="ViewerEditSession.Snapshot"/>, <see cref="ViewerEditSession.Restore"/>). It names
 /// the document by its location and the SHA-256 of its bytes as opened: the edits are given back
-/// only to those bytes. It holds annotation texts and form values (the reader's own edits) and
-/// never the document's own text or a password; it is deleted when the edits are saved or discarded.
+/// only to those bytes. It never contains the document's own text (page content, or a file
+/// annotation the reader did not change, which is kept by its id only) or a password: only the
+/// annotation data and form values the reader made. It is deleted when the edits are saved or discarded.
 /// </summary>
 public sealed record ViewerEditSnapshot
 {
     /// <summary>The version of the JSON form; another version is not read.</summary>
     public const int FormatVersion = 1;
 
-    /// <summary>The longest snapshot read, in characters (10000 annotations with their points and texts fit).</summary>
-    public const int MaxCharacters = 256 * 1024 * 1024;
+    /// <summary>
+    /// The largest snapshot written or read: 32 MB of UTF-8 (and as many characters). A larger
+    /// one is not kept; the edits stay in memory until saved.
+    /// </summary>
+    public const int MaxBytes = 32 * 1024 * 1024;
 
     /// <summary>Where the document is (an Android content URI).</summary>
     public required string Location { get; init; }
@@ -60,8 +64,17 @@ public sealed record ViewerEditSnapshot
 
     // ------------------------------------------------------------------ JSON
 
-    /// <summary>The snapshot as JSON (UTF-8 text).</summary>
-    public string ToJson()
+    /// <summary>The snapshot as JSON text.</summary>
+    public string ToJson() => Encoding.UTF8.GetString(Write().WrittenSpan);
+
+    /// <summary>The snapshot as UTF-8 JSON for a file, or null when it is larger than <see cref="MaxBytes"/> (it is then not kept).</summary>
+    public byte[]? ToUtf8()
+    {
+        var buffer = Write();
+        return buffer.WrittenCount > MaxBytes ? null : buffer.WrittenSpan.ToArray();
+    }
+
+    private ArrayBufferWriter<byte> Write()
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var w = new Utf8JsonWriter(buffer))
@@ -96,7 +109,7 @@ public sealed record ViewerEditSnapshot
             w.WriteEndObject();
             w.WriteEndObject();
         }
-        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+        return buffer;
     }
 
     private static void WriteAnnotation(Utf8JsonWriter w, ViewerAnnotation a)
@@ -154,7 +167,7 @@ public sealed record ViewerEditSnapshot
     public static ViewerEditSnapshot FromJson(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
-        if (json.Length > MaxCharacters) throw new FormatException("The kept edits are too large.");
+        if (json.Length > MaxBytes) throw new FormatException("The kept edits are too large.");
         try
         {
             using var doc = JsonDocument.Parse(json);

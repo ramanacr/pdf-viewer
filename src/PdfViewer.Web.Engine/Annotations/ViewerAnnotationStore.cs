@@ -175,6 +175,13 @@ public sealed class ViewerAnnotationStore
         return reply with { Page = parent.Page, Box = parent.Box };
     }
 
+    /// <summary>What deleting annotation <paramref name="id"/> also deletes: its replies and statuses, and theirs, in list order.</summary>
+    public IReadOnlyList<ViewerAnnotation> DeletedWith(string id)
+    {
+        var ids = Descendants(Current, [id]);
+        return Current.Where(a => ids.Contains(a.Id)).ToList();
+    }
+
     /// <summary>The replies to the annotation, and the replies to them, and so on.</summary>
     private static HashSet<string> Descendants(IReadOnlyList<ViewerAnnotation> list, IEnumerable<string> ids)
     {
@@ -200,6 +207,8 @@ public sealed class ViewerAnnotationStore
         var old = Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
         if (old.Kind != annotation.Kind) throw new ViewerAnnotationException("An annotation's subtype cannot change.");
         if (old.InReplyTo != annotation.InReplyTo) throw new ViewerAnnotationException("What a reply answers cannot change.");
+        // A status is written hidden: it stays a status (its state may change), and a reply stays a reply.
+        if (old.IsStatus != annotation.IsStatus) throw new ViewerAnnotationException("A review status cannot become a reply, nor a reply a status.");
         if (old.Kind == ViewerAnnotationKind.Reply) annotation = annotation with { Page = old.Page, Box = old.Box };
         // A measurement stays one, and keeps its fill, dash and line endings (values given for them are ignored).
         annotation = old.IsMeasurement

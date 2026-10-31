@@ -32,6 +32,8 @@ public sealed record EmbedSaveOptions(bool Enabled, int AutoSaveSeconds, bool Fo
 ///   creator: { type: "Person", name }, created, modified }
 /// </code>
 /// A reply is <c>{ id, type, motivation: "replying", bodyValue, target: "&lt;id it answers&gt;", creator, created, modified }</c>.
+/// A review status is a reply with <c>status: { state: "Accepted", stateModel: "Review" }</c> (a hidden
+/// reply with /State and /StateModel, as Acrobat writes it); a host that lists replies leaves those out.
 /// node.index counts pages from 0; coordinates are PDF points in the page's user space, origin at
 /// the lower-left, y up.
 /// </remarks>
@@ -82,9 +84,19 @@ public static class EmbedAnnotationJson
             string parent = e.TryGetProperty("target", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString()! : "";
             if (parent.Length is 0 or > ViewerAnnotationStore.MaxIdLength || parent.Any(char.IsControl))
                 throw Bad(requestId, $"{what}: a reply's target is the id of the annotation it answers.");
+            // A review status: both names, 1 to 64 characters (not cut to fit).
+            string state = "", stateModel = "";
+            if (Object(e, "status", what, requestId) is { } status)
+            {
+                state = String(status, "state", int.MaxValue, what + ".status", requestId) ?? "";
+                stateModel = String(status, "stateModel", int.MaxValue, what + ".status", requestId) ?? "";
+                if (!ViewerAnnotationPdf.IsStateName(state) || !ViewerAnnotationPdf.IsStateName(stateModel))
+                    throw Bad(requestId, $"{what}.status: state and stateModel are each 1 to {ViewerAnnotationPdf.MaxStateLength} characters, such as \"Accepted\" and \"Review\".");
+            }
             return new ViewerAnnotation
             {
                 Id = id, Page = 1, Kind = ViewerAnnotationKind.Reply, Box = default, InReplyTo = parent,
+                State = state, StateModel = stateModel,
                 Color = ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Reply),
                 Contents = contents, Author = name, Created = created, Modified = modified,
             };
@@ -262,6 +274,13 @@ public static class EmbedAnnotationJson
             w.WriteString("motivation", "replying");
             w.WriteString("bodyValue", a.Contents);
             w.WriteString("target", a.InReplyTo);
+            if (a.IsStatus)
+            {
+                w.WriteStartObject("status");
+                w.WriteString("state", a.State);
+                w.WriteString("stateModel", a.StateModel);
+                w.WriteEndObject();
+            }
             WriteCreator(w, a);
             return;
         }
