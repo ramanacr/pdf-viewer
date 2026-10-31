@@ -129,6 +129,28 @@
       "licenseSha256": "c90ff15ade263a49148e35af34e9c177c6d56881e81260b29f10123e9e227eca"
     },
     {
+      "id": "sinhala",
+      "family": "Noto Sans Sinhala",
+      "url": "https://github.com/notofonts/sinhala/releases/download/NotoSansSinhala-v3.000/NotoSansSinhala-v3.000.zip",
+      "size": 4300849,
+      "sha256": "25b2c787e0b34b82ccedce026e6519cc535394a6bd8520d5a1df45c233807d8a",
+      "member": "NotoSansSinhala/unhinted/ttf/NotoSansSinhala-Regular.ttf",
+      "memberSha256": "46d5b54952a624e6e3981e0968aecc5464f3b1081131dd7a1fcd42fbf7966471",
+      "license": "OFL.txt",
+      "licenseSha256": "2d6f7c43bce61f4b1919379f901bc613484f5285f520b6d29bb7c1f31b17e841"
+    },
+    {
+      "id": "thai",
+      "family": "Noto Sans Thai",
+      "url": "https://github.com/notofonts/thai/releases/download/NotoSansThai-v2.002/NotoSansThai-v2.002.zip",
+      "size": 4720990,
+      "sha256": "af889cc673fc714060ce5e4e088fbad32aa4c0571a19958efeaff128a22da485",
+      "member": "NotoSansThai/unhinted/ttf/NotoSansThai-Regular.ttf",
+      "memberSha256": "d4303fe9c63ebb72759ca8b6d2040c8ae81689f7d08d7b91c656154382b49313",
+      "license": "OFL.txt",
+      "licenseSha256": "2e98fd23a52d253db8612cd5942c8f2ff4111b21d2367050fdca91d8ccc374a0"
+    },
+    {
       "id": "math",
       "family": "Noto Sans Math",
       "url": "https://github.com/notofonts/math/releases/download/NotoSansMath-v3.000/NotoSansMath-v3.000.zip",

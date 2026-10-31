@@ -62,14 +62,16 @@ jobs:
         node --check publish/web/wwwroot/pdfviewer-embed.mjs
         node --check docs/sdk/examples/large-pdf.js
         node --check eng/webdemo/serve.mjs
-        node --test tests/sdk/embed-range.test.mjs
+        node --test tests/sdk/embed-range.test.mjs tests/sdk/embed-fonts.test.mjs
 
     # Noto fonts for the scripts that the committed Liberation fonts lack (Arabic, Hebrew, Indic,
-    # symbols, math, CJK). They are not committed: eng/webdemo/noto_fonts.py downloads the release
-    # archives pinned in eng/webdemo/noto-fonts.json, checks the SHA-256 of each archive and of each
-    # file taken from it (a mismatch fails the build), cuts the CJK faces into Unicode slices with
-    # the pinned fontTools, and writes them with their licences to fonts/noto. The app fetches a file
-    # from this site only when a page needs a glyph from it. Cached archives are checked again.
+    # Sinhala, Thai, symbols, math, CJK). They are not committed: eng/webdemo/noto_fonts.py downloads
+    # the release archives pinned in eng/webdemo/noto-fonts.json (github.com/notofonts only), checks
+    # the size and SHA-256 of each archive and the SHA-256 of each file taken from it (a mismatch
+    # fails the build), cuts the CJK faces into Unicode slices with the pinned fontTools, and writes
+    # them with their licences to fonts/noto. index.json maps code points to files and gives each
+    # file's size and SHA-256, which the app checks after each fetch. The app fetches a file from
+    # this site only when a page needs a glyph from it. Cached archives are checked again.
     - name: Cache the Noto archives
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
@@ -79,6 +81,7 @@ jobs:
     - name: Add the Noto fonts
       shell: bash
       run: |
+        python3 -I eng/webdemo/noto_fonts.py check
         python3 -m venv "$RUNNER_TEMP/noto-venv"
         py="$RUNNER_TEMP/noto-venv/bin/python"
         python3 -I eng/webdemo/noto_fonts.py requirements > "$RUNNER_TEMP/noto-requirements.txt"
@@ -87,6 +90,29 @@ jobs:
         test -s publish/web/wwwroot/fonts/noto/index.json
         test -s publish/web/wwwroot/fonts/noto/NotoSansArabic-Regular.ttf
         test -s publish/web/wwwroot/fonts/noto/NotoSansSC-Regular-00.otf
+        test -s publish/web/wwwroot/fonts/noto/NotoSansThai-Regular.ttf
+        test -s publish/web/wwwroot/fonts/noto/NotoSansSinhala-Regular.ttf
+        test -s publish/web/wwwroot/fonts/noto/OFL-thai.txt
+        # Every file in the index has its size and SHA-256, and the files on disk match them.
+        python3 -I - publish/web/wwwroot/fonts/noto <<'PY'
+        import hashlib, json, os, sys
+        folder = sys.argv[1]
+        faces = json.load(open(os.path.join(folder, "index.json"), encoding="utf-8"))["faces"]
+        for face in faces:
+            data = open(os.path.join(folder, face["file"]), "rb").read()
+            assert face["size"] == len(data) and face["sha256"] == hashlib.sha256(data).hexdigest(), face["file"]
+        print(f"index.json: {len(faces)} files, each with a matching size and SHA-256")
+        PY
+        # The About dialog links the licence of every source (Viewer.razor.cs, FontNotices).
+        for id in $(python3 -I -c 'import json; print(" ".join(f["id"] for f in json.load(open("eng/webdemo/noto-fonts.json"))["fonts"]))'); do
+          test -s "publish/web/wwwroot/fonts/noto/OFL-$id.txt"
+          grep -q "fonts/noto/OFL-$id.txt" src/PdfViewer.Web/Components/Viewer.razor.cs || { echo "::error::Viewer.razor.cs FontNotices lacks OFL-$id.txt"; exit 1; }
+        done
+        # The first load fetches no font: the page and the runtime's boot list name none.
+        if grep -q 'fonts/' publish/web/wwwroot/index.html || grep -rqs --include='*.json' -e '\.ttf' -e '\.otf' publish/web/wwwroot/_framework; then
+          echo "::error::index.html or the boot list names a font file: fonts must load only when a page needs them"
+          exit 1
+        fi
 
     # A project site is served under /<repository>/: the app's base href must say so. The
     # precompressed copies are dropped: GitHub Pages compresses by itself and never serves them.
@@ -112,7 +138,7 @@ jobs:
           echo "| App without the fonts, gzip-compressed (about what a first visit transfers) | $(tar -C "$site" --exclude=./fonts -cf - . | gzip -6 | wc -c | numfmt --to=iec) |"
           echo "| Liberation fonts (fetched only when a page needs a face) | $(du -sh --apparent-size --exclude=noto "$site/fonts" | cut -f1) |"
           echo "| Noto fonts (fetched only when a page needs a glyph from a file) | $(du -sh --apparent-size "$site/fonts/noto" | cut -f1) |"
-        } >> "$GITHUB_STEP_SUMMARY"
+        } | tee -a "$GITHUB_STEP_SUMMARY"
 
     # Pages serves only what this workflow deploys, so the documentation site in docs/ (home page,
     # privacy policy) is built here too and kept at the site root; the demo goes under /demo/.

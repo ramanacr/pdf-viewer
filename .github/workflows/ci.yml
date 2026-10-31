@@ -76,10 +76,39 @@ jobs:
         VECTOR_FUZZ_ITERATIONS: ${{ github.event_name == 'schedule' && '100000' || '2000' }}
       run: dotnet test tests/PdfEngine.Vector.Tests/PdfEngine.Vector.Tests.csproj --configuration Release --no-build --verbosity normal
 
+    # The web demo's Noto fonts, for the Skia suite's tests that need the real files (NotoFontTests,
+    # SubstituteShapingTests). They are never committed: eng/webdemo/noto_fonts.py downloads the
+    # release archives pinned in eng/webdemo/noto-fonts.json from github.com/notofonts, checks the
+    # size and SHA-256 of each archive and of each file taken from it (a mismatch fails the job),
+    # and slices the CJK faces with the pinned fontTools, as the web demo workflow does.
+    - name: Cache the Noto archives
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/noto-fonts
+        key: noto-fonts-${{ runner.os }}-${{ hashFiles('eng/webdemo/noto-fonts.json') }}
+
+    - name: Build the Noto fonts for the tests
+      shell: pwsh
+      run: |
+        python -I eng/webdemo/noto_fonts.py check
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        python -m venv "$env:RUNNER_TEMP/noto-venv"
+        $py = Join-Path $env:RUNNER_TEMP 'noto-venv/Scripts/python.exe'
+        python -I eng/webdemo/noto_fonts.py requirements | Set-Content -Encoding utf8NoBOM "$env:RUNNER_TEMP/noto-requirements.txt"
+        & $py -m pip install --quiet --disable-pip-version-check --require-hashes --no-deps -r "$env:RUNNER_TEMP/noto-requirements.txt"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $out = Join-Path $env:RUNNER_TEMP 'noto'
+        & $py -I eng/webdemo/noto_fonts.py build --cache (Join-Path $HOME '.cache/noto-fonts') --out $out
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        "NOTO_FONTS_DIR=$out" >> $env:GITHUB_ENV
+
     # Portable Skia backend (src/PdfEngine.Vector.Skia): every fixture rendered with Skia and with
     # Direct2D, compared within a per-test pixel budget. The corpus parity report in that project
-    # runs only when SKIA_PARITY_CORPUS points at a corpus checkout, so it is skipped here.
+    # runs only when SKIA_PARITY_CORPUS points at a corpus checkout, so it is skipped here. The
+    # Noto tests run with the files built above; NOTO_FONTS_REQUIRED makes a missing folder fail them.
     - name: Run Skia Backend Suite
+      env:
+        NOTO_FONTS_REQUIRED: '1'
       run: dotnet test tests/PdfEngine.Vector.Skia.Tests/PdfEngine.Vector.Skia.Tests.csproj --configuration Release --no-build --verbosity normal
 
     # Local-only corpus report (no document leaves the runner). Extend by pointing at a
