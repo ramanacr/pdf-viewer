@@ -559,6 +559,24 @@ public static class PdfAnnotationAppearances
             return (rd.L, rd.B, Width - rd.L - rd.R, Height - rd.B - rd.T);
         }
 
+        /// <summary>
+        /// The drawing box of free text drawn turned (<see cref="UprightOnPage"/>): /RD is in default
+        /// user space (ISO 32000-2 Table 177), so the inner box's page corners are turned into the
+        /// form's coordinates with <see cref="Local"/>, as the callout line's points are.
+        /// </summary>
+        private (double X, double Y, double W, double H) TurnedInnerBox()
+        {
+            bool quarter = PdfAnnotation.QuarterTurn(_rotation) is 90 or 270;
+            double pageW = quarter ? Height : Width, pageH = quarter ? Width : Height;
+            var rd = Numbers("RD");
+            if (rd is not { Length: 4 } || rd.Any(v => v < 0) || rd[0] + rd[2] >= pageW || rd[1] + rd[3] >= pageH)
+                return (0, 0, Width, Height);
+            var a = Local(_x0 + rd[0], _y0 + rd[1]);
+            var b = Local(_x0 + pageW - rd[2], _y0 + pageH - rd[3]);
+            double x = Math.Min(a.X, b.X), y = Math.Min(a.Y, b.Y);
+            return (x, y, Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y));
+        }
+
         public bool Square()
         {
             var border = ReadBorder();
@@ -1441,7 +1459,7 @@ public static class PdfAnnotationAppearances
             var da = ParseDA(Text("DA"), Text("DS"));
             string intent = Name("IT") ?? string.Empty;
             var border = ReadBorder(intent == "FreeTextTypewriter" ? 0 : 1);
-            var (x, y, w, h) = InnerBox();
+            var (x, y, w, h) = _rotation == 0 ? InnerBox() : TurnedInnerBox();
             var background = Colour("IC") ?? Colour("C");
             string? fill = ColourOp(background, false);
             var textColour = da.Fill ?? new[] { 0.0 };

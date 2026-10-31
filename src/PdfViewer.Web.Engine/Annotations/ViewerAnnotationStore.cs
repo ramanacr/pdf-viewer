@@ -159,6 +159,10 @@ public sealed class ViewerAnnotationStore
     /// <summary>A shape's box grown around its points may reach past the page: it is cut to the page (its points are checked).</summary>
     private ViewerAnnotation Fit(ViewerAnnotation a)
     {
+        // A callout given by its anchor only (a host page's x, y): its line is laid out to the box.
+        if (a.Kind == ViewerAnnotationKind.FreeText && a.Callout.Count == 2 && a.Page >= 1 && a.Page <= _pages.Count
+            && a.Callout.All(double.IsFinite) && double.IsFinite(a.Box.X1 + a.Box.Y1 + a.Box.X2 + a.Box.Y2))
+            return ViewerCallout.Relaid(a, _pages[a.Page - 1]);
         if (!a.HasVertices || a.Page < 1 || a.Page > _pages.Count) return a;
         var m = _pages[a.Page - 1].MediaBox;
         var b = a.Box;
@@ -226,7 +230,10 @@ public sealed class ViewerAnnotationStore
         return updated;
     }
 
-    /// <summary>Moves an annotation by (dx, dy) user-space points, kept inside its page.</summary>
+    /// <summary>
+    /// Moves an annotation by (dx, dy) user-space points, kept inside its page. A callout's text box
+    /// moves and its anchor stays: its line is laid out again from the anchor to the box.
+    /// </summary>
     public ViewerAnnotation Move(string id, double dx, double dy, DateTimeOffset now)
     {
         var old = Find(id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{id}\".");
@@ -235,7 +242,9 @@ public sealed class ViewerAnnotationStore
         static double Clamp(double v, double lo, double hi) => lo > hi ? 0 : Math.Clamp(v, lo, hi);
         dx = Clamp(dx, media.Left - old.Box.X1, media.Right - old.Box.X2);
         dy = Clamp(dy, media.Top - old.Box.Y1, media.Bottom - old.Box.Y2);
-        return Update(old.Moved(dx, dy) with { Modified = now });
+        var moved = old.Moved(dx, dy) with { Modified = now };
+        if (old.IsCallout) moved = ViewerCallout.Relaid(moved with { Callout = old.Callout }, _pages[old.Page - 1]);
+        return Update(moved);
     }
 
     /// <summary>Removes the annotations the filter matches, with their replies (as Acrobat does); returns them.</summary>
@@ -342,9 +351,19 @@ public sealed class ViewerAnnotationStore
             for (int i = 0; i < v.Count; i += 2)
                 if (!Inside(v[i], v[i + 1])) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a vertices point is outside page {a.Page}.");
         }
+        if (a.Callout.Count > 0)
+        {
+            var c = a.Callout;
+            if (a.Kind != ViewerAnnotationKind.FreeText || c.Count is not (4 or 6))
+                throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a free text annotation has a callout, its line's points [x1, y1, x2, y2] or [x1, y1, x2, y2, x3, y3] (the spot it points to first).");
+            for (int i = 0; i < c.Count; i += 2)
+                if (!Inside(c[i], c[i + 1])) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a callout point is outside page {a.Page}.");
+            if (!(a.StrokeWidth > 0)) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a callout's line needs a strokeWidth above 0.");
+        }
         bool endings = a.StartEnding != "None" || a.EndEnding != "None";
-        if (endings && (!a.HasEndings || !PdfAnnotationLimits.LineEndings.Contains(a.StartEnding) || !PdfAnnotationLimits.LineEndings.Contains(a.EndEnding)))
-            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": lineEndings are for lines and polylines, each one of {string.Join(", ", PdfAnnotationLimits.LineEndings)}.");
+        bool calloutEnding = a.IsCallout && a.EndEnding == "None" && PdfAnnotationLimits.LineEndings.Contains(a.StartEnding);
+        if (endings && !calloutEnding && (!a.HasEndings || !PdfAnnotationLimits.LineEndings.Contains(a.StartEnding) || !PdfAnnotationLimits.LineEndings.Contains(a.EndEnding)))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": lineEndings are for lines and polylines (and a callout's calloutEnding), each one of {string.Join(", ", PdfAnnotationLimits.LineEndings)}.");
         if (a.Dash != null && (!a.IsShape || !ViewerAnnotationPdf.IsValidDash(a.Dash)))
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": dashPattern is for squares, circles, lines, polygons and polylines: 1 to {ViewerAnnotationPdf.MaxDashCount} numbers from 0 to {ViewerAnnotationPdf.MaxDashLength}, not all 0.");
         if (a.Kind == ViewerAnnotationKind.Stamp ? !ViewerAnnotationPdf.IsStampName(a.StampName) : a.StampName.Length > 0)

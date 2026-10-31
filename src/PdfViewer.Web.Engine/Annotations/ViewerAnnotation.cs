@@ -68,7 +68,21 @@ public sealed record ViewerAnnotation
     /// <summary>A line's two points (/L: x1, y1, x2, y2), or a polygon's or polyline's points (/Vertices: x, y, x, y, …).</summary>
     public IReadOnlyList<double> Vertices { get; init; } = [];
 
-    /// <summary>The line endings (/LE, ISO 32000-2 Table 179) at the first and the last point of a line or polyline.</summary>
+    /// <summary>
+    /// A callout's line (/CL): the spot it points to (its anchor) first, then an optional knee, then
+    /// the point on the text box; 4 or 6 numbers in user space. Empty for a plain text box and every
+    /// other kind. A callout is free text: its <see cref="Box"/> is its text box (/Rect less /RD),
+    /// and its /Rect, which holds the line too, is worked out when it is written.
+    /// </summary>
+    public IReadOnlyList<double> Callout { get; init; } = [];
+
+    /// <summary>A text box with a line to the spot it points to (/IT /FreeTextCallout).</summary>
+    public bool IsCallout => Kind == ViewerAnnotationKind.FreeText && Callout.Count >= 4;
+
+    /// <summary>
+    /// The line endings (/LE, ISO 32000-2 Table 179) at the first and the last point of a line or
+    /// polyline. A callout's ending at its anchor is <see cref="StartEnding"/> (its /LE).
+    /// </summary>
     public string StartEnding { get; init; } = "None";
     public string EndEnding { get; init; } = "None";
 
@@ -145,6 +159,7 @@ public sealed record ViewerAnnotation
         QuadPoints = QuadPoints.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray(),
         InkList = InkList.Select(s => (IReadOnlyList<double>)s.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray()).ToArray(),
         Vertices = Vertices.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray(),
+        Callout = Callout.Select((v, i) => i % 2 == 0 ? v + dx : v + dy).ToArray(),
     };
 
     /// <summary>The kinds' names in the host page's JSON (target.selector.subtype); a reply has motivation "replying" instead.</summary>
@@ -316,6 +331,13 @@ public static class ViewerAnnotationPdf
             || vertices.Length > 2 * PdfAnnotationLimits.MaxVertices || !vertices.All(double.IsFinite)) return null;
         string Ending(int i) => p.LineEndings is { Length: 2 } le && PdfAnnotationLimits.LineEndings.Contains(le[i]) ? le[i] : "None";
         bool endings = kind is ViewerAnnotationKind.Line or ViewerAnnotationKind.PolyLine;
+        // A callout: free text with a line of two or three finite points. Its box is its text box:
+        // /Rect less /RD, where the engine draws it.
+        double[] callout = kind == ViewerAnnotationKind.FreeText && p.CalloutLine is { Length: 4 or 6 } cl && cl.All(double.IsFinite) ? cl : [];
+        var box = new ViewerBox(p.Rect.Left, p.Rect.Top, p.Rect.Right, p.Rect.Bottom);
+        if (callout.Length > 0 && p.RectDifferences is { Length: 4 } rd && rd[0] + rd[2] < box.Width && rd[1] + rd[3] < box.Height)
+            box = new ViewerBox(box.X1 + rd[0], box.Y1 + rd[1], box.X2 - rd[2], box.Y2 - rd[3]);
+        string calloutEnding = callout.Length > 0 && p.LineEndings is { Length: >= 1 } ce && PdfAnnotationLimits.LineEndings.Contains(ce[0]) ? ce[0] : "None";
         string? textColor = null;
         double fontSize = 12;
         if (kind == ViewerAnnotationKind.FreeText) (textColor, fontSize) = ReadDefaultAppearance(p.DefaultAppearance);
@@ -333,11 +355,12 @@ public static class ViewerAnnotationPdf
             Id = !string.IsNullOrEmpty(p.Name) && p.Name.Length <= 200 && !p.Name.Any(char.IsControl) ? p.Name : id,
             Page = p.PageNumber,
             Kind = kind,
-            Box = new ViewerBox(p.Rect.Left, p.Rect.Top, p.Rect.Right, p.Rect.Bottom),
+            Box = box,
             QuadPoints = p.QuadPoints.SelectMany(q => q).ToArray(),
             InkList = p.InkList.Select(s => (IReadOnlyList<double>)s.SelectMany(pt => new[] { pt.X, pt.Y }).ToArray()).ToArray(),
             Vertices = vertices,
-            StartEnding = endings ? Ending(0) : "None",
+            Callout = callout,
+            StartEnding = endings ? Ending(0) : calloutEnding,
             EndEnding = endings ? Ending(1) : "None",
             StampName = kind == ViewerAnnotationKind.Stamp ? StampNameOf(p.Icon) : "",
             InReplyTo = kind == ViewerAnnotationKind.Reply ? parentId! : "",
@@ -434,6 +457,25 @@ public static class ViewerAnnotationPdf
                 p.InteriorColor = null;
                 p.DefaultAppearance = string.Create(CultureInfo.InvariantCulture, $"/Helv {Number(a.FontSize)} Tf {RgbOperands(a.Color)} rg");
                 p.BorderWidth = a.StrokeWidth;
+                if (a.IsCallout)
+                {
+                    // As Acrobat writes a callout: /IT /FreeTextCallout, /CL, /LE at the anchor, and a
+                    // /Rect around the text box and the line with /RD giving the text box inside it.
+                    var outer = ViewerCallout.Outer(a);
+                    p.Rect = outer.ToRect();
+                    p.RectDifferences = [a.Box.X1 - outer.X1, a.Box.Y1 - outer.Y1, outer.X2 - a.Box.X2, outer.Y2 - a.Box.Y2];
+                    p.Intent = ViewerCallout.Intent;
+                    p.CalloutLine = a.Callout.ToArray();
+                    p.LineEndings = a.StartEnding != "None" ? [a.StartEnding] : null;
+                }
+                else if (basis?.CalloutLine != null)
+                {
+                    // A file's callout given back without its line (a host page's update): a plain text box.
+                    p.CalloutLine = null;
+                    p.LineEndings = null;
+                    if (p.Intent == ViewerCallout.Intent) p.Intent = null;
+                    p.RectDifferences = [0, 0, 0, 0];
+                }
                 break;
             case ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle:
                 p.Color = Rgb(a.Color);

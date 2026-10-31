@@ -17,7 +17,7 @@ public sealed record PdfXfdfImport(List<PdfAnnotation> Annotations, int Skipped)
 /// <summary>
 /// Annotations as XFDF (ISO 19444-1, the <c>&lt;annots&gt;</c> element), in PDF user space: the
 /// markup and comment types a reader makes (highlight, underline, strike-out, squiggly, note, free
-/// text, ink, square, circle, line, polygon, polyline, stamp) and replies (inreplyto, the parent's
+/// text with its callout line, ink, square, circle, line, polygon, polyline, stamp) and replies (inreplyto, the parent's
 /// name; a status reply's state and statemodel). Export writes <see cref="PdfAnnotation"/>s; import reads them
 /// back, ready for <see cref="Services.PdfAnnotationEditor.Add"/>. Imported XML is untrusted: no DTD,
 /// no external entities, a size limit, an element limit, finite numbers only, and elements of other
@@ -121,6 +121,15 @@ public static class PdfAnnotationXfdf
                     e.Add(new XAttribute("state", a.State), new XAttribute("statemodel", a.StateModel));
             }
             if (a.Subtype == "FreeText" && a.Justification is 1 or 2) e.Add(new XAttribute("justification", a.Justification == 1 ? "centered" : "right"));
+            if (a.Subtype == "FreeText")
+            {
+                // A callout as Acrobat writes it: its line (callout), the ending at the pointed-at
+                // spot (head), its intent, and the text box inside rect (fringe, /RD).
+                if (a.CalloutLine is { Length: 4 or 6 } cl && cl.All(double.IsFinite)) e.Add(new XAttribute("callout", Join(cl)));
+                if (a.LineEndings is { Length: 1 } fe && fe[0] != "None" && PdfAnnotationLimits.LineEndings.Contains(fe[0])) e.Add(new XAttribute("head", fe[0]));
+                if (IsIntentName(a.Intent)) e.Add(new XAttribute("intent", a.Intent!));
+                if (a.RectDifferences is { Length: 4 } rd && rd.All(v => double.IsFinite(v) && v >= 0)) e.Add(new XAttribute("fringe", Join(rd)));
+            }
             if (!string.IsNullOrEmpty(a.Contents)) e.Add(new XElement(Ns + "contents", a.Contents));
             if (a.Subtype == "FreeText" && !string.IsNullOrEmpty(a.DefaultAppearance)) e.Add(new XElement(Ns + "defaultappearance", a.DefaultAppearance));
             if (a.Subtype == "Ink" && a.InkList.Count > 0)
@@ -398,6 +407,12 @@ public static class PdfAnnotationXfdf
         {
             a.DefaultAppearance = e.DefaultAppearance ?? Limit(e["defaultappearance"], 1000);
             a.Justification = e["justification"] switch { "centered" => 1, "right" => 2, _ => 0 };
+            // A callout: its line of two or three points, the ending at its first point, its
+            // intent and the text box inside rect. A line of another length is left out, not the annotation.
+            if (Numbers(e["callout"]) is { Length: 4 or 6 } cl) a.CalloutLine = cl;
+            if (e["head"] is { } head && Ending(head) is var ending && ending != "None") a.LineEndings = new[] { ending };
+            if (IsIntentName(e["intent"])) a.Intent = e["intent"];
+            if (Numbers(e["fringe"]) is { Length: 4 } fringe && fringe.All(v => v >= 0)) a.RectDifferences = fringe;
         }
         if (subtype == "Ink")
         {
@@ -433,6 +448,9 @@ public static class PdfAnnotationXfdf
     /// <summary>A dash pattern: 1 to <see cref="MaxDashes"/> numbers, none negative, not all zero; else the default [3].</summary>
     internal static double[] Dashes(string? text) =>
         Numbers(text) is { Length: > 0 and <= MaxDashes } dashes && dashes.All(d => d >= 0) && dashes.Sum() > 0 ? dashes : new[] { 3.0 };
+
+    /// <summary>An /IT name this class writes and reads: 1 to 64 ASCII letters (FreeTextCallout, FreeTextTypewriter).</summary>
+    private static bool IsIntentName(string? name) => name is { Length: > 0 and <= 64 } && name.All(char.IsAsciiLetter);
 
     /// <summary>A line ending name of Table 179, else None.</summary>
     private static string Ending(string? name) => name != null && PdfAnnotationLimits.LineEndings.Contains(name) ? name : "None";

@@ -291,6 +291,8 @@ public sealed class PdfAnnotationEditor
         Put("Q", a.Justification != 0 ? new PdfInteger(a.Justification) : null);
         Put("IT", a.Intent != null ? new PdfName(a.Intent) : null);
         Put("CL", a.CalloutLine is { Length: 4 or 6 } cl ? PdfUpdate.Numbers(cl) : null);
+        // Written only when set: a change that does not give /RD keeps the file's.
+        if (a.RectDifferences is { Length: 4 } rd && rd.All(v => double.IsFinite(v) && v >= 0)) e["RD"] = PdfUpdate.Numbers(rd);
         // Free text turned to read upright in a turned view; without a turn, what the file has stays.
         if (a.Subtype == "FreeText" && a.TextRotation is int turn) e["Rotate"] = new PdfInteger(PdfAnnotation.QuarterTurn(turn));
         Put("IRT", a.InReplyTo > 0 ? new PdfIndirectRef(a.InReplyTo) : null);

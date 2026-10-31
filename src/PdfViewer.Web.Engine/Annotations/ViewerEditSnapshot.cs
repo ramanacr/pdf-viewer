@@ -129,6 +129,7 @@ public sealed record ViewerEditSnapshot
         }
         w.WriteEndArray();
         Numbers(w, "vertices", a.Vertices);
+        if (a.Callout.Count > 0) Numbers(w, "callout", a.Callout);
         w.WriteString("startEnding", a.StartEnding);
         w.WriteString("endEnding", a.EndEnding);
         w.WriteString("stampName", a.StampName);
@@ -218,6 +219,8 @@ public sealed record ViewerEditSnapshot
             QuadPoints = Doubles(e, "quads"),
             InkList = Array(e, "ink").Select(s => (IReadOnlyList<double>)Items(s).Select(n => n.GetDouble()).ToArray()).ToArray(),
             Vertices = Doubles(e, "vertices"),
+            // Kept edits written before callouts have no "callout".
+            Callout = e.TryGetProperty("callout", out _) ? Doubles(e, "callout") : [],
             StartEnding = Str(e, "startEnding"),
             EndEnding = Str(e, "endEnding"),
             StampName = Str(e, "stampName"),
