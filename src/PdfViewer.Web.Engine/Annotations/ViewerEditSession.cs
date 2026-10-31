@@ -704,7 +704,8 @@ public sealed class ViewerEditSession
         var c = OnPage(new ViewerPoint(cx, cy), g);
         var rect = new ViewerRect(Math.Clamp(c.X - w / 2, 0, g.ShownWidth - w), Math.Clamp(c.Y - h / 2, 0, g.ShownHeight - h), w, h);
         CheckCanAnnotate();
-        long held = ViewerAnnotationStore.CustomStampBytes(Store.Current.Select(a => a.CustomStamp).Append(stamp));
+        // The stamps undo and redo can bring back count too: they are held in memory, and written again when they come back.
+        long held = ViewerAnnotationStore.CustomStampBytes(Store.HeldStamps.Append(stamp));
         if (held > MaxCustomStampBytes)
             throw new ViewerAnnotationException($"The custom stamps of one document can hold at most {MaxCustomStampBytes / (1024 * 1024)} MB of pictures and pages; this one would make it more.");
         var a = New(ViewerAnnotationKind.Stamp, page, ClampBox(g.ToUser(rect), g), null) with
@@ -876,8 +877,11 @@ public sealed class ViewerEditSession
         // A custom stamp keeps what it draws and its turn (the host page has neither), and its shape: a new box is fitted to it.
         if (old.CustomStamp is { } custom && annotation.Kind == ViewerAnnotationKind.Stamp)
         {
-            annotation = annotation with { CustomStamp = custom, StampName = old.StampName, StampTurn = old.StampTurn, StampSubtitle = null };
-            if (annotation.Box != old.Box) annotation = annotation with { Box = Shaped(annotation.Box, custom, old.StampTurn) };
+            // On another page it reads upright as that page is shown.
+            int rotation = Geometry(annotation.Page).Rotation;
+            int turn = annotation.Page == old.Page ? old.StampTurn : rotation is 90 or 180 or 270 ? rotation : 0;
+            annotation = annotation with { CustomStamp = custom, StampName = old.StampName, StampTurn = turn, StampSubtitle = null };
+            if (annotation.Box != old.Box || turn != old.StampTurn) annotation = annotation with { Box = Shaped(annotation.Box, custom, turn) };
         }
         // A callout whose box moved but whose line was given back as it was keeps its anchor: the line meets the box again.
         if (annotation.IsCallout && old.IsCallout && annotation.Page == old.Page && annotation.Box != old.Box && annotation.Callout.SequenceEqual(old.Callout))

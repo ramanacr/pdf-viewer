@@ -635,9 +635,9 @@ turned page, and Acrobat and the desktop app draw it from that appearance.
 const response = await fetch('/signature.png');
 const stamp = await manager.addCustomStamp({
   data: await response.arrayBuffer(),   // an ArrayBuffer, a typed array or a Blob: PNG, JPEG or PDF
-  pageNumber: 1,                        // the page to stamp, from 1 (default 1)
+  pageNumber: 1,                        // the page to stamp, from 1 (default 1; null too)
   boundingBox: [72, 72, 216, 144],      // optional: the box it is fitted in (PDF points), keeping its shape
-  sourcePage: 1,                        // a PDF's page to stamp, from 1 (default 1)
+  sourcePage: 1,                        // a PDF's page to stamp, from 1 (default 1; null too)
 });
 // stamp.target.selector: { subtype: 'stamp', stampName: 'Custom', customStamp: true, boundingBox, … }
 ```
@@ -646,10 +646,16 @@ const stamp = await manager.addCustomStamp({
   smaller than 8 points either way places it so on the box's corner. A larger box gets the
   largest stamp of its shape, centred in it. The stamp is kept on the page.
 - `data` is checked as untrusted input: at most 20 MB for a PDF and 10 MB for a picture, at most
-  12 million pixels and 10 000 pixels a side; a picture is decoded in full and a damaged one is
-  rejected; a PDF that is encrypted, is not a PDF, or has no such `sourcePage` is rejected.
-  The appearance copies no action, script or link to another file. A document's custom stamps
-  hold at most 48 MB together. Each case rejects with `INVALID_ARGUMENT` and a message.
+  12 million pixels and 10 000 pixels a side. A picture is decoded (a damaged one is rejected);
+  one of more than 4 million pixels is decoded smaller, keeping its shape. A JPEG that is upright
+  is embedded as it is, without its metadata (EXIF, comments); a JPEG turned by its EXIF
+  orientation is decoded and turned. A PDF that is encrypted, is not a PDF, or has no such
+  `sourcePage` is rejected. Only the page's content and resources are kept: not its annotations,
+  page actions, metadata or the file's document information. Nothing copied carries an action, a
+  script or a link to another file. A stamp placed many times is one copy in the file. A
+  document's custom stamps, with those that undo and redo can bring back, hold at most 48 MB
+  together. Each case rejects with `INVALID_ARGUMENT` and a message.
+- Bytes beside any other call are dropped, and bytes over 20 MB are not taken.
 - `getAnnotations` gives a custom stamp with `subtype: 'stamp'`, `stampName: 'Custom'` and
   `customStamp: true` (other stamps have `customStamp: false`). It does not give the picture or
   page unless you ask: with `getAnnotations({ includeCustomStampData: true })`, a stamp made in

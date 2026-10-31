@@ -21,11 +21,18 @@ public sealed class ViewerStampLibrary
 
     private const string IndexName = "stamps.json";
     private readonly string _folder;
+    private readonly long _maxBytes;
 
-    public ViewerStampLibrary(string folder)
+    public ViewerStampLibrary(string folder) : this(folder, MaxBytes)
+    {
+    }
+
+    /// <summary>A library with another size cap (for tests).</summary>
+    internal ViewerStampLibrary(string folder, long maxBytes)
     {
         ArgumentException.ThrowIfNullOrEmpty(folder);
         _folder = folder;
+        _maxBytes = maxBytes;
     }
 
     private sealed record Entry(string Id, string Name, string Kind, DateTimeOffset Created);
@@ -38,7 +45,9 @@ public sealed class ViewerStampLibrary
     public IReadOnlyList<ViewerSavedStamp> List()
     {
         var result = new List<ViewerSavedStamp>();
-        foreach (var e in ReadIndex())
+        var index = ReadIndex();
+        RemoveStrays(index);
+        foreach (var e in index)
         {
             try
             {
@@ -65,7 +74,7 @@ public sealed class ViewerStampLibrary
         index.RemoveAll(e => e.Id == stamp.Hash);
         var kept = List();
         if (kept.Count >= MaxStamps) return $"The stamp library keeps at most {MaxStamps} stamps. Delete one first.";
-        if (kept.Sum(s => s.Size) + stamp.Pdf.Length > MaxBytes) return $"The stamp library is full ({MaxBytes / (1024 * 1024)} MB). Delete a stamp first.";
+        if (kept.Sum(s => s.Size) + stamp.Pdf.Length > _maxBytes) return $"The stamp library is full ({_maxBytes / (1024 * 1024)} MB). Delete a stamp first.";
         string clean = new string((name ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
         if (clean.Length == 0) clean = "Stamp";
         if (clean.Length > MaxNameLength) clean = clean[..MaxNameLength];
@@ -79,6 +88,8 @@ public sealed class ViewerStampLibrary
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // Not in the index: its file is not left behind.
+            TryDelete(FileOf(stamp.Hash));
             return "The stamp could not be kept on this device (its storage is full or refused).";
         }
     }
@@ -120,6 +131,32 @@ public sealed class ViewerStampLibrary
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return false;
+        }
+    }
+
+    /// <summary>Deletes the stamp files the index does not name (a save cut short, or an index that was lost).</summary>
+    private void RemoveStrays(List<Entry> index)
+    {
+        try
+        {
+            if (!Directory.Exists(_folder)) return;
+            var named = index.Select(e => e.Id + ".pdf").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (string file in Directory.EnumerateFiles(_folder, "*.pdf"))
+                if (!named.Contains(Path.GetFileName(file))) TryDelete(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
     }
 

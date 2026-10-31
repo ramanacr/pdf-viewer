@@ -232,7 +232,9 @@ public sealed partial class Viewer
 
     /// <summary>A call with bytes beside it (addCustomStamp's picture or PDF), transferred by the host page.</summary>
     [JSInvokable]
-    public Task OnEmbedCallBytes(string json, byte[] bytes) => AnswerCallAsync(json, bytes);
+    public Task OnEmbedCallBytes(string json, byte[] bytes) =>
+        // Bytes beside a call are taken for addCustomStamp only, and only up to the largest file a stamp is made from.
+        AnswerCallAsync(json, bytes.Length <= PdfViewer.Web.Engine.Annotations.ViewerCustomStamp.MaxPdfBytes ? bytes : []);
 
     private async Task AnswerCallAsync(string json, byte[]? bytes)
     {
@@ -241,7 +243,7 @@ public sealed partial class Viewer
         try
         {
             if (EmbedProtocol.Parse(json, _frame.Mode) is not EmbedCall c) return;
-            call = bytes != null ? c with { Bytes = bytes } : c;
+            call = bytes != null && c.Method == EmbedMethod.AddCustomStamp ? c with { Bytes = bytes } : c;
         }
         catch (EmbedProtocolException ex)
         {

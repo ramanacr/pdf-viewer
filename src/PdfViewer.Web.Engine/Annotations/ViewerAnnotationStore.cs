@@ -297,6 +297,10 @@ public sealed class ViewerAnnotationStore
             throw new ViewerAnnotationException($"The document's annotations can have at most {MaxPoints} ink, quadPoints and vertices points together.");
     }
 
+    /// <summary>The custom stamps the store holds: in the current annotations and in the undo and redo history.</summary>
+    public IEnumerable<ViewerCustomStamp> HeldStamps =>
+        _undo.Concat(_redo).Append(Current).SelectMany(list => list).Select(a => a.CustomStamp).OfType<ViewerCustomStamp>();
+
     /// <summary>The bytes the custom stamps hold together, each picture or page once (stamps placed twice share it).</summary>
     public static long CustomStampBytes(IEnumerable<ViewerCustomStamp?> stamps) =>
         stamps.OfType<ViewerCustomStamp>().DistinctBy(s => s.Hash, StringComparer.Ordinal).Sum(s => (long)s.Pdf.Length);

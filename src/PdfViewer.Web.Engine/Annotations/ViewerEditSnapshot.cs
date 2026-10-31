@@ -65,23 +65,77 @@ public sealed record ViewerEditSnapshot
     // ------------------------------------------------------------------ JSON
 
     /// <summary>The snapshot as JSON text.</summary>
-    public string ToJson() => Encoding.UTF8.GetString(Write().WrittenSpan);
+    public string ToJson() => Encoding.UTF8.GetString(Write(Annotations).WrittenSpan);
 
-    /// <summary>The snapshot as UTF-8 JSON for a file, or null when it is larger than <see cref="MaxBytes"/> (it is then not kept).</summary>
-    public byte[]? ToUtf8() => ToUtf8(MaxBytes);
+    /// <summary>
+    /// The snapshot as UTF-8 JSON for a file, at most <see cref="MaxBytes"/>. When the custom
+    /// stamps make it larger, the stamps that do not fit are left out (with their replies), as
+    /// many as needed, so that the other edits are still kept; <paramref name="droppedStamps"/>
+    /// counts the stamps left out, for the reader to be told. Null when even the edits without any
+    /// custom stamp are larger (nothing is then kept).
+    /// </summary>
+    public byte[]? ToUtf8(out int droppedStamps) => ToUtf8(MaxBytes, out droppedStamps);
 
-    /// <summary><see cref="ToUtf8()"/> with another limit (for tests).</summary>
-    internal byte[]? ToUtf8(int maxBytes)
+    /// <summary><see cref="ToUtf8(out int)"/> without the count.</summary>
+    public byte[]? ToUtf8() => ToUtf8(MaxBytes, out _);
+
+    /// <summary><see cref="ToUtf8(out int)"/> with another limit (for tests).</summary>
+    internal byte[]? ToUtf8(int maxBytes, out int droppedStamps)
     {
-        // Custom stamps are most of a large snapshot (base64, 4 bytes for 3): one too large is
-        // known before it is written out, so a reader's many stamps never fill memory here.
-        long stamps = ViewerAnnotationStore.CustomStampBytes(Annotations.Select(i => i.Annotation?.CustomStamp));
-        if (stamps / 3 * 4 > maxBytes) return null;
-        var buffer = Write();
-        return buffer.WrittenCount > maxBytes ? null : buffer.WrittenSpan.ToArray();
+        droppedStamps = 0;
+        var stamps = Annotations.Select(i => i.Annotation?.CustomStamp).OfType<ViewerCustomStamp>().DistinctBy(c => c.Hash, StringComparer.Ordinal).ToList();
+        // Base64 is 4 bytes for 3: stamps too large are known before anything is written out,
+        // so a reader's many stamps never fill memory here.
+        long stampText = stamps.Sum(c => (c.Pdf.LongLength + 2) / 3 * 4);
+        if (stampText < maxBytes)
+        {
+            var whole = Write(Annotations);
+            if (whole.WrittenCount <= maxBytes) return whole.WrittenSpan.ToArray();
+        }
+        if (stamps.Count == 0) return null;
+        // Too large: the edits without custom stamps, then the stamps that fit, in the order they were made.
+        var none = Without(stamps.Select(c => c.Hash).ToHashSet(StringComparer.Ordinal));
+        var bare = Write(none);
+        if (bare.WrittenCount > maxBytes) return null;
+        long room = maxBytes - bare.WrittenCount;
+        var dropped = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var c in stamps)
+        {
+            int uses = Annotations.Count(i => i.Annotation?.CustomStamp?.Hash == c.Hash);
+            // Its base64, its entry, and each annotation that uses it (a generous allowance for one).
+            long cost = (c.Pdf.LongLength + 2) / 3 * 4 + 256 + 4096L * uses;
+            if (cost <= room) room -= cost;
+            else dropped.Add(c.Hash);
+        }
+        var kept = Without(dropped);
+        var buffer = Write(kept);
+        if (buffer.WrittenCount > maxBytes)
+        {
+            kept = none;
+            buffer = bare;
+        }
+        droppedStamps = Annotations.Count(i => i.Annotation is { CustomStamp: { } c } && !kept.Any(k => ReferenceEquals(k.Annotation, i.Annotation)));
+        return buffer.WrittenSpan.ToArray();
     }
 
-    private ArrayBufferWriter<byte> Write()
+    /// <summary>The items without the custom stamps of <paramref name="hashes"/>, and without the replies to what is left out.</summary>
+    private List<ViewerSnapshotItem> Without(HashSet<string> hashes)
+    {
+        var gone = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var i in Annotations)
+            if (i.Annotation is { CustomStamp: { } c } a && hashes.Contains(c.Hash)) gone.Add(a.Id);
+        // Replies, a level at a time (a thread is at most the reply depth deep).
+        for (int level = 0; level <= ViewerAnnotationStore.MaxReplyDepth; level++)
+        {
+            int before = gone.Count;
+            foreach (var i in Annotations)
+                if (i.Annotation is { Kind: ViewerAnnotationKind.Reply } r && gone.Contains(r.InReplyTo)) gone.Add(r.Id);
+            if (gone.Count == before) break;
+        }
+        return Annotations.Where(i => i.Annotation is not { } a || !gone.Contains(a.Id)).ToList();
+    }
+
+    private ArrayBufferWriter<byte> Write(IReadOnlyList<ViewerSnapshotItem> annotations)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var w = new Utf8JsonWriter(buffer))
@@ -92,7 +146,7 @@ public sealed record ViewerEditSnapshot
             w.WriteNumber("length", OriginalLength);
             w.WriteString("sha256", OriginalHash);
             // The pictures and pages of custom stamps, each once (by its hash), as the one-page PDF that draws it.
-            var stamps = Annotations.Select(i => i.Annotation?.CustomStamp).OfType<ViewerCustomStamp>().DistinctBy(c => c.Hash, StringComparer.Ordinal).ToList();
+            var stamps = annotations.Select(i => i.Annotation?.CustomStamp).OfType<ViewerCustomStamp>().DistinctBy(c => c.Hash, StringComparer.Ordinal).ToList();
             if (stamps.Count > 0)
             {
                 w.WriteStartArray("customStamps");
@@ -107,7 +161,7 @@ public sealed record ViewerEditSnapshot
                 w.WriteEndArray();
             }
             w.WriteStartArray("annotations");
-            foreach (var item in Annotations)
+            foreach (var item in annotations)
             {
                 if (item.KeptId is { } id)
                 {

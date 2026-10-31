@@ -35,6 +35,19 @@ public class CustomStampTests
         return data.ToArray();
     }
 
+    /// <summary>A PNG of random colours, which hardly compresses.</summary>
+    private static byte[] Noisy(int side)
+    {
+        var rng = new Random(7);
+        using var bitmap = new SKBitmap(new SKImageInfo(side, side, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        for (int y = 0; y < side; y++)
+            for (int x = 0; x < side; x++)
+                bitmap.SetPixel(x, y, new SKColor((byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256)));
+        using var image = SKImage.FromBitmap(bitmap);
+        using var png = image.Encode(SKEncodedImageFormat.Png, 100);
+        return png.ToArray();
+    }
+
     /// <summary>A PDF whose page 1 (300 x 150) is green on the left and blue on the right, as paths; more plain pages after it.</summary>
     private static byte[] SourcePdf(int pages = 1, string extraPage = "", PdfTestEncryption? encryption = null)
     {
@@ -150,8 +163,9 @@ public class CustomStampTests
         await using var _ = doc;
         session.AddCustomStamp(1, new ViewerRect(100, 100, 128, 64), stamp);
         await session.ApplyAsync();
-        // The JPEG's own bytes are in the file (DCTDecode, not decoded and written again).
-        Assert.True(doc.Bytes.AsSpan().IndexOf(jpeg) > 0);
+        // The JPEG's coded data is in the file as it is (DCTDecode, not decoded and written again).
+        int sos = jpeg.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xFF, 0xDA]);
+        Assert.True(doc.Bytes.AsSpan().IndexOf(jpeg.AsSpan(sos)) > 0);
         Is(IsRed, await PixelAt(doc, 1, 120, 132));
         Is(IsBlue, await PixelAt(doc, 1, 210, 132));
     }
@@ -211,7 +225,7 @@ public class CustomStampTests
     }
 
     [Fact]
-    public async Task AnEncryptedPdf_IsRefused_UnlessItIsTheOpenDocument()
+    public async Task AnEncryptedPdf_IsRefused()
     {
         byte[] encrypted = SourcePdf(encryption: new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "", "owner"));
         var ex = Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.FromPdf(encrypted, 1));
@@ -219,18 +233,8 @@ public class CustomStampTests
         byte[] withPassword = SourcePdf(encryption: new PdfTestEncryption(TestEncryptionKind.Aes256_R6, "user", "owner"));
         Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.FromPdf(withPassword, 1));
 
-        await using var open = await ViewerDocument.OpenAsync(withPassword, "user");
-        var stamp = await ViewerCustomStamp.FromDocumentAsync(open, 1);
-        Assert.Equal(300, stamp.Width);
-        using (var one = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.PdfMemoryByteSource(stamp.Pdf)))
-            Assert.False(one.IsEncrypted);
-        await Assert.ThrowsAsync<ViewerAnnotationException>(() => ViewerCustomStamp.FromDocumentAsync(open, 2));
-
-        var (doc, session) = await Start(Pages());
-        await using var _ = doc;
-        session.AddCustomStamp(1, new ViewerRect(100, 100, 300, 150), stamp);
-        await session.ApplyAsync();
-        Is(IsGreen, await PixelAt(doc, 1, 150, 175));
+        Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.PageCount(withPassword));
+        await Task.CompletedTask;
     }
 
     [Fact]
@@ -464,17 +468,31 @@ public class CustomStampTests
     }
 
     [Fact]
-    public async Task KeptEdits_TooLargeForTheCap_AreNotKept()
+    public async Task KeptEdits_TooLargeForTheCap_DropTheStamps_AndKeepTheOtherEdits()
     {
-        var picture = ViewerCustomStamp.FromImage(Picture(40, 20));
+        var picture = ViewerCustomStamp.FromImage(Noisy(100));
         byte[] pdf = Pages();
         var (doc, session) = await Start(pdf);
         await using var _ = doc;
-        session.AddCustomStamp(1, new ViewerRect(100, 100, 200, 100), picture);
+        var stamp = session.AddCustomStamp(1, new ViewerRect(100, 100, 200, 100), picture);
+        session.AddReply(stamp.Id, "On the stamp");
+        var note = session.AddNote(1, new ViewerPoint(400, 400), "Kept");
         var snapshot = session.Snapshot("content://doc", ViewerEditSnapshot.Hash(pdf));
-        Assert.Null(snapshot.ToUtf8(picture.Pdf.Length / 2));
-        Assert.NotNull(snapshot.ToUtf8(picture.Pdf.Length * 2 + 4096));
-        Assert.NotNull(snapshot.ToUtf8());
+
+        byte[] all = snapshot.ToUtf8(picture.Pdf.Length * 2 + 8192, out int none)!;
+        Assert.Equal(0, none);
+        Assert.Equal(3, ViewerEditSnapshot.FromJson(Encoding.UTF8.GetString(all)).Annotations.Count);
+
+        Assert.True(picture.Pdf.Length > 20_000);
+        byte[] some = snapshot.ToUtf8(20_000, out int dropped)!;
+        Assert.Equal(1, dropped);
+        var read = ViewerEditSnapshot.FromJson(Encoding.UTF8.GetString(some));
+        // The note stays; the stamp and the reply to it are left out.
+        Assert.Equal(note.Id, Assert.Single(read.Annotations).Annotation!.Id);
+        await using var again = await ViewerDocument.OpenAsync(pdf);
+        var restored = await ViewerEditSession.StartAsync(again);
+        Assert.True(restored.Restore(read));
+        Assert.Null(snapshot.ToUtf8(100, out int all100));
     }
 
     // ------------------------------------------------------------------ the stamp library (Android: app-private files)
@@ -504,9 +522,10 @@ public class CustomStampTests
             // A file changed on the device is not trusted: it is not given back.
             File.WriteAllBytes(Path.Combine(folder, picture.Hash + ".pdf"), Picture(4, 4));
             Assert.Null(library.Load(picture.Hash));
-            // A damaged index is read as empty, not as an error.
+            // A damaged index is read as empty, not as an error, and the files it named are removed.
             File.WriteAllText(Path.Combine(folder, "stamps.json"), "{ not json");
             Assert.Empty(library.List());
+            Assert.Empty(Directory.GetFiles(folder, "*.pdf"));
 
             Assert.Null(library.Save(page, "Letterhead"));
             Assert.True(library.Delete(page.Hash));
@@ -539,10 +558,281 @@ public class CustomStampTests
     }
 
     [Fact]
+    public void TheStampLibrary_HasASizeCap()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "custom-stamps-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var first = ViewerCustomStamp.FromImage(Picture(40, 20));
+            var library = new ViewerStampLibrary(folder, first.Pdf.Length + 10);
+            Assert.Null(library.Save(first, "First"));
+            Assert.Contains("full", library.Save(ViewerCustomStamp.FromImage(Picture(30, 20)), "Second"));
+            Assert.Single(library.List());
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public void APdfsPages_AreCounted_ForChoosingOne()
     {
         Assert.Equal(3, ViewerCustomStamp.PageCount(SourcePdf(pages: 3)));
         Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.PageCount(SourcePdf(encryption: new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "", "owner"))));
         Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.PageCount(Picture(4, 4)));
+    }
+
+    // ------------------------------------------------------------------ review fixes
+
+    /// <summary>A PDF whose page (300 x 150) draws two red squares with a Type 3 font named /A, glyphs /A and /Next.</summary>
+    private static byte[] Type3Pdf()
+    {
+        var b = new VectorPdfBuilder();
+        int glyph = b.AddStream("", "1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f");
+        int font = b.Add($"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /A {glyph} 0 R /Next {glyph} 0 R >> /Encoding << /Type /Encoding /Differences [65 /A /Next] >> /FirstChar 65 /LastChar 66 /Widths [1000 1000] /Resources << >> >>");
+        int gs = b.Add("<< /Type /ExtGState /CA 1 /ca 1 >>");
+        b.AddPage("/A gs 1 0 0 rg BT /A 100 Tf 10 10 Td (AB) Tj ET", resources: $"<< /Font << /A {font} 0 R >> /ExtGState << /A {gs} 0 R >> >>", mediaBox: "[0 0 300 150]");
+        return b.Build();
+    }
+
+    [Fact]
+    public async Task ResourcesAndGlyphsNamedLikeActionKeys_AreKept_OnTheDesktopPathToo()
+    {
+        // The web and Android path.
+        var stamp = ViewerCustomStamp.FromPdf(Type3Pdf(), 1);
+        var (doc, session) = await Start(Pages());
+        await using (doc)
+        {
+            session.AddCustomStamp(1, new ViewerRect(100, 100, 300, 150), stamp);
+            await session.ApplyAsync();
+            Is(IsRed, await PixelAt(doc, 1, 160, 190));
+            Is(IsRed, await PixelAt(doc, 1, 260, 190));
+        }
+
+        // The desktop app's path: the engine's stamp from a PDF page, written by the annotation editor.
+        byte[] pdf = Pages();
+        byte[] saved;
+        using (var vector = await PdfVectorDocument.OpenAsync(pdf))
+        {
+            saved = PdfEngine.Vector.Services.PdfAnnotationEditor.Apply(vector, pdf, editor => editor.Add(new PdfAnnotation
+            {
+                PageNumber = 1, Subtype = "Stamp", Icon = "Custom", Rect = new PdfEngine.Geometry.PdfRect(100, 542, 300, 150), Opacity = 1,
+                Stamp = new PdfStampAppearance { SourcePdf = Type3Pdf(), SourcePage = 1, Width = 300, Height = 150 },
+            }));
+        }
+        await using var desktop = await ViewerDocument.OpenAsync(saved);
+        Is(IsRed, await PixelAt(desktop, 1, 160, 190));
+        Is(IsRed, await PixelAt(desktop, 1, 260, 190));
+    }
+
+    /// <summary>A PDF whose page draws blue, with a form that links to an embedded file through /Ref, /OPI and /F.</summary>
+    private static byte[] LinkedFilePdf()
+    {
+        var b = new VectorPdfBuilder();
+        int ef = b.AddStream("/Type /EmbeddedFile", "SECRET-EMBEDDED-PAYLOAD");
+        int fs = b.Add($"<< /Type /Filespec /F (outside.pdf) /EF << /F {ef} 0 R >> >>");
+        int form = b.AddStream($"/Type /XObject /Subtype /Form /BBox [0 0 300 150] /Ref << /F {fs} 0 R /Page 0 >> /OPI << /2.0 << /Type /OPI /Version 2.0 /F {fs} 0 R >> >>",
+            "0 0 1 rg 0 0 300 150 re f");
+        int unused = b.AddStream($"/Type /XObject /Subtype /Form /BBox [0 0 10 10] /F {fs} 0 R /FFilter /FlateDecode", "");
+        b.AddPage("/Fm0 Do", resources: $"<< /XObject << /Fm0 {form} 0 R /Fm1 {unused} 0 R >> >>", mediaBox: "[0 0 300 150]");
+        return b.Build();
+    }
+
+    [Fact]
+    public async Task LinksToOtherFiles_AreNotCopied_NorWhatTheyPointTo()
+    {
+        var stamp = ViewerCustomStamp.FromPdf(LinkedFilePdf(), 1);
+        string own = Encoding.Latin1.GetString(stamp.Pdf);
+        foreach (string word in new[] { "SECRET-EMBEDDED-PAYLOAD", "EmbeddedFile", "Filespec", "outside.pdf", "/OPI", "/Ref", "/FFilter" })
+            Assert.DoesNotContain(word, own);
+
+        byte[] pdf = Pages();
+        var (doc, session) = await Start(pdf);
+        await using (doc)
+        {
+            session.AddCustomStamp(1, new ViewerRect(100, 100, 300, 150), stamp);
+            await session.ApplyAsync();
+            Is(IsBlue, await PixelAt(doc, 1, 250, 175));
+        }
+
+        // The desktop path copies from the file as it is: the same keys are left out before they are followed.
+        byte[] saved;
+        using (var vector = await PdfVectorDocument.OpenAsync(pdf))
+        {
+            saved = PdfEngine.Vector.Services.PdfAnnotationEditor.Apply(vector, pdf, editor => editor.Add(new PdfAnnotation
+            {
+                PageNumber = 1, Subtype = "Stamp", Icon = "Custom", Rect = new PdfEngine.Geometry.PdfRect(100, 542, 300, 150), Opacity = 1,
+                Stamp = new PdfStampAppearance { SourcePdf = LinkedFilePdf(), SourcePage = 1, Width = 300, Height = 150 },
+            }));
+        }
+        string update = Encoding.Latin1.GetString(saved, pdf.Length, saved.Length - pdf.Length);
+        foreach (string word in new[] { "SECRET-EMBEDDED-PAYLOAD", "EmbeddedFile", "Filespec", "outside.pdf" })
+            Assert.DoesNotContain(word, update);
+    }
+
+    [Fact]
+    public void TheStampPdf_HoldsThePageOnly_NotTheFilesAnnotationsActionsOrInformation()
+    {
+        var b = new VectorPdfBuilder();
+        int ef = b.AddStream("/Type /EmbeddedFile", "SECRET-ATTACHED");
+        int fs = b.Add($"<< /Type /Filespec /F (attached.txt) /EF << /F {ef} 0 R >> >>");
+        int note = b.Add("<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] /Contents (SECRET-COMMENT) >>");
+        int attachment = b.Add($"<< /Type /Annot /Subtype /FileAttachment /Rect [0 0 10 10] /FS {fs} 0 R >>");
+        int link = b.Add("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (http://secret.example) >> >>");
+        int metadata = b.AddStream("/Type /Metadata /Subtype /XML", "SECRET-XMP");
+        int info = b.Add("<< /Author (Jane Secret) /Title (SECRET-TITLE) >>");
+        b.AddPage("0 1 0 rg 0 0 300 150 re f", mediaBox: "[0 0 300 150]",
+            extra: $"/Annots [{note} 0 R {attachment} 0 R {link} 0 R] /AA << /O << /S /JavaScript /JS (app.alert\\(9\\)) >> >> /PieceInfo << /SecretApp << /Private (SECRET-PIECE) >> >>");
+        b.WithCatalog($"/Metadata {metadata} 0 R /OpenAction << /S /JavaScript /JS (app.alert\\(1\\)) >>");
+        b.WithTrailer($"/Info {info} 0 R");
+        var stamp = ViewerCustomStamp.FromPdf(b.Build(), 1);
+
+        string text = Encoding.Latin1.GetString(stamp.Pdf);
+        foreach (string word in new[] { "SECRET", "Jane", "JavaScript", "app.alert", "Annot", "Metadata", "/Info", "EmbeddedFile", "PieceInfo", "secret.example", "attached.txt" })
+            Assert.DoesNotContain(word, text);
+        using var one = PdfVectorDocument.Open(new PdfEngine.Vector.Parsing.PdfMemoryByteSource(stamp.Pdf));
+        Assert.Equal(["Contents", "MediaBox", "Parent", "Resources", "Type"], one.PageTree.Pages[0].Dictionary.Entries.Keys.Order());
+        // A PDF that is not one made so is not taken back as a stamp.
+        Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.FromKept(ViewerCustomStampKind.Page, SourcePdf()));
+    }
+
+    [Fact]
+    public async Task OneStampPlacedTwentyTimes_IsOneCopyInTheFile()
+    {
+        // A picture that does not compress much: its copy is most of the file.
+        var stamp = ViewerCustomStamp.FromImage(Noisy(200));
+
+        byte[] pdf = Pages();
+        var (doc, session) = await Start(pdf);
+        await using var _ = doc;
+        session.AddCustomStamp(1, new ViewerRect(10, 10, 50, 50), stamp);
+        await session.ApplyAsync();
+        long once = doc.Bytes.Length - pdf.Length;
+        for (int i = 1; i < 20; i++) session.AddCustomStamp(1, new ViewerRect(10 + 25 * i, 100, 50, 50), stamp);
+        await session.ApplyAsync();
+        long twenty = doc.Bytes.Length - pdf.Length;
+        Assert.True(stamp.Pdf.Length > 100_000);
+        // Each more placement is its annotation and a small form, not another copy.
+        Assert.True(twenty - once < stamp.Pdf.Length / 4, $"{once} then {twenty} bytes");
+        Is(IsWhite, await PixelAt(doc, 1, 5, 5));
+    }
+
+    [Fact]
+    public async Task MovedToATurnedPage_ACustomStampReadsUprightThere()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("", mediaBox: "[0 0 612 792]");
+        b.AddPage("", mediaBox: "[0 0 612 792]", extra: "/Rotate 90");
+        var (doc, session) = await Start(b.Build());
+        await using var _ = doc;
+        var stamp = ViewerCustomStamp.FromImage(Picture(40, 20));
+        var a = session.AddCustomStamp(1, new ViewerRect(100, 100, 200, 100), stamp);
+        Assert.Equal(0, a.StampTurn);
+        // A host page moves it to page 2 with the same box (user space): it is turned with the page, and kept to its shape as shown.
+        var moved = session.UpdateAnnotation(a with { Page = 2, CustomStamp = null, StampTurn = 0 });
+        Assert.Equal(90, moved.StampTurn);
+        Assert.Same(stamp, moved.CustomStamp);
+        var shown = doc.Geometry[1].ToShown(moved.Box);
+        Assert.Equal(2.0, shown.Width / shown.Height, 6);
+        await session.ApplyAsync();
+        Is(IsRed, await PixelAt(doc, 2, shown.X + shown.Width / 4, shown.Y + shown.Height / 2));
+        Is(IsBlue, await PixelAt(doc, 2, shown.X + shown.Width * 3 / 4, shown.Y + shown.Height / 2));
+    }
+
+    /// <summary>A JPEG with an APP1 EXIF segment (orientation, and a GPS-like text), a comment and bytes after its end.</summary>
+    private static byte[] JpegWithMetadata(int orientation)
+    {
+        byte[] jpeg = Picture(64, 32, SKEncodedImageFormat.Jpeg);
+        var tiff = new List<byte> { (byte)'I', (byte)'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, (byte)orientation, 0, 0, 0, 0, 0, 0, 0 };
+        tiff.AddRange("GPS-SECRET-PLACE"u8.ToArray());
+        byte[] exif = [.. "Exif\0\0"u8, .. tiff];
+        byte[] comment = "SECRET-COMMENT-TEXT"u8.ToArray();
+        var file = new List<byte> { 0xFF, 0xD8 };
+        file.AddRange([0xFF, 0xE1, (byte)((exif.Length + 2) >> 8), (byte)(exif.Length + 2)]);
+        file.AddRange(exif);
+        file.AddRange([0xFF, 0xFE, (byte)((comment.Length + 2) >> 8), (byte)(comment.Length + 2)]);
+        file.AddRange(comment);
+        file.AddRange(jpeg.Skip(2));
+        file.AddRange("TRAILING-SECRET"u8.ToArray());
+        return file.ToArray();
+    }
+
+    [Fact]
+    public async Task AJpegsMetadata_IsLeftOut_AndItsOrientationIsKept()
+    {
+        var upright = ViewerCustomStamp.FromImage(JpegWithMetadata(1));
+        string text = Encoding.Latin1.GetString(upright.Pdf);
+        foreach (string word in new[] { "GPS-SECRET-PLACE", "SECRET-COMMENT-TEXT", "TRAILING-SECRET", "Exif" })
+            Assert.DoesNotContain(word, text);
+        Assert.Equal(2.0, upright.Aspect, 6);
+
+        // Turned a quarter by its EXIF orientation: seen 32 x 64, decoded and turned (its metadata gone too).
+        var turned = ViewerCustomStamp.FromImage(JpegWithMetadata(6));
+        Assert.Equal(0.5, turned.Aspect, 6);
+        Assert.DoesNotContain("GPS-SECRET-PLACE", Encoding.Latin1.GetString(turned.Pdf));
+        var (doc, session) = await Start(Pages());
+        await using var _ = doc;
+        session.AddCustomStamp(1, new ViewerRect(100, 100, 100, 200), turned);
+        await session.ApplyAsync();
+        // Turned clockwise: the red left half is at the top.
+        Is(IsRed, await PixelAt(doc, 1, 150, 140));
+        Is(IsBlue, await PixelAt(doc, 1, 150, 260));
+    }
+
+    [Fact]
+    public void ThinAndLargePictures_KeepTheirShape_AndLargeOnesAreDecodedSmaller()
+    {
+        var thin = ViewerCustomStamp.FromImage(Picture(2000, 2));
+        Assert.Equal(1000, thin.Aspect, 3);
+        var (w, h) = thin.DefaultSize;
+        Assert.Equal(144, w, 6);
+        Assert.Equal(0.144, h, 6);
+
+        using var bitmap = new SKBitmap(new SKImageInfo(3000, 2000, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            canvas.Clear(Red);
+            using var paint = new SKPaint { Color = Blue };
+            canvas.DrawRect(1500, 0, 1500, 2000, paint);
+        }
+        using var image = SKImage.FromBitmap(bitmap);
+        using var png = image.Encode(SKEncodedImageFormat.Png, 100);
+        var large = ViewerCustomStamp.FromImage(png.ToArray());
+        Assert.Equal(1.5, large.Aspect, 3);
+        string text = Encoding.Latin1.GetString(large.Pdf);
+        Assert.DoesNotContain("/Width 3000", text);
+        Assert.Contains("/Width 2449", text);
+    }
+
+    [Fact]
+    public void TheEmbedApi_ChecksAddCustomStampsOptions_AndAskingForTheData()
+    {
+        const string envelope = "\"protocol\":\"pdfviewer-embed\",\"version\":1,\"type\":\"call\",\"requestId\":7,\"document\":1";
+        EmbedCall Call(string method, string args) =>
+            (EmbedCall)EmbedProtocol.Parse("{" + envelope + ",\"method\":\"" + method + "\",\"args\":" + args + "}", EmbedMode.FullWindow)!;
+        EmbedProtocolException Bad(string method, string args) =>
+            Assert.Throws<EmbedProtocolException>(() => Call(method, args));
+
+        var plain = Call("addCustomStamp", "[{}]").CustomStamp!;
+        Assert.Equal((1, null, 1), (plain.Page, plain.Box, plain.SourcePage));
+        // null is the default, as a left-out value is.
+        var nulls = Call("addCustomStamp", "[{\"pageNumber\":null,\"sourcePage\":null,\"boundingBox\":null}]").CustomStamp!;
+        Assert.Equal((1, null, 1), (nulls.Page, nulls.Box, nulls.SourcePage));
+        var given = Call("addCustomStamp", "[{\"pageNumber\":3,\"sourcePage\":2,\"boundingBox\":[200,100,50,40]}]").CustomStamp!;
+        Assert.Equal((3, new ViewerBox(50, 40, 200, 100), 2), (given.Page, given.Box, given.SourcePage));
+        Assert.Equal(7, Bad("addCustomStamp", "[]").RequestId);
+        Bad("addCustomStamp", "[{\"pageNumber\":0}]");
+        Bad("addCustomStamp", "[{\"pageNumber\":1.5}]");
+        Bad("addCustomStamp", "[{\"sourcePage\":\"2\"}]");
+        Bad("addCustomStamp", "[{\"boundingBox\":[1,2,3]}]");
+        Bad("addCustomStamp", "[{\"boundingBox\":[1,2,3,\"4\"]}]");
+        Bad("addCustomStamp", "[{\"boundingBox\":[1,2,3,1e9]}]");
+
+        Assert.False(Call("getAnnotations", "[]").IncludeStampData);
+        Assert.False(Call("getAnnotations", "[{\"includeCustomStampData\":false}]").IncludeStampData);
+        Assert.True(Call("getAnnotations", "[{\"includeCustomStampData\":true}]").IncludeStampData);
+        Assert.True(Call("getAnnotations", "[{\"includeCustomStampData\":true,\"pageRange\":{\"startPage\":1}}]").IncludeStampData);
+        Bad("getAnnotations", "[{\"includeCustomStampData\":\"yes\"}]");
     }
 }

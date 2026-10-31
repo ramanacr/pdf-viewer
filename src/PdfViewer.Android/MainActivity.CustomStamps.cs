@@ -81,9 +81,9 @@ public sealed partial class MainActivity
                 {
                     pages = await Task.Run(() => ViewerCustomStamp.PageCount(bytes));
                 }
-                catch (ViewerAnnotationException ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    Tell(ex.Message);
+                    Tell(Problem(ex));
                     return;
                 }
                 if (pages == 1)
@@ -116,9 +116,9 @@ public sealed partial class MainActivity
         {
             stamp = await Task.Run(make);
         }
-        catch (ViewerAnnotationException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Tell(ex.Message);
+            Tell(Problem(ex));
             return;
         }
         new AlertDialog.Builder(this)
@@ -127,7 +127,15 @@ public sealed partial class MainActivity
             .SetPositiveButton("Keep and place", async (_, _) =>
             {
                 var library = StampLibrary;
-                string? notKept = await Task.Run(() => library.Save(stamp, name));
+                string? notKept;
+                try
+                {
+                    notKept = await Task.Run(() => library.Save(stamp, name));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    notKept = "The stamp could not be kept on this device.";
+                }
                 if (notKept != null) Tell(notKept);
                 ArmCustomStamp(stamp, name);
             })!
@@ -149,7 +157,15 @@ public sealed partial class MainActivity
     private async Task UseSavedStampAsync(ViewerSavedStamp saved)
     {
         var library = StampLibrary;
-        var stamp = await Task.Run(() => library.Load(saved.Id));
+        ViewerCustomStamp? stamp;
+        try
+        {
+            stamp = await Task.Run(() => library.Load(saved.Id));
+        }
+        catch (OutOfMemoryException)
+        {
+            stamp = null;
+        }
         if (stamp == null)
         {
             Tell("That saved stamp cannot be read. Delete it and make it again.");
@@ -178,6 +194,14 @@ public sealed partial class MainActivity
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
     }
+
+    /// <summary>What the reader is told when a stamp cannot be made: the reason, never the file's content.</summary>
+    private static string Problem(Exception ex) => ex switch
+    {
+        ViewerAnnotationException a => a.Message,
+        OutOfMemoryException => "This file is too large to make a stamp on this device. Choose a smaller one.",
+        _ => $"The stamp could not be made ({ex.GetType().Name}).",
+    };
 
     private void Tell(string message) =>
         Toast.MakeText(this, message, message.Length > 60 ? ToastLength.Long : ToastLength.Short)?.Show();

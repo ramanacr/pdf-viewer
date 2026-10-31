@@ -64,9 +64,15 @@ public sealed partial class Viewer
         }
         else if (value != CurrentStampOption)
         {
+            // A standard stamp from the list: the stamp tool stays on (only its toolbar button turns it off).
             _stampName = value;
             _customStamp = null;
-            if (_tool != Tool.Stamp) SetTool(Tool.Stamp);
+            if (_tool != Tool.Stamp)
+            {
+                _tool = Tool.Stamp;
+                CanvasInterop.SetTool(ToolNames[(int)Tool.Stamp]);
+            }
+            _status = "Click where the stamp goes.";
         }
         StateHasChanged();
     }
@@ -250,10 +256,10 @@ public sealed partial class Viewer
             _pickedKind = kind;
             _previewDirty = true;
         }
-        catch (ViewerAnnotationException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await ClearPickedAsync();
-            _stampProblem = ex.Message;
+            _stampProblem = Problem(ex);
         }
         finally
         {
@@ -261,6 +267,14 @@ public sealed partial class Viewer
         }
         StateHasChanged();
     }
+
+    /// <summary>What the reader is told when a stamp cannot be made: the reason, never the file's content.</summary>
+    private static string Problem(Exception ex) => ex switch
+    {
+        ViewerAnnotationException a => a.Message,
+        OutOfMemoryException => "This file is too large to make a stamp in this browser. Choose a smaller one.",
+        _ => $"The stamp could not be made ({ex.GetType().Name}).",
+    };
 
     private void StepPickedPage(int delta) => SetPickedPage(_pickedPage + delta);
 
@@ -324,9 +338,9 @@ public sealed partial class Viewer
             UseCustomStamp(stamp, name);
             if (!string.IsNullOrEmpty(notKept)) _status = $"{notKept} The stamp can still be placed now.";
         }
-        catch (ViewerAnnotationException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _stampProblem = ex.Message;
+            _stampProblem = Problem(ex);
         }
         finally
         {

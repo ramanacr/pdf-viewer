@@ -455,7 +455,7 @@ public static class EmbedProtocol
         {
             if (e.ValueKind != JsonValueKind.Object)
                 throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "addCustomStamp: give { data, pageNumber, boundingBox, sourcePage }.", requestId);
-            int page = e.TryGetProperty("pageNumber", out var pn) ? Integer(pn, "pageNumber", 1, int.MaxValue) : 1;
+            int page = e.TryGetProperty("pageNumber", out var pn) && pn.ValueKind != JsonValueKind.Null ? Integer(pn, "pageNumber", 1, int.MaxValue) : 1;
             int source = e.TryGetProperty("sourcePage", out var sp) && sp.ValueKind != JsonValueKind.Null ? Integer(sp, "sourcePage", 1, int.MaxValue) : 1;
             Annotations.ViewerBox? box = null;
             if (e.TryGetProperty("boundingBox", out var bb) && bb.ValueKind != JsonValueKind.Null)

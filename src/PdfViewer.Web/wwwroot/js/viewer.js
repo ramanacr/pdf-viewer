@@ -900,7 +900,6 @@ function printEnd() {
 
 const MaxStampFileBytes = 20 * 1024 * 1024;   // ViewerCustomStamp.MaxPdfBytes
 const StampDbName = 'pdfviewer-stamps';
-const StampStore = 'stamps';
 const MaxSavedStamps = 30;
 const MaxSavedStampBytes = 64 * 1024 * 1024;
 
@@ -940,30 +939,53 @@ export function drawStampPreview(view, width, height) {
     canvas.style.height = `${height / ratio}px`;
 }
 
+// Two stores: "meta" holds a small record per stamp (id, name, kind, size, created), listed
+// without reading any stamp's bytes; "data" holds the bytes (id, data), read only to use one.
+const StampMeta = 'meta';
+const StampData = 'data';
+
 function openStampDb() {
     return new Promise((resolve, reject) => {
         let request;
         try {
-            request = indexedDB.open(StampDbName, 1);
+            request = indexedDB.open(StampDbName, 2);
         } catch (e) {
             reject(e);
             return;
         }
-        request.onupgradeneeded = () => request.result.createObjectStore(StampStore, { keyPath: 'id' });
-        request.onsuccess = () => resolve(request.result);
+        let blocked = false;
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            for (const name of Array.from(db.objectStoreNames)) db.deleteObjectStore(name);
+            db.createObjectStore(StampMeta, { keyPath: 'id' });
+            db.createObjectStore(StampData, { keyPath: 'id' });
+        };
+        request.onsuccess = () => {
+            const db = request.result;
+            // Opened after it was blocked: the caller has given up, so the connection is closed at once.
+            if (blocked) {
+                db.close();
+                return;
+            }
+            db.onversionchange = () => db.close();
+            resolve(db);
+        };
         request.onerror = () => reject(request.error);
-        request.onblocked = () => reject(new Error('The stamp library is blocked.'));
+        request.onblocked = () => {
+            blocked = true;
+            reject(new Error('The stamp library is blocked.'));
+        };
     });
 }
 
-/** Runs work(store) in one transaction; resolves with its request's result when the transaction ends. */
+/** Runs work(stores) in one transaction over both stores; resolves with what work's result holds when the transaction ends. */
 async function withStamps(mode, work) {
     const db = await openStampDb();
     try {
         return await new Promise((resolve, reject) => {
-            const tx = db.transaction(StampStore, mode);
-            const request = work(tx.objectStore(StampStore));
-            tx.oncomplete = () => resolve(request ? request.result : undefined);
+            const tx = db.transaction([StampMeta, StampData], mode);
+            const result = work(tx.objectStore(StampMeta), tx.objectStore(StampData), tx);
+            tx.oncomplete = () => resolve(result && typeof result.value === 'function' ? result.value() : result);
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);
         });
@@ -972,30 +994,49 @@ async function withStamps(mode, work) {
     }
 }
 
-/** The saved stamps as JSON [{ id, name, kind, size }], oldest first; "null" when this browser keeps none. */
+/** The saved stamps as JSON [{ id, name, kind, size }], oldest first; "null" when this browser keeps none. Reads no stamp's bytes. */
 export async function stampLibraryList() {
     try {
-        const all = await withStamps('readonly', s => s.getAll());
+        const all = await withStamps('readonly', meta => {
+            const request = meta.getAll();
+            return { value: () => request.result };
+        });
         return JSON.stringify(all
-            .filter(r => r && typeof r.id === 'string' && r.data instanceof Uint8Array)
+            .filter(r => r && typeof r.id === 'string' && typeof r.size === 'number')
             .sort((a, b) => (a.created || 0) - (b.created || 0))
-            .map(r => ({ id: r.id, name: String(r.name || 'Stamp'), kind: r.kind === 'Page' ? 'Page' : 'Image', size: r.data.byteLength })));
+            .map(r => ({ id: r.id, name: String(r.name || 'Stamp'), kind: r.kind === 'Page' ? 'Page' : 'Image', size: r.size })));
     } catch {
         return 'null';
     }
 }
 
-/** Keeps a made stamp (its one-page PDF); '' when kept (or kept already), else why not. */
+/**
+ * Keeps a made stamp (its one-page PDF); '' when kept (or kept already), else why not. The caps
+ * are checked in the same transaction as the write, so two tabs saving at once cannot pass them.
+ */
 export async function stampLibrarySave(id, name, kind, view) {
     const data = view.slice();   // a copy out of WebAssembly memory, before the first await
     try {
-        const all = await withStamps('readonly', s => s.getAll());
-        if (all.some(r => r.id === id)) return '';
-        if (all.length >= MaxSavedStamps) return `The stamp library keeps at most ${MaxSavedStamps} stamps. Delete one first.`;
-        const total = all.reduce((n, r) => n + (r.data ? r.data.byteLength : 0), 0);
-        if (total + data.byteLength > MaxSavedStampBytes) return 'The stamp library is full (64 MB). Delete a stamp first.';
-        await withStamps('readwrite', s => s.put({ id, name, kind, data, created: Date.now() }));
-        return '';
+        return await withStamps('readwrite', (meta, store, tx) => {
+            let answer = '';
+            const request = meta.getAll();
+            request.onsuccess = () => {
+                const all = request.result || [];
+                if (all.some(r => r.id === id)) return;
+                if (all.length >= MaxSavedStamps) {
+                    answer = `The stamp library keeps at most ${MaxSavedStamps} stamps. Delete one first.`;
+                    return;
+                }
+                const total = all.reduce((n, r) => n + (typeof r.size === 'number' ? r.size : 0), 0);
+                if (total + data.byteLength > MaxSavedStampBytes) {
+                    answer = 'The stamp library is full (64 MB). Delete a stamp first.';
+                    return;
+                }
+                store.put({ id, data });
+                meta.put({ id, name, kind, size: data.byteLength, created: Date.now() });
+            };
+            return { value: () => answer };
+        });
     } catch {
         return 'This browser does not let the viewer keep stamps (its storage is off or full).';
     }
@@ -1004,9 +1045,12 @@ export async function stampLibrarySave(id, name, kind, view) {
 /** Gives a saved stamp's bytes to OnStampLibraryBytes; false when it is not there. */
 export async function stampLibraryLoad(id) {
     try {
-        const r = await withStamps('readonly', s => s.get(id));
+        const r = await withStamps('readonly', (meta, store) => {
+            const m = meta.get(id), d = store.get(id);
+            return { value: () => (m.result && d.result ? { meta: m.result, data: d.result.data } : null) };
+        });
         if (!r || !(r.data instanceof Uint8Array)) return false;
-        await app.invokeMethodAsync('OnStampLibraryBytes', r.id, r.kind === 'Page' ? 'Page' : 'Image', String(r.name || 'Stamp'), r.data);
+        await app.invokeMethodAsync('OnStampLibraryBytes', r.meta.id, r.meta.kind === 'Page' ? 'Page' : 'Image', String(r.meta.name || 'Stamp'), r.data);
         return true;
     } catch {
         return false;
@@ -1016,7 +1060,10 @@ export async function stampLibraryLoad(id) {
 /** Deletes a saved stamp; false when the browser's storage refused. */
 export async function stampLibraryDelete(id) {
     try {
-        await withStamps('readwrite', s => s.delete(id));
+        await withStamps('readwrite', (meta, store) => {
+            meta.delete(id);
+            store.delete(id);
+        });
         return true;
     } catch {
         return false;
@@ -1045,13 +1092,12 @@ export function initEmbed(dotnet, origin, readyJson) {
             const { data, ...rest } = m;
             dotnet.invokeMethodAsync('OnEmbedOpen', JSON.stringify(rest), bytes);
         } else if (m.type === 'call') {
-            if (m.data instanceof ArrayBuffer) {
-                // A call with bytes beside it (addCustomStamp's picture or PDF).
-                const bytes = new Uint8Array(m.data);
-                const { data, ...rest } = m;
-                dotnet.invokeMethodAsync('OnEmbedCallBytes', JSON.stringify(rest), bytes);
+            const { data, ...rest } = m;
+            if (m.method === 'addCustomStamp' && data instanceof ArrayBuffer && data.byteLength <= MaxStampFileBytes) {
+                // addCustomStamp's picture or PDF beside the call; bytes beside any other call are dropped.
+                dotnet.invokeMethodAsync('OnEmbedCallBytes', JSON.stringify(rest), new Uint8Array(data));
             } else {
-                dotnet.invokeMethodAsync('OnEmbedCall', JSON.stringify(m));
+                dotnet.invokeMethodAsync('OnEmbedCall', JSON.stringify(rest));
             }
         } else if (m.type === 'range') {
             // The answer to a fetchRange request: its bytes beside it, checked against the request in .NET.
