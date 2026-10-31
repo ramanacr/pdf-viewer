@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using PdfEngine.Vector.Editing;
@@ -12,6 +13,8 @@ namespace PdfViewer.Web.Engine;
 /// (a whole face, or one Unicode slice of a CJK face) with the code points its cmap maps. A
 /// character is looked up in the faces in index order, script and symbol faces first; the CJK
 /// faces share most characters, so the language of the text picks which of them comes first.
+/// An entry can also give the file's size and SHA-256; a fetched file must then match both
+/// (<see cref="Entry.Matches"/>), so a truncated or altered file never reaches Skia.
 /// </summary>
 public sealed partial class BundledFontIndex
 {
@@ -21,12 +24,30 @@ public sealed partial class BundledFontIndex
         private readonly int[] _starts;
         private readonly int[] _ends;
 
-        internal Entry(SystemFontFace face, string group, int[] starts, int[] ends)
+        internal Entry(SystemFontFace face, string group, int[] starts, int[] ends, long? size, string? sha256)
         {
             Face = face;
             Group = group;
             _starts = starts;
             _ends = ends;
+            Size = size;
+            Sha256 = sha256;
+        }
+
+        /// <summary>The file's length in bytes, when the index gives it.</summary>
+        public long? Size { get; }
+
+        /// <summary>The file's SHA-256 (lower-case hex), when the index gives it.</summary>
+        public string? Sha256 { get; }
+
+        /// <summary>
+        /// Whether fetched bytes are this file: the size and the SHA-256 that the index gives, when
+        /// it gives them. The size is checked first, so most wrong files are refused without hashing.
+        /// </summary>
+        public bool Matches(ReadOnlySpan<byte> data)
+        {
+            if (Size is { } size && data.Length != size) return false;
+            return Sha256 == null || Convert.ToHexStringLower(SHA256.HashData(data)) == Sha256;
         }
 
         public SystemFontFace Face { get; }
@@ -64,17 +85,31 @@ public sealed partial class BundledFontIndex
     /// <summary>The CJK languages, in the order tried after the one the text is in.</summary>
     public static IReadOnlyList<string> CjkGroups { get; } = new[] { "sc", "tc", "jp", "kr" };
 
-    private BundledFontIndex(IReadOnlyList<Entry> entries) => Entries = entries;
+    private readonly Dictionary<string, Entry> _byPath;
+
+    private BundledFontIndex(IReadOnlyList<Entry> entries)
+    {
+        Entries = entries;
+        _byPath = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        foreach (var e in entries) _byPath.TryAdd(e.Face.Path, e);
+    }
 
     public IReadOnlyList<Entry> Entries { get; }
+
+    /// <summary>The entry of a file by its path relative to the fonts folder ("noto/NotoSansThai-Regular.ttf"); null when the index has none.</summary>
+    public Entry? EntryOf(string path) => _byPath.GetValueOrDefault(path);
 
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]*$")]
     private static partial Regex SafeName();
 
+    [GeneratedRegex("^[0-9a-f]{64}$")]
+    private static partial Regex Sha256Hex();
+
     /// <summary>
     /// Reads an index (version 1). Each face's "ranges" are pairs [gap, extra]: a run of extra + 1
     /// code points that starts gap code points after the end of the previous run (the first after
-    /// -1). Entries with a file name that is not a plain name are left out.
+    /// -1). Optional "size" (bytes) and "sha256" (lower-case hex) describe the file; when they are
+    /// there, they must be valid. Entries with a file name that is not a plain name are left out.
     /// </summary>
     /// <param name="directory">Folder of the files relative to the fonts folder ("noto"); it prefixes each face's path.</param>
     /// <exception cref="FormatException">The data is not an index this version reads.</exception>
@@ -92,6 +127,18 @@ public sealed partial class BundledFontIndex
                 string family = item.GetProperty("family").GetString() ?? "";
                 string group = item.GetProperty("group").GetString() ?? "";
                 if (!SafeName().IsMatch(file) || family.Length == 0) continue;
+                long? size = null;
+                string? sha = null;
+                if (item.TryGetProperty("size", out var sizeValue))
+                {
+                    size = sizeValue.GetInt64();
+                    if (size <= 0) throw new FormatException("Invalid file size.");
+                }
+                if (item.TryGetProperty("sha256", out var shaValue))
+                {
+                    sha = shaValue.GetString() ?? "";
+                    if (!Sha256Hex().IsMatch(sha)) throw new FormatException("Invalid SHA-256.");
+                }
                 var ranges = item.GetProperty("ranges");
                 int count = ranges.GetArrayLength();
                 if (count % 2 != 0) throw new FormatException("Odd range list.");
@@ -116,7 +163,7 @@ public sealed partial class BundledFontIndex
                     n++;
                 }
                 var face = new SystemFontFace($"{directory}/{file}", 0, family, "Regular", Path.GetFileNameWithoutExtension(file), 400, false);
-                entries.Add(new Entry(face, group, starts, ends));
+                entries.Add(new Entry(face, group, starts, ends, size, sha));
             }
             return new BundledFontIndex(entries);
         }

@@ -74,11 +74,38 @@ public sealed class EmbedProtocolException(string code, string message, int requ
 /// </summary>
 public sealed record EmbedFrame(EmbedMode Mode, string? Origin)
 {
+    /// <summary>
+    /// Where the viewer fetches its bundled fonts (the SDK's <c>fontBaseUrl</c> option): an absolute
+    /// path on the viewer's own origin, such as "/static/pdf-fonts/". Null for the default, the
+    /// <c>fonts/</c> folder next to the viewer. Another origin is never used: the SDK refuses it,
+    /// and the viewer's Content-Security-Policy allows requests to its own origin only.
+    /// </summary>
+    public string? FontBase { get; init; }
+
+    /// <summary>
+    /// A font base path from the frame's URL, or null when it is not a plain absolute path: it must
+    /// start and end with "/", not start with "//", and have only letters, digits and ". _ ~ -" in
+    /// its segments, none of which starts with "." (so no "." or ".." segment).
+    /// </summary>
+    public static string? ParseFontBase(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 512 || value[0] != '/' || value[^1] != '/' || value.StartsWith("//", StringComparison.Ordinal))
+            return null;
+        if (value == "/") return value;
+        foreach (var segment in value[1..^1].Split('/'))
+        {
+            if (segment.Length == 0 || segment[0] == '.') return null;
+            foreach (char c in segment)
+                if (!(char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '~' or '-')) return null;
+        }
+        return value;
+    }
+
     /// <summary>The frame's settings from a URL query ("?embed=1&amp;…"), or null when the page is not embedded.</summary>
     public static EmbedFrame? FromQuery(string? query)
     {
         if (string.IsNullOrEmpty(query)) return null;
-        string? embed = null, mode = null, origin = null;
+        string? embed = null, mode = null, origin = null, fonts = null;
         foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
             int eq = part.IndexOf('=');
@@ -97,11 +124,15 @@ public sealed record EmbedFrame(EmbedMode Mode, string? Origin)
                 case "embed": embed ??= value; break;
                 case "mode": mode ??= value; break;
                 case "origin": origin ??= value; break;
+                case "fonts": fonts ??= value; break;
             }
         }
         if (embed == null) return null;
         return new EmbedFrame(EmbedConfig.ParseMode(mode) ?? EmbedMode.FullWindow,
-            embed == EmbedProtocol.Version.ToString(CultureInfo.InvariantCulture) ? EmbedProtocol.ParseOrigin(origin) : null);
+            embed == EmbedProtocol.Version.ToString(CultureInfo.InvariantCulture) ? EmbedProtocol.ParseOrigin(origin) : null)
+        {
+            FontBase = ParseFontBase(fonts),
+        };
     }
 }
 

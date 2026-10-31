@@ -241,15 +241,36 @@ export function toggleFullscreen() {
 }
 
 /**
+ * A font folder on this origin: an absolute path such as '/static/pdf-fonts/' (the embed SDK's
+ * fontBaseUrl, checked by the SDK and by EmbedFrame.ParseFontBase), else null for the default.
+ */
+function fontBaseOf(value) {
+    return typeof value === 'string' && value.length <= 512 && /^\/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*\/)*$/.test(value)
+        && !value.split('/').some(s => s === '.' || s === '..') ? value : null;
+}
+
+/** The font folder the embed SDK named in this frame's address, or null for the default. */
+function frameFontBase() {
+    try {
+        return fontBaseOf(new URLSearchParams(location.search).get('fonts'));
+    } catch {
+        return null;
+    }
+}
+
+/**
  * One of the fonts bundled with the app (wwwroot/fonts, relative to the base href, for example
  * 'LiberationSans-Regular.ttf' or 'noto/index.json'), fetched when a page first needs it; the
- * browser's HTTP cache keeps it. Same origin only. Null when it cannot be had.
+ * browser's HTTP cache keeps it. Same origin only: `base` (the embed SDK's fontBaseUrl) is a path
+ * on this origin, and the page's Content-Security-Policy allows no other. Null when it cannot be
+ * had; the engine then reports the text as missing.
  */
-export async function fetchFont(file) {
+export async function fetchFont(file, base) {
     const parts = String(file).split('/');
     if (parts.some(p => p === '' || p === '.' || p === '..')) return null;
     try {
-        const response = await fetch('fonts/' + parts.map(encodeURIComponent).join('/'), { credentials: 'same-origin' });
+        const folder = fontBaseOf(base) ?? 'fonts/';
+        const response = await fetch(folder + parts.map(encodeURIComponent).join('/'), { credentials: 'same-origin' });
         return response.ok ? new Uint8Array(await response.arrayBuffer()) : null;
     } catch {
         return null;
@@ -1206,6 +1227,8 @@ export function startRenderWorker() {
             // The worker carries this module's version query (?v=), so both are replaced together.
             const url = new URL('render-worker.js', import.meta.url);
             url.search = new URL(import.meta.url).search;
+            const fontBase = frameFontBase();
+            if (fontBase) url.searchParams.set('fonts', fontBase);
             renderWorker = new Worker(url, { type: 'module', name: 'render' });
         } catch {
             settle(false);

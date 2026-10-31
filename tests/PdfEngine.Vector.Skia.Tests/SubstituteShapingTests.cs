@@ -274,20 +274,11 @@ public class SubstituteShapingTests
         Assert.Equal(new[] { Nirmala.Value.GlyphFor(0x093F), Nirmala.Value.GlyphFor(0x0915) }, ids[5..7]);
     }
 
-    /// <summary>Runs only with NOTO_FONTS_DIR set to the output of eng/webdemo/noto_fonts.py.</summary>
-    private sealed class NotoFontsFactAttribute : FactAttribute
-    {
-        public NotoFontsFactAttribute()
-        {
-            if (!File.Exists(Path.Combine(Environment.GetEnvironmentVariable("NOTO_FONTS_DIR") ?? "", "NotoSansArabic-Regular.ttf")))
-                Skip = "Set NOTO_FONTS_DIR to the folder eng/webdemo/noto_fonts.py wrote (fonts/noto).";
-        }
-    }
-
+    /// <summary>Runs with the real Noto files (NOTO_FONTS_DIR; see <see cref="NotoFontsFactAttribute"/>).</summary>
     [NotoFontsFact]
     public async Task RealNotoFaces_JoinArabicAndReorderDevanagari()
     {
-        var fonts = new CharacterFaces(Environment.GetEnvironmentVariable("NOTO_FONTS_DIR"));
+        var fonts = new CharacterFaces(NotoFontsFactAttribute.Directory);
         var arabic = Font(fonts.ArabicPath);
         var devanagari = Font(fonts.DevanagariPath);
         string[] lines = { Seen("بيت"), Seen("سلام"), "कि", "क्ष", "र्क" };

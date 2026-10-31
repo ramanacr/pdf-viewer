@@ -13,8 +13,9 @@ namespace PdfEngine.Vector.Skia.Tests;
 /// an index written here, whose Noto file names are served by installed Windows fonts with the
 /// same scripts (Arial for Arabic, Nirmala UI for Devanagari, Microsoft YaHei for Chinese). So the
 /// whole chain runs as in the browser; only the outlines differ. With NOTO_FONTS_DIR set to a
-/// folder that the script wrote, <see cref="RealNotoFonts_DrawArabicDevanagariAndChinese"/> draws
-/// with the real files too.
+/// folder that the script wrote, <see cref="RealNotoFonts_DrawEachScriptFromItsFace"/> and
+/// <see cref="RealNotoIndex_SlicesCoverEachCjkFaceOnce"/> use the real files too; CI builds that
+/// folder and requires them (<see cref="NotoFontsFactAttribute"/>).
 /// </summary>
 public class NotoFontTests
 {
@@ -57,12 +58,15 @@ public class NotoFontTests
     }
 
     private const string Arabic = "NotoSansArabic-Regular.ttf", Devanagari = "NotoSansDevanagari-Regular.ttf", Symbols = "NotoSansSymbols2-Regular.ttf";
+    private const string Thai = "NotoSansThai-Regular.ttf", Sinhala = "NotoSansSinhala-Regular.ttf";
     private const string ScCore = "NotoSansSC-Regular-00.otf", ScRest = "NotoSansSC-Regular-01.otf", TcCore = "NotoSansTC-Regular-00.otf", JpCore = "NotoSansJP-Regular-00.otf", KrCore = "NotoSansKR-Regular-00.otf";
 
     /// <summary>An index like the script's: script and symbol faces, then CJK slices by language.</summary>
     private static byte[] TestIndex() => IndexJson(
         (Arabic, "Noto Sans Arabic", "arabic", new[] { (0x0600, 0x06FF), (0xFB50, 0xFDFF), (0xFE70, 0xFEFF) }),
         (Devanagari, "Noto Sans Devanagari", "devanagari", new[] { (0x0900, 0x097F) }),
+        (Sinhala, "Noto Sans Sinhala", "sinhala", new[] { (0x0D81, 0x0DF4) }),
+        (Thai, "Noto Sans Thai", "thai", new[] { (0x0E01, 0x0E5B) }),
         (Symbols, "Noto Sans Symbols 2", "symbols2", new[] { (0x2190, 0x21FF), (0x2700, 0x27BF) }),
         // The core slice has the common characters; the rest slice the others (here: a block of rare ones).
         (ScCore, "Noto Sans SC", "sc", new[] { (0x3000, 0x303F), (0x4E00, 0x4E2D), (0x6587, 0x6587) }),
@@ -77,14 +81,130 @@ public class NotoFontTests
     public void Index_DecodesRunsAndPaths()
     {
         var index = Index;
-        Assert.Equal(8, index.Entries.Count);
+        Assert.Equal(10, index.Entries.Count);
         var arabic = index.Entries[0];
         Assert.Equal("noto/" + Arabic, arabic.Face.Path);
         Assert.Equal("Noto Sans Arabic", arabic.Face.Family);
         Assert.Equal(0x100 + 0x2B0 + 0x90, arabic.CharacterCount);
         Assert.True(arabic.Covers(0x0600) && arabic.Covers(0x06FF) && arabic.Covers(0xFB50) && arabic.Covers(0xFEFF));
         Assert.False(arabic.Covers(0x05FF) || arabic.Covers(0x0700) || arabic.Covers(0xFE6F) || arabic.Covers(0xFF00));
-        Assert.Equal(new[] { false, false, false, true, true, true, true, true }, index.Entries.Select(e => e.IsCjk));
+        Assert.Equal(new[] { false, false, false, false, false, true, true, true, true, true }, index.Entries.Select(e => e.IsCjk));
+        // An index without sizes and hashes (as before they were written): nothing to check against.
+        Assert.All(index.Entries, e => Assert.True(e.Size == null && e.Sha256 == null && e.Matches(new byte[] { 1, 2, 3 })));
+        Assert.Same(index.Entries[1], index.EntryOf("noto/" + Devanagari));
+        Assert.Null(index.EntryOf(Devanagari));
+        Assert.Null(index.EntryOf("noto/NotoSansLao-Regular.ttf"));
+    }
+
+    // ------------------------------------------------------------------ the pinned sources
+
+    /// <summary>
+    /// eng/webdemo/noto-fonts.json, which CI downloads from: every family the web demo promises,
+    /// each from a release of a github.com/notofonts repository, pinned by size and SHA-256.
+    /// </summary>
+    [Fact]
+    public void Manifest_PinsEveryFamilyToAnOfficialRelease()
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(RepositoryRoot(), "eng", "webdemo", "noto-fonts.json")));
+        var fonts = doc.RootElement.GetProperty("fonts").EnumerateArray().ToList();
+        var families = fonts.Select(f => f.GetProperty("family").GetString()).ToList();
+        foreach (var family in new[] { "Noto Sans Arabic", "Noto Sans Hebrew", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Gurmukhi",
+                     "Noto Sans Gujarati", "Noto Sans Oriya", "Noto Sans Tamil", "Noto Sans Telugu", "Noto Sans Kannada", "Noto Sans Malayalam",
+                     "Noto Sans Sinhala", "Noto Sans Thai", "Noto Sans Math", "Noto Sans Symbols 2", "Noto Sans SC", "Noto Sans TC", "Noto Sans JP", "Noto Sans KR" })
+            Assert.Contains(family, families);
+        Assert.Equal(families.Count, families.Distinct().Count());
+        Assert.Equal(fonts.Count, fonts.Select(f => f.GetProperty("id").GetString()).Distinct().Count());
+        var hex = new System.Text.RegularExpressions.Regex("^[0-9a-f]{64}$");
+        foreach (var f in fonts)
+        {
+            var url = new Uri(f.GetProperty("url").GetString()!);
+            Assert.Equal("https", url.Scheme);
+            Assert.Equal("github.com", url.Host);
+            Assert.StartsWith("/notofonts/", url.AbsolutePath);
+            Assert.Contains("/releases/download/", url.AbsolutePath);
+            Assert.True(f.GetProperty("size").GetInt64() > 0);
+            foreach (var key in new[] { "sha256", "memberSha256", "licenseSha256" })
+                Assert.Matches(hex, f.GetProperty(key).GetString()!);
+        }
+        // Only the CJK faces are sliced, one per language that BundledFontIndex knows.
+        Assert.Equal(BundledFontIndex.CjkGroups.Order(), fonts.Where(f => f.TryGetProperty("slice", out _)).Select(f => f.GetProperty("slice").GetString()!).Order());
+        Assert.Equal("files.pythonhosted.org", new Uri(doc.RootElement.GetProperty("fontTools").GetProperty("url").GetString()!).Host);
+    }
+
+    // ------------------------------------------------------------------ size and SHA-256
+
+    private static string Sha256Hex(byte[] data) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
+
+    /// <summary>An index of one Arabic file that gives the file's size and SHA-256.</summary>
+    private static byte[] VerifiedIndex(long size, string sha256) => Encoding.UTF8.GetBytes(
+        $"{{\"version\":1,\"faces\":[{{\"file\":\"{Arabic}\",\"family\":\"Noto Sans Arabic\",\"group\":\"arabic\",\"ranges\":[{string.Join(",", Encode((0x0600, 0x06FF)))}],\"size\":{size},\"sha256\":\"{sha256}\"}}]}}");
+
+    [Fact]
+    public void Index_ReadsSizeAndSha256_AndMatchesOnlyTheSameBytes()
+    {
+        byte[] file = Enumerable.Range(0, 5000).Select(i => (byte)(i * 7)).ToArray();
+        var entry = BundledFontIndex.Parse(VerifiedIndex(file.Length, Sha256Hex(file)), "noto").Entries.Single();
+        Assert.Equal(5000, entry.Size);
+        Assert.Equal(Sha256Hex(file), entry.Sha256);
+        Assert.True(entry.Matches(file));
+        Assert.False(entry.Matches(file.AsSpan(0, 4999)));            // truncated
+        Assert.False(entry.Matches(file.Append((byte)0).ToArray()));  // longer
+        var altered = (byte[])file.Clone();
+        altered[2500] ^= 1;
+        Assert.False(entry.Matches(altered));                          // same size, other bytes
+    }
+
+    [Theory]
+    [InlineData("\"size\":0")]
+    [InlineData("\"size\":-5")]
+    [InlineData("\"size\":\"12\"")]
+    [InlineData("\"sha256\":\"ABCDEF\"")]
+    [InlineData("\"sha256\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\"")] // upper case
+    [InlineData("\"sha256\":12")]
+    public void Index_RejectsABadSizeOrSha256(string field) =>
+        Assert.Throws<FormatException>(() => BundledFontIndex.Parse(Encoding.UTF8.GetBytes(
+            $"{{\"version\":1,\"faces\":[{{\"file\":\"a.ttf\",\"family\":\"A\",\"group\":\"arabic\",\"ranges\":[0,1],{field}}}]}}"), "noto"));
+
+    [Fact]
+    public async Task FetchedFile_WithTheIndexedSizeAndSha256_IsDrawn()
+    {
+        byte[] stand = File.ReadAllBytes(Path.Combine(WindowsFonts, "arial.ttf"));
+        var fetch = new FakeFetch { Index = VerifiedIndex(stand.Length, Sha256Hex(stand)) };
+        await using var doc = await ViewerDocument.OpenAsync(UnicodePage(("ArialUnicode", null, ArabicText)),
+            options: new ViewerOptions { Fonts = OnDemandFontSource.Bundled(fetch.FetchAsync) });
+        var bitmap = await doc.RenderPageAsync(1, 1.0);
+        Assert.Equal(0, bitmap.TextRegionsWithoutFont);
+        Assert.True(Ink(bitmap) > 100);
+    }
+
+    [Theory]
+    [InlineData("truncated")]
+    [InlineData("altered")]
+    public async Task FetchedFile_ThatDiffersFromTheIndex_IsRefused_AndTheTextReportedMissing(string damage)
+    {
+        byte[] stand = File.ReadAllBytes(Path.Combine(WindowsFonts, "arial.ttf"));
+        var fetch = new FakeFetch
+        {
+            Index = VerifiedIndex(stand.Length, Sha256Hex(stand)),
+            // As a broken proxy or a partial download would serve it: still a font Skia could read.
+            Alter = (_, bytes) =>
+            {
+                if (damage == "truncated") return bytes[..^4];
+                var copy = (byte[])bytes.Clone();
+                copy[^1] ^= 0xFF;
+                return copy;
+            },
+        };
+        var fonts = OnDemandFontSource.Bundled(fetch.FetchAsync);
+        await using var doc = await ViewerDocument.OpenAsync(UnicodePage(("ArialUnicode", null, ArabicText)), options: new ViewerOptions { Fonts = fonts });
+        var bitmap = await doc.RenderPageAsync(1, 1.0);
+        Assert.Equal(1, bitmap.TextRegionsWithoutFont);
+        Assert.Equal(0, Ink(bitmap));
+        // Refused once and not asked for again.
+        Assert.Equal(1, (await doc.RenderPageAsync(1, 1.5)).TextRegionsWithoutFont);
+        Assert.Equal(new[] { "noto/index.json", "noto/" + Arabic }, fetch.NotoRequests.Order());
+        Assert.False(fonts.HasPendingRequests);
+        Assert.DoesNotContain("noto/" + Arabic, fonts.LoadedFiles);
     }
 
     [Fact]
@@ -102,6 +222,8 @@ public class NotoFontTests
     [InlineData(0x0628, "", null, Arabic)]                 // Arabic beh
     [InlineData(0xFEF7, "", null, Arabic)]                 // a presentation form
     [InlineData(0x0915, "", null, Devanagari)]             // ka
+    [InlineData(0x0E01, "", null, Thai)]                   // ko kai
+    [InlineData(0x0D85, "", null, Sinhala)]                // ayanna
     [InlineData(0x2713, "", null, Symbols)]                // check mark
     [InlineData(0x4E2D, "", null, ScCore)]                 // a common Han character: Simplified Chinese when nothing tells
     [InlineData(0x9F99, "", null, ScRest)]                 // a rare one: the slice that has it
@@ -145,7 +267,20 @@ public class NotoFontTests
         public bool FailIndex { get; init; }
         public string? NotoDirectory { get; init; }
 
-        public Task<byte[]?> FetchAsync(string file, CancellationToken cancellationToken)
+        /// <summary>The index to serve instead of <see cref="TestIndex"/>.</summary>
+        public byte[]? Index { get; init; }
+
+        /// <summary>Changes a Noto font file on its way (a damaged download), by its name.</summary>
+        public Func<string, byte[], byte[]>? Alter { get; init; }
+
+        public async Task<byte[]?> FetchAsync(string file, CancellationToken cancellationToken)
+        {
+            var data = await FetchUnalteredAsync(file, cancellationToken);
+            return data != null && Alter != null && file.StartsWith("noto/", StringComparison.Ordinal) && !file.EndsWith(".json", StringComparison.Ordinal)
+                ? Alter(file, data) : data;
+        }
+
+        private Task<byte[]?> FetchUnalteredAsync(string file, CancellationToken cancellationToken)
         {
             Requests.Add(file);
             if (!file.StartsWith("noto/", StringComparison.Ordinal))
@@ -154,7 +289,7 @@ public class NotoFontTests
             if (NotoDirectory != null)
                 return Task.FromResult<byte[]?>(File.ReadAllBytes(Path.Combine(NotoDirectory, name)));
             if (name == "index.json")
-                return Task.FromResult(FailIndex ? null : TestIndex());
+                return Task.FromResult(FailIndex ? null : Index ?? TestIndex());
             string? stand = name switch
             {
                 Arabic => "arial.ttf",
@@ -336,31 +471,61 @@ public class NotoFontTests
         Assert.Null(fonts.CharacterIndex);
     }
 
-    /// <summary>Runs only with NOTO_FONTS_DIR set to the output of eng/webdemo/noto_fonts.py.</summary>
-    private sealed class NotoFontsFactAttribute : FactAttribute
-    {
-        public NotoFontsFactAttribute()
-        {
-            if (!File.Exists(Path.Combine(Environment.GetEnvironmentVariable("NOTO_FONTS_DIR") ?? "", "index.json")))
-                Skip = "Set NOTO_FONTS_DIR to the folder eng/webdemo/noto_fonts.py wrote (fonts/noto).";
-        }
-    }
-
+    /// <summary>
+    /// With the real files (NOTO_FONTS_DIR; see <see cref="NotoFontsFactAttribute"/>): every line is
+    /// drawn from its Noto face, only those files are fetched, and each matched the size and
+    /// SHA-256 that the index gives (a mismatch would leave its line undrawn).
+    /// </summary>
     [NotoFontsFact]
-    public async Task RealNotoFonts_DrawArabicDevanagariAndChinese()
+    public async Task RealNotoFonts_DrawEachScriptFromItsFace()
     {
-        var fetch = new FakeFetch { NotoDirectory = Environment.GetEnvironmentVariable("NOTO_FONTS_DIR") };
+        var fetch = new FakeFetch { NotoDirectory = NotoFontsFactAttribute.Directory };
         var fonts = OnDemandFontSource.Bundled(fetch.FetchAsync);
         await using var doc = await ViewerDocument.OpenAsync(UnicodePage(("ArialUnicode", null, ArabicText), ("Mangal", null, HindiText),
-            ("SimSun", null, ChineseText), ("MS-Mincho", "Japan1", "日本語です"), ("Batang", null, "한국어")), options: new ViewerOptions { Fonts = fonts });
+            ("SimSun", null, ChineseText), ("MS-Mincho", "Japan1", "日本語です"), ("Batang", null, "한국어"),
+            ("Tahoma", null, "ภาษาไทย"), ("Iskoola Pota", null, "සිංහල")), options: new ViewerOptions { Fonts = fonts });
         var bitmap = await doc.RenderPageAsync(1, 1.0);
         Assert.Equal(0, bitmap.TextRegionsWithoutFont);
-        for (int line = 0; line < 5; line++)
+        for (int line = 0; line < 7; line++)
         {
             int baseline = 400 - (360 - 40 * line);
             Assert.True(Ink(bitmap, baseline - 26, baseline + 10) > 100, $"line {line} drew no glyphs");
         }
         Assert.Equal(new[] { "noto/NotoSansArabic-Regular.ttf", "noto/NotoSansDevanagari-Regular.ttf", "noto/NotoSansJP-Regular-00.otf",
-            "noto/NotoSansKR-Regular-00.otf", "noto/NotoSansSC-Regular-00.otf", "noto/index.json" }, fetch.NotoRequests.Order(StringComparer.Ordinal));
+            "noto/NotoSansKR-Regular-00.otf", "noto/NotoSansSC-Regular-00.otf", "noto/NotoSansSinhala-Regular.ttf", "noto/NotoSansThai-Regular.ttf",
+            "noto/index.json" }, fetch.NotoRequests.Order(StringComparer.Ordinal));
+        Assert.Equal(fetch.NotoRequests.Count(), fonts.LoadedFiles.Count(f => f.StartsWith("noto/", StringComparison.Ordinal)));
+
+        // The index that the script wrote describes every file, and each file on disk matches it.
+        var index = fonts.CharacterIndex!;
+        Assert.Contains(index.Entries, e => e.Group == "thai");
+        Assert.Contains(index.Entries, e => e.Group == "sinhala");
+        foreach (var entry in index.Entries)
+        {
+            Assert.True(entry.Size > 0 && entry.Sha256 != null, entry.Face.Path);
+            Assert.True(entry.Matches(File.ReadAllBytes(Path.Combine(NotoFontsFactAttribute.Directory!, entry.Face.Path["noto/".Length..]))), entry.Face.Path);
+        }
+    }
+
+    /// <summary>
+    /// The slice map of the real index: each CJK language's slices together cover its face, never
+    /// overlap, and the core slice (the "-00" file) has the common characters of that language.
+    /// </summary>
+    [NotoFontsFact]
+    public async Task RealNotoIndex_SlicesCoverEachCjkFaceOnce()
+    {
+        var index = BundledFontIndex.Parse(await File.ReadAllBytesAsync(Path.Combine(NotoFontsFactAttribute.Directory!, "index.json")), "noto");
+        foreach (var (group, common) in new[] { ("sc", 0x4E2D), ("tc", 0x4E2D), ("jp", 0x3042), ("kr", 0xAC00) })
+        {
+            var slices = index.Entries.Where(e => e.Group == group).ToList();
+            Assert.True(slices.Count > 1, group);
+            Assert.EndsWith("-00.otf", slices[0].Face.Path);
+            Assert.True(slices[0].Covers(common), $"{group}: U+{common:X4} is not in the core slice");
+            foreach (int cp in new[] { 0x3001, 0x4E00, 0x6587, 0x9F99, 0xAC01, 0x30A2, 0xFF01 })
+                Assert.True(slices.Count(s => s.Covers(cp)) <= 1, $"{group}: U+{cp:X4} is in two slices");
+        }
+        // Script faces come before the CJK slices, so a character both have is taken from the script face.
+        int firstCjk = index.Entries.ToList().FindIndex(e => e.IsCjk);
+        Assert.DoesNotContain(index.Entries.Skip(firstCjk), e => !e.IsCjk);
     }
 }
