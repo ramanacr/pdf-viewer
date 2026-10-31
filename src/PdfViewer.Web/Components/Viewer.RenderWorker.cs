@@ -37,7 +37,8 @@ public sealed partial class Viewer
             if (part is "renderInWorker=1" or "renderInWorker=true")
             {
                 _worker = WorkerState.Starting;
-                _workerStart = CanvasInterop.StartRenderWorker();
+                // The frame's font folder, as ReadFrameUrl parsed it: one source for both threads.
+                _workerStart = CanvasInterop.StartRenderWorker(_frame?.FontBase);
                 return;
             }
         }

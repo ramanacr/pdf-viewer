@@ -69,6 +69,37 @@ public class EmbedSdkTests
         Assert.Equal(EmbedMode.FullWindow, EmbedFrame.FromQuery("?embed=1&mode=POPUP")!.Mode);
     }
 
+    [Fact]
+    public void FrameUrl_GivesTheFontBase_OnlyAsAPlainPathOnTheViewersOrigin()
+    {
+        // The SDK's fontBaseUrl arrives as an absolute path (pdfviewer-embed.js, fontBasePath).
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&origin=https%3A%2F%2Fa.test")!.FontBase);
+        Assert.Equal("/static/pdf-fonts/", EmbedFrame.FromQuery("?embed=1&origin=https%3A%2F%2Fa.test&fonts=%2Fstatic%2Fpdf-fonts%2F")!.FontBase);
+        Assert.Equal("/a/", EmbedFrame.FromQuery("?embed=1&fonts=/a/&fonts=/b/")!.FontBase);
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&fonts=https%3A%2F%2Ffonts.googleapis.com%2F")!.FontBase);
+        Assert.Null(EmbedFrame.ParseFontBase(null));
+        Assert.Null(EmbedFrame.ParseFontBase("/" + new string('a', 600) + "/"));
+    }
+
+    /// <summary>
+    /// The shared case list (tests/sdk/font-base-cases.json), which tests/sdk/font-base.test.mjs runs
+    /// against the viewer's JavaScript rule (font-base.js), so the C# and JavaScript checks agree.
+    /// </summary>
+    [Fact]
+    public void FontBase_FollowsTheSharedCaseList()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "PdfViewer.slnx"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        using var cases = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dir!.FullName, "tests", "sdk", "font-base-cases.json")));
+        var valid = cases.RootElement.GetProperty("valid").EnumerateArray().Select(e => e.GetString()!).ToList();
+        var invalid = cases.RootElement.GetProperty("invalid").EnumerateArray().Select(e => e.GetString()!).ToList();
+        Assert.NotEmpty(valid);
+        Assert.True(invalid.Count > 20);
+        foreach (var value in valid) Assert.Equal(value, EmbedFrame.ParseFontBase(value));
+        foreach (var value in invalid) Assert.Null(EmbedFrame.ParseFontBase(value));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("not json")]

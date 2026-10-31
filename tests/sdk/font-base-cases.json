@@ -1,0 +1,38 @@
+{
+  "about": "Font folder paths (the embed SDK's fontBaseUrl as the frame gets it, ?fonts=). The same rule is in src/PdfViewer.Web/wwwroot/js/font-base.js (viewer.js and render-worker.js) and EmbedFrame.ParseFontBase (C#). tests/sdk/font-base.test.mjs and EmbedSdkTests both check every case here.",
+  "valid": [
+    "/",
+    "/fonts/",
+    "/static/pdf-fonts/",
+    "/v1.2/fonts_x~y-z/",
+    "/a/b/c/d/"
+  ],
+  "invalid": [
+    "",
+    "fonts/",
+    "/fonts",
+    "//evil.example/fonts/",
+    "//",
+    "/../fonts/",
+    "/..//",
+    "/./",
+    "/a/./b/",
+    "/a/../b/",
+    "/.hidden/",
+    "/%2e%2e/",
+    "/%2E/",
+    "/a%2F/",
+    "/a//b/",
+    "/a b/",
+    "/a\\b/",
+    "\\\\evil.example\\fonts\\",
+    "/fönts/",
+    "https://fonts.gstatic.com/s/",
+    "http://pdf.example.com/fonts/",
+    "javascript:alert(1)/",
+    "data:/x/",
+    "/a?b=1/",
+    "/a#b/",
+    "/a:b/"
+  ]
+}

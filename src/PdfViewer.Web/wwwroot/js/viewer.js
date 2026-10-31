@@ -4,6 +4,8 @@
 // It sends nothing over the network. When the page is embedded (index.html?embed=1, see
 // pdfviewer-embed.js), it also carries the messages between the host page and the viewer.
 
+import { fontBaseOf, fontFilePath } from './font-base.js?v=10';
+
 let app = null;            // DotNetObjectReference of the viewer component
 let scroller = null;       // the element that scrolls the pages
 let observer = null;
@@ -243,13 +245,17 @@ export function toggleFullscreen() {
 /**
  * One of the fonts bundled with the app (wwwroot/fonts, relative to the base href, for example
  * 'LiberationSans-Regular.ttf' or 'noto/index.json'), fetched when a page first needs it; the
- * browser's HTTP cache keeps it. Same origin only. Null when it cannot be had.
+ * browser's HTTP cache keeps it. Same origin only: `base` (the embed SDK's fontBaseUrl, as
+ * EmbedFrame.ParseFontBase read it) is a plain path, checked again here (font-base.js), so the
+ * request cannot leave this origin. With `reload`, the HTTP cache is bypassed: the engine asks
+ * so once when a file did not match its size and SHA-256. Null when it cannot be had; the engine
+ * then reports the text as missing.
  */
-export async function fetchFont(file) {
-    const parts = String(file).split('/');
-    if (parts.some(p => p === '' || p === '.' || p === '..')) return null;
+export async function fetchFont(file, base, reload) {
+    const path = fontFilePath(file, base, 'fonts/');
+    if (path === null) return null;
     try {
-        const response = await fetch('fonts/' + parts.map(encodeURIComponent).join('/'), { credentials: 'same-origin' });
+        const response = await fetch(path, { credentials: 'same-origin', cache: reload === true ? 'reload' : 'default' });
         return response.ok ? new Uint8Array(await response.arrayBuffer()) : null;
     } catch {
         return null;
@@ -1186,8 +1192,11 @@ function workerGone(message) {
     workerBitmaps.clear();
 }
 
-/** Starts the render worker; true once its runtime is up, false when it fails or takes over 20 s. */
-export function startRenderWorker() {
+/**
+ * Starts the render worker; true once its runtime is up, false when it fails or takes over 20 s.
+ * `fontBase` is the font folder of the embedded frame (EmbedFrame.FontBase), or null.
+ */
+export function startRenderWorker(fontBase) {
     if (typeof Worker !== 'function' || typeof createImageBitmap !== 'function') return Promise.resolve(false);
     return new Promise(resolve => {
         let settled = false;
@@ -1206,6 +1215,8 @@ export function startRenderWorker() {
             // The worker carries this module's version query (?v=), so both are replaced together.
             const url = new URL('render-worker.js', import.meta.url);
             url.search = new URL(import.meta.url).search;
+            const fonts = fontBaseOf(fontBase);
+            if (fonts) url.searchParams.set('fonts', fonts);
             renderWorker = new Worker(url, { type: 'module', name: 'render' });
         } catch {
             settle(false);

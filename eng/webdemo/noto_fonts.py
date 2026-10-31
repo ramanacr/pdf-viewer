@@ -10,11 +10,13 @@ a mismatch), and writes into OUT:
   - each CJK face cut into Unicode slices: a core slice (the common characters of the
     language's national character set, kana, hangul and CJK punctuation), then the rest of the
     face's characters in code point order, cjkSliceSize characters per slice;
-  - index.json: every file with the code points it covers (see ranges()), which the app
-    reads before it asks for a Noto face;
+  - index.json: every file with the code points it covers (see ranges()), its size and its
+    SHA-256, which the app reads before it asks for a Noto face (it refuses a file whose size or
+    SHA-256 differ);
   - the licence of each source as OFL-<id>.txt.
 
 Usage:
+  python3 -I eng/webdemo/noto_fonts.py check          # the manifest only: no download, no fontTools
   python3 -I eng/webdemo/noto_fonts.py requirements > noto-requirements.txt
   python3 -m pip install --require-hashes --no-deps -r noto-requirements.txt
   python3 -I eng/webdemo/noto_fonts.py build --cache <download dir> --out <site>/fonts/noto
@@ -53,7 +55,7 @@ def fail(message):
     sys.exit(1)
 
 
-def download(url, expected_sha, cache_dir):
+def download(url, expected_sha, expected_size, cache_dir):
     """The archive's bytes, from the cache when the cached copy has the pinned hash."""
     host = urllib.parse.urlparse(url).hostname
     if urllib.parse.urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:
@@ -65,11 +67,21 @@ def download(url, expected_sha, cache_dir):
     if os.path.exists(cached):
         with open(cached, "rb") as f:
             data = f.read()
-        if sha256(data) == expected_sha:
+        if len(data) == expected_size and sha256(data) == expected_sha:
             return data
     print(f"downloading {url}", file=sys.stderr)
     with urllib.request.urlopen(url, timeout=300) as response:
-        data = response.read()
+        # At most one byte more than pinned: a larger answer is refused without reading it all.
+        parts, total = [], 0
+        while total <= expected_size:
+            chunk = response.read(min(1 << 20, expected_size + 1 - total))
+            if not chunk:
+                break
+            parts.append(chunk)
+            total += len(chunk)
+        data = b"".join(parts)
+    if len(data) != expected_size:
+        fail(f"{url}: {len(data)} bytes, the manifest pins {expected_size}")
     actual = sha256(data)
     if actual != expected_sha:
         fail(f"{url}: SHA-256 is {actual}, the manifest pins {expected_sha}")
@@ -184,8 +196,55 @@ def coverage(font_bytes):
     return set(TTFont(io.BytesIO(font_bytes)).getBestCmap().keys())
 
 
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+CJK_LANGUAGES = {"sc", "tc", "jp", "kr"}
+
+
+def validate_manifest(manifest):
+    """Stops on a manifest that would download from elsewhere, or that pins a value badly."""
+    tool = manifest["fontTools"]
+    if not re.match(r"^\d+\.\d+\.\d+$", tool["version"]) or not HEX64.match(tool["sha256"]):
+        fail("fontTools: version or sha256 is not pinned")
+    if urllib.parse.urlparse(tool["url"]).hostname != "files.pythonhosted.org":
+        fail("fontTools: the wheel must come from files.pythonhosted.org")
+    if int(manifest["cjkSliceSize"]) < 100:
+        fail("cjkSliceSize is too small")
+    ids = set()
+    for font in manifest["fonts"]:
+        fid = font["id"]
+        if not SAFE_NAME.match(fid) or fid in ids:
+            fail(f"font id {fid!r} is not a plain name, or it is used twice")
+        ids.add(fid)
+        url = urllib.parse.urlparse(font["url"])
+        if url.scheme != "https" or url.hostname != "github.com" or not url.path.startswith("/notofonts/") or "/releases/download/" not in url.path:
+            fail(f"{fid}: the archive must be a release of a github.com/notofonts repository")
+        for key in ("sha256", "memberSha256", "licenseSha256"):
+            if not HEX64.match(font[key]):
+                fail(f"{fid}: {key} is not a SHA-256")
+        if int(font["size"]) <= 0:
+            fail(f"{fid}: size is not pinned")
+        if not font["family"].startswith("Noto "):
+            fail(f"{fid}: unexpected family {font['family']}")
+        if "slice" in font and font["slice"] not in CJK_LANGUAGES:
+            fail(f"{fid}: unknown CJK language {font['slice']}")
+        if not SAFE_NAME.match(os.path.basename(font["member"])):
+            fail(f"{fid}: unexpected file name {font['member']}")
+
+
+def check(args):
+    """Checks the manifest and the index encoding without downloading anything."""
+    manifest = load_manifest(args.manifest)
+    validate_manifest(manifest)
+    sample = {0x41, 0x42, 0x43, 0x600, 0x601, 0x4E00, 0x10FFFF}
+    encoded = ranges(sample)
+    if encoded != [65, 2, 1468, 1, 18430, 0, 1094142, 0] or char_count(encoded) != len(sample):
+        fail(f"ranges() encodes {sorted(sample)} as {encoded}")
+    print(f"manifest ok: {len(manifest['fonts'])} sources, fontTools {manifest['fontTools']['version']}")
+
+
 def build(args):
     manifest = load_manifest(args.manifest)
+    validate_manifest(manifest)
     try:
         import fontTools
     except ImportError:
@@ -204,7 +263,7 @@ def build(args):
         fid = font["id"]
         if not SAFE_NAME.match(fid):
             fail(f"unexpected font id {fid}")
-        archive = zipfile.ZipFile(io.BytesIO(download(font["url"], font["sha256"], args.cache)))
+        archive = zipfile.ZipFile(io.BytesIO(download(font["url"], font["sha256"], int(font["size"]), args.cache)))
         data = member(archive, font["member"], font["memberSha256"], fid)
         licence = member(archive, font["license"], font["licenseSha256"], fid)
         with open(os.path.join(out_dir, f"OFL-{fid}.txt"), "wb") as f:
@@ -221,6 +280,11 @@ def build(args):
                 f.write(data)
             faces.append({"file": name, "family": font["family"], "group": fid, "ranges": ranges(coverage(data))})
 
+    for face in faces:
+        with open(os.path.join(out_dir, face["file"]), "rb") as f:
+            written = f.read()
+        face["size"] = len(written)
+        face["sha256"] = sha256(written)
     index = {"version": 1, "faces": faces}
     with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(index, f, separators=(",", ":"))
@@ -261,6 +325,8 @@ def main():
     b.set_defaults(func=build)
     r = commands.add_parser("requirements", help="print the pip requirement line for the pinned fontTools")
     r.set_defaults(func=requirements)
+    c = commands.add_parser("check", help="check the manifest and the index encoding (no download)")
+    c.set_defaults(func=check)
     args = parser.parse_args()
     args.func(args)
 

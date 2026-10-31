@@ -121,8 +121,25 @@ The owner's steps and all differences from the installer build are in
 ## Build the web demo and the Android app
 
 - **Web demo:** `dotnet workload install wasm-tools`, then
-  `dotnet run --project src/PdfViewer.Web`. To add the Noto fonts and serve the published site,
-  see [src/PdfViewer.Web/README.md](https://github.com/ramanacr/pdf-viewer/blob/main/src/PdfViewer.Web/README.md).
+  `dotnet run --project src/PdfViewer.Web`. To serve the published site, see
+  [src/PdfViewer.Web/README.md](https://github.com/ramanacr/pdf-viewer/blob/main/src/PdfViewer.Web/README.md).
+- **Web demo fonts (optional):** the Noto fonts are not in the repository. The demo runs
+  without them; text in scripts that only they cover (Arabic, Indic, Sinhala, Thai, CJK and
+  others) is then not drawn. To download them as CI does, with Python 3.11 or later:
+
+  ```powershell
+  py -3 -I eng/webdemo/noto_fonts.py check
+  py -3 -m venv .venv-noto
+  py -3 -I eng/webdemo/noto_fonts.py requirements > noto-requirements.txt
+  .venv-noto\Scripts\python -m pip install --require-hashes --no-deps -r noto-requirements.txt
+  .venv-noto\Scripts\python -I eng/webdemo/noto_fonts.py build --cache ../noto-cache --out src/PdfViewer.Web/wwwroot/fonts/noto
+  ```
+
+  The script downloads only the release archives pinned in `eng/webdemo/noto-fonts.json`
+  (github.com/notofonts, about 350 MB, kept in the cache folder), checks the size and SHA-256 of
+  each archive and the SHA-256 of each file (it stops on a mismatch), slices the CJK faces with
+  the pinned fontTools, and writes the files to the output folder, which git ignores. Set
+  `NOTO_FONTS_DIR` to that folder to run the Noto tests in `tests/PdfEngine.Vector.Skia.Tests`.
 - **Android:** `dotnet workload install android`, then
   `dotnet build src/PdfViewer.Android -f net9.0-android -c Release`. See
   [src/PdfViewer.Android/README.md](https://github.com/ramanacr/pdf-viewer/blob/main/src/PdfViewer.Android/README.md).
@@ -214,7 +231,7 @@ tests/
 
 | Workflow | When | What it does |
 | --- | --- | --- |
-| `ci.yml` (job `build-and-test`) | Every pull request and push to `main`; nightly | Builds, runs all test suites (with and without PDFium), the corpus report, benchmarks, SBOMs, a signed dry-run publish and the release gates. The nightly run adds deep fuzzing and the full corpus job. |
+| `ci.yml` (job `build-and-test`) | Every pull request and push to `main`; nightly | Builds, downloads and checks the pinned Noto fonts for the Skia suite's font tests, runs all test suites (with and without PDFium), the corpus report, benchmarks, SBOMs, a signed dry-run publish and the release gates. The nightly run adds deep fuzzing and the full corpus job. |
 | `web-demo.yml` | Every pull request and push to `main` | Builds the web demo with the Noto fonts. From `main`, deploys the GitHub Pages site: `docs/` at the root and the demo under `/demo/`. |
 | `android.yml` | Changes to the Android app or the code it uses | Builds the APK, checks that it asks for no permission, and uploads it as an artifact. |
 | `packages.yml` | Every pull request and push to `main`; `engine-v*` tags | Packs the three engine packages. An `engine-v*` tag publishes them to nuget.org through Trusted Publishing (no stored API key). |

@@ -128,11 +128,41 @@ public sealed partial class Viewer : IAsyncDisposable
 
     public Viewer()
     {
-        _bundledFonts = OnDemandFontSource.Bundled(FetchBundledFontAsync);
+        _bundledFonts = OnDemandFontSource.Bundled((file, ct) => FetchBundledFontAsync(file, false, ct), (file, ct) => FetchBundledFontAsync(file, true, ct));
     }
 
-    private async Task<byte[]?> FetchBundledFontAsync(string file, CancellationToken cancellationToken) =>
-        _module == null ? null : await _module.InvokeAsync<byte[]?>("fetchFont", cancellationToken, file);
+    /// <summary>A bundled font file from this origin; with <paramref name="reload"/>, past the HTTP cache.</summary>
+    private async Task<byte[]?> FetchBundledFontAsync(string file, bool reload, CancellationToken cancellationToken) =>
+        _module == null ? null : await _module.InvokeAsync<byte[]?>("fetchFont", cancellationToken, file, _frame?.FontBase, reload);
+
+    /// <summary>
+    /// The bundled font families and their licence files (SIL Open Font License 1.1), for the About
+    /// dialog. The Noto licences are written next to the fonts by eng/webdemo/noto_fonts.py as
+    /// OFL-&lt;id&gt;.txt, by the ids of eng/webdemo/noto-fonts.json.
+    /// </summary>
+    private static readonly (string Family, string Licence)[] FontNotices =
+    [
+        ("Liberation Sans, Serif and Mono 2.1.5", "fonts/OFL.txt"),
+        ("Noto Sans Arabic", "fonts/noto/OFL-arabic.txt"),
+        ("Noto Sans Hebrew", "fonts/noto/OFL-hebrew.txt"),
+        ("Noto Sans Devanagari", "fonts/noto/OFL-devanagari.txt"),
+        ("Noto Sans Bengali", "fonts/noto/OFL-bengali.txt"),
+        ("Noto Sans Gurmukhi", "fonts/noto/OFL-gurmukhi.txt"),
+        ("Noto Sans Gujarati", "fonts/noto/OFL-gujarati.txt"),
+        ("Noto Sans Oriya", "fonts/noto/OFL-oriya.txt"),
+        ("Noto Sans Tamil", "fonts/noto/OFL-tamil.txt"),
+        ("Noto Sans Telugu", "fonts/noto/OFL-telugu.txt"),
+        ("Noto Sans Kannada", "fonts/noto/OFL-kannada.txt"),
+        ("Noto Sans Malayalam", "fonts/noto/OFL-malayalam.txt"),
+        ("Noto Sans Sinhala", "fonts/noto/OFL-sinhala.txt"),
+        ("Noto Sans Thai", "fonts/noto/OFL-thai.txt"),
+        ("Noto Sans Math", "fonts/noto/OFL-math.txt"),
+        ("Noto Sans Symbols 2", "fonts/noto/OFL-symbols2.txt"),
+        ("Noto Sans SC", "fonts/noto/OFL-sc.txt"),
+        ("Noto Sans TC", "fonts/noto/OFL-tc.txt"),
+        ("Noto Sans JP", "fonts/noto/OFL-jp.txt"),
+        ("Noto Sans KR", "fonts/noto/OFL-kr.txt"),
+    ];
 
     // Focus moves into a dialog when it opens, and back to the pages when it closes.
     private Dialog _focusedDialog;
@@ -165,7 +195,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=9");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=10");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {

@@ -256,7 +256,7 @@ public sealed partial class Viewer
             Directory.CreateDirectory(directory);
             foreach (var file in new[] { "LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf" })
             {
-                if (await FetchBundledFontAsync(file, CancellationToken.None) is { Length: > 0 } data)
+                if (await FetchBundledFontAsync(file, false, CancellationToken.None) is { Length: > 0 } data)
                     File.WriteAllBytes(Path.Combine(directory, file), data);
             }
             string[] sans = ["Liberation Sans"];

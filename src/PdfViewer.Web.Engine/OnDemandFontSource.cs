@@ -15,8 +15,10 @@ namespace PdfViewer.Web.Engine;
 /// <para>
 /// With a character index (<see cref="Bundled"/>: the Noto fonts' <c>noto/index.json</c>), text
 /// that the catalog's faces lack takes each character from the bundled face that has it: Arabic,
-/// Hebrew, the main Indic scripts, symbols, math, and CJK in Unicode slices. The index is fetched
-/// the first time such a character is drawn, then only the files that hold the page's characters.
+/// Hebrew, the main Indic scripts, Sinhala, Thai, symbols, math, and CJK in Unicode slices. The
+/// index is fetched the first time such a character is drawn, then only the files that hold the
+/// page's characters. A file whose size or SHA-256 differs from the index (a corrupted, partial
+/// or mismatched copy) is read once more past the cache (<see cref="Reload"/>), then refused.
 /// </para>
 /// </summary>
 public sealed class OnDemandFontSource : SkiaFontSource
@@ -64,8 +66,19 @@ public sealed class OnDemandFontSource : SkiaFontSource
     /// The web demo's fonts: <see cref="Liberation"/>, then the Noto fonts (SIL Open Font License 1.1),
     /// found by <see cref="NotoIndexFile"/>, for the characters Liberation lacks.
     /// </summary>
-    public static OnDemandFontSource Bundled(Func<string, CancellationToken, Task<byte[]?>> fetch) =>
-        new(LiberationFaces, SystemFontCatalog.LiberationFamilyAliases, fetch, NotoIndexFile);
+    /// <param name="fetch">Reads one file by name, as for the other sources.</param>
+    /// <param name="reload">Reads a file again past any cache (<see cref="Reload"/>); null for no second try.</param>
+    public static OnDemandFontSource Bundled(Func<string, CancellationToken, Task<byte[]?>> fetch,
+        Func<string, CancellationToken, Task<byte[]?>>? reload = null) =>
+        new(LiberationFaces, SystemFontCatalog.LiberationFamilyAliases, fetch, NotoIndexFile) { Reload = reload };
+
+    /// <summary>
+    /// Reads a file again past the browser's HTTP cache. When a fetched file does not match the size
+    /// and SHA-256 in the character index, it is read once more with this, since a corrupted or
+    /// partial copy can stay in the cache across reloads; if that copy does not match either, the
+    /// file counts as failed for the session. Null: no second try.
+    /// </summary>
+    public Func<string, CancellationToken, Task<byte[]?>>? Reload { get; init; }
 
     /// <summary>The bundled Liberation faces, as their name and OS/2 tables describe them, by file name.</summary>
     public static IReadOnlyList<SystemFontFace> LiberationFaces { get; } = BuildLiberationFaces();
@@ -106,20 +119,33 @@ public sealed class OnDemandFontSource : SkiaFontSource
         get { lock (_gate) return _index; }
     }
 
+    private static async Task<byte[]?> TryFetchAsync(Func<string, CancellationToken, Task<byte[]?>> fetch, string file, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await fetch(file, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Fetches every file asked for and not fetched yet; returns how many were loaded.</summary>
     public async Task<int> LoadRequestedAsync(CancellationToken cancellationToken = default)
     {
         int count = 0;
         foreach (var file in PendingFiles)
         {
-            byte[]? data;
-            try
+            byte[]? data = await TryFetchAsync(_fetch, file, cancellationToken).ConfigureAwait(false);
+            // A file the index describes must have the size and SHA-256 it gives (an entry without
+            // both matches nothing). A corrupted, partial or mismatched copy, often a stale one in
+            // the HTTP cache, is read once more past the cache; if that copy does not match either,
+            // the file counts as failed and its text is reported as missing, not drawn wrongly.
+            if (data != null && file != _indexFile && CharacterIndex?.EntryOf(file) is { } described && !described.Matches(data))
             {
-                data = await _fetch(file, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                data = null;
+                data = Reload == null ? null : await TryFetchAsync(Reload, file, cancellationToken).ConfigureAwait(false);
+                if (data != null && !described.Matches(data)) data = null;
             }
             BundledFontIndex? index = null;
             if (file == _indexFile && data != null)

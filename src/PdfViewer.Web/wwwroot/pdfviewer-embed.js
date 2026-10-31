@@ -112,6 +112,34 @@
         return url;
     }
 
+    /**
+     * The fontBaseUrl option as the path the viewer is given, or null for the default (the fonts/
+     * folder next to the viewer). A relative URL is taken from the viewer's folder. It must be on
+     * the viewer's origin, so no font request ever goes to a third party: the viewer and its render
+     * worker take only a plain absolute path (EmbedFrame.ParseFontBase, js/font-base.js). The
+     * viewer page's Content-Security-Policy is extra defence on the main page only; a meta CSP does
+     * not apply inside the render worker.
+     */
+    function fontBasePath(fontBaseUrl, base) {
+        if (fontBaseUrl === undefined || fontBaseUrl === null) return null;
+        if (typeof fontBaseUrl !== 'string' && !(fontBaseUrl instanceof URL)) throw fail(ErrorCode.INVALID_ARGUMENT, 'fontBaseUrl must be a URL.');
+        let url;
+        try {
+            url = new URL(String(fontBaseUrl), base);
+        } catch {
+            throw fail(ErrorCode.INVALID_ARGUMENT, 'fontBaseUrl is not a valid URL.');
+        }
+        if (url.origin !== base.origin) {
+            throw fail(ErrorCode.INVALID_ARGUMENT, `fontBaseUrl must be on the viewer's origin (${base.origin}): the viewer fetches fonts from its own origin only.`);
+        }
+        let path = url.pathname;
+        if (!path.endsWith('/')) path += '/';
+        if (path.length > 512 || !/^\/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*\/)*$/.test(path)) {
+            throw fail(ErrorCode.INVALID_ARGUMENT, 'fontBaseUrl must be a folder whose path has only letters, digits and . _ ~ -.');
+        }
+        return path;
+    }
+
     /** A copy of the caller's value that postMessage can clone: plain data only, functions dropped. */
     function plainData(value, what) {
         if (value === undefined || value === null) return {};
@@ -747,10 +775,10 @@
         console.warn(`PdfViewer: the viewer (${viewerOrigin}) has the same origin as this page. The iframe sandbox then does not isolate it: a fault in the viewer could reach this page. For production, serve the viewer from another origin (for example a subdomain). See ${ISOLATION_DOCS}`);
     }
 
-    /** One viewer in one element of the page: new PdfViewer.View({ divId, locale, baseUrl, isolation, renderInWorker }). */
+    /** One viewer in one element of the page: new PdfViewer.View({ divId, locale, baseUrl, fontBaseUrl, isolation, renderInWorker }). */
     class View {
         constructor(options) {
-            const { divId, locale = 'en-US', baseUrl, isolation = 'warn', renderInWorker = false } = options || {};
+            const { divId, locale = 'en-US', baseUrl, fontBaseUrl, isolation = 'warn', renderInWorker = false } = options || {};
             if (isolation !== 'warn' && isolation !== 'require') throw fail(ErrorCode.INVALID_ARGUMENT, "isolation must be 'warn' or 'require'.");
             if (typeof renderInWorker !== 'boolean') throw fail(ErrorCode.INVALID_ARGUMENT, 'renderInWorker must be true or false.');
             const document = global.document;
@@ -763,6 +791,7 @@
             this._locale = typeof locale === 'string' ? locale : 'en-US';
             this._renderInWorker = renderInWorker;
             this._base = viewerBase(baseUrl);
+            this._fontBase = fontBasePath(fontBaseUrl, this._base);
             this._viewerOrigin = this._base.origin;
             checkIsolation(this._viewerOrigin, isolation);
             this._listeners = [];
@@ -928,6 +957,7 @@
             src.searchParams.set('mode', mode);
             src.searchParams.set('origin', global.location.origin);
             if (this._renderInWorker) src.searchParams.set('renderInWorker', '1');
+            if (this._fontBase) src.searchParams.set('fonts', this._fontBase);
             frame.src = src.href;
             frame.title = `PDF viewer: ${fileName}`;
             // As strict as the viewer allows: scripts (the engine), its own origin (its files and
@@ -1149,7 +1179,7 @@
     };
     // For tests of the range sources (tests/sdk); not part of the API.
     Object.defineProperty(PdfViewer, '_internals', {
-        value: Object.freeze({ UrlRangeSource, LinearizedRangeSource, RangeServer, checkRange, parseContentRange, bufferOf, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS, FETCH_TIMEOUT_MS }),
+        value: Object.freeze({ UrlRangeSource, LinearizedRangeSource, RangeServer, checkRange, parseContentRange, bufferOf, fontBasePath, MAX_RANGE_BYTES, MAX_RANGE_REQUESTS, FETCH_TIMEOUT_MS }),
     });
     // For pdfviewer-embed.mjs: a module knows its own URL, a classic script reads currentScript.
     Object.defineProperty(PdfViewer, '_setScriptUrl', {

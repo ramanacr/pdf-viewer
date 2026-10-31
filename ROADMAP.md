@@ -21,8 +21,6 @@ What is planned next for PDF Viewer Native. Plans change; dates are not promised
 - Drag one point of a line, arrow, polygon or polyline. **help wanted:**
   [#139](https://github.com/ramanacr/pdf-viewer/issues/139).
 - One editing core for the web viewer and Android (the shared `ViewerEditSession`).
-- Self-hosted Noto fonts in the live demo, loaded per script on demand, so text in any script
-  shows without a font on the visitor's machine and without calls to third-party font servers.
 
 ### Android
 - Choose the colour of new highlights, ink and notes. **help wanted:**
