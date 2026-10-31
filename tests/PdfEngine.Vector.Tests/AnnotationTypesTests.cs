@@ -207,6 +207,54 @@ public class AnnotationTypesTests
     }
 
     [Fact]
+    public async Task DeletingAParent_DetachesOnlyTheRepliesTheCallerAccepts_AndLeavesTheOthersUntouched()
+    {
+        var parent = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(50, 300, 20, 20), Name = "p1" };
+        var caret = new PdfAnnotation { PageNumber = 1, Subtype = "Caret", Rect = new PdfRect(80, 300, 10, 10), Name = "c1", InReplyToName = "p1", ReplyType = "R" };
+        var note = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = parent.Rect, Name = "r1", InReplyToName = "p1", Contents = "Kept" };
+        var (doc, bytes) = await Write(Blank(), e => { e.Add(parent); e.Add(caret); e.Add(note); });
+        using (doc)
+        {
+            var r = doc.Resolver;
+            var caretBefore = (PdfDictionary)r.Resolve(((PdfArray)r.Resolve(doc.PageTree.Pages[0].Dictionary["Annots"])!)[1])!;
+            using var after = await PdfVectorDocument.OpenAsync(PdfAnnotationEditor.Apply(doc, bytes,
+                e => e.Delete(1, 0, cascadeReplies: false, detachReply: i => i == 2)));
+            var left = PdfAnnotationReader.Read(after, 1);
+            // The caret keeps everything (its appearance too) but the /IRT and /RT that named the parent.
+            var keptCaret = Assert.Single(left, a => a.Subtype == "Caret");
+            Assert.Equal((0, (string?)null), (keptCaret.InReplyTo, keptCaret.ReplyType));
+            var ar = after.Resolver;
+            var caretAfter = (PdfDictionary)ar.Resolve(((PdfArray)ar.Resolve(after.PageTree.Pages[0].Dictionary["Annots"])!)[keptCaret.Index])!;
+            Assert.Equal(caretBefore.Entries.Keys.Where(k => k is not ("IRT" or "RT")).OrderBy(k => k), caretAfter.Entries.Keys.OrderBy(k => k));
+            if (caretBefore.ContainsKey("AP")) Assert.Equal(Appearance(doc, 1), Appearance(after, keptCaret.Index)); // not drawn again
+            // The note the caller accepted becomes a note of its own, drawn again.
+            var keptNote = Assert.Single(left, a => a.Subtype == "Text");
+            Assert.Equal(("Kept", 0), (keptNote.Contents, keptNote.InReplyTo));
+            Assert.Empty(PdfAnnotationThreads.Roots(left));
+        }
+    }
+
+    [Fact]
+    public async Task Flattening_TakesHiddenRepliesToFlattenedAnnotationsWithIt()
+    {
+        var parent = new PdfAnnotation { PageNumber = 1, Subtype = "Square", Rect = new PdfRect(50, 300, 60, 40), Name = "p1", Color = [1, 0, 0], BorderWidth = 2 };
+        var status = new PdfAnnotation
+        {
+            PageNumber = 1, Subtype = "Text", Rect = new PdfRect(50, 300, 20, 20), Name = "s1", InReplyToName = "p1", ReplyType = "R",
+            Flags = 30, State = "Accepted", StateModel = "Review",
+        };
+        var nested = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(50, 300, 20, 20), Name = "s2", InReplyToName = "s1", Flags = 30 };
+        var other = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(200, 300, 20, 20), Name = "o1", Flags = 30, Contents = "hidden, answers nothing" };
+        var (doc, bytes) = await Write(Blank(), e => { e.Add(parent); e.Add(status); e.Add(nested); e.Add(other); });
+        using (doc)
+        {
+            using var flat = await PdfVectorDocument.OpenAsync(PdfAnnotationEditor.Apply(doc, bytes, e => e.FlattenAll()));
+            var left = PdfAnnotationReader.Read(flat, 1);
+            Assert.Equal(new[] { "o1" }, left.Select(a => a.Name)); // the statuses went with the square
+        }
+    }
+
+    [Fact]
     public async Task AReplyToAParentWrittenDirectlyInAnnots_MakesTheParentAnObject()
     {
         var b = new VectorPdfBuilder();
@@ -263,6 +311,30 @@ public class AnnotationTypesTests
         Assert.Null(back[4].InReplyToName);
         Assert.Equal("p1", back[5].InReplyToName);
         Assert.Null(back[5].ReplyType);
+    }
+
+    [Fact]
+    public void Xfdf_WritesReplyTypeReplyOrGroup_AndReadsAMissingOneAsAReply()
+    {
+        var parent = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), Name = "p1", ObjectNumber = 12 };
+        var reply = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), Name = "r1", InReplyTo = 12, ReplyType = "R" };
+        var plain = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), Name = "r2", InReplyTo = 12 };
+        var member = new PdfAnnotation { PageNumber = 1, Subtype = "Highlight", Rect = new PdfRect(5, 5, 20, 20), Name = "g1", InReplyTo = 12, ReplyType = "Group" };
+
+        var x = System.Xml.Linq.XDocument.Parse(PdfAnnotationXfdf.Export([parent, reply, plain, member]));
+        var types = x.Descendants().Where(e => e.Attribute("inreplyto") != null).ToDictionary(e => (string)e.Attribute("name")!, e => (string?)e.Attribute("replyType"));
+        Assert.Equal("reply", types["r1"]);
+        Assert.Equal("reply", types["r2"]);
+        Assert.Equal("group", types["g1"]);
+        Assert.Null(x.Descendants().Single(e => (string?)e.Attribute("name") == "p1").Attribute("replyType"));
+
+        var back = PdfAnnotationXfdf.Import(x.ToString());
+        Assert.Null(back.Single(a => a.Name == "r1").ReplyType);
+        Assert.Equal("Group", back.Single(a => a.Name == "g1").ReplyType);
+        var missing = PdfAnnotationXfdf.Import("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"q\"/><text page=\"0\" rect=\"10,10,30,30\" name=\"a\" inreplyto=\"q\"/></annots></xfdf>");
+        Assert.Equal("q", missing[1].InReplyToName);
+        Assert.True(PdfAnnotationThreads.IsReply(new PdfAnnotation { InReplyTo = 1, ReplyType = missing[1].ReplyType }));
     }
 
     [Fact]

@@ -144,7 +144,8 @@ public partial class MainViewModel
     {
         var byId = AnnotationsById();
         var children = RepliesByParent(byId);
-        var roots = AllAnnotations.Where(a => ParentOf(a, byId) == null).ToList();
+        // A status whose comment is gone is no comment of its own: it is kept in the document, not listed.
+        var roots = AllAnnotations.Where(a => ParentOf(a, byId) == null && !a.IsStateChange).ToList();
         var placed = new HashSet<AnnotationModel>(ReferenceEqualityComparer.Instance);
         // Replies whose chain never reaches a comment (it loops) are shown as comments of their own.
         foreach (var r in roots) placed.Add(r);

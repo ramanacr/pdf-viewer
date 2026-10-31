@@ -1408,7 +1408,8 @@ public class PdfiumDocumentService : IPdfDocumentService
         AnnotationSaveMode mode,
         IEnumerable<AnnotationModel> annotations,
         string? originalPath = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool allowInvalidatingSignatures = false) // the developer-only PDFium path writes as it always has
     {
         if (string.IsNullOrWhiteSpace(targetPath))
             throw new ArgumentException("Target file path cannot be empty.", nameof(targetPath));

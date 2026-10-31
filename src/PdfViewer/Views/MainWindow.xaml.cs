@@ -727,6 +727,8 @@ public partial class MainWindow : Window
                 _vm.EditSelectedAnnotation();
                 return true;
             case Key.Apps when plain:
+            // Shift+F10 arrives as F10; it is also matched as a system key, in case Windows reports it as one.
+            case Key.F10 when shift:
             case Key.System when e.SystemKey == Key.F10 && shift:
                 // The annotation's menu (reply, status, edit, delete), as a right-click opens it.
                 if (_vm.SelectedAnnotation is { } selected && _vm.AllAnnotations.Contains(selected))
@@ -1857,6 +1859,8 @@ public partial class MainWindow : Window
             _vm.CurrentPageNumber = annot.PageNumber;
             ScrollToPage(annot.PageNumber);
             _vm.SelectAnnotation(annot);
+            // The keys now act on the selected annotation (Delete, Enter, arrows, the Menu key), as after Tab on the page.
+            Keyboard.Focus(DocumentScrollViewer);
         }
     }
 
@@ -1947,19 +1951,12 @@ public partial class MainWindow : Window
         foreach (var state in MainViewModel.ReviewStates)
         {
             var item = Item("_" + state, () => document.SetReviewState(annot, state));
-            item.IsCheckable = false;
-            item.IsChecked = string.Equals(current ?? "None", state, StringComparison.Ordinal);
-            // The current status shows its check; the others show their icon, as in the panel's Status menu.
-            if (!item.IsChecked)
+            // The current status is marked: a check, bold, and "current" for screen readers. The others have no mark.
+            if (string.Equals(current ?? "None", state, StringComparison.Ordinal))
             {
-                string glyph = state switch
-                {
-                    "Rejected" => Themes.IconGlyphs.Close,
-                    "Cancelled" => Themes.IconGlyphs.Deselect,
-                    "None" => Themes.IconGlyphs.ClearMarks,
-                    _ => Themes.IconGlyphs.Check,
-                };
-                item.Icon = new TextBlock { Text = glyph, Style = (Style)FindResource("MenuGlyph") };
+                item.Icon = new TextBlock { Text = Themes.IconGlyphs.Check, Style = (Style)FindResource("MenuGlyph") };
+                item.FontWeight = FontWeights.SemiBold;
+                System.Windows.Automation.AutomationProperties.SetItemStatus(item, "Current status");
             }
             status.Items.Add(item);
         }

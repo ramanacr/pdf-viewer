@@ -2231,6 +2231,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = ShowSaveAnnotatedDialogFunc(Metadata);
             if (result.Confirmed && !string.IsNullOrWhiteSpace(result.TargetPath))
             {
+                // A signed document that cannot take an incremental update (or is flattened) is
+                // written whole: the copy keeps no valid signature. Only with the user's yes.
+                bool breaksSignatures = _docService.SaveWouldInvalidateSignatures(result.Mode);
+                if (breaksSignatures && !Confirm(
+                        "This document is signed, and this copy cannot be saved in a way that keeps the signatures: " +
+                        (result.Mode == AnnotationSaveMode.Flattened ? "flattening rewrites the whole file" : "its file structure had to be repaired") +
+                        ".\n\nThe signatures in the copy will no longer be valid. The original file is not changed.\n\nSave the copy anyway?",
+                        "Signatures Will Be Invalid"))
+                {
+                    StatusText = "Save As cancelled: the signatures would no longer be valid.";
+                    return;
+                }
                 try
                 {
                     StatusText = "Saving annotated document...";
@@ -2238,7 +2250,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         result.TargetPath,
                         result.Mode,
                         AllAnnotations,
-                        Metadata.FilePath);
+                        Metadata.FilePath,
+                        allowInvalidatingSignatures: breaksSignatures);
 
                     // Only an embedded save captures the annotations in the document itself;
                     // an XFDF export leaves the PDF as it was, so the work is still unsaved.

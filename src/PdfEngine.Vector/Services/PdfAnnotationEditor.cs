@@ -144,13 +144,18 @@ public sealed class PdfAnnotationEditor
     /// <summary>
     /// Removes the annotation at <paramref name="index"/> with its pop-up and, unless
     /// <paramref name="cascadeReplies"/> is false, the replies to it (12.5.6.4, /IRT), as Acrobat does.
+    /// Replies that stay become notes of their own (without /IRT, drawn again); with
+    /// <paramref name="detachReply"/>, only those at the page positions it accepts do; the others
+    /// keep their appearance and every entry but /IRT and /RT (which would name an annotation that
+    /// is gone, and keep it in the file): a caller that manages only some kinds of annotation
+    /// does not redraw the rest.
     /// </summary>
-    public void Delete(int pageNumber, int index, bool cascadeReplies = true)
+    public void Delete(int pageNumber, int index, bool cascadeReplies = true, Func<int, bool>? detachReply = null)
     {
         var page = State(pageNumber);
         if (index < 0 || index >= page.Items.Count)
             throw new ArgumentOutOfRangeException(nameof(index), $"Page {pageNumber} has no annotation at position {index}.");
-        Remove(page, index, cascadeReplies);
+        Remove(page, index, cascadeReplies, detachReply);
     }
 
     internal static void RemoveAt(PdfUpdate update, int pageNumber, int index)
@@ -160,7 +165,7 @@ public sealed class PdfAnnotationEditor
         editor.Finish();
     }
 
-    private void Remove(PageState page, int index, bool cascadeReplies = true)
+    private void Remove(PageState page, int index, bool cascadeReplies = true, Func<int, bool>? detachReply = null)
     {
         // A work list, not recursion: a file's /IRT chain can be as long as its /Annots, and a
         // removed item is never visited again, so a chain that loops ends too.
@@ -186,9 +191,28 @@ public sealed class PdfAnnotationEditor
                     || self > 0 && od?.GetName("Subtype") == "Popup" && od["Parent"] is PdfIndirectRef parent && parent.ObjectNumber == self;
                 bool isReply = self > 0 && od?["IRT"] is PdfIndirectRef irt && irt.ObjectNumber == self;
                 if (isPopup || isReply && cascadeReplies) pending.Push(i);
-                else if (isReply && od != null) Detach(page, i, od);
+                else if (isReply && od != null)
+                {
+                    if (detachReply == null || detachReply(i)) Detach(page, i, od);
+                    else Unlink(page, i, od);
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// A reply the caller does not manage, whose parent is removed: it keeps its appearance and
+    /// every other entry; only /IRT and /RT go, so the removed parent is not kept reachable (and
+    /// written out again, its text and all) through a reference that names nothing on the page.
+    /// </summary>
+    private void Unlink(PageState page, int index, PdfDictionary reply)
+    {
+        var e = new Dictionary<string, PdfObject>(reply.Entries);
+        e.Remove("IRT");
+        e.Remove("RT");
+        if (page.Items[index] is PdfIndirectRef r) _update.Set(r.ObjectNumber, new PdfDictionary(e));
+        else page.Items[index] = new PdfDictionary(e);
+        page.Changed = true;
     }
 
     /// <summary>
@@ -424,6 +448,35 @@ public sealed class PdfAnnotationEditor
             else page.Added.Remove(item);
         }
         if (flattened == 0) return 0;
+
+        // Replies to flattened annotations go too (12.5.6.4): a hidden one, such as a review
+        // status, is not drawn, so it would be left answering an annotation that is gone. A
+        // reply to such a reply goes with it; a chain that loops ends when nothing new goes.
+        if (!widgetsOnly)
+        {
+            var gone = new HashSet<int>(flattenedNumbers);
+            bool more = true;
+            while (more)
+            {
+                more = false;
+                bool Answers(PdfObject? item) =>
+                    Resolved(item) is { } d && d["IRT"] is PdfIndirectRef irt && gone.Contains(irt.ObjectNumber);
+                for (int i = 0; i < page.Items.Count; i++)
+                {
+                    if (!Answers(page.Items[i])) continue;
+                    if (page.Items[i] is PdfIndirectRef r) gone.Add(r.ObjectNumber);
+                    page.Items[i] = null;
+                    more = true;
+                }
+                foreach (var item in page.Added.Where(Answers).ToList())
+                {
+                    if (item is PdfIndirectRef r) gone.Add(r.ObjectNumber);
+                    page.Added.Remove(item);
+                    more = true;
+                }
+            }
+            flattenedNumbers.UnionWith(gone);
+        }
 
         // Pop-ups of flattened annotations go too.
         for (int i = 0; i < page.Items.Count; i++)

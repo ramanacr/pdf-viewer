@@ -385,6 +385,133 @@ public class CommentThreadViewerTests : IDisposable
         Assert.Equal("Completed", thread.ReviewState);
     }
 
+    private static async Task<byte[]> SignedPdf()
+    {
+        using var pki = new PdfEngine.Vector.Tests.Fixtures.TestPki();
+        byte[] pdf = PdfEngine.Vector.Tests.Fixtures.FormPdfFixture.Build();
+        using var doc = await PdfVectorDocument.OpenAsync(pdf);
+        var prepared = PdfEngine.Vector.Signatures.PdfSigner.Prepare(doc, pdf,
+            new PdfEngine.Vector.Signatures.PdfSignatureRequest { SignerName = "Grace Hopper", Rect = new PdfEngine.Geometry.PdfRect(150, 20, 140, 40) });
+        return prepared.Complete(await PdfEngine.Vector.Signatures.PdfCmsSigner.SignAsync(prepared.SignedBytes(), pki.Signer));
+    }
+
+    [Fact]
+    public async Task ASignedDocumentThatCannotTakeAnIncrementalUpdate_IsNotRewritten_AndSaveAsWarnsFirst()
+    {
+        // A signed file whose startxref is damaged: it opens (the cross-reference data is rebuilt),
+        // but a change could only be written by rewriting the whole file, which breaks the signature.
+        byte[] signed = await SignedPdf();
+        string text = System.Text.Encoding.Latin1.GetString(signed);
+        int at = text.LastIndexOf("startxref", StringComparison.Ordinal);
+        Assert.True(at > 0);
+        byte[] damaged = (byte[])signed.Clone();
+        damaged[at + "startxre".Length] = (byte)'X';
+        string path = Path.Combine(_dir, "signed-repaired.pdf");
+        await File.WriteAllBytesAsync(path, damaged);
+
+        string? alert = null;
+        using var vm = await Open(path);
+        vm.ShowMessageBoxAction = (message, _, _, _) => alert = message;
+        Assert.True(vm.DocumentService.SaveWouldInvalidateSignatures(AnnotationSaveMode.Embedded));
+        vm.AddAnnotation(Note("A change to a signed file."));
+
+        await vm.SaveAsync();
+        Assert.Equal(damaged, await File.ReadAllBytesAsync(path)); // not rewritten
+        Assert.True(vm.HasUnsavedChanges);
+        Assert.Contains("can only be saved as a copy without valid signatures", alert);
+
+        string copy = Path.Combine(_dir, "signed-copy.pdf");
+        string? asked = null;
+        vm.ShowSaveAnnotatedDialogFunc = _ => (true, copy, AnnotationSaveMode.Embedded);
+        vm.ConfirmFunc = (message, _) => { asked = message; return false; };
+        await vm.SaveAnnotatedAsAsync();
+        Assert.Contains("signatures in the copy will no longer be valid", asked);
+        Assert.False(File.Exists(copy));
+
+        vm.ConfirmFunc = (_, _) => true;
+        await vm.SaveAnnotatedAsAsync();
+        Assert.True(File.Exists(copy));
+        Assert.Contains(ReadPage(copy), a => a.Contents == "A change to a signed file.");
+        Assert.Equal(damaged, await File.ReadAllBytesAsync(path));
+    }
+
+    [Fact]
+    public async Task ASignedDocument_SavedAsAFlattenedCopy_AsksFirst_AndAnEmbeddedCopyDoesNot()
+    {
+        string path = Path.Combine(_dir, "signed-flatten.pdf");
+        await File.WriteAllBytesAsync(path, await SignedPdf());
+        using var vm = await Open(path);
+        Assert.False(vm.DocumentService.SaveWouldInvalidateSignatures(AnnotationSaveMode.Embedded));
+        Assert.True(vm.DocumentService.SaveWouldInvalidateSignatures(AnnotationSaveMode.Flattened));
+        Assert.False(vm.DocumentService.SaveWouldInvalidateSignatures(AnnotationSaveMode.ExportXfdf));
+        vm.AddAnnotation(Note("Flatten me."));
+        int asked = 0;
+        vm.ConfirmFunc = (_, _) => { asked++; return false; };
+        string copy = Path.Combine(_dir, "signed-flat.pdf");
+        vm.ShowSaveAnnotatedDialogFunc = _ => (true, copy, AnnotationSaveMode.Flattened);
+        await vm.SaveAnnotatedAsAsync();
+        Assert.Equal(1, asked);
+        Assert.False(File.Exists(copy));
+
+        string embedded = Path.Combine(_dir, "signed-embedded.pdf");
+        vm.ShowSaveAnnotatedDialogFunc = _ => (true, embedded, AnnotationSaveMode.Embedded);
+        await vm.SaveAnnotatedAsAsync();
+        Assert.Equal(1, asked); // an incremental copy keeps the signature: nothing to ask
+        Assert.True(File.Exists(embedded));
+    }
+
+    [Fact]
+    public async Task DeletingACommentFromTheFile_LeavesRepliesTheViewerDoesNotManageAsTheyWere()
+    {
+        string path = NewPdf();
+        byte[] original = await File.ReadAllBytesAsync(path);
+        byte[] withCaret;
+        using (var doc = await PdfVectorDocument.OpenAsync(original))
+        {
+            withCaret = PdfAnnotationEditor.Apply(doc, original, e =>
+            {
+                e.Add(new PdfAnnotation { PageNumber = 1, Subtype = "Text", Name = "p", Rect = new PdfEngine.Geometry.PdfRect(100, 600, 20, 20), Contents = "Insert a word here?" });
+                e.Add(new PdfAnnotation { PageNumber = 1, Subtype = "Caret", Name = "c", InReplyToName = "p", ReplyType = "R", Rect = new PdfEngine.Geometry.PdfRect(130, 600, 10, 10) });
+            });
+        }
+        await File.WriteAllBytesAsync(path, withCaret);
+        int parentNumber = ReadPage(path).Single(a => a.Name == "p").ObjectNumber;
+
+        using (var vm = await Open(path))
+        {
+            vm.DeleteAnnotation(Assert.Single(vm.AllAnnotations));
+            await vm.SaveAsync();
+        }
+        Assert.True(parentNumber > 0);
+        var left = ReadPage(path);
+        var caret = Assert.Single(left);
+        // Still a caret, not redrawn as a note; only its /IRT and /RT, which named the deleted comment, are gone,
+        // so the deleted comment's text does not stay in the file either.
+        Assert.Equal("Caret", caret.Subtype);
+        Assert.Equal(0, caret.InReplyTo);
+        Assert.Null(caret.ReplyType);
+        string bytes = System.Text.Encoding.Latin1.GetString(await File.ReadAllBytesAsync(path));
+        string deletedText = Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes("Insert a word here?"));
+        Assert.DoesNotContain(deletedText, bytes, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Insert a word here?", bytes);
+    }
+
+    [Fact]
+    public async Task AStatusWhoseCommentIsGone_IsNotListedAsAComment()
+    {
+        using var vm = await Open(NewPdf());
+        var note = Note("Listed.");
+        vm.AddAnnotation(note);
+        var orphan = Note("Accepted set by Ann");
+        orphan.InReplyToId = Guid.NewGuid(); // answers a comment the document no longer has
+        orphan.State = "Accepted";
+        orphan.StateModel = "Review";
+        vm.AddAnnotation(orphan);
+        Assert.Contains(orphan, vm.AllAnnotations);
+        Assert.Same(note, Assert.Single(vm.CommentThreads).Root);
+        Assert.DoesNotContain(orphan, vm.Pages[0].AnnotationsOnPage);
+    }
+
     [Fact]
     public async Task RepliesAndStatusesMadeInAcrobat_LoadIntoTheirThreads_AndASaveKeepsThem()
     {

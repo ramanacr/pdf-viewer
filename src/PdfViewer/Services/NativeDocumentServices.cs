@@ -562,8 +562,13 @@ internal sealed class NativeDocumentServices
     /// so deleted comments do not linger in an earlier revision. Flattened draws every annotation
     /// into its page and is always written whole.
     /// </summary>
-    public byte[] Save(PdfVectorDocument doc, byte[] bytes, IEnumerable<AnnotationModel> annotations, bool flatten)
+    public byte[] Save(PdfVectorDocument doc, byte[] bytes, IEnumerable<AnnotationModel> annotations, bool flatten, bool allowInvalidatingSignatures = false)
     {
+        // A signed document is only ever changed by an incremental update. When it cannot take one
+        // (its cross-reference data was rebuilt, it has no startxref) or the save flattens, the whole
+        // file would be written again and every signature in it broken: never without being told to.
+        if (!allowInvalidatingSignatures && WouldInvalidateSignatures(doc, bytes, flatten))
+            throw new SignedSaveException();
         var models = annotations.Where(a => a.PageNumber >= 1 && a.PageNumber <= doc.PageCount).ToList();
         var byId = new Dictionary<Guid, AnnotationModel>();
         foreach (var m in models) byId.TryAdd(m.Id, m);
@@ -576,10 +581,13 @@ internal sealed class NativeDocumentServices
         // Where each kept annotation is (for a new reply's /IRT): its object number, else its place.
         var kept = new Dictionary<Guid, (int Page, int Index, int ObjectNumber)>();
         var deleted = new List<(int Page, int Index, int Depth)>();
+        // The positions of the annotations the viewer manages, per page: only those are ever changed.
+        var managedAt = new Dictionary<int, HashSet<int>>();
         for (int p = 1; p <= doc.PageCount; p++)
         {
             var crop = doc.PageTree.Pages[p - 1].CropBox;
             var onPage = PdfAnnotationReader.Read(doc, p);
+            managedAt[p] = onPage.Where(a => IsManaged(a, doc)).Select(a => a.Index).ToHashSet();
             foreach (var existing in onPage)
             {
                 if (!IsManaged(existing, doc)) continue;
@@ -597,8 +605,9 @@ internal sealed class NativeDocumentServices
         }
         // Replies before the comments they answer, so a deleted comment's deleted replies are
         // removed, not first turned into notes of their own (the editor detaches replies it keeps).
+        // A reply the viewer does not manage (a caret, a squiggly) is left exactly as the file has it.
         foreach (var (p, index, _) in deleted.OrderByDescending(d => d.Depth))
-            editor.Delete(p, index, cascadeReplies: false);
+            editor.Delete(p, index, cascadeReplies: false, detachReply: managedAt[p].Contains);
 
         // New comments before new replies, each reply after the one it answers, so /IRT can name it.
         foreach (var model in models.Where(m => !handled.Contains(m.Id)).OrderBy(m => ThreadDepth(m, byId)))
@@ -619,6 +628,10 @@ internal sealed class NativeDocumentServices
         editor.Finish();
         return update.Commit(forceFullRewrite: flatten || !IsSigned(doc));
     }
+
+    /// <summary>Saving <paramref name="doc"/> (whose bytes are <paramref name="bytes"/>) would break its signatures: it is signed, and the save flattens or it cannot take an incremental update.</summary>
+    internal static bool WouldInvalidateSignatures(PdfVectorDocument doc, byte[] bytes, bool flatten) =>
+        IsSigned(doc) && (flatten || !PdfUpdate.TakesIncrementalUpdate(doc, bytes));
 
     /// <summary>How many /IRT steps lead from the annotation to one on its page that answers none (0 for that one; a chain that loops or leaves the page ends).</summary>
     private static int ReplyDepth(PdfAnnotation a, IReadOnlyList<PdfAnnotation> page)
