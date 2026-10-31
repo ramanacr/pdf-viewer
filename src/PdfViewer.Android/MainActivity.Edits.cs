@@ -38,12 +38,12 @@ public sealed partial class MainActivity
     private bool _noticeShown;
 
     private IEnumerable<TextView> EditButtons =>
-        _toolButtons.Select(t => t.Button).Concat([_undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
+        _toolButtons.Select(t => t.Button).Concat([_colourButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
 
     private bool CanAnnotate => _session?.CanAnnotate == true;
 
     /// <summary>
-    /// The annotate bar: the tools, then undo, redo, reply, move, delete and close, in one strip that
+    /// The annotate bar: the tools, then colour, undo, redo, reply, move, delete and close, in one strip that
     /// scrolls sideways (at 360 dp a phone is too narrow for all of them at 48 dp each).
     /// </summary>
     private View BuildAnnotateBar()
@@ -62,6 +62,7 @@ public sealed partial class MainActivity
             (ToolButton("Arrow", "Arrow: drag from its tail to its point", (_, _) => SetTool(PageView.PageTool.Arrow)), PageView.PageTool.Arrow),
             (ToolButton("Stamp", "Stamp: choose one, then tap where it goes", (_, _) => StampTool()), PageView.PageTool.Stamp),
         ];
+        BuildColourButton();
         _undoButton = ToolButton("↶", "Undo", (_, _) => Change(s => s.Undo()));
         _redoButton = ToolButton("↷", "Redo", (_, _) => Change(s => s.Redo()));
         _deleteButton = ToolButton("Delete", "Delete the chosen annotation", (_, _) => DeletePicked());
@@ -70,7 +71,7 @@ public sealed partial class MainActivity
         _closeAnnotateButton = ToolButton("✕", "Stop annotating", (_, _) => ShowAnnotateBar(false));
         var tools = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
         foreach (var (button, _) in _toolButtons) tools.AddView(button);
-        foreach (var button in new[] { _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
+        foreach (var button in new[] { _colourButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
         // TalkBack reads the strip in order and scrolls it to the focused button.
         var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = true, FillViewport = true };
         strip.AddView(tools);
@@ -95,28 +96,29 @@ public sealed partial class MainActivity
         _pages.FieldTapped += OnFieldTapped;
         _pages.AnnotationTapped += OnAnnotationTapped;
         _pages.EmptyTapped += () => Pick(null);
-        _pages.InkDrawn += (page, stroke) => Change(s => s.AddInk(page, stroke) != null, unchanged: () => _pages.DropPendingInk(stroke));
+        // New annotations take the colour chosen for their kind (MainActivity.Colours.cs); null is the kind's default.
+        _pages.InkDrawn += (page, stroke) => Change(s => s.AddInk(page, stroke, KeptColour(ViewerAnnotationKind.Ink)) != null, unchanged: () => _pages.DropPendingInk(stroke));
         _pages.NoteRequested += (page, point) =>
         {
             SetTool(PageView.PageTool.Browse);
             AskText("New note", "", ViewerAnnotationStore.MaxContentsLength, multiline: true, password: false,
-                text => Change(s => s.AddNote(page, point, text) is { } a && Picked(a.Id)));
+                text => Change(s => s.AddNote(page, point, text, KeptColour(ViewerAnnotationKind.Note)) is { } a && Picked(a.Id)));
         };
         _pages.TextRequested += (page, point) =>
         {
             SetTool(PageView.PageTool.Browse);
             AskText("New text box", "", ViewerAnnotationStore.MaxContentsLength, multiline: true, password: false,
-                text => Change(s => s.AddFreeText(page, point, text) is { } a && Picked(a.Id)));
+                text => Change(s => s.AddFreeText(page, point, text, KeptColour(ViewerAnnotationKind.FreeText)) is { } a && Picked(a.Id)));
         };
         _pages.StampRequested += PlaceStamp;
         ConnectCallouts();
         // A drag shorter than ViewerEditSession.MinShapeSize adds nothing: its outline goes.
         _pages.ShapeDrawn += (tool, page, from, to, outline) => Change(s => tool switch
         {
-            PageView.PageTool.Rectangle => s.AddShape(ViewerAnnotationKind.Square, page, from, to),
-            PageView.PageTool.Ellipse => s.AddShape(ViewerAnnotationKind.Circle, page, from, to),
-            PageView.PageTool.Line => s.AddLine(page, from, to, arrow: false),
-            _ => s.AddLine(page, from, to, arrow: true),
+            PageView.PageTool.Rectangle => s.AddShape(ViewerAnnotationKind.Square, page, from, to, KeptColour(ViewerAnnotationKind.Square)),
+            PageView.PageTool.Ellipse => s.AddShape(ViewerAnnotationKind.Circle, page, from, to, KeptColour(ViewerAnnotationKind.Circle)),
+            PageView.PageTool.Line => s.AddLine(page, from, to, arrow: false, KeptColour(ViewerAnnotationKind.Line)),
+            _ => s.AddLine(page, from, to, arrow: true, KeptColour(ViewerAnnotationKind.Line)),
         } != null, unchanged: () => _pages.DropPendingInk(outline));
     }
 
@@ -180,6 +182,7 @@ public sealed partial class MainActivity
         // Move: the chosen annotation (not a reply, which stays with what it answers).
         Enable(_moveButton, annotate && _pages.PickedAnnotation is { } chosen && _session?.Store.Find(chosen) is { Kind: not ViewerAnnotationKind.Reply });
         Enable(_replyButton, _pages.PickedAnnotation != null);
+        Enable(_colourButton, annotate);
         // The chosen tool is underlined.
         foreach (var (b, tool) in _toolButtons)
         {
@@ -190,6 +193,7 @@ public sealed partial class MainActivity
             b.Visibility = annotate ? ViewStates.Visible : ViewStates.Gone;
         // The selection bar is short of room on a phone when it has the markup buttons.
         _selectionLabel.Visibility = annotate ? ViewStates.Gone : ViewStates.Visible;
+        UpdateColours();
     }
 
     private void Pick(string? id)
@@ -253,7 +257,7 @@ public sealed partial class MainActivity
     private void MarkSelection(ViewerAnnotationKind kind)
     {
         if (_pages.Selection is not { } selection) return;
-        Change(s => s.MarkText(kind, selection) != null);
+        Change(s => s.MarkText(kind, selection, KeptColour(kind)) != null);
         _pages.ClearSelection();
     }
 

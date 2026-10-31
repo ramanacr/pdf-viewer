@@ -81,7 +81,7 @@ public sealed partial class MainActivity
                 return;
             }
             // A tap, not a drag: the box is as wide as a text box and as tall as its text.
-            Change(s => Picked(s.AddCallout(page, anchor, new ViewerRect(point.X, point.Y, 0, 0), text).Id));
+            Change(s => Picked(s.AddCallout(page, anchor, new ViewerRect(point.X, point.Y, 0, 0), text, KeptColour(ViewerAnnotationKind.FreeText)).Id));
         });
     }
 
