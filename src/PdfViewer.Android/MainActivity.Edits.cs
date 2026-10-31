@@ -42,8 +42,8 @@ public sealed partial class MainActivity
     private bool CanAnnotate => _session?.CanAnnotate == true;
 
     /// <summary>
-    /// The annotate bar: the tools in a strip that scrolls sideways (a phone is too narrow for
-    /// all of them), then undo, redo, delete and close, which stay in place.
+    /// The annotate bar: the tools, then undo, redo, reply, delete and close, in one strip that
+    /// scrolls sideways (at 360 dp a phone is too narrow for all of them at 48 dp each).
     /// </summary>
     private View BuildAnnotateBar()
     {
@@ -67,14 +67,11 @@ public sealed partial class MainActivity
         _closeAnnotateButton = ToolButton("✕", "Stop annotating", (_, _) => ShowAnnotateBar(false));
         var tools = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
         foreach (var (button, _) in _toolButtons) tools.AddView(button);
-        var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = false, FillViewport = false };
+        foreach (var button in new[] { _undoButton, _redoButton, _replyButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
+        // TalkBack reads the strip in order and scrolls it to the focused button.
+        var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = true, FillViewport = true };
         strip.AddView(tools);
         _annotateBar.AddView(strip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
-        _annotateBar.AddView(_undoButton);
-        _annotateBar.AddView(_redoButton);
-        _annotateBar.AddView(_replyButton);
-        _annotateBar.AddView(_deleteButton);
-        _annotateBar.AddView(_closeAnnotateButton);
         return _annotateBar;
     }
 
@@ -248,11 +245,27 @@ public sealed partial class MainActivity
         _pages.ClearSelection();
     }
 
+    /// <summary>Deletes the chosen annotation; with replies under it, asks first and names how many (and how many by other people).</summary>
     private void DeletePicked()
     {
-        if (_pages.PickedAnnotation is not { } id) return;
-        Change(s => s.Delete(id));
-        Pick(null);
+        if (_pages.PickedAnnotation is not { } id || _session is not { } session) return;
+        void Delete()
+        {
+            Change(s => s.Delete(id));
+            Pick(null);
+        }
+        var (replies, byOthers) = session.DeletedWith(id);
+        if (replies == 0)
+        {
+            Delete();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .SetTitle("Delete this annotation?")!
+            .SetMessage($"This also deletes {replies} {(replies == 1 ? "reply" : "replies")}" + (byOthers > 0 ? $", {byOthers} by other people" : "") + ". Undo brings them back.")!
+            .SetPositiveButton("Delete", (_, _) => Delete())!
+            .SetNegativeButton("Cancel", (_, _) => { })!
+            .Show();
     }
 
     private void OnAnnotationTapped(ViewerAnnotation a)
@@ -577,6 +590,9 @@ public sealed partial class MainActivity
                 default:
                     return;
             }
+            // Kept edits go before the file is written: a crash after the write cannot give the
+            // saved edits back a second time. Unsaved edits are kept again at the next onStop.
+            ForgetOurKeptEdits();
             // The complete bytes (the file as opened plus the edits as an incremental update) are
             // made first; only then is the file written, on a worker thread.
             byte[]? written = null;
@@ -607,7 +623,7 @@ public sealed partial class MainActivity
         if (r.Saved)
         {
             // The file has every edit: edits kept for a restore are no longer needed (MainActivity.KeptEdits.cs).
-            if (!session!.IsDirty) ForgetKeptEdits();
+            if (!session!.IsDirty) ForgetOurKeptEdits();
             Toast.MakeText(this, r.Unverified ? "Saved. (The storage did not confirm the file's size.)" : "Saved.", ToastLength.Short)?.Show();
             // An edit that came in after the bytes were taken is not in the file: ask again.
             if (after != null)
@@ -770,7 +786,12 @@ public sealed partial class MainActivity
             .SetTitle("Save changes?")!
             .SetMessage(ViewerSaveBack.UnsavedMessage)!
             .SetPositiveButton("Save", (_, _) => Save(after: then, afterCopy: true))!
-            .SetNeutralButton("Discard", (_, _) => then())!
+            .SetNeutralButton("Discard", (_, _) =>
+            {
+                // Discarded edits are not given back later (MainActivity.KeptEdits.cs).
+                ForgetOurKeptEdits();
+                then();
+            })!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
     }

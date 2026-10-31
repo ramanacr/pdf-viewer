@@ -75,14 +75,13 @@ public sealed partial class MainActivity : Activity
             _pages.NightPages = savedInstanceState.GetBoolean(StateNight);
             var view = (new PageAnchor(savedInstanceState.GetInt(StatePage, 1), savedInstanceState.GetDouble(StateU), savedInstanceState.GetDouble(StateV)),
                 savedInstanceState.GetDouble(StateZoom, 1));
-            // With the unsaved edits kept for it (MainActivity.KeptEdits.cs).
-            _ = OpenUriAsync(savedUri, view, restore: ReadKeptEdits(saved));
+            // With the unsaved edits kept for it (MainActivity.KeptEdits.cs), read on a worker thread.
+            _ = ReopenAfterProcessDeathAsync(savedUri, saved, view);
         }
-        else
+        else if (Intent is { Action: Intent.ActionView, Data: { } uri })
         {
-            // A new start: edits kept by an earlier process were left behind (the app was closed), not saved.
-            ForgetKeptEdits();
-            if (Intent is { Action: Intent.ActionView, Data: { } uri }) _ = OpenUriAsync(uri, null);
+            // A new start keeps edits an earlier process kept: they are offered when their document opens.
+            _ = OpenUriAsync(uri, null);
         }
     }
 
@@ -124,7 +123,7 @@ public sealed partial class MainActivity : Activity
     /// <summary>In the background Android may end the process: unsaved edits are kept (leaving with Back has saved or discarded them).</summary>
     protected override void OnStop()
     {
-        if (IsFinishing) ForgetKeptEdits();
+        if (IsFinishing) ForgetOurKeptEdits();
         else KeepEdits();
         base.OnStop();
     }
@@ -604,17 +603,23 @@ public sealed partial class MainActivity : Activity
         byte[] bytes;
         ViewerFileStamp stamp;
         byte[]? original = null;
+        ViewerEditSnapshot? kept = null;
+        bool afterDeath = restore != null;
         try
         {
             // The size and time that later tell whether another app changed the file: taken with the read.
-            (bytes, stamp, original) = await Task.Run(() =>
+            // Kept edits (from the saved state, or any on storage) and the bytes they fit, hashed here too.
+            (bytes, stamp, kept, original) = await Task.Run(() =>
             {
                 var file = ReadAll(uri);
-                return (file, Stamp(uri), restore != null ? BytesForKeptEdits(restore, file) : null);
+                var found = restore ?? ReadKeptEditsNow();
+                return (file, Stamp(uri), found, found?.OriginalOf(file));
             });
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            // The kept edits were for this file, which cannot be read any more (a revoked grant, a deleted file).
+            if (afterDeath) ForgetKeptEdits();
             bool gone = ex is Java.Lang.SecurityException or Java.IO.FileNotFoundException or FileNotFoundException;
             if (gone && _recent.Find(uri.ToString()!) != null)
             {
@@ -625,15 +630,29 @@ public sealed partial class MainActivity : Activity
             Toast.MakeText(this, ex is FileTooLargeException ? ex.Message : $"The file could not be read ({ex.GetType().Name}).", ToastLength.Long)?.Show();
             return;
         }
-        if (restore != null && original == null)
+        string? name = fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri);
+        if (afterDeath && original == null)
         {
             ForgetKeptEdits();
-            restore = null;
             Toast.MakeText(this, "The file changed while the app was closed, so your unsaved changes could not be restored.", ToastLength.Long)?.Show();
+            await OpenBytesAsync(bytes, uri, name, password: null, view, stamp);
+            return;
         }
-        // With kept edits, the bytes they were made on (the file may have a saved update after them).
-        await OpenBytesAsync(original ?? bytes, uri, fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri), password: null, view, stamp,
-            restore, onDisk: bytes);
+        if (afterDeath)
+        {
+            // With kept edits, the bytes they were made on (the file may have a saved update after them).
+            await OpenBytesAsync(original!, uri, name, password: null, view, stamp, restore, onDisk: bytes);
+            return;
+        }
+        if (kept != null && original != null)
+        {
+            // Opened anew (not from the saved state), with edits kept for these bytes: the reader chooses.
+            OfferKeptEdits(kept,
+                restore: () => _ = OpenBytesAsync(original, uri, name, password: null, view, stamp, kept, onDisk: bytes),
+                discard: () => _ = OpenBytesAsync(bytes, uri, name, password: null, view, stamp));
+            return;
+        }
+        await OpenBytesAsync(bytes, uri, name, password: null, view, stamp);
     }
 
     private sealed class FileTooLargeException(string message) : IOException(message);
@@ -683,7 +702,8 @@ public sealed partial class MainActivity : Activity
         }
         catch (ViewerOpenException ex)
         {
-            // The message is written for users and never quotes the document.
+            // The message is written for users and never quotes the document. Kept edits for it cannot be given back.
+            if (restore != null) ForgetKeptEdits();
             Toast.MakeText(this, ex.Message, ToastLength.Long)?.Show();
             return;
         }
@@ -692,7 +712,13 @@ public sealed partial class MainActivity : Activity
         ViewerEditSession? session = null;
         try
         {
-            session = await Task.Run(() => ViewerEditSession.StartAsync(opened));
+            session = await Task.Run(async () =>
+            {
+                var started = await ViewerEditSession.StartAsync(opened);
+                // Annotations made on this device earlier: the reader's own (MainActivity.KeptEdits.cs).
+                foreach (string id in ReadMadeHere()) started.MadeHere.Add(id);
+                return started;
+            });
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -713,13 +739,14 @@ public sealed partial class MainActivity : Activity
         // To tell, at a save, whether another app changed the file since; and what to write back if a save fails part-way.
         _openedStamp = stamp;
         _onDisk = onDisk ?? bytes;
-        // What kept edits are tied to (MainActivity.KeptEdits.cs).
-        _openedHash = Task.Run(() => ViewerEditSnapshot.Hash(bytes));
+        // What kept edits are tied to (MainActivity.KeptEdits.cs): the same bytes as the snapshot's length.
+        _openedHash = Task.Run(() => ViewerEditSnapshot.Hash(opened.OriginalBytes));
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
         _linkBack.Clear();
-        // Edits kept for the document before (saved or discarded by now) are no longer needed.
-        if (restore == null) ForgetKeptEdits();
+        // Kept edits on storage are this document's only once restored; another document's stay until replaced.
+        _keptOurs = false;
+        _keptVersion = -1;
         StartEdits(session);
         if (restore != null && session != null && !opened.IsEncrypted) RestoreKeptEdits(session, restore);
         if (view is { } v) _pages.RestoreView(v.TopLeft, v.Zoom);
@@ -905,7 +932,7 @@ public sealed partial class MainActivity : Activity
     protected override void OnDestroy()
     {
         _search?.Cancel();
-        if (IsFinishing) ForgetKeptEdits();
+        if (IsFinishing) ForgetOurKeptEdits();
         var doc = _doc;
         _doc = null;
         _pages.SetDocument(null);

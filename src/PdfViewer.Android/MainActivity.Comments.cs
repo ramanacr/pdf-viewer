@@ -27,8 +27,12 @@ public sealed partial class MainActivity
 {
     private const int ExportXfdfRequest = 3, ImportXfdfRequest = 4;
 
-    /// <summary>The largest .xfdf file read, in bytes (the engine reads at most 8 M characters).</summary>
-    private const int MaxXfdfBytes = 32 * 1024 * 1024;
+    /// <summary>
+    /// The largest .xfdf file read, in bytes: the engine's limit in characters
+    /// (<see cref="PdfEngine.Vector.Annotations.PdfAnnotationXfdf.MaxCharacters"/>), at up to three
+    /// bytes each (UTF-8 or UTF-16). The engine then refuses a text longer than its limit.
+    /// </summary>
+    private const int MaxXfdfBytes = 3 * PdfEngine.Vector.Annotations.PdfAnnotationXfdf.MaxCharacters;
 
     private TextView _replyButton = null!;
 
@@ -202,11 +206,16 @@ public sealed partial class MainActivity
             });
     }
 
+    /// <summary>Asks before deleting a reply, naming the replies under it that go too and how many other people wrote.</summary>
     private void ConfirmDelete(ViewerAnnotation reply, string threadId)
     {
+        if (_session is not { } session) return;
+        var (replies, byOthers) = session.DeletedWith(reply.Id);
+        string message = replies == 0 ? "Undo brings it back."
+            : $"This also deletes {replies} {(replies == 1 ? "reply" : "replies")} under it" + (byOthers > 0 ? $", {byOthers} by other people" : "") + ". Undo brings them back.";
         new AlertDialog.Builder(this)
             .SetTitle("Delete this reply?")!
-            .SetMessage("Its own replies are deleted with it. Undo brings them back.")!
+            .SetMessage(message)!
             .SetPositiveButton("Delete", (_, _) =>
             {
                 Change(s => s.Delete(reply.Id));
