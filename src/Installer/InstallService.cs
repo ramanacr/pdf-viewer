@@ -94,16 +94,22 @@ public static class InstallService
         {
             int totalEntries = archive.Entries.Count;
             int current = 0;
+            string targetRoot = Path.GetFullPath(targetDirectory);
+            if (!Path.EndsInDirectorySeparator(targetRoot)) targetRoot += Path.DirectorySeparatorChar;
 
             foreach (var entry in archive.Entries)
             {
+                // Never write outside the install folder, whatever the entry name says (zip slip).
+                string destinationPath = Path.GetFullPath(Path.Combine(targetRoot, entry.FullName));
+                if (!destinationPath.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"The installer payload has an entry outside the install folder: {entry.FullName}");
+
                 if (string.IsNullOrEmpty(entry.Name))
                 {
-                    Directory.CreateDirectory(Path.Combine(targetDirectory, entry.FullName));
+                    Directory.CreateDirectory(destinationPath);
                     continue;
                 }
 
-                string destinationPath = Path.Combine(targetDirectory, entry.FullName);
                 string? destDir = Path.GetDirectoryName(destinationPath);
                 if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
 
