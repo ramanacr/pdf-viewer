@@ -891,6 +891,138 @@ function printEnd() {
     printEncoding = [];
 }
 
+// ------------------------------------------------------------------ custom stamps
+//
+// A custom stamp is made from a picture or a PDF page the reader picks (read in the browser,
+// never uploaded). The reader may keep a made stamp in this browser's stamp library: IndexedDB
+// of this site, on this device only, with a count and size cap. Every storage call is guarded:
+// in a private window or with storage blocked the library is simply not there.
+
+const MaxStampFileBytes = 20 * 1024 * 1024;   // ViewerCustomStamp.MaxPdfBytes
+const StampDbName = 'pdfviewer-stamps';
+const StampStore = 'stamps';
+const MaxSavedStamps = 30;
+const MaxSavedStampBytes = 64 * 1024 * 1024;
+
+/** Opens the file picker for a custom stamp's picture or PDF; the bytes go to OnStampFile. */
+export function pickStampFile() {
+    const input = document.getElementById('stamp-input');
+    if (!input) return;
+    if (!input.dataset.ready) {
+        input.dataset.ready = '1';
+        input.addEventListener('change', async () => {
+            const file = input.files[0];
+            input.value = '';
+            if (!file) return;
+            if (file.size > MaxStampFileBytes) {
+                app.invokeMethodAsync('OnStampFileRejected', 'This file is larger than 20 MB, the most a stamp is made from.');
+                return;
+            }
+            try {
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                await app.invokeMethodAsync('OnStampFile', file.name, bytes);
+            } catch {
+                app.invokeMethodAsync('OnStampFileRejected', 'The browser could not read this file.');
+            }
+        });
+    }
+    input.click();
+}
+
+/** Draws the custom stamp dialog's preview (a BGRA bitmap). */
+export function drawStampPreview(view, width, height) {
+    const canvas = document.getElementById('stamp-preview');
+    if (!canvas) return;
+    drawInto(canvas, view, width, height);
+    // Drawn at the device's pixel ratio, shown at its size in CSS pixels.
+    const ratio = window.devicePixelRatio || 1;
+    canvas.style.width = `${width / ratio}px`;
+    canvas.style.height = `${height / ratio}px`;
+}
+
+function openStampDb() {
+    return new Promise((resolve, reject) => {
+        let request;
+        try {
+            request = indexedDB.open(StampDbName, 1);
+        } catch (e) {
+            reject(e);
+            return;
+        }
+        request.onupgradeneeded = () => request.result.createObjectStore(StampStore, { keyPath: 'id' });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('The stamp library is blocked.'));
+    });
+}
+
+/** Runs work(store) in one transaction; resolves with its request's result when the transaction ends. */
+async function withStamps(mode, work) {
+    const db = await openStampDb();
+    try {
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(StampStore, mode);
+            const request = work(tx.objectStore(StampStore));
+            tx.oncomplete = () => resolve(request ? request.result : undefined);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+/** The saved stamps as JSON [{ id, name, kind, size }], oldest first; "null" when this browser keeps none. */
+export async function stampLibraryList() {
+    try {
+        const all = await withStamps('readonly', s => s.getAll());
+        return JSON.stringify(all
+            .filter(r => r && typeof r.id === 'string' && r.data instanceof Uint8Array)
+            .sort((a, b) => (a.created || 0) - (b.created || 0))
+            .map(r => ({ id: r.id, name: String(r.name || 'Stamp'), kind: r.kind === 'Page' ? 'Page' : 'Image', size: r.data.byteLength })));
+    } catch {
+        return 'null';
+    }
+}
+
+/** Keeps a made stamp (its one-page PDF); '' when kept (or kept already), else why not. */
+export async function stampLibrarySave(id, name, kind, view) {
+    const data = view.slice();   // a copy out of WebAssembly memory, before the first await
+    try {
+        const all = await withStamps('readonly', s => s.getAll());
+        if (all.some(r => r.id === id)) return '';
+        if (all.length >= MaxSavedStamps) return `The stamp library keeps at most ${MaxSavedStamps} stamps. Delete one first.`;
+        const total = all.reduce((n, r) => n + (r.data ? r.data.byteLength : 0), 0);
+        if (total + data.byteLength > MaxSavedStampBytes) return 'The stamp library is full (64 MB). Delete a stamp first.';
+        await withStamps('readwrite', s => s.put({ id, name, kind, data, created: Date.now() }));
+        return '';
+    } catch {
+        return 'This browser does not let the viewer keep stamps (its storage is off or full).';
+    }
+}
+
+/** Gives a saved stamp's bytes to OnStampLibraryBytes; false when it is not there. */
+export async function stampLibraryLoad(id) {
+    try {
+        const r = await withStamps('readonly', s => s.get(id));
+        if (!r || !(r.data instanceof Uint8Array)) return false;
+        await app.invokeMethodAsync('OnStampLibraryBytes', r.id, r.kind === 'Page' ? 'Page' : 'Image', String(r.name || 'Stamp'), r.data);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Deletes a saved stamp; false when the browser's storage refused. */
+export async function stampLibraryDelete(id) {
+    try {
+        await withStamps('readwrite', s => s.delete(id));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 // ------------------------------------------------------------------ embedding
 
 const PROTOCOL = 'pdfviewer-embed';
@@ -913,7 +1045,14 @@ export function initEmbed(dotnet, origin, readyJson) {
             const { data, ...rest } = m;
             dotnet.invokeMethodAsync('OnEmbedOpen', JSON.stringify(rest), bytes);
         } else if (m.type === 'call') {
-            dotnet.invokeMethodAsync('OnEmbedCall', JSON.stringify(m));
+            if (m.data instanceof ArrayBuffer) {
+                // A call with bytes beside it (addCustomStamp's picture or PDF).
+                const bytes = new Uint8Array(m.data);
+                const { data, ...rest } = m;
+                dotnet.invokeMethodAsync('OnEmbedCallBytes', JSON.stringify(rest), bytes);
+            } else {
+                dotnet.invokeMethodAsync('OnEmbedCall', JSON.stringify(m));
+            }
         } else if (m.type === 'range') {
             // The answer to a fetchRange request: its bytes beside it, checked against the request in .NET.
             const bytes = m.data instanceof ArrayBuffer ? new Uint8Array(m.data) : new Uint8Array(0);

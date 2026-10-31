@@ -476,4 +476,73 @@ public class CustomStampTests
         Assert.NotNull(snapshot.ToUtf8(picture.Pdf.Length * 2 + 4096));
         Assert.NotNull(snapshot.ToUtf8());
     }
+
+    // ------------------------------------------------------------------ the stamp library (Android: app-private files)
+
+    [Fact]
+    public void TheStampLibrary_KeepsStamps_GivesThemBackChecked_AndDeletesThem()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "custom-stamps-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var library = new ViewerStampLibrary(folder);
+            Assert.Empty(library.List());
+            var picture = ViewerCustomStamp.FromImage(Picture(40, 20));
+            var page = ViewerCustomStamp.FromPdf(SourcePdf(pages: 2), 2);
+            Assert.Null(library.Save(picture, "Signature\n"));
+            Assert.Null(library.Save(page, "Letterhead, page 2"));
+            Assert.Null(library.Save(picture, "Again"));   // kept once
+            var list = library.List();
+            Assert.Equal([("Signature", ViewerCustomStampKind.Image), ("Letterhead, page 2", ViewerCustomStampKind.Page)], list.Select(s => (s.Name, s.Kind)));
+            Assert.Equal(picture.Hash, list[0].Id);
+
+            var back = library.Load(list[1].Id)!;
+            Assert.Equal((page.Hash, ViewerCustomStampKind.Page, 300.0), (back.Hash, back.Kind, back.Width));
+            Assert.Null(library.Load("../../escape"));
+            Assert.Null(library.Load(new string('a', 64)));
+
+            // A file changed on the device is not trusted: it is not given back.
+            File.WriteAllBytes(Path.Combine(folder, picture.Hash + ".pdf"), Picture(4, 4));
+            Assert.Null(library.Load(picture.Hash));
+            // A damaged index is read as empty, not as an error.
+            File.WriteAllText(Path.Combine(folder, "stamps.json"), "{ not json");
+            Assert.Empty(library.List());
+
+            Assert.Null(library.Save(page, "Letterhead"));
+            Assert.True(library.Delete(page.Hash));
+            Assert.Empty(library.List());
+            Assert.False(File.Exists(Path.Combine(folder, page.Hash + ".pdf")));
+            Assert.False(library.Delete(page.Hash));
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TheStampLibrary_HasACountCap()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "custom-stamps-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var library = new ViewerStampLibrary(folder);
+            for (int i = 0; i < ViewerStampLibrary.MaxStamps; i++)
+                Assert.Null(library.Save(ViewerCustomStamp.FromImage(Picture(10 + i, 10)), $"Stamp {i}"));
+            Assert.Contains("at most", library.Save(ViewerCustomStamp.FromImage(Picture(9, 9)), "One more"));
+            Assert.Equal(ViewerStampLibrary.MaxStamps, library.List().Count);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void APdfsPages_AreCounted_ForChoosingOne()
+    {
+        Assert.Equal(3, ViewerCustomStamp.PageCount(SourcePdf(pages: 3)));
+        Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.PageCount(SourcePdf(encryption: new PdfTestEncryption(TestEncryptionKind.Aes128_R4, "", "owner"))));
+        Assert.Throws<ViewerAnnotationException>(() => ViewerCustomStamp.PageCount(Picture(4, 4)));
+    }
 }

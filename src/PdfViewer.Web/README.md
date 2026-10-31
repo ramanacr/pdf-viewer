@@ -10,7 +10,8 @@ server code.
 - **No telemetry.** No analytics, no cookies, no third-party requests. The page sets a
   Content-Security-Policy of `'self'` only. The bundled fonts, Noto included, come from the
   demo's own site, never from Google Fonts or another host. The theme and side-panel choices are kept in the
-  browser's local storage; nothing else is stored.
+  browser's local storage, and the custom stamps you choose to keep in its IndexedDB (on this
+  device only); nothing else is stored.
 - **Document JavaScript never runs.** The engine has no script interpreter.
 - Diagnostics shown on screen are numbers and exception type names, never document text.
 
@@ -34,6 +35,7 @@ Status: a demo, and the viewer of the [web embed SDK](#embed-sdk) (`wwwroot/pdfv
 | Thumbnails | The "Pages" tab of the side panel. Only thumbnails near its view are drawn, after the pages in view. |
 | Text selection and copy | Drag with the mouse or a pen, double-click for a word, `Ctrl`+`A` for the page, `Ctrl`+`C` to copy (when the document allows it). One page at a time, with the engine's text layout (`ViewerTextLayout`, shared with the Android app). |
 | Annotations | Highlight, underline, strike-through, note, free text, callouts, ink, rectangle, ellipse, line, arrow, polygon, connected lines and stamps; select, move, delete, undo and redo; a comments panel with replies and review statuses. Shapes have a fill, a dash (solid, dashed, dotted) and, for lines, the ten line endings. A callout (the **Callout** tool: click the spot it points to, then click or drag its text box, then type) is free text with `/IT /FreeTextCallout`, a line with a knee and an open arrow (`/CL`, `/LE`) and `/RD` for its text box, as Acrobat writes one. Dragging its box keeps the spot it points to; the selected callout has a handle at that spot to drag it, each one undo step. The edits, their rules and undo live in `ViewerEditSession`, the editing core the Android app shares. Written by the engine's `PdfAnnotationEditor` as an incremental update with appearance streams (`ViewerDocument.ApplyEditsAsync`). |
+| Custom stamps | The stamp list's **Custom stamp…**: a PNG or JPEG picture, or a page of a PDF (chosen with a small preview), read in the browser and never uploaded; then click where it goes (2 inches across) or drag its box (it keeps its shape). Written as a `/Stamp` named `Custom` whose appearance draws the picture or page as a form XObject (`ViewerCustomStamp` in the shared editing core, the engine's `PdfStampForms`, as the desktop app writes one): a page stays vector content, a JPEG is embedded as it is. Untrusted input has caps (10 MB and 12 million pixels for a picture, 20 MB for a PDF, 12 MB for the stamp made), a damaged picture or an encrypted PDF is refused, and the appearance copies no action, script or external link. **Keep it in this browser's stamp library** saves it in IndexedDB (at most 30 stamps and 64 MB; every call guarded, so a private window simply has no library); saved stamps are in the stamp list, and the dialog deletes them. An embedded viewer keeps none (its origin is shared by every host page). The embed SDK has `addCustomStamp`. |
 | Forms | Text, check box, radio, combo and list fields filled over the page; values, formats and calculations by the engine (`PdfFormService.Fill`), without running document JavaScript. |
 | Download | The document with its annotations and form data as a Blob download (`Ctrl`+`S`); embedded, the bytes as given unless `downloadWithAnnotations`. |
 | Print | Pages rendered at 150 dpi and printed as images through a hidden iframe. Up to 500 pages. |
@@ -413,7 +415,7 @@ is [docs/sdk/index.md](../../docs/sdk/index.md) (published at
 1. The script makes an iframe of `index.html?embed=1&mode=<embedMode>&origin=<host origin>`.
    `theme.js` and `Viewer.ReadFrameUrl` read the URL before the first render, so the demo's
    chrome (brand, Open, Tour, privacy bar, status bar, help, drag and drop) never shows, and
-   nothing is read from or written to local storage.
+   nothing is read from or written to local storage or IndexedDB (no custom stamp library).
 2. The host page fetches the file itself and posts `{ protocol: "pdfviewer-embed", version: 1,
    type: "open", config, data }` with the bytes as a transferred ArrayBuffer. `viewer.js` accepts
    messages only from the parent window and the origin in the URL, and posts only to it;

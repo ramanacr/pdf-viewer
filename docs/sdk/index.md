@@ -413,6 +413,7 @@ With `showAnnotationTools` (full window and light box), a second toolbar shows t
 | Line, arrow | Drag from the start to the end. The arrow has an open arrowhead at its end. |
 | Polygon, connected lines | Click each point. Double-click or press `Enter` to end; `Esc` cancels. |
 | Stamp | Pick a stamp (Approved, Draft, Confidential and the other standard ones) and click where it goes. On a turned page (`/Rotate`), the stamp reads upright as the page is shown. |
+| Custom stamp | In the stamp list, **Custom stamp…** opens a dialog: choose a PNG or JPEG picture or a PDF (for a PDF, choose the page; a small preview shows it), then **Place stamp**, then click where it goes (2 inches across its longer side) or drag its box (it keeps its shape). The file is read in the browser and never uploaded. Tick **Keep it in this browser's stamp library** to find it in the stamp list again; the dialog lists the saved stamps with a delete button. An embedded viewer has no library: its origin is shared by every host page, so it keeps nothing in the browser. |
 
 The colour buttons set the colour of the next annotation, or change the selected one (a stamp
 keeps the colour of its kind).
@@ -464,11 +465,13 @@ method returns a Promise.
 | `deleteAnnotations(filter)` | Deletes the annotations of the filter (`{}` deletes all); resolves with the deleted ones. |
 | `setConfig(config)` | `{ showToolbar, showCommentsPanel, downloadWithAnnotations, printWithAnnotations, authorName }`, each optional. `authorName` is the author of the reader's new annotations (default `Guest`). |
 | `exportXfdf()` | The annotations as an XFDF document (ISO 19444-1), a string. |
+| `addCustomStamp(options)` | Adds a custom stamp made from a PNG or JPEG picture or from a page of a PDF; resolves with the annotation. See [custom stamps](#custom-stamps). |
 | `importXfdf(xml)` | Adds the annotations of an XFDF document (the supported types; others are skipped) as one undo step; resolves with the ones added. Long texts are cut to the limits below. An annotation that is not valid here (more than 1000 quadrilaterals, off the document's pages, outside a page's media box) is skipped, with its replies, and the viewer's status line counts the skipped ones. A reply deeper than 64 levels is skipped the same way. The import is rejected as a whole with `INVALID_ARGUMENT` (a message that starts with `importXfdf: `) when the text is not XFDF, when it has more than 1000 annotations to add, or when they would take the document past its limits (10 000 annotations, or the total of points below); then nothing is added. *Changed in this version:* before, one annotation that was not valid (off the pages, for example) rejected the whole import; now it is skipped and the others are added, as in the Android app. |
 | `registerEventListener(handler, { listenOn })` | See [annotation events](#annotation-events). |
 
 A filter is `{ annotationIds: ['id1', …], pageRange: { startPage, endPage } }` (pages from 1),
-each part optional. Changes reject with `NOT_ALLOWED` when the file was opened with
+each part optional. `getAnnotations` also takes `includeCustomStampData: true` (see
+[custom stamps](#custom-stamps)). Changes reject with `NOT_ALLOWED` when the file was opened with
 `hasReadOnlyAccess` or the document forbids annotations (its permissions, or a
 [signature](#signed-and-certified-files)), and with `INVALID_ARGUMENT` (and a message that
 says what) for an annotation that is not valid.
@@ -620,6 +623,45 @@ annotation within 64 levels; a chain that loops, a group member (`/RT /Group`) a
 another type stay as they are. A stamp from the file keeps its own appearance when it is moved.
 Their `id` is their `/NM`, or `pdf-<page>-<index>` when they have none. New and changed
 annotations are written with `/NM` set to their `id`, so ids survive a save.
+
+### Custom stamps
+
+A custom stamp is a `/Stamp` named `Custom` whose appearance draws a picture or a page of a PDF
+as a form XObject, as the desktop app writes one: a PDF page stays vector content, a JPEG is
+embedded as it is, and a PNG is embedded losslessly with its transparency. It reads upright on a
+turned page, and Acrobat and the desktop app draw it from that appearance.
+
+```js
+const response = await fetch('/signature.png');
+const stamp = await manager.addCustomStamp({
+  data: await response.arrayBuffer(),   // an ArrayBuffer, a typed array or a Blob: PNG, JPEG or PDF
+  pageNumber: 1,                        // the page to stamp, from 1 (default 1)
+  boundingBox: [72, 72, 216, 144],      // optional: the box it is fitted in (PDF points), keeping its shape
+  sourcePage: 1,                        // a PDF's page to stamp, from 1 (default 1)
+});
+// stamp.target.selector: { subtype: 'stamp', stampName: 'Custom', customStamp: true, boundingBox, … }
+```
+
+- Without `boundingBox` the stamp is centred on the page, 2 inches across its longer side; a box
+  smaller than 8 points either way places it so on the box's corner. A larger box gets the
+  largest stamp of its shape, centred in it. The stamp is kept on the page.
+- `data` is checked as untrusted input: at most 20 MB for a PDF and 10 MB for a picture, at most
+  12 million pixels and 10 000 pixels a side; a picture is decoded in full and a damaged one is
+  rejected; a PDF that is encrypted, is not a PDF, or has no such `sourcePage` is rejected.
+  The appearance copies no action, script or link to another file. A document's custom stamps
+  hold at most 48 MB together. Each case rejects with `INVALID_ARGUMENT` and a message.
+- `getAnnotations` gives a custom stamp with `subtype: 'stamp'`, `stampName: 'Custom'` and
+  `customStamp: true` (other stamps have `customStamp: false`). It does not give the picture or
+  page unless you ask: with `getAnnotations({ includeCustomStampData: true })`, a stamp made in
+  this session also has `customStampData: { kind: 'image' | 'page', mimeType: 'application/pdf', data }`,
+  `data` being the one-page PDF that draws it, base64. A custom stamp read from the file
+  (`customStamp: true` by its name) keeps its appearance and has no `customStampData`.
+- `updateAnnotation` moves or resizes it: give it back with `stampName: 'Custom'` and a new
+  `boundingBox`. It keeps what it draws, and the box is fitted to its shape (centred in the box
+  given). `addAnnotations` with `stampName: 'Custom'` rejects: a custom stamp comes from
+  `addCustomStamp`. Delete it and undo it as any annotation.
+- The bytes travel to the viewer's frame beside the message (transferred, never uploaded).
+- `exportXfdf` writes it as a stamp named `Custom` without its picture, so `importXfdf` skips it.
 
 ### Annotation events
 
@@ -841,7 +883,7 @@ Firefox and Safari are not tested yet.
 | Pages | Drawn one at a time on the main thread, in strips; a heavy page's interpretation still blocks the viewer for a moment (see [responsiveness](#responsiveness)). |
 | Loading | By ranges when the server allows it (see [large files](#large-files)); otherwise the whole file is read before the first page shows. While a ranged file loads, calls that need all of it wait. |
 | Selection | One page at a time; dragging does not scroll. |
-| Annotations | The types above (callouts too) and replies; no carets, file attachments, custom stamps or reply states (/State) yet, and a line or polygon is moved as a whole (its points have no handles yet). Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
+| Annotations | The types above (callouts and custom stamps too) and replies; no carets, file attachments or reply states (/State) yet; stamps have no handle to resize or turn them in the viewer (the API resizes a custom stamp), and a line or polygon is moved as a whole (its points have no handles yet). Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
 | Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. No API to set form values from the host page yet. Simplified field notation nested deeper than 64 levels is not calculated. |
 | Language | The viewer is in English. |
 
@@ -905,4 +947,4 @@ const view = new PdfViewer.View({ divId: 'viewer', renderInWorker: true });
 ## Planned
 
 - Rendering in a worker by default, once it is checked in Safari and on phones.
-- Later: handles for the points of lines and polygons, reply states (accepted, rejected) and custom stamps.
+- Later: handles for the points of lines and polygons, reply states (accepted, rejected), and handles to resize and turn stamps.

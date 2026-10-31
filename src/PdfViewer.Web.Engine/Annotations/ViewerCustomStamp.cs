@@ -205,6 +205,20 @@ public sealed class ViewerCustomStamp
     }
 
     /// <summary>
+    /// The number of pages of a PDF a stamp may be made from, for choosing the page; refused as
+    /// <see cref="FromPdf"/> refuses (too large, not a PDF that can be read, encrypted).
+    /// </summary>
+    public static int PageCount(byte[] pdf)
+    {
+        ArgumentNullException.ThrowIfNull(pdf);
+        if (pdf.Length == 0) throw new ViewerAnnotationException("The PDF is empty.");
+        if (pdf.Length > MaxPdfBytes) throw new ViewerAnnotationException($"The PDF is larger than {MaxPdfBytes / (1024 * 1024)} MB.");
+        using var doc = Open(pdf, "The PDF");
+        if (doc.IsEncrypted) throw new ViewerAnnotationException("The PDF is encrypted. Open it in the viewer first, or use an unencrypted copy.");
+        return doc.PageCount;
+    }
+
+    /// <summary>
     /// A stamp from page <paramref name="page"/> (from 1) of a document open in the viewer: an
     /// encrypted one too, as it is open already (the stamp keeps the page unencrypted).
     /// </summary>

@@ -400,6 +400,20 @@ kbd {
 .field input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* The custom stamp dialog */
+.stamp-dialog h3 { font-size: 14px; margin: 16px 0 6px; }
+.stamp-page { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+.stamp-page input { width: 4.5em; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.stamp-preview {
+    display: block; max-width: 280px; max-height: 200px; margin: 8px 0;
+    border: 1px solid var(--border); background: #fff;
+}
+.stamp-dialog .problem { padding: 6px 10px; border-radius: 6px; background: var(--danger-bg); color: var(--danger-text); }
+.saved-stamps { list-style: none; margin: 0 0 12px; padding: 0; max-height: 180px; overflow-y: auto; }
+.saved-stamps li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.saved-stamps .muted { flex: 1; font-size: 12px; }
+.link-button { border: 0; background: none; padding: 4px 0; color: var(--accent); cursor: pointer; text-align: left; font: inherit; text-decoration: underline; }
+
 /* ------------------------------------------------------------ narrow screens */
 
 @media (max-width: 760px) {

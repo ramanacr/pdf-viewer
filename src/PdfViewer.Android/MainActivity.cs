@@ -548,6 +548,11 @@ public sealed partial class MainActivity : Activity
             if (resultCode == Result.Ok && data?.Data is { } source) _ = ImportXfdfAsync(source);
             return;
         }
+        if (requestCode == CustomStampRequest)
+        {
+            if (resultCode == Result.Ok && data?.Data is { } picked) _ = MakeCustomStampAsync(picked);
+            return;
+        }
         if (requestCode == OpenDocumentRequest && resultCode == Result.Ok && data?.Data is { } uri)
         {
             RememberPosition();

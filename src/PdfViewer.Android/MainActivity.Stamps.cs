@@ -15,6 +15,8 @@ namespace PdfViewer.Android;
 /// size, upright as the page is shown, and the engine draws its appearance; Delete, Undo and Redo
 /// work as for the other annotations. A dynamic stamp's name is asked once and kept in this app's
 /// private preferences (backups are off): it goes into the document only, never anywhere else.
+/// The list also offers custom stamps (a picture or a PDF page, MainActivity.CustomStamps.cs):
+/// the ones kept in this app's stamp library, and "Custom stamp" to make one.
 /// </summary>
 public sealed partial class MainActivity
 {
@@ -45,13 +47,26 @@ public sealed partial class MainActivity
     {
         if (!CanAnnotate) return;
         var stamps = ViewerEditSession.Stamps;
+        // The standard and dynamic stamps, the saved custom stamps, then making one.
+        var saved = StampLibrary.List();
+        var items = stamps.Select(StampTitle)
+            .Concat(saved.Select(s => $"{s.Name} (saved)"))
+            .Append("Custom stamp: a picture or PDF page…");
+        if (saved.Count > 0) items = items.Append("Delete a saved stamp…");
         new AlertDialog.Builder(this)
             .SetTitle("Stamp")!
-            .SetItems(stamps.Select(StampTitle).ToArray(), (_, e) =>
+            .SetItems(items.ToArray(), (_, e) =>
             {
-                var chosen = stamps[e.Which];
-                if (chosen.Dynamic && Signer() == null) AskSigner(() => ArmStamp(chosen));
-                else ArmStamp(chosen);
+                int i = e.Which;
+                if (i < stamps.Count)
+                {
+                    var chosen = stamps[i];
+                    if (chosen.Dynamic && Signer() == null) AskSigner(() => ArmStamp(chosen));
+                    else ArmStamp(chosen);
+                }
+                else if (i < stamps.Count + saved.Count) _ = UseSavedStampAsync(saved[i - stamps.Count]);
+                else if (i == stamps.Count + saved.Count) PickCustomStampFile();
+                else DeleteSavedStamp(saved);
             })!
             .SetNeutralButton("Your name…", (_, _) => AskSigner(null))!
             .SetNegativeButton("Cancel", (_, _) => { })!
@@ -62,6 +77,7 @@ public sealed partial class MainActivity
     private void ArmStamp(PdfStandardStamp stamp)
     {
         _stamp = stamp;
+        _customStamp = null;
         if (_pages.Tool != PageView.PageTool.Stamp) SetTool(PageView.PageTool.Stamp);
         Toast.MakeText(this, $"Tap where the {StampTitle(stamp).Split(',')[0]} stamp goes.", ToastLength.Short)?.Show();
     }
@@ -69,6 +85,12 @@ public sealed partial class MainActivity
     private void PlaceStamp(int page, ViewerPoint point)
     {
         SetTool(PageView.PageTool.Browse);
+        if (_customStamp is { } custom)
+        {
+            // Centred on the tap at its usual size (two inches across), kept to its shape and on the page.
+            Change(s => Picked(s.AddCustomStamp(page, new ViewerRect(point.X, point.Y, 0, 0), custom).Id));
+            return;
+        }
         if (_stamp is not { } stamp) return;
         string? signer = stamp.Dynamic ? Signer() : null;
         if (stamp.Dynamic && signer == null)
