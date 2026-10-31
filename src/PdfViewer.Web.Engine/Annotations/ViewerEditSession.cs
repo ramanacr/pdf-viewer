@@ -3,8 +3,14 @@ using PdfEngine.Vector.Forms;
 
 namespace PdfViewer.Web.Engine.Annotations;
 
-/// <summary>One line of an annotation list: the annotation, its reply level, what it is and the start of its text.</summary>
-public sealed record ViewerAnnotationListItem(ViewerAnnotation Annotation, int Level, string Label, string Summary);
+/// <summary>
+/// One line of an annotation list: the annotation, its reply level, what it is, the start of its
+/// text, and its review status ("Accepted"; null for none).
+/// </summary>
+public sealed record ViewerAnnotationListItem(ViewerAnnotation Annotation, int Level, string Label, string Summary, string? Status = null);
+
+/// <summary>What an XFDF import added, and how many of its annotations were left out (unreadable, off the document's pages or outside the limits).</summary>
+public readonly record struct ViewerXfdfImport(int Added, int Skipped);
 
 /// <summary>What writing the edits into the document did: written (pages must be drawn again), a value refused, or a failure.</summary>
 public readonly record struct ViewerApplyResult(bool Written, string? Refused, string? Failed);
@@ -103,6 +109,9 @@ public sealed class ViewerEditSession
 
     /// <summary>There are edits that no save has written.</summary>
     public bool IsDirty => _edits.IsDirty;
+
+    /// <summary>Counts the edits (each change, undo and redo): a viewer that keeps the edits elsewhere tells by it whether they changed since.</summary>
+    public int Version => _edits.EditVersion;
 
     /// <summary>The document's bytes have every edit.</summary>
     public bool IsCurrent => _edits.IsCurrent;
@@ -541,23 +550,247 @@ public sealed class ViewerEditSession
         _ => "Reply",
     };
 
-    /// <summary>The annotations as a list: each one that starts a thread, then its replies with their level.</summary>
+    /// <summary>
+    /// The annotations as a list: each one that starts a thread, then its replies with their
+    /// level. Statuses are not lines of their own: each line carries its annotation's review status.
+    /// </summary>
     public IReadOnlyList<ViewerAnnotationListItem> List()
     {
         var list = Store.Current;
         var replies = list.Where(a => a.Kind == ViewerAnnotationKind.Reply).ToLookup(a => a.InReplyTo);
         var result = new List<ViewerAnnotationListItem>();
-        void Add(ViewerAnnotation a, int level)
-        {
-            // A stamp without a comment is listed by what it shows.
-            string summary = a.Kind == ViewerAnnotationKind.Stamp && string.IsNullOrWhiteSpace(a.Contents) ? StampLabel(a.StampName) : Summary(a.Contents);
-            result.Add(new ViewerAnnotationListItem(a, level, Label(a.Kind), summary));
-            // The store keeps threads within the depth limit; the level check is a second guard.
-            if (level < ViewerAnnotationStore.MaxReplyDepth)
-                foreach (var r in replies[a.Id]) Add(r, level + 1);
-        }
-        foreach (var a in list.Where(a => a.Kind != ViewerAnnotationKind.Reply)) Add(a, 0);
+        foreach (var a in list.Where(a => a.Kind != ViewerAnnotationKind.Reply)) AddThread(result, a, 0, replies);
         return result;
+    }
+
+    /// <summary>
+    /// One thread: the annotation <paramref name="id"/> answers none of, or the one given, then
+    /// its replies (not its statuses) with their level. Empty when it is not there or is a status.
+    /// </summary>
+    public IReadOnlyList<ViewerAnnotationListItem> Thread(string id)
+    {
+        if (Store.Find(id) is not { IsStatus: false } a) return [];
+        var replies = Store.Current.Where(r => r.Kind == ViewerAnnotationKind.Reply).ToLookup(r => r.InReplyTo);
+        var result = new List<ViewerAnnotationListItem>();
+        AddThread(result, a, 0, replies);
+        return result;
+    }
+
+    private void AddThread(List<ViewerAnnotationListItem> result, ViewerAnnotation a, int level, ILookup<string, ViewerAnnotation> replies)
+    {
+        // A stamp without a comment is listed by what it shows.
+        string summary = a.Kind == ViewerAnnotationKind.Stamp && string.IsNullOrWhiteSpace(a.Contents) ? StampLabel(a.StampName) : Summary(a.Contents);
+        result.Add(new ViewerAnnotationListItem(a, level, Label(a.Kind), summary, ReviewState(replies[a.Id])));
+        // The store keeps threads within the depth limit; the level check is a second guard.
+        if (level < ViewerAnnotationStore.MaxReplyDepth)
+            foreach (var r in replies[a.Id].Where(r => !r.IsStatus)) AddThread(result, r, level + 1, replies);
+    }
+
+    // ------------------------------------------------------------------ replies and review status
+
+    /// <summary>The review statuses of Acrobat's Review model, as the desktop viewer offers them; "None" clears the status.</summary>
+    public static IReadOnlyList<string> ReviewStates { get; } = ["Accepted", "Rejected", "Cancelled", "Completed", "None"];
+
+    /// <summary>The state model of review statuses (/StateModel /Review).</summary>
+    public const string ReviewStateModel = "Review";
+
+    /// <summary>An annotation the reader made under their own name (their name is set and is its author): they may change and delete it.</summary>
+    public bool IsOwn(ViewerAnnotation a) => Author.Length > 0 && string.Equals(a.Author, Author, StringComparison.Ordinal);
+
+    /// <summary>
+    /// A reply to annotation <paramref name="parentId"/> (a comment or a reply) with the reader's
+    /// text, under their name; null when the text is empty. Written as Acrobat and the desktop
+    /// viewer write one: a note with /IRT, /RT /R, the Comment icon and /F 28.
+    /// </summary>
+    public ViewerAnnotation? AddReply(string parentId, string text)
+    {
+        CheckCanAnnotate();
+        var parent = Store.Find(parentId) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (parent.IsStatus) throw new ViewerAnnotationException("A status cannot be answered.");
+        text = Clip(text.Trim());
+        if (text.Length == 0) return null;
+        return Add(NewReply(parent, text));
+    }
+
+    private ViewerAnnotation NewReply(ViewerAnnotation parent, string text)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new ViewerAnnotation
+        {
+            Id = ViewerAnnotationStore.NewId(),
+            Page = parent.Page,
+            Kind = ViewerAnnotationKind.Reply,
+            Box = parent.Box,
+            InReplyTo = parent.Id,
+            Color = ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Reply),
+            Contents = text,
+            Author = Author,
+            Created = now,
+            Modified = now,
+        };
+    }
+
+    /// <summary>
+    /// The review status of annotation <paramref name="id"/>: the latest Review status set on it
+    /// (by date, then as listed), or null when there is none or it was cleared ("None").
+    /// </summary>
+    public string? ReviewStateOf(string id) =>
+        ReviewState(Store.Current.Where(a => a.Kind == ViewerAnnotationKind.Reply && a.InReplyTo == id));
+
+    private static string? ReviewState(IEnumerable<ViewerAnnotation> replies)
+    {
+        var latest = replies.Where(r => r.IsStatus && string.Equals(r.StateModel, ReviewStateModel, StringComparison.OrdinalIgnoreCase))
+            .Select((r, i) => (r, i)).OrderBy(x => x.r.Created).ThenBy(x => x.i).Select(x => x.r).LastOrDefault();
+        return latest == null || string.Equals(latest.State, "None", StringComparison.OrdinalIgnoreCase) ? null : latest.State;
+    }
+
+    /// <summary>
+    /// Sets the review status of annotation <paramref name="id"/> as Acrobat and the desktop viewer
+    /// do: a hidden reply (/F 30) with /State and /StateModel /Review, under the reader's name,
+    /// saying who set it. "None" clears it. One step in the undo history. Null when the status is
+    /// the annotation's already; refused when it is not one of <see cref="ReviewStates"/>.
+    /// </summary>
+    public ViewerAnnotation? SetReviewState(string id, string state)
+    {
+        CheckCanAnnotate();
+        var parent = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (parent.Kind == ViewerAnnotationKind.Reply) throw new ViewerAnnotationException("A status is set on a comment, not on a reply.");
+        string known = ReviewStates.FirstOrDefault(s => string.Equals(s, state, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ViewerAnnotationException($"A review status is one of {string.Join(", ", ReviewStates)}.");
+        if (string.Equals(ReviewStateOf(id) ?? "None", known, StringComparison.Ordinal)) return null;
+        string by = Author.Length > 0 ? Author : "the reader";
+        return Add(NewReply(parent, $"{known} set by {by}") with { State = known, StateModel = ReviewStateModel });
+    }
+
+    // ------------------------------------------------------------------ XFDF
+
+    /// <summary>
+    /// The annotations as an XFDF document (the engine's <see cref="PdfAnnotationXfdf"/>): replies
+    /// with name, inreplyto and replyType "reply", statuses with state and statemodel.
+    /// <paramref name="href"/> names the PDF.
+    /// </summary>
+    public string ExportXfdf(string? href = null) =>
+        PdfAnnotationXfdf.Export(Store.Current.Select(a => ViewerAnnotationPdf.ToPdf(a, null)), href);
+
+    /// <summary>
+    /// Adds the annotations of an XFDF document as one change (one undo step), as the web viewer's
+    /// importXfdf does: names in use get new ids, replies are linked to their parents (in the
+    /// import or the document) or added on their own. Annotations off the document's pages or
+    /// outside the store's limits are left out and counted. Refused when the text is not XFDF.
+    /// </summary>
+    public ViewerXfdfImport ImportXfdf(string xml)
+    {
+        ArgumentNullException.ThrowIfNull(xml);
+        CheckCanAnnotate();
+        PdfXfdfImport import;
+        try
+        {
+            import = PdfAnnotationXfdf.ImportWithReport(xml);
+        }
+        catch (FormatException ex)
+        {
+            throw new ViewerAnnotationException("This is not an XFDF file that can be read: " + ex.Message);
+        }
+        int pages = Document.Geometry.Count;
+        var onPages = import.Annotations.Where(p => p.PageNumber >= 1 && p.PageNumber <= pages).ToList();
+        int skipped = import.Skipped + import.Annotations.Count - onPages.Count;
+        var ids = Store.Current.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+        var now = DateTimeOffset.UtcNow;
+        var taken = new List<ViewerAnnotation>();
+        var known = new HashSet<string>(ids, StringComparer.Ordinal);
+        // Parents come before their replies: a reply whose parent was left out is left out too.
+        foreach (var read in ViewerAnnotationPdf.FromXfdf(onPages, ids))
+        {
+            var a = read with
+            {
+                Author = read.Author.Length > 0 ? read.Author : Author,
+                Created = read.Created != default ? read.Created : now,
+                Modified = read.Modified != default ? read.Modified : now,
+            };
+            if (!Store.Accepts(a) || a.Kind == ViewerAnnotationKind.Reply && !known.Contains(a.InReplyTo))
+            {
+                skipped++;
+                continue;
+            }
+            known.Add(a.Id);
+            taken.Add(a);
+        }
+        if (taken.Count > ViewerAnnotationStore.MaxPerCall)
+            throw new ViewerAnnotationException($"An XFDF file can add at most {ViewerAnnotationStore.MaxPerCall} annotations at once; this one has {taken.Count}.");
+        if (taken.Count > 0)
+        {
+            Store.Add(taken);
+            _edits.Edit();
+        }
+        return new ViewerXfdfImport(taken.Count, skipped);
+    }
+
+    // ------------------------------------------------------------------ keeping the edits while the app is ended
+
+    /// <summary>
+    /// The reader's edits as a <see cref="ViewerEditSnapshot"/> for the document at
+    /// <paramref name="location"/> whose bytes as opened have <paramref name="originalHash"/>
+    /// (<see cref="ViewerEditSnapshot.Hash"/>): the annotations (a file's annotation that did not
+    /// change is kept by its id only) and the form values the reader set.
+    /// </summary>
+    public ViewerEditSnapshot Snapshot(string location, string originalHash)
+    {
+        var file = new HashSet<ViewerAnnotation>(Store.FromFile, ReferenceEqualityComparer.Instance);
+        return new ViewerEditSnapshot
+        {
+            Location = location,
+            OriginalLength = Document.OriginalBytes.LongLength,
+            OriginalHash = originalHash,
+            Annotations = Store.Current.Select(a => file.Contains(a) ? new ViewerSnapshotItem(a.Id, null) : new ViewerSnapshotItem(null, a)).ToList(),
+            Values = _values.Select(p => new KeyValuePair<string, IReadOnlyList<string>>(p.Key, p.Value)).ToList(),
+        };
+    }
+
+    /// <summary>
+    /// Gives the edits of <paramref name="snapshot"/> back to this session, opened on the same
+    /// bytes, as one change (undo goes back to the file as opened): its annotations, when the
+    /// document allows annotations, and the values of fields it still has, when it allows form
+    /// filling, each checked as when the reader set it. Then <see cref="ApplyAsync"/> writes them.
+    /// False when there was nothing to give back. Refused (nothing changed) when an annotation
+    /// fails the store's checks.
+    /// </summary>
+    public bool Restore(ViewerEditSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var fileById = new Dictionary<string, ViewerAnnotation>(StringComparer.Ordinal);
+        foreach (var f in Store.FromFile) fileById.TryAdd(f.Id, f);
+        var list = new List<ViewerAnnotation>();
+        foreach (var item in snapshot.Annotations)
+        {
+            if (item.KeptId is { } kept)
+            {
+                if (fileById.TryGetValue(kept, out var f)) list.Add(f);
+                continue;
+            }
+            if (item.Annotation is not { } a) continue;
+            // A file's annotation keeps its place in the file only where the file has it there.
+            bool inFile = a.FromFile && fileById.TryGetValue(a.Id, out var at) && at.SourceIndex == a.SourceIndex && at.Page == a.Page;
+            list.Add(inFile ? a : a with { SourceIndex = -1 });
+        }
+        bool changed = false;
+        bool annotations = list.Count != Store.Current.Count || list.Where((a, i) => !ReferenceEquals(a, Store.Current[i])).Any();
+        if (annotations && CanAnnotate)
+        {
+            Store.Restore(list);
+            changed = true;
+        }
+        if (CanFillForms)
+        {
+            foreach (var (field, values) in snapshot.Values)
+            {
+                if (Widgets.FirstOrDefault(w => w.Name == field) is not { } widget || Normalize(widget, values, out _) is not { } taken) continue;
+                if ((ValueOf(field) ?? widget.Values).SequenceEqual(taken, StringComparer.Ordinal)) continue;
+                _values[field] = taken;
+                changed = true;
+            }
+        }
+        if (changed) _edits.Edit();
+        return changed;
     }
 
     /// <summary>The first line of a text, at most 80 characters.</summary>

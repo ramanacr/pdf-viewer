@@ -37,7 +37,7 @@ public sealed partial class MainActivity
     private bool _noticeShown;
 
     private IEnumerable<TextView> EditButtons =>
-        _toolButtons.Select(t => t.Button).Concat([_undoButton, _redoButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
+        _toolButtons.Select(t => t.Button).Concat([_undoButton, _redoButton, _replyButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
 
     private bool CanAnnotate => _session?.CanAnnotate == true;
 
@@ -63,6 +63,7 @@ public sealed partial class MainActivity
         _undoButton = ToolButton("↶", "Undo", (_, _) => Change(s => s.Undo()));
         _redoButton = ToolButton("↷", "Redo", (_, _) => Change(s => s.Redo()));
         _deleteButton = ToolButton("Delete", "Delete the chosen annotation", (_, _) => DeletePicked());
+        BuildReplyButton();
         _closeAnnotateButton = ToolButton("✕", "Stop annotating", (_, _) => ShowAnnotateBar(false));
         var tools = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
         foreach (var (button, _) in _toolButtons) tools.AddView(button);
@@ -71,6 +72,7 @@ public sealed partial class MainActivity
         _annotateBar.AddView(strip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _annotateBar.AddView(_undoButton);
         _annotateBar.AddView(_redoButton);
+        _annotateBar.AddView(_replyButton);
         _annotateBar.AddView(_deleteButton);
         _annotateBar.AddView(_closeAnnotateButton);
         return _annotateBar;
@@ -118,6 +120,8 @@ public sealed partial class MainActivity
     private void StartEdits(ViewerEditSession? session)
     {
         _session = session;
+        // New annotations, replies and statuses carry the reader's name (asked once, kept on this device).
+        if (session != null) session.Author = Signer() ?? "";
         _noticeShown = false;
         _pages.Session = session;
         ShowAnnotateBar(false);
@@ -159,6 +163,7 @@ public sealed partial class MainActivity
         Enable(_undoButton, _session?.CanUndo == true);
         Enable(_redoButton, _session?.CanRedo == true);
         Enable(_deleteButton, annotate && _pages.PickedAnnotation != null);
+        Enable(_replyButton, _pages.PickedAnnotation != null);
         // The chosen tool is underlined.
         foreach (var (b, tool) in _toolButtons)
         {
@@ -254,21 +259,10 @@ public sealed partial class MainActivity
     {
         Pick(a.Id);
         if (CanAnnotate && _annotateBar.Visibility != ViewStates.Visible) ShowAnnotateBar(true);
-        if (a.Kind == ViewerAnnotationKind.Note || a.Contents.Length > 0) ShowComment(a);
-    }
-
-    /// <summary>A note's comment (any annotation's text): edited when the document allows it, else read.</summary>
-    private void ShowComment(ViewerAnnotation a)
-    {
-        string title = ViewerEditSession.Label(a.Kind) + (a.Author.Length > 0 ? " · " + a.Author : "");
-        if (!CanAnnotate)
-        {
-            new AlertDialog.Builder(this).SetTitle(title)!.SetMessage(a.Contents.Length > 0 ? a.Contents : "(no text)")!
-                .SetPositiveButton("Close", (_, _) => { })!.Show();
-            return;
-        }
-        AskText(title, a.Contents, ViewerAnnotationStore.MaxContentsLength, multiline: true, password: false,
-            text => Change(s => s.SetContents(a.Id, text)), delete: () => DeletePicked());
+        // A note, or an annotation with text or replies, opens its thread (MainActivity.Comments.cs);
+        // another is chosen, and Reply in the annotation bar opens its thread.
+        if (a.Kind == ViewerAnnotationKind.Note || a.Contents.Length > 0 || _session?.Thread(a.Id).Count > 1 || _session?.ReviewStateOf(a.Id) != null)
+            ShowThread(a.Id);
     }
 
     // ------------------------------------------------------------------ form fields
@@ -380,8 +374,9 @@ public sealed partial class MainActivity
             Toast.MakeText(this, "This document has no annotations.", ToastLength.Short)?.Show();
             return;
         }
-        // "p. 3 · Highlight · text", replies indented under the annotation they answer.
-        var lines = items.Select(i => new string(' ', 2 * Math.Min(i.Level, 4)) + $"p. {i.Annotation.Page} · {i.Label}" + (i.Summary.Length > 0 ? " · " + i.Summary : "")).ToArray();
+        // "p. 3 · Highlight [Accepted] · text", replies indented under the annotation they answer.
+        var lines = items.Select(i => new string(' ', 2 * Math.Min(i.Level, 4)) + $"p. {i.Annotation.Page} · {i.Label}"
+            + (i.Status is { } status ? $" [{status}]" : "") + (i.Summary.Length > 0 ? " · " + i.Summary : "")).ToArray();
         new AlertDialog.Builder(this)
             .SetTitle($"Annotations ({items.Count})")!
             .SetItems(lines, (_, e) =>
@@ -390,6 +385,8 @@ public sealed partial class MainActivity
                 ShowThumbnails(false);
                 _pages.GoToAnnotation(a);
                 Pick(a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo : a.Id);
+                // A comment or a reply opens its thread.
+                if (a.Kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.Reply || a.Contents.Length > 0) ShowThread(a.Id);
             })!
             .SetNegativeButton("Close", (_, _) => { })!
             .Show();
@@ -609,6 +606,8 @@ public sealed partial class MainActivity
         UpdateEditButtons();
         if (r.Saved)
         {
+            // The file has every edit: edits kept for a restore are no longer needed (MainActivity.KeptEdits.cs).
+            if (!session!.IsDirty) ForgetKeptEdits();
             Toast.MakeText(this, r.Unverified ? "Saved. (The storage did not confirm the file's size.)" : "Saved.", ToastLength.Short)?.Show();
             // An edit that came in after the bytes were taken is not in the file: ask again.
             if (after != null)

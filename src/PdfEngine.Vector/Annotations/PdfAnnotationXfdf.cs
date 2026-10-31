@@ -18,7 +18,7 @@ public sealed record PdfXfdfImport(List<PdfAnnotation> Annotations, int Skipped)
 /// Annotations as XFDF (ISO 19444-1, the <c>&lt;annots&gt;</c> element), in PDF user space: the
 /// markup and comment types a reader makes (highlight, underline, strike-out, squiggly, note, free
 /// text, ink, square, circle, line, polygon, polyline, stamp) and replies (inreplyto, the parent's
-/// name). Export writes <see cref="PdfAnnotation"/>s; import reads them
+/// name; a status reply's state and statemodel). Export writes <see cref="PdfAnnotation"/>s; import reads them
 /// back, ready for <see cref="Services.PdfAnnotationEditor.Add"/>. Imported XML is untrusted: no DTD,
 /// no external entities, a size limit, an element limit, finite numbers only, and elements of other
 /// types skipped.
@@ -44,6 +44,9 @@ public static class PdfAnnotationXfdf
 
     /// <summary>Most numbers in a dash pattern.</summary>
     public const int MaxDashes = 16;
+
+    /// <summary>Longest status name read (a reply's state and statemodel: "Accepted", "Review").</summary>
+    public const int MaxStateLength = 64;
 
     private static readonly Dictionary<string, string> ElementForSubtype = new(StringComparer.Ordinal)
     {
@@ -113,6 +116,9 @@ public static class PdfAnnotationXfdf
                 e.Add(new XAttribute("inreplyto", parentName));
                 // XFDF (ISO 19444-1) replyType: "reply" (/RT /R, or none) or "group"; a reader takes a missing one as a reply.
                 e.Add(new XAttribute("replyType", a.ReplyType == "Group" ? "group" : "reply"));
+                // A review or marked status (a reply with /State and /StateModel, as Acrobat writes them).
+                if (!string.IsNullOrEmpty(a.StateModel) && !string.IsNullOrEmpty(a.State))
+                    e.Add(new XAttribute("state", a.State), new XAttribute("statemodel", a.StateModel));
             }
             if (a.Subtype == "FreeText" && a.Justification is 1 or 2) e.Add(new XAttribute("justification", a.Justification == 1 ? "centered" : "right"));
             if (!string.IsNullOrEmpty(a.Contents)) e.Add(new XElement(Ns + "contents", a.Contents));
@@ -377,6 +383,13 @@ public static class PdfAnnotationXfdf
         {
             a.InReplyToName = parent;
             a.ReplyType = string.Equals(e["replyType"], "group", StringComparison.OrdinalIgnoreCase) ? "Group" : null;
+            // A status: both names, short, without control characters (else the reply is an ordinary one).
+            if (Limit(e["state"], MaxStateLength) is { Length: > 0 } state && Limit(e["statemodel"], MaxStateLength) is { Length: > 0 } model
+                && !state.Any(char.IsControl) && !model.Any(char.IsControl))
+            {
+                a.State = state;
+                a.StateModel = model;
+            }
         }
         if (subtype == "FreeText")
         {

@@ -814,7 +814,8 @@ public sealed partial class Viewer
     private List<(ViewerAnnotation Annotation, int Level)> Threads()
     {
         var list = _store?.Current ?? [];
-        var replies = list.Where(a => a.Kind == ViewerAnnotationKind.Reply).ToLookup(a => a.InReplyTo);
+        // A review status (a hidden reply with /State, as Acrobat and the desktop viewer write it) is not a line of its own.
+        var replies = list.Where(a => a.Kind == ViewerAnnotationKind.Reply && !a.IsStatus).ToLookup(a => a.InReplyTo);
         var result = new List<(ViewerAnnotation, int)>();
         void Add(ViewerAnnotation a, int level)
         {

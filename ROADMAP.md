@@ -8,6 +8,9 @@ What is planned next for PDF Viewer Native. Plans change; dates are not promised
 - **Comment reply threads on the desktop.** Replies nested under each comment, edit and delete
   with undo, and review status (Accepted, Rejected, Completed) that Acrobat and the web viewer
   also read.
+- **Android: comment replies, review status, XFDF and kept edits.** Reply threads with review
+  status as the desktop writes them, XFDF import and export through the system's file dialogs,
+  and unsaved edits kept when Android ends the app in the background.
 
 ## Next
 
@@ -24,8 +27,6 @@ What is planned next for PDF Viewer Native. Plans change; dates are not promised
   shows without a font on the visitor's machine and without calls to third-party font servers.
 
 ### Android
-- Comment replies and XFDF import and export.
-- Keep unsaved edits when Android ends the app in the background.
 - Choose the colour of new highlights, ink and notes. **help wanted:**
   [#141](https://github.com/ramanacr/pdf-viewer/issues/141).
 - A larger tap target for sticky-note icons. **help wanted:**
