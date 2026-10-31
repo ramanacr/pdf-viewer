@@ -149,7 +149,9 @@ a { color: var(--accent); }
     background: var(--surface);
     border-bottom: 1px solid var(--border);
 }
+.toolbar { position: relative; }   /* holds the "More" menu and the .visually-hidden labels */
 .toolbar .group { display: flex; align-items: center; gap: 4px; }
+.toolbar .phone-only { display: none; }
 .toolbar .group.end { margin-left: auto; }
 
 .brand { font-weight: 650; white-space: nowrap; margin: 0 4px; }
@@ -404,10 +406,9 @@ kbd {
     .toolbar { gap: 4px 6px; padding: 6px 8px; }
     .toolbar .label { display: none; }
     .brand { display: none; }
-    /* Search gets a row of its own, last; zoom and the view toggles share one. */
-    .toolbar .group.search { order: 10; flex: 1 1 100%; }
+    /* The toolbar is one row: see "phone toolbar" at the end of this file. */
     .search-box { flex: 1; }
-    .search-box input { width: 100%; }
+    .search-box input { width: 100%; min-width: 0; }
     .search-count { min-width: 0; }
     .icon-button { width: 36px; height: 36px; }
     .privacy-bar { font-size: 11.5px; }
@@ -534,3 +535,46 @@ textarea.form-field { resize: none; overflow: hidden; }
     .swatch::after { content: ""; position: absolute; inset: -12px; border-radius: 50%; }
     .dialog-actions .button, .annot-editor-actions .button { min-width: 44px; }
 }
+
+/* ------------------------------------------------------------ phone toolbar */
+
+/* One row: side panel, open, page number, zoom, search and "More". The page and zoom steppers
+   and the tour go (scrolling, the zoom list and the menu do their work); the search field opens
+   into the row in place of the others; the end group's commands are in the "More" menu. */
+@media (max-width: 760px) {
+    .toolbar { flex-wrap: nowrap; gap: 0; padding-left: max(6px, var(--inset-left)); padding-right: max(6px, var(--inset-right)); }
+    .toolbar > .group { flex: none; gap: 0; }
+    .toolbar .phone-only { display: inline-flex; }
+    .toolbar .group.end, .toolbar .page-step, .toolbar .zoom-step, .toolbar .tour-button, .toolbar .group.search { display: none; }
+    .toolbar .button { min-width: 44px; padding-inline: 10px; }
+    .toolbar .page-box { gap: 4px; padding: 0 4px; }
+    .toolbar .page-box input { width: 2.8em; }
+    /* The zoom list gives way first when the row is short of room ("of 128"). */
+    .toolbar > .group:has(.zoom-select) { flex: 0 1 auto; min-width: 0; }
+    .toolbar > .group:has(.zoom-select) > label { display: flex; min-width: 0; }
+    .zoom-select { width: 6.6em; min-width: 0; max-width: 100%; }
+    .phone-actions { margin-left: auto; }
+
+    .toolbar.search-open > .group:not(.search) { display: none; }
+    .toolbar.search-open > .group.search { display: flex; flex: 1 1 auto; min-width: 0; gap: 2px; }
+    .search-count { font-size: 12px; white-space: nowrap; padding: 0 4px; }
+    .search-count:empty { padding: 0; }
+    .check { padding: 0 4px; }
+}
+
+.more-menu {
+    position: absolute; z-index: 46; top: calc(100% - 2px); right: max(6px, var(--inset-right));
+    min-width: 220px; max-width: calc(100vw - 12px);
+    display: flex; flex-direction: column; padding: 4px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.menu-backdrop { position: fixed; inset: 0; z-index: 45; }
+.menu-item {
+    display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px;
+    border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-2); }
+.menu-item:focus-visible { outline-offset: -2px; }
+.menu-item[aria-checked="true"] { color: var(--accent); font-weight: 600; }
+.menu-item[aria-checked="true"]::after { content: "\2713"; margin-left: auto; }

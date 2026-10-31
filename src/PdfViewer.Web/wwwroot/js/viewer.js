@@ -265,6 +265,18 @@ export function isNarrow() {
     return window.matchMedia('(max-width: 760px)').matches;
 }
 
+/** Keyboard movement in a menu: key is Home, End, ArrowDown or ArrowUp; disabled items are skipped. */
+export function moveMenuFocus(menuId, key) {
+    const items = Array.from(document.getElementById(menuId)?.querySelectorAll('[role^="menuitem"]:not(:disabled)') ?? []);
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement);
+    const next = key === 'Home' ? 0
+        : key === 'End' ? items.length - 1
+        : key === 'ArrowUp' ? (at <= 0 ? items.length - 1 : at - 1)
+        : (at + 1) % items.length;
+    items[next].focus();
+}
+
 /**
  * Hands the engine the device's fonts of the given families (Local Font Access API; the browser
  * asks the user first). The files go to the .NET runtime in this tab and nowhere else. Returns the
@@ -307,7 +319,8 @@ function inField(e) {
 
 /** The focus is in a text field or a list box (zoom, stamp, shape style): it keeps its letters, arrows and Delete. */
 function inFieldOrList(e) {
-    return inField(e) || e.target instanceof HTMLSelectElement;
+    // A menu's Home, End and letter keys are its own, not page shortcuts.
+    return inField(e) || e.target instanceof HTMLSelectElement || !!e.target.closest?.('[role="menu"]');
 }
 
 function onKey(e) {

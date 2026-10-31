@@ -3,7 +3,7 @@
 @using PdfViewer.Web.Engine.Embed
 
 <div class="app @(_sidebarOpen && _doc != null && _config.HasSidePanel ? "with-sidebar" : "") @(Embedded ? "embedded" : "")">
-    <header class="toolbar" role="toolbar" aria-label="Viewer controls">
+    <header class="toolbar@(_searchOpen ? " search-open" : "")" role="toolbar" aria-label="Viewer controls">
         <div class="group">
             @if (_config.HasSidePanel)
             {
@@ -26,27 +26,27 @@
         {
             <div class="group">
                 <button type="button" class="button" title="Open a PDF file (Ctrl+O)" @onclick="PickFile"><Icon Name="open" /><span class="label">Open</span></button>
-                <button type="button" class="button quiet" title="Open the built-in engine tour" @onclick="OpenSampleAsync"><Icon Name="sample" /><span class="label">Tour</span></button>
+                <button type="button" class="button quiet tour-button" title="Open the built-in engine tour" @onclick="OpenSampleAsync"><Icon Name="sample" /><span class="label">Tour</span></button>
             </div>
         }
 
         @if (_doc != null)
         {
             <div class="group" role="group" aria-label="Pages">
-                <button type="button" class="icon-button" title="Previous page (Left arrow)" aria-label="Previous page" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(_currentPage - 1)"><Icon Name="up" /></button>
+                <button type="button" class="icon-button page-step" title="Previous page (Left arrow)" aria-label="Previous page" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(_currentPage - 1)"><Icon Name="up" /></button>
                 <label class="page-box">
                     <span class="visually-hidden">Page number</span>
                     <input id="page-input" type="text" inputmode="numeric" value="@_currentPage" size="3" aria-describedby="page-count"
                            @onchange="OnPageInput" @onfocus="SelectPageInput" />
                     <span id="page-count" class="muted">of @_doc.PageCount</span>
                 </label>
-                <button type="button" class="icon-button" title="Next page (Right arrow)" aria-label="Next page" disabled="@(_currentPage >= _doc.PageCount)" @onclick="() => GoToPage(_currentPage + 1)"><Icon Name="down" /></button>
+                <button type="button" class="icon-button page-step" title="Next page (Right arrow)" aria-label="Next page" disabled="@(_currentPage >= _doc.PageCount)" @onclick="() => GoToPage(_currentPage + 1)"><Icon Name="down" /></button>
             </div>
 
             @if (_config.ShowZoomControl)
             {
                 <div class="group" role="group" aria-label="Zoom">
-                    <button type="button" class="icon-button" title="Zoom out (Ctrl+minus)" aria-label="Zoom out" @onclick="ZoomOut"><Icon Name="minus" /></button>
+                    <button type="button" class="icon-button zoom-step" title="Zoom out (Ctrl+minus)" aria-label="Zoom out" @onclick="ZoomOut"><Icon Name="minus" /></button>
                     <label>
                         <span class="visually-hidden">Zoom</span>
                         <select class="zoom-select" @onchange="OnZoomSelect" aria-label="Zoom level">
@@ -65,11 +65,13 @@
                             }
                         </select>
                     </label>
-                    <button type="button" class="icon-button" title="Zoom in (Ctrl+plus)" aria-label="Zoom in" @onclick="ZoomIn"><Icon Name="plus" /></button>
+                    <button type="button" class="icon-button zoom-step" title="Zoom in (Ctrl+plus)" aria-label="Zoom in" @onclick="ZoomIn"><Icon Name="plus" /></button>
                 </div>
             }
 
             <form class="group search" role="search" @onsubmit="SearchOrNextAsync" @onsubmit:preventDefault>
+                @* Phones (app.css): the search is behind a button in the toolbar; this closes it again. *@
+                <button type="button" class="icon-button phone-only" id="search-close" aria-label="Close the search" title="Close the search (Esc)" @onclick="CloseSearchAsync"><Icon Name="close" /></button>
                 <label class="search-box">
                     <Icon Name="search" />
                     <span class="visually-hidden">Find in document</span>
@@ -110,6 +112,49 @@
                 <button type="button" class="icon-button" title="Keyboard shortcuts and about (?)" aria-label="Help and about" @onclick="() => _dialog = Dialog.Help"><Icon Name="help" /></button>
             }
         </div>
+
+        @* Phones only (app.css): one toolbar row. Search opens into the row; the end group's commands are in the "More" menu. *@
+        <div class="group phone-only phone-actions">
+            @if (_doc != null)
+            {
+                <button type="button" class="icon-button" id="search-toggle" title="Find in document" aria-label="Find in document"
+                        aria-expanded="@(_searchOpen ? "true" : "false")" @onclick="OpenSearch"><Icon Name="search" /></button>
+            }
+            <button type="button" class="icon-button" id="more-button" title="More" aria-label="More commands" aria-haspopup="menu"
+                    aria-expanded="@(_moreOpen ? "true" : "false")" aria-controls="@(_moreOpen ? "more-menu" : null)" @onclick="ToggleMoreMenu"><Icon Name="more" /></button>
+        </div>
+        @if (_moreOpen)
+        {
+            <div class="menu-backdrop" aria-hidden="true" @onclick="() => CloseMoreMenu()"></div>
+            <div class="more-menu" id="more-menu" role="menu" aria-label="More commands" @onkeydown="OnMoreMenuKey">
+                @if (!Embedded)
+                {
+                    <button type="button" role="menuitem" class="menu-item" @onclick="async () => { CloseMoreMenu(); await OpenSampleAsync(); }"><Icon Name="sample" /> Open the engine tour</button>
+                }
+                @if (ShowsSaveButton)
+                {
+                    <button type="button" role="menuitem" class="menu-item" disabled="@(Saving || !IsDirty)" @onclick="async () => { CloseMoreMenu(); await SaveFromButton(); }"><Icon Name="save" /> @(Saving ? "Saving…" : "Save")</button>
+                }
+                @if (_doc != null && _config.ShowDownload)
+                {
+                    <button type="button" role="menuitem" class="menu-item" @onclick="async () => { CloseMoreMenu(); await Download(); }"><Icon Name="download" /> Download the PDF</button>
+                }
+                @if (_doc != null && _config.ShowPrint)
+                {
+                    <button type="button" role="menuitem" class="menu-item" disabled="@(_printing || !_doc.CanPrint)" @onclick="async () => { CloseMoreMenu(); await PrintAsync(); }"><Icon Name="print" /> Print</button>
+                }
+                @if (Embedded && _config.Mode == EmbedMode.SizedContainer && _config.ShowFullScreen && _canFullscreen)
+                {
+                    <button type="button" role="menuitem" class="menu-item" @onclick="() => { CloseMoreMenu(); ToggleFullscreen(); }"><Icon Name="fullscreen" /> Full screen</button>
+                }
+                <button type="button" role="menuitemcheckbox" class="menu-item" aria-checked="@(_night ? "true" : "false")" @onclick="() => { CloseMoreMenu(); ToggleNight(); }"><Icon Name="invert" /> Night pages</button>
+                @if (!Embedded)
+                {
+                    <button type="button" role="menuitem" class="menu-item" @onclick="() => { CloseMoreMenu(); CycleTheme(); }"><Icon Name="@ThemeIcon" /> @($"Theme: {_theme}")</button>
+                    <button type="button" role="menuitem" class="menu-item" @onclick="() => { CloseMoreMenu(focusButton: false); _dialog = Dialog.Help; }"><Icon Name="help" /> Help and about</button>
+                }
+            </div>
+        }
     </header>
 
     @if (_doc != null && ShowsAnnotationToolbar)

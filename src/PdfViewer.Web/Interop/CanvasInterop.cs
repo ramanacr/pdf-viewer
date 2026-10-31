@@ -56,6 +56,10 @@ internal static partial class CanvasInterop
     [JSImport("isNarrow", ModuleName)]
     public static partial bool IsNarrow();
 
+    /// <summary>Focuses the first, last, next or previous enabled item of a role="menu" element (key: Home, End, ArrowDown, ArrowUp).</summary>
+    [JSImport("moveMenuFocus", ModuleName)]
+    public static partial void MoveMenuFocus(string menuId, string key);
+
     [JSImport("drawThumbnail", ModuleName)]
     public static partial void DrawThumbnail(int page, [JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bgra, int width, int height);
 
