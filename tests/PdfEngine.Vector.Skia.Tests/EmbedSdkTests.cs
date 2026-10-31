@@ -69,6 +69,22 @@ public class EmbedSdkTests
         Assert.Equal(EmbedMode.FullWindow, EmbedFrame.FromQuery("?embed=1&mode=POPUP")!.Mode);
     }
 
+    [Fact]
+    public void FrameUrl_GivesTheFontBase_OnlyAsAPlainPathOnTheViewersOrigin()
+    {
+        // The SDK's fontBaseUrl arrives as an absolute path (pdfviewer-embed.js, fontBasePath).
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&origin=https%3A%2F%2Fa.test")!.FontBase);
+        Assert.Equal("/static/pdf-fonts/", EmbedFrame.FromQuery("?embed=1&origin=https%3A%2F%2Fa.test&fonts=%2Fstatic%2Fpdf-fonts%2F")!.FontBase);
+        Assert.Equal("/a/", EmbedFrame.FromQuery("?embed=1&fonts=/a/&fonts=/b/")!.FontBase);
+        Assert.Equal("/", EmbedFrame.ParseFontBase("/"));
+        Assert.Equal("/v1.2/fonts_x~y-z/", EmbedFrame.ParseFontBase("/v1.2/fonts_x~y-z/"));
+        // Never another origin, nor a path that climbs out or is not plain.
+        foreach (var bad in new[] { null, "", "fonts/", "/fonts", "//cdn.example.com/fonts/", "https://fonts.gstatic.com/s/",
+                     "/../fonts/", "/a/./b/", "/.hidden/", "/a//b/", "/a b/", "/a%2F/", "/a\\b/", "/fönts/", "/" + new string('a', 600) + "/" })
+            Assert.Null(EmbedFrame.ParseFontBase(bad));
+        Assert.Null(EmbedFrame.FromQuery("?embed=1&fonts=https%3A%2F%2Ffonts.googleapis.com%2F")!.FontBase);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("not json")]

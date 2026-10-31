@@ -15,8 +15,9 @@ namespace PdfViewer.Web.Engine;
 /// <para>
 /// With a character index (<see cref="Bundled"/>: the Noto fonts' <c>noto/index.json</c>), text
 /// that the catalog's faces lack takes each character from the bundled face that has it: Arabic,
-/// Hebrew, the main Indic scripts, symbols, math, and CJK in Unicode slices. The index is fetched
-/// the first time such a character is drawn, then only the files that hold the page's characters.
+/// Hebrew, the main Indic scripts, Sinhala, Thai, symbols, math, and CJK in Unicode slices. The
+/// index is fetched the first time such a character is drawn, then only the files that hold the
+/// page's characters. A file whose size or SHA-256 differs from the index is refused.
 /// </para>
 /// </summary>
 public sealed class OnDemandFontSource : SkiaFontSource
@@ -121,6 +122,10 @@ public sealed class OnDemandFontSource : SkiaFontSource
             {
                 data = null;
             }
+            // A file the index describes must have its size and SHA-256: a truncated or altered
+            // file counts as failed, so its text is reported as missing instead of drawn wrongly.
+            if (data != null && file != _indexFile && CharacterIndex?.EntryOf(file) is { } described && !described.Matches(data))
+                data = null;
             BundledFontIndex? index = null;
             if (file == _indexFile && data != null)
             {

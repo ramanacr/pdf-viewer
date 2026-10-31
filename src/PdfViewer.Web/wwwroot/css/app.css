@@ -392,6 +392,8 @@ body.dropping .drop-overlay { display: flex; }
 .shortcuts { width: 100%; border-collapse: collapse; }
 .shortcuts td { padding: 4px 0; vertical-align: top; }
 .shortcuts td:first-child { white-space: nowrap; padding-right: 16px; }
+.font-notices { margin: 0 0 8px; padding-left: 18px; columns: 2 16em; column-gap: 24px; }
+.font-notices li { break-inside: avoid; }
 kbd {
     font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
     padding: 1px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-2);

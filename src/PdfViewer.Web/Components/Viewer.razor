@@ -638,6 +638,14 @@
             <h2>About this demo</h2>
             <p>PDF Viewer Native's engine, running as .NET WebAssembly in this tab. Open source under the MIT License: <a href="https://github.com/ramanacr/pdf-viewer" rel="noopener">github.com/ramanacr/pdf-viewer</a>.</p>
             <p class="muted">@_engineInfo</p>
+            <h2>Fonts</h2>
+            <p>For text in fonts that a PDF does not embed, this demo uses its own copies of these fonts, under the SIL Open Font License 1.1. Each file comes from this site only, when a page needs it. Licence texts: <a href="https://github.com/ramanacr/pdf-viewer/blob/main/THIRD_PARTY_NOTICES.md" rel="noopener">THIRD_PARTY_NOTICES.md</a>.</p>
+            <ul class="font-notices">
+                @foreach (var (family, licence) in FontNotices)
+                {
+                    <li>@family: <a href="@licence" target="_blank" rel="noopener">licence</a></li>
+                }
+            </ul>
             <h2>Cryptography in this runtime</h2>
             <table class="shortcuts">
                 <tbody>

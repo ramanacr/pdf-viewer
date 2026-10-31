@@ -79,6 +79,40 @@ folder:
 new PdfViewer.View({ divId: 'viewer', baseUrl: 'https://cdn.example.com/pdf-viewer/' });
 ```
 
+### Self-hosted fonts
+
+A PDF often uses fonts that it does not embed. The viewer then draws the text with its own
+fonts: Liberation (Latin, Greek, Cyrillic, Hebrew) and Noto (Arabic, Hebrew, Indic scripts,
+Sinhala, Thai, math, symbols, and Chinese, Japanese and Korean in slices), all under the SIL
+Open Font License 1.1. They are files in the viewer's `fonts/` folder, next to `index.html`.
+
+1. The viewer fetches a font file only when a page needs a character from it. A document that
+   embeds its fonts fetches none.
+2. Every request goes to the viewer's own origin. The viewer's Content-Security-Policy
+   (`connect-src 'self'`) blocks any other host, so no font request goes to Google Fonts or to
+   another third party.
+3. The viewer checks each Noto file against the size and SHA-256 in `fonts/noto/index.json`. A
+   file that does not match is not used, and its text is reported as missing.
+
+When you host the viewer, publish it with the Noto fonts: run `eng/webdemo/noto_fonts.py` as in
+the viewer's [README](https://github.com/ramanacr/pdf-viewer/tree/main/src/PdfViewer.Web#run-locally).
+Without them, the viewer still works; only text that needs them is not drawn.
+
+To keep the fonts in another folder of the viewer's origin (for example one folder shared by
+several viewer versions), set `fontBaseUrl`. The folder must have the same layout as `fonts/`
+(the Liberation files, and `noto/` with its `index.json`):
+
+```js
+new PdfViewer.View({
+    divId: 'viewer',
+    baseUrl: 'https://pdf.example.com/viewer/2.1/',
+    fontBaseUrl: 'https://pdf.example.com/shared/pdf-fonts/',   // or '/shared/pdf-fonts/'
+});
+```
+
+A relative `fontBaseUrl` is taken from the viewer's folder. A URL on another origin throws
+`INVALID_ARGUMENT`: the viewer could not fetch from it, and fonts never come from a third party.
+
 ### Production
 
 The files on this site change on each deploy, without notice. `integrity` on the script tag pins
@@ -99,6 +133,7 @@ is not pinned by it. For production:
 | --- | --- |
 | `divId` | The id of the element that holds the viewer. Required. |
 | `baseUrl` | Where the viewer files are. Default: the folder of `pdfviewer-embed.js`. |
+| `fontBaseUrl` | Where the viewer's bundled fonts are: a folder on the viewer's own origin. Default: `fonts/` next to the viewer. See [Self-hosted fonts](#self-hosted-fonts). |
 | `locale` | Accepted. The viewer is in English only for now. |
 | `isolation` | `'warn'` (default) or `'require'`: what to do when the viewer has the same origin as your page. `'warn'` writes one console warning; `'require'` throws `INVALID_ARGUMENT`. See [Same-origin viewer](#same-origin-viewer). |
 | `renderInWorker` | `true` to draw pages in a Web Worker, so the reader's main thread stays free; `false` (default) draws them on the main thread. Preview: see [Rendering in a worker](#rendering-in-a-worker). |
@@ -798,6 +833,8 @@ from a PDF application.
   - The frame's URL carries your page's origin (`?embed=1&mode=…&origin=…`). The viewer accepts
     messages only from its parent window and that origin, and posts only to that origin. If
     another site frames the viewer and names your origin, the browser delivers nothing to it.
+    With `fontBaseUrl`, the URL also has `&fonts=/path/`: the viewer takes it only as a plain
+    absolute path on its own origin (`EmbedFrame.ParseFontBase`), never as another host.
   - The viewer checks every message (`EmbedProtocol` in `src/PdfViewer.Web.Engine/Embed`, with
     unit tests): unknown protocols, versions and types are ignored; bad arguments are refused
     with a code.
