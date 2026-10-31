@@ -234,7 +234,7 @@ path can make the native link exceed the 260-character path limit; a short path 
    by the browser after the first visit. Largest pieces: `dotnet.native.wasm` with Skia 5.8 MB,
    the engine `PdfEngine.Vector.wasm` 3.0 MB, `System.Private.CoreLib` 1.7 MB. The bundled fonts
    add 4.4 MB (Liberation: 12 faces of 280 to 420 KB) and about 21 MB (Noto: 58 files and a
-   150 KB index) to the published site, but none of them is part of the first load: a file is
+   144 KB index) to the published site, but none of them is part of the first load: a file is
    downloaded only when a page draws text from it. There is no size gate for the demo; the web
    demo workflow writes these sizes to its step summary, and fails when `index.html` or the
    runtime's boot list names a font file.
@@ -296,7 +296,7 @@ not embed:
    fitted to the space the PDF's `/Widths` give it, as single glyphs are. Embedded fonts are
    drawn by their own glyphs, unshaped, as before. The desktop app's renderers (Direct2D and
    WPF) shape with the same code, so a page looks the same in both.
-6. **Lazy loading.** The Noto index (`fonts/noto/index.json`, 140 KB, about 32 KB with gzip)
+6. **Lazy loading.** The Noto index (`fonts/noto/index.json`, 144 KB, smaller with gzip)
    is fetched the first time a character needs it, then only the files that hold the page's
    characters. Each CJK face is cut into slices: a core slice with the common characters of
    the language's national character set (GB 2312 level 1, Big5 level 1, JIS X 0208 level 1,
@@ -335,15 +335,15 @@ not embed:
 | NotoSansGujarati-Regular.ttf | 114 | 139 KB |
 | NotoSansGurmukhi-Regular.ttf | 154 | 35 KB |
 | NotoSansOriya-Regular.ttf | 151 | 128 KB |
-| NotoSansSinhala-Regular.ttf | see the step summary | 88 KB |
-| NotoSansThai-Regular.ttf | see the step summary | 20 KB |
+| NotoSansSinhala-Regular.ttf | 218 | 88 KB |
+| NotoSansThai-Regular.ttf | 101 | 20 KB |
 | NotoSansMath-Regular.ttf | 2919 | 642 KB |
 | NotoSansSymbols2-Regular.ttf | 2641 | 655 KB |
 | NotoSansSC-Regular-00.otf (core) / 01 to 14 | 4642 / 248 to 2000 each | 844 KB / 64 to 548 KB each |
 | NotoSansTC-Regular-00.otf (core) / 01 to 08 | 6177 / 568 to 2000 each | 1334 KB / 171 to 542 KB each |
 | NotoSansJP-Regular-00.otf (core) / 01 to 07 | 3690 / 1042 to 2000 each | 672 KB / 192 to 515 KB each |
 | NotoSansKR-Regular-00.otf (core) / 01 to 10 | 3512 / 1662 to 2000 each | 343 KB / 205 to 484 KB each |
-| index.json | | about 150 KB |
+| index.json | | 144 KB |
 
 The workflow's step summary lists every file.
 
