@@ -453,6 +453,8 @@ function pointOn(el, e) {
 let tool = 'select';       // the annotation tool (Viewer.Annotations.cs): select, highlight, note, ink, square, …
 let drawing = null;        // { page, el, points, preview } while a shape or a stroke is drawn
 let moving = null;         // { id, el, x, y, dx, dy } while an annotation is dragged
+let anchorMoving = null;   // { id, el, page, x, y, dx, dy } while a callout's anchor handle is dragged
+let calloutAnchor = null;  // { el, page, x, y, mark } the spot the callout tool took, until its box is placed
 const markupTools = new Set(['select', 'highlight', 'underline', 'strikeout']);
 const clickTools = new Set(['note', 'stamp']);       // a click places them
 const polyTools = new Set(['polygon', 'polyline']);  // a click a point, a double-click (or Enter) ends
@@ -463,6 +465,25 @@ export function setTool(name) {
     tool = String(name);
     if (scroller) scroller.dataset.tool = tool;
     cancelDrawing();
+    clearCalloutAnchor();
+}
+
+/** The callout tool's first press: the spot the callout points to, marked until the box is placed. */
+function setCalloutAnchor(el, e) {
+    clearCalloutAnchor();
+    const [x, y] = pointOn(el, e);
+    const mark = document.createElement('span');
+    mark.className = 'callout-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    mark.style.left = `${x * 100}%`;
+    mark.style.top = `${y * 100}%`;
+    el.appendChild(mark);
+    calloutAnchor = { el, page: Number(el.dataset.page), x, y, mark };
+}
+
+function clearCalloutAnchor() {
+    calloutAnchor?.mark.remove();
+    calloutAnchor = null;
 }
 
 function cancelDrawing() {
@@ -518,6 +539,13 @@ function finishDrawing() {
     d.preview?.ownerSVGElement?.remove();
     let points = d.points;
     if (tool !== 'ink' && !polyTools.has(tool)) points = points.length >= 4 ? [points[0], points[1], points[points.length - 2], points[points.length - 1]] : [points[0], points[1], points[0], points[1]];
+    if (tool === 'callout') {
+        // The spot it points to first, then the text box's corners.
+        const a = calloutAnchor;
+        clearCalloutAnchor();
+        if (!a || a.page !== d.page) return;
+        points = [a.x, a.y].concat(points);
+    }
     app.invokeMethodAsync('OnToolStroke', tool, d.page, points);
 }
 
@@ -588,6 +616,15 @@ function initSelection() {
         if (e.button !== 0 || e.pointerType === 'touch') return;
         // Form fields and the note editor take their own input.
         if (e.target.closest?.('.form-field, .annot-editor')) return;
+        // A selected callout's anchor handle: dragged to move the spot the callout points to.
+        const anchorHit = e.target.closest?.('.callout-anchor[data-anchor]');
+        if (anchorHit && tool === 'select') {
+            e.preventDefault();
+            scroller.focus({ preventScroll: true });
+            anchorMoving = { id: anchorHit.dataset.anchor, el: anchorHit, page: anchorHit.closest('.page'), x: e.clientX, y: e.clientY, dx: 0, dy: 0 };
+            scroller.setPointerCapture(e.pointerId);
+            return;
+        }
         const hit = e.target.closest?.('.annot-hit[data-annot]');
         if (hit && tool === 'select') {
             e.preventDefault();
@@ -611,6 +648,13 @@ function initSelection() {
             polyClick(el, e);
             return;
         }
+        // The callout tool: the first press takes the spot it points to (on this page); the next one places the box.
+        if (tool === 'callout' && (!calloutAnchor || calloutAnchor.page !== Number(el.dataset.page))) {
+            e.preventDefault();
+            scroller.focus({ preventScroll: true });
+            setCalloutAnchor(el, e);
+            return;
+        }
         if (!markupTools.has(tool)) {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
@@ -626,6 +670,12 @@ function initSelection() {
         app.invokeMethodAsync('OnSelectStart', dragging.page, x, y, e.detail || 1);
     });
     scroller.addEventListener('pointermove', e => {
+        if (anchorMoving) {
+            anchorMoving.dx = e.clientX - anchorMoving.x;
+            anchorMoving.dy = e.clientY - anchorMoving.y;
+            anchorMoving.el.style.transform = `translate(${anchorMoving.dx}px, ${anchorMoving.dy}px)`;
+            return;
+        }
         if (moving) {
             moveAnnotation(e.clientX - moving.x, e.clientY - moving.y);
             return;
@@ -655,6 +705,16 @@ function initSelection() {
         });
     });
     const end = e => {
+        if (anchorMoving) {
+            const m = anchorMoving;
+            anchorMoving = null;
+            m.el.style.transform = '';
+            if (m.page && e.type === 'pointerup' && (Math.abs(m.dx) > 3 || Math.abs(m.dy) > 3)) {
+                const [x, y] = pointOn(m.page, e);
+                app.invokeMethodAsync('OnCalloutAnchorDrag', m.id, x, y);
+            }
+            return;
+        }
         if (moving) {
             const m = moving;
             moving = null;
@@ -685,6 +745,8 @@ function initSelection() {
     scroller.addEventListener('pointerup', end);
     scroller.addEventListener('pointercancel', end);
     scroller.addEventListener('keydown', e => {
+        // Esc drops the callout's spot, and its box while it is dragged.
+        if (e.key === 'Escape' && calloutAnchor) { e.preventDefault(); cancelDrawing(); clearCalloutAnchor(); return; }
         if (!drawing || !polyTools.has(tool)) return;
         if (e.key === 'Enter') { e.preventDefault(); finishDrawing(); }
         else if (e.key === 'Escape') { e.preventDefault(); cancelDrawing(); }

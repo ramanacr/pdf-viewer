@@ -490,8 +490,15 @@
                             @foreach (var a in AnnotationsByPage[pv.Number].Where(a => a.Kind != ViewerAnnotationKind.Reply))
                             {
                                 var r = _doc.Geometry[pv.Number - 1].ToShown(a.Box);
-                                <span class="annot-hit@(a.Id == _selectedId ? " selected" : "")" data-annot="@a.Id" title="@(a.Contents.Length > 0 ? a.Contents : ViewerEditSession.Label(a.Kind))"
+                                <span class="annot-hit@(a.Id == _selectedId ? " selected" : "")" data-annot="@a.Id" title="@(a.Contents.Length > 0 ? a.Contents : ViewerEditSession.Label(a))"
                                       style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(Math.Max(r.Width, 4) / pv.Width);height:@Pct(Math.Max(r.Height, 4) / pv.Height)"></span>
+                            }
+                            @if (CanEditAnnotations && Selected is { IsCallout: true } callout && callout.Page == pv.Number)
+                            {
+                                // The selected callout's anchor: drag it to move the spot the callout points to.
+                                var ap = _doc.Geometry[pv.Number - 1].ToShown(callout.Callout[0], callout.Callout[1]);
+                                <span class="callout-anchor" data-anchor="@callout.Id" role="img" aria-label="The spot the callout points to"
+                                      title="Drag to move the spot the callout points to" style="left:@Pct(ap.X / pv.Width);top:@Pct(ap.Y / pv.Height)"></span>
                             }
                         }
                         else if (Selected is { } shown && shown.Page == pv.Number)

@@ -80,6 +80,15 @@ public sealed class PdfAnnotation
     public string? RichContents { get; set; }
 
     /// <summary>
+    /// /RD of free text, a square, a circle, a polygon or a caret: how far the drawn box lies inside
+    /// /Rect (left, bottom, right, top insets in default user space: the order of /Rect's numbers, as
+    /// Acrobat writes it and PDFBox and MuPDF read it). A callout's /Rect holds its line,
+    /// and /RD gives its text box. Null when absent; the editor writes it only when it is set, so a
+    /// change that does not set it keeps the file's.
+    /// </summary>
+    public double[]? RectDifferences { get; set; }
+
+    /// <summary>
     /// Free text's /Rotate (written by Acrobat, read by other viewers too): 0, 90, 180 or 270
     /// degrees counter-clockwise the text is turned on the page, so it reads upright in a view
     /// turned that far clockwise. Null when absent: the appearance then follows the page's own
@@ -205,6 +214,7 @@ public static class PdfAnnotationReader
             Justification = (int)(r.Resolve(d["Q"]) is { } q && q.TryGetInteger(out long qv) ? qv : 0),
             Intent = r.Resolve(d["IT"]) is PdfName it ? it.Value : null,
             CalloutLine = Numbers("CL"),
+            RectDifferences = Numbers("RD") is { Length: 4 } rd && rd.All(v => double.IsFinite(v) && v >= 0) ? rd : null,
             RichContents = r.Resolve(d["RC"]) is PdfStream ? null : Text("RC"),
             InReplyTo = d["IRT"] is PdfIndirectRef irt ? irt.ObjectNumber : 0,
             ReplyType = r.Resolve(d["RT"]) is PdfName rt ? rt.Value : null,

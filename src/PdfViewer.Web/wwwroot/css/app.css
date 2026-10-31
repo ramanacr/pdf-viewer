@@ -448,7 +448,7 @@ kbd {
 .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
 .swatch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-.pages[data-tool="note"] .page, .pages[data-tool="freetext"] .page, .pages[data-tool="ink"] .page,
+.pages[data-tool="note"] .page, .pages[data-tool="freetext"] .page, .pages[data-tool="callout"] .page, .pages[data-tool="ink"] .page,
 .pages[data-tool="square"] .page, .pages[data-tool="circle"] .page, .pages[data-tool="line"] .page, .pages[data-tool="arrow"] .page,
 .pages[data-tool="polygon"] .page, .pages[data-tool="polyline"] .page, .pages[data-tool="stamp"] .page { cursor: crosshair; }
 /* Links on a page: a pointer and the target as a tooltip; Tab reaches them, Enter follows them. */
@@ -463,6 +463,14 @@ kbd {
 .annot-hit:hover { outline-color: var(--accent); }
 .annot-hit.selected { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .annot-hit.passive { pointer-events: none; }
+/* A callout's anchor: the selected callout's handle (drag to move the spot it points to), and the spot the callout tool took. */
+.callout-anchor, .callout-mark {
+    position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; box-sizing: border-box;
+    background: var(--surface, #fff); border: 2px solid var(--accent);
+}
+.callout-anchor { cursor: grab; touch-action: none; z-index: 2; }
+.callout-anchor::after { content: ""; position: absolute; inset: -8px; } /* a larger target than it looks */
+.callout-mark { pointer-events: none; background: var(--accent); }
 .draw-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .draw-preview * { fill: none; stroke: var(--accent); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
 .draw-preview polyline { stroke-dasharray: none; stroke-linecap: round; stroke-linejoin: round; }

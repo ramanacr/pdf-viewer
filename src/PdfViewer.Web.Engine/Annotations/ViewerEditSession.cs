@@ -514,6 +514,83 @@ public sealed class ViewerEditSession
         return added;
     }
 
+    /// <summary>The line width of a callout's text box border and line.</summary>
+    public const double CalloutWidth = 1;
+
+    /// <summary>
+    /// A callout: a text box with a line to the spot it points to, as one undo step. The line starts
+    /// at <paramref name="anchor"/> (a point of the shown page, which must be on the page) with an
+    /// open arrow, and goes to the side of the box that faces it, with a knee
+    /// (<see cref="ViewerCallout.Leader"/>). <paramref name="box"/> is the text box on the shown page,
+    /// moved onto the page when it reaches past an edge. A box smaller than 24 by 12 points is a
+    /// click at its top-left corner: the box is then as wide as a text box and as tall as
+    /// <paramref name="text"/> (<see cref="TextBoxWidth"/> by <see cref="TextBoxHeight"/> while it is
+    /// empty). Its text follows the text box rules: a character without a font on this device is
+    /// refused, and an empty callout is for the reader to type into (delete it when they leave it
+    /// empty). Refused when a number is not finite or the anchor is off the page.
+    /// </summary>
+    public ViewerAnnotation AddCallout(int page, ViewerPoint anchor, ViewerRect box, string text, string? color = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var g = Geometry(page);
+        if (!Finite(anchor) || !double.IsFinite(box.X) || !double.IsFinite(box.Y) || !double.IsFinite(box.Width) || !double.IsFinite(box.Height))
+            throw new ViewerAnnotationException("A callout needs a point on the page and a place for its text.");
+        if (anchor.X < 0 || anchor.Y < 0 || anchor.X > g.ShownWidth || anchor.Y > g.ShownHeight)
+            throw new ViewerAnnotationException("The spot a callout points to must be on the page.");
+        text = Clip(text);
+        var a = New(ViewerAnnotationKind.FreeText, page, default, color) with
+        {
+            Contents = text,
+            StrokeWidth = CalloutWidth,
+            StartEnding = ViewerCallout.DefaultEnding,
+        };
+        var r = new ViewerRect(Math.Min(box.X, box.X + box.Width), Math.Min(box.Y, box.Y + box.Height), Math.Abs(box.Width), Math.Abs(box.Height));
+        bool sized = r.Width >= 24 && r.Height >= 12;
+        ViewerBox user;
+        if (!sized && !string.IsNullOrWhiteSpace(text))
+        {
+            user = FreeTextBox(g, OnPage(new ViewerPoint(r.X, r.Y), g), text, a.FontSize, CalloutWidth);
+        }
+        else
+        {
+            if (!sized) r = new ViewerRect(r.X, r.Y, TextBoxWidth, TextBoxHeight);
+            double w = Math.Min(r.Width, g.ShownWidth), h = Math.Min(r.Height, g.ShownHeight);
+            r = new ViewerRect(Math.Clamp(r.X, 0, g.ShownWidth - w), Math.Clamp(r.Y, 0, g.ShownHeight - h), w, h);
+            if (text.Length > 0) MeasureText(text, a.FontSize, Math.Max(r.Width, 1), CalloutWidth); // only the fonts are checked
+            user = ClampBox(g.ToUser(r), g);
+        }
+        var (ax, ay) = g.ToUser(anchor.X, anchor.Y);
+        var added = Add(a with { Box = user, Callout = ViewerCallout.Leader(g, user, ax, ay) });
+        if (sized || string.IsNullOrWhiteSpace(text)) _sizedByReader.Add(added.Id);
+        return added;
+    }
+
+    /// <summary>
+    /// Moves the spot a callout points to (its anchor) to a point of the shown page, as one undo
+    /// step: the knee and the end at the box are laid out again. False when it is the same point;
+    /// refused when the point is not finite or off the page, or the annotation is not a callout.
+    /// </summary>
+    public bool MoveCalloutAnchor(string id, ViewerPoint to)
+    {
+        CheckCanAnnotate();
+        var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (!a.IsCallout) throw new ViewerAnnotationException("Only a callout has a point to move.");
+        var g = Geometry(a.Page);
+        if (!Finite(to) || to.X < 0 || to.Y < 0 || to.X > g.ShownWidth || to.Y > g.ShownHeight)
+            throw new ViewerAnnotationException("The spot a callout points to must be on the page.");
+        var (x, y) = g.ToUser(to.X, to.Y);
+        if (Math.Abs(x - a.Callout[0]) < 1e-6 && Math.Abs(y - a.Callout[1]) < 1e-6) return false;
+        // A file's line 0 wide is not drawn: once the reader moves it, it is drawn (1 point).
+        Store.Update(a with
+        {
+            Callout = ViewerCallout.Leader(g, a.Box, x, y),
+            StrokeWidth = a.StrokeWidth > 0 ? a.StrokeWidth : CalloutWidth,
+            Modified = DateTimeOffset.UtcNow,
+        });
+        _edits.Edit();
+        return true;
+    }
+
     /// <summary>
     /// A text box's place for its text, on the shown page: wrapped at <see cref="FreeTextWidth"/>
     /// (less near the page's right edge) and exactly as tall as its lines, measured with the fonts,
@@ -521,19 +598,19 @@ public sealed class ViewerEditSession
     /// drawn upright as shown, so the shown width is the width the text wraps at). Refused when a
     /// character has no font on this device: the appearance would leave it out.
     /// </summary>
-    private static ViewerBox FreeTextBox(ViewerPageGeometry g, ViewerPoint topLeft, string text, double size)
+    private static ViewerBox FreeTextBox(ViewerPageGeometry g, ViewerPoint topLeft, string text, double size, double border = 0)
     {
         double x = Math.Min(topLeft.X, Math.Max(0, g.ShownWidth - 40));
         double width = Math.Min(FreeTextWidth, g.ShownWidth - x);
-        double height = Math.Min(MeasureText(text, size, width).Height + 0.5, g.ShownHeight);
+        double height = Math.Min(MeasureText(text, size, width, border).Height + 0.5, g.ShownHeight);
         double y = Math.Min(topLeft.Y, g.ShownHeight - height);
         return ClampBox(g.ToUser(new ViewerRect(x, Math.Max(0, y), width, height)), g);
     }
 
-    /// <summary>The text laid out as the engine draws a text box (/DA /Helv, no border); refused when a font is missing.</summary>
-    private static PdfFreeTextLayout MeasureText(string text, double size, double width)
+    /// <summary>The text laid out as the engine draws a text box (/DA /Helv, a border <paramref name="border"/> wide); refused when a font is missing.</summary>
+    private static PdfFreeTextLayout MeasureText(string text, double size, double width, double border = 0)
     {
-        var layout = PdfAnnotationAppearances.MeasureFreeText(text, "Helv", size, width)
+        var layout = PdfAnnotationAppearances.MeasureFreeText(text, "Helv", size, width, border)
             ?? throw new ViewerAnnotationException("This device has no font to draw a text box with.");
         if (layout.Missing > 0)
             throw new ViewerAnnotationException(layout.Missing == 1
@@ -622,9 +699,13 @@ public sealed class ViewerEditSession
         {
             var g = Geometry(a.Page);
             var shown = g.ToShown(a.Box);
-            if (_sizedByReader.Contains(a.Id)) MeasureText(text, a.FontSize, Math.Max(shown.Width, 1)); // only the fonts are checked
-            else if (!a.FromFile) changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize) };
-            else MeasureText(text, a.FontSize, FreeTextWidth); // its size is kept: only the fonts are checked
+            // A callout's text box has a border: it is measured with it.
+            double border = a.IsCallout ? a.StrokeWidth : 0;
+            if (_sizedByReader.Contains(a.Id)) MeasureText(text, a.FontSize, Math.Max(shown.Width, 1), border); // only the fonts are checked
+            else if (!a.FromFile) changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize, border) };
+            else MeasureText(text, a.FontSize, FreeTextWidth, border); // its size is kept: only the fonts are checked
+            // A callout's box that changed size keeps its anchor: the line meets the box again.
+            if (a.IsCallout && changed.Box != a.Box) changed = ViewerCallout.Relaid(changed, g);
         }
         Store.Update(changed);
         _edits.Edit();
@@ -727,6 +808,9 @@ public sealed class ViewerEditSession
         ArgumentNullException.ThrowIfNull(annotation);
         CheckCanAnnotate();
         var old = Store.Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
+        // A callout whose box moved but whose line was given back as it was keeps its anchor: the line meets the box again.
+        if (annotation.IsCallout && old.IsCallout && annotation.Page == old.Page && annotation.Box != old.Box && annotation.Callout.SequenceEqual(old.Callout))
+            annotation = ViewerCallout.Relaid(annotation, Geometry(old.Page));
         var updated = Store.Update(annotation with
         {
             // Authorship is not rewritten: without an author given, the annotation keeps its own (empty stays empty).
@@ -809,6 +893,9 @@ public sealed class ViewerEditSession
         _ => "Reply",
     };
 
+    /// <summary>What an annotation is, for a list or a message: a text box with a line is a callout.</summary>
+    public static string Label(ViewerAnnotation a) => a.IsCallout ? "Callout" : Label(a.Kind);
+
     /// <summary>
     /// The annotations as a list: each one that starts a thread, then its replies with their
     /// level. Statuses are not lines of their own: each line carries its annotation's review status.
@@ -839,7 +926,7 @@ public sealed class ViewerEditSession
     {
         // A stamp without a comment is listed by what it shows.
         string summary = a.Kind == ViewerAnnotationKind.Stamp && string.IsNullOrWhiteSpace(a.Contents) ? StampLabel(a.StampName) : Summary(a.Contents);
-        result.Add(new ViewerAnnotationListItem(a, level, Label(a.Kind), summary, ReviewState(replies[a.Id])));
+        result.Add(new ViewerAnnotationListItem(a, level, Label(a), summary, ReviewState(replies[a.Id])));
         // The store keeps threads within the depth limit; the level check is a second guard.
         if (level < ViewerAnnotationStore.MaxReplyDepth)
             foreach (var r in replies[a.Id].Where(r => !r.IsStatus)) AddThread(result, r, level + 1, replies);

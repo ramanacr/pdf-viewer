@@ -27,8 +27,8 @@ public sealed record EmbedSaveOptions(bool Enabled, int AutoSaveSeconds, bool Fo
 /// <code>
 /// { id, type: "Annotation", motivation: "commenting" | "highlighting", bodyValue,
 ///   target: { source, selector: { node: { index }, subtype, boundingBox: [x1, y1, x2, y2],
-///             quadPoints, inkList, vertices, lineEndings, stampName, strokeColor, fillColor,
-///             dashPattern, strokeWidth, opacity, fontSize } },
+///             quadPoints, inkList, vertices, lineEndings, callout, calloutEnding, stampName,
+///             strokeColor, fillColor, dashPattern, strokeWidth, opacity, fontSize } },
 ///   creator: { type: "Person", name }, created, modified }
 /// </code>
 /// A reply is <c>{ id, type, motivation: "replying", bodyValue, target: "&lt;id it answers&gt;", creator, created, modified }</c>.
@@ -150,6 +150,17 @@ public static class EmbedAnnotationJson
                 end = le[1].GetString()!;
             }
         }
+        // A callout: free text with callout, its line's points (the spot it points to first), or only
+        // that spot ([x, y]: the viewer lays the line out to the box); calloutEnding is its /LE.
+        double[]? callout = null;
+        if (kind == ViewerAnnotationKind.FreeText && (callout = Numbers(selector, "callout", 6, w, requestId)) != null)
+        {
+            if (callout.Length is not (2 or 4 or 6))
+                throw Bad(requestId, $"{w}.callout must be [x, y] (the spot it points to), or the line's points [x1, y1, x2, y2] or [x1, y1, x2, y2, x3, y3].");
+            start = String(selector, "calloutEnding", 32, w, requestId) ?? ViewerCallout.DefaultEnding;
+            if (!PdfEngine.Vector.Annotations.PdfAnnotationLimits.LineEndings.Contains(start))
+                throw Bad(requestId, $"{w}.calloutEnding must be one of {string.Join(", ", PdfEngine.Vector.Annotations.PdfAnnotationLimits.LineEndings)}.");
+        }
         string stampName = "";
         if (kind == ViewerAnnotationKind.Stamp)
         {
@@ -179,6 +190,7 @@ public static class EmbedAnnotationJson
             QuadPoints = quads ?? [],
             InkList = ink ?? [],
             Vertices = vertices ?? [],
+            Callout = callout ?? [],
             StartEnding = start,
             EndEnding = end,
             StampName = stampName,
@@ -314,6 +326,11 @@ public static class EmbedAnnotationJson
             w.WriteStringValue(a.StartEnding);
             w.WriteStringValue(a.EndEnding);
             w.WriteEndArray();
+        }
+        if (a.IsCallout)
+        {
+            WriteNumbers(w, "callout", a.Callout);
+            w.WriteString("calloutEnding", a.StartEnding);
         }
         if (a.Kind == ViewerAnnotationKind.Stamp) w.WriteString("stampName", a.StampName);
         w.WriteString("strokeColor", a.Color);
