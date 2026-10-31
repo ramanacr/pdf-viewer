@@ -156,6 +156,9 @@ jobs:
 
         aab=$(ls "$RUNNER_TEMP"/out/aab/*-Signed.aab)
         apk=$(ls "$RUNNER_TEMP"/out/apk/*-Signed.apk)
+        # The native debug symbols that Play Console reads (NativeDebugSymbols.targets).
+        unzip -l "$aab" | grep -q " BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/" \
+          || { echo "::error::the bundle has no native debug symbols"; exit 1; }
         apksigner=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)apksigner
         # Both signed, and with the upload key, not a debug key. jarsigner exits 0 for an unsigned
         # jar ("jar is unsigned."), so its output must say exactly "jar verified.". Not -strict:

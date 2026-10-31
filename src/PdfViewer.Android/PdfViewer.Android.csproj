@@ -67,4 +67,7 @@
     <ProjectReference Include="..\PdfViewer.Web.Engine\PdfViewer.Web.Engine.csproj" />
   </ItemGroup>
 
+  <!-- Native debug symbols in the Release app bundle, for Google Play (docs/android-release.md). -->
+  <Import Project="NativeDebugSymbols.targets" />
+
 </Project>
