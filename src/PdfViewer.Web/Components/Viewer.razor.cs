@@ -27,7 +27,7 @@ public sealed partial class Viewer : IAsyncDisposable
 {
     private enum ZoomMode { FitWidth, FitPage, Custom }
     private enum Panel { Outline, Thumbnails, Results, Comments }
-    private enum Dialog { None, Help, Password, Link }
+    private enum Dialog { None, Help, Password, Link, CustomStamp }
 
     private static readonly double[] ZoomPresets = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
     private const double MinZoom = 0.1, MaxZoom = 8;
@@ -165,7 +165,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=8");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=9");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {
@@ -195,6 +195,7 @@ public sealed partial class Viewer : IAsyncDisposable
             CanvasInterop.ObserveThumbnails();
         }
         ReportView();
+        await DrawStampPreviewAsync();
         if (_layoutChanged)
         {
             _layoutChanged = false;
@@ -1069,6 +1070,7 @@ public sealed partial class Viewer : IAsyncDisposable
             case "escape":
                 if (_dialog == Dialog.Password) CancelPassword();
                 else if (_dialog == Dialog.Link) CancelPendingLink();
+                else if (_dialog == Dialog.CustomStamp) await CloseCustomStampDialogAsync();
                 else if (_dialog != Dialog.None) _dialog = Dialog.None;
                 else if (_moreOpen) CloseMoreMenu();
                 else if (_doc != null && _sidebarOpen && CanvasInterop.IsNarrow()) CloseDrawer();

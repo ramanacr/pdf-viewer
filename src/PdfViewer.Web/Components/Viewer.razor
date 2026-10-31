@@ -168,15 +168,29 @@
                 @foreach (var (tool, icon, label) in ToolButtons)
                 {
                     var t = tool;
-                    <button type="button" class="icon-button" title="@label" aria-label="@label" aria-pressed="@(_tool == t ? "true" : "false")" @onclick="() => SetTool(t)"><Icon Name="@icon" /></button>
+                    <button type="button" class="icon-button" title="@label" aria-label="@label" aria-pressed="@(_tool == t || t == Tool.Stamp && _tool == Tool.CustomStamp ? "true" : "false")" @onclick="() => SetTool(t)"><Icon Name="@icon" /></button>
                 }
-                @if (_tool == Tool.Stamp)
+                @if (_tool is Tool.Stamp or Tool.CustomStamp)
                 {
-                    <select aria-label="Stamp" @bind="_stampName">
+                    <select aria-label="Stamp" value="@StampValue" @onchange="PickStampAsync">
                         @foreach (var stamp in PdfEngine.Vector.Annotations.PdfStamps.Standard)
                         {
                             <option value="@stamp.Name">@stamp.Label</option>
                         }
+                        @if (_savedStamps.Count > 0)
+                        {
+                            <optgroup label="Saved stamps">
+                                @foreach (var saved in _savedStamps)
+                                {
+                                    <option value="@($"C:{saved.Id}")">@saved.Name</option>
+                                }
+                            </optgroup>
+                        }
+                        @if (StampValue == CurrentStampOption)
+                        {
+                            <option value="@CurrentStampOption">@_customStampName</option>
+                        }
+                        <option value="@CustomStampOption">Custom stamp…</option>
                     </select>
                 }
             </div>
@@ -654,6 +668,61 @@
             </div>
         </div>
     }
+
+    @if (_dialog == Dialog.CustomStamp)
+    {
+        <div class="dialog-backdrop" @onclick="CloseCustomStampDialogAsync"></div>
+        <div class="dialog stamp-dialog" role="dialog" aria-modal="true" aria-labelledby="stamp-title">
+            <header>
+                <h2 id="stamp-title">Custom stamp</h2>
+                <button type="button" class="icon-button" aria-label="Close" @onclick="CloseCustomStampDialogAsync"><Icon Name="close" /></button>
+            </header>
+            <p class="muted">Make a stamp from a PNG or JPEG picture, or from a page of a PDF. The file is read in this browser; nothing is uploaded.</p>
+            <p><button type="button" class="button" id="stamp-pick" disabled="@_stampBusy" @onclick="PickStampFile">Choose a picture or PDF…</button></p>
+            @if (_pickedKind != null && _pickedPdf != null)
+            {
+                <p><strong>@_pickedName</strong></p>
+                @if (_pickedKind == PdfViewer.Web.Engine.Annotations.ViewerCustomStampKind.Page && _pickedPdf.PageCount > 1)
+                {
+                    <div class="stamp-page" role="group" aria-label="Page of the PDF">
+                        <button type="button" class="icon-button" aria-label="Previous page" disabled="@(_pickedPage <= 1)" @onclick="() => StepPickedPage(-1)"><Icon Name="left" /></button>
+                        <label>Page <input type="number" min="1" max="@_pickedPdf.PageCount" value="@_pickedPage" @onchange="OnPickedPageInput" /></label>
+                        <span>of @_pickedPdf.PageCount</span>
+                        <button type="button" class="icon-button" aria-label="Next page" disabled="@(_pickedPage >= _pickedPdf.PageCount)" @onclick="() => StepPickedPage(1)"><Icon Name="right" /></button>
+                    </div>
+                }
+                <canvas id="stamp-preview" class="stamp-preview" role="img" aria-label="Preview of the stamp"></canvas>
+                @if (CanKeepStamps && _stampLibrary)
+                {
+                    <label class="check"><input type="checkbox" @bind="_saveStamp" /> Keep it in this browser's stamp library</label>
+                }
+            }
+            @if (_stampProblem != null)
+            {
+                <p class="problem" role="alert">@_stampProblem</p>
+            }
+            @if (_savedStamps.Count > 0)
+            {
+                <h3>Saved in this browser</h3>
+                <ul class="saved-stamps">
+                    @foreach (var saved in _savedStamps)
+                    {
+                        var s = saved;
+                        <li>
+                            <button type="button" class="link-button" @onclick="() => UseSavedStampAsync(s.Id)">@s.Name</button>
+                            <span class="muted">@(s.Kind == "Page" ? "PDF page" : "Picture"), @(Math.Max(1, s.Size / 1024)) KB</span>
+                            <button type="button" class="icon-button" aria-label="@($"Delete the saved stamp {s.Name}")" title="Delete" @onclick="() => DeleteSavedStampAsync(s)"><Icon Name="trash" /></button>
+                        </li>
+                    }
+                </ul>
+            }
+            <div class="dialog-actions">
+                <button type="button" class="button" @onclick="CloseCustomStampDialogAsync">Cancel</button>
+                <button type="button" class="button primary" disabled="@(_pickedKind == null || _stampBusy)" @onclick="UsePickedStampAsync">Place stamp</button>
+            </div>
+        </div>
+    }
+    <input id="stamp-input" type="file" accept="image/png,image/jpeg,application/pdf,.png,.jpg,.jpeg,.pdf" hidden />
 
     @if (_dialog == Dialog.Password)
     {

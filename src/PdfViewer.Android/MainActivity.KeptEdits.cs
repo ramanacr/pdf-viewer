@@ -86,7 +86,15 @@ public sealed partial class MainActivity
             string temporary = path + ".new";
             try
             {
-                byte[]? json = (snapshot with { OriginalHash = hash.GetAwaiter().GetResult() }).ToUtf8();
+                byte[]? json = (snapshot with { OriginalHash = hash.GetAwaiter().GetResult() }).ToUtf8(out int droppedStamps);
+                if (droppedStamps > 0)
+                {
+                    // Kept without the custom stamps that did not fit: the reader is told, the other edits are kept.
+                    string message = droppedStamps == 1
+                        ? "One custom stamp is too large to keep if Android closes the app. Save the document to keep it."
+                        : $"{droppedStamps} custom stamps are too large to keep if Android closes the app. Save the document to keep them.";
+                    RunOnUiThread(() => Tell(message));
+                }
                 if (json == null)
                 {
                     // Larger than a snapshot may be: not kept (and an older one would be out of date).

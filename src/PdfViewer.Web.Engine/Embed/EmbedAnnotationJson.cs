@@ -165,7 +165,8 @@ public static class EmbedAnnotationJson
         if (kind == ViewerAnnotationKind.Stamp)
         {
             stampName = String(selector, "stampName", 64, w, requestId) ?? "Draft";
-            if (!ViewerAnnotationStore.StampNames.Contains(stampName))
+            // "Custom" names a custom stamp given back (updateAnnotation); a new one comes from addCustomStamp.
+            if (!ViewerAnnotationStore.StampNames.Contains(stampName) && stampName != ViewerCustomStamp.StampName)
                 throw Bad(requestId, $"{w}.stampName must be one of {string.Join(", ", ViewerAnnotationStore.StampNames)}.");
         }
         double strokeWidth = Number(selector, "strokeWidth", 0, ViewerAnnotationStore.MaxStrokeWidth, w, requestId) ?? 1;
@@ -273,7 +274,13 @@ public static class EmbedAnnotationJson
     // ------------------------------------------------------------------ writing
 
     /// <summary>One annotation as the host page gets it. <paramref name="source"/> is the file's id or name (target.source).</summary>
-    public static void Write(Utf8JsonWriter w, ViewerAnnotation a, string source)
+    public static void Write(Utf8JsonWriter w, ViewerAnnotation a, string source) => Write(w, a, source, false);
+
+    /// <summary>
+    /// One annotation as the host page gets it; a custom stamp made here carries what it draws
+    /// (customStampData: its kind and the one-page PDF, base64) only when <paramref name="stampData"/>.
+    /// </summary>
+    public static void Write(Utf8JsonWriter w, ViewerAnnotation a, string source, bool stampData)
     {
         w.WriteStartObject();
         w.WriteStartArray("@context");
@@ -332,7 +339,19 @@ public static class EmbedAnnotationJson
             WriteNumbers(w, "callout", a.Callout);
             w.WriteString("calloutEnding", a.StartEnding);
         }
-        if (a.Kind == ViewerAnnotationKind.Stamp) w.WriteString("stampName", a.StampName);
+        if (a.Kind == ViewerAnnotationKind.Stamp)
+        {
+            w.WriteString("stampName", a.StampName);
+            w.WriteBoolean("customStamp", a.IsCustomStamp);
+            if (stampData && a.CustomStamp is { } custom)
+            {
+                w.WriteStartObject("customStampData");
+                w.WriteString("kind", custom.Kind == ViewerCustomStampKind.Image ? "image" : "page");
+                w.WriteString("mimeType", "application/pdf");
+                w.WriteBase64String("data", custom.Pdf);
+                w.WriteEndObject();
+            }
+        }
         w.WriteString("strokeColor", a.Color);
         if (a.FillColor != null) w.WriteString("fillColor", a.FillColor);
         if (a.Dash != null)
@@ -363,12 +382,24 @@ public static class EmbedAnnotationJson
         w.WriteEndObject();
     }
 
-    public static Action<Utf8JsonWriter> List(IEnumerable<ViewerAnnotation> list, string source) => w =>
+    public static Action<Utf8JsonWriter> List(IEnumerable<ViewerAnnotation> list, string source, bool stampData = false) => w =>
     {
         w.WriteStartArray();
-        foreach (var a in list) Write(w, a, source);
+        foreach (var a in list) Write(w, a, source, stampData);
         w.WriteEndArray();
     };
+
+    /// <summary>getAnnotations' filter asks for what custom stamps draw: { includeCustomStampData: true }.</summary>
+    public static bool WantsStampData(JsonElement filter, int requestId)
+    {
+        if (filter.ValueKind != JsonValueKind.Object || !filter.TryGetProperty("includeCustomStampData", out var v) || v.ValueKind == JsonValueKind.Null) return false;
+        return v.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => throw Bad(requestId, "getAnnotations: includeCustomStampData must be true or false."),
+        };
+    }
 
     private static void WriteDate(Utf8JsonWriter w, string name, DateTimeOffset date)
     {

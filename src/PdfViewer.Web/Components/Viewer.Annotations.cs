@@ -22,9 +22,9 @@ namespace PdfViewer.Web.Components;
 /// </summary>
 public sealed partial class Viewer
 {
-    private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Callout, Ink, Square, Circle, Line, Arrow, Polygon, PolyLine, Stamp }
+    private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Callout, Ink, Square, Circle, Line, Arrow, Polygon, PolyLine, Stamp, CustomStamp }
 
-    private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "callout", "ink", "square", "circle", "line", "arrow", "polygon", "polyline", "stamp"];
+    private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "callout", "ink", "square", "circle", "line", "arrow", "polygon", "polyline", "stamp", "customstamp"];
 
     /// <summary>What the host page is told when it opened the file with hasReadOnlyAccess and tries a change.</summary>
     private const string ReadOnlyReason = "The file was opened with hasReadOnlyAccess.";
@@ -88,7 +88,7 @@ public sealed partial class Viewer
         Tool.Line or Tool.Arrow => ViewerAnnotationKind.Line,
         Tool.Polygon => ViewerAnnotationKind.Polygon,
         Tool.PolyLine => ViewerAnnotationKind.PolyLine,
-        Tool.Stamp => ViewerAnnotationKind.Stamp,
+        Tool.Stamp or Tool.CustomStamp => ViewerAnnotationKind.Stamp,
         _ => null,
     };
 
@@ -342,7 +342,15 @@ public sealed partial class Viewer
             MarkSelection(tool);
             return;
         }
-        _tool = _tool == tool && tool != Tool.Select ? Tool.Select : tool;
+        // The stamp button also ends placing a custom stamp.
+        bool again = _tool == tool || tool == Tool.Stamp && _tool == Tool.CustomStamp;
+        _tool = again && tool != Tool.Select ? Tool.Select : tool;
+        if (_tool == Tool.Stamp)
+        {
+            _customStamp = null;
+            // The saved custom stamps join the stamp menu.
+            if (CanKeepStamps) _ = RefreshSavedStampsThenRenderAsync();
+        }
         if (_tool != Tool.Select) Unselect(user: true);
         // A text box or stamp needs the appearance fonts: they are read while the reader places it.
         if (_tool is Tool.FreeText or Tool.Callout or Tool.Stamp) _ = EnsureAppearanceFontsAsync();
@@ -358,6 +366,7 @@ public sealed partial class Viewer
             Tool.Line or Tool.Arrow => "Drag from where the line starts to where it ends.",
             Tool.Polygon or Tool.PolyLine => "Click each point; double-click or press Enter to end, Esc to cancel.",
             Tool.Stamp => "Click where the stamp goes.",
+            Tool.CustomStamp => "Click where the stamp goes, or drag its box.",
             _ => "Drag on the page to draw the shape.",
         };
     }
@@ -524,6 +533,8 @@ public sealed partial class Viewer
             ViewerAnnotationKind.Ink => s.AddInk(page, shown, color),
             ViewerAnnotationKind.Note => s.AddNote(page, first, ""),
             ViewerAnnotationKind.FreeText => s.AddTextBox(page, first, last, color),
+            ViewerAnnotationKind.Stamp when _tool == Tool.CustomStamp && _customStamp is { } custom =>
+                s.AddCustomStamp(page, new ViewerRect(Math.Min(first.X, last.X), Math.Min(first.Y, last.Y), Math.Abs(last.X - first.X), Math.Abs(last.Y - first.Y)), custom),
             ViewerAnnotationKind.Stamp => s.AddStamp(page, first, PdfStamps.Standard.FirstOrDefault(st => st.Name == _stampName) ?? PdfStamps.Standard[0]),
             ViewerAnnotationKind.Line => s.AddLine(page, first, last, style, color),
             ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine => s.AddPolyline(kind, page, shown, style, color),
@@ -716,10 +727,11 @@ public sealed partial class Viewer
         int id = call.RequestId;
         if (call.Method is not (EmbedMethod.GetAnnotationManager or EmbedMethod.AddAnnotations or EmbedMethod.GetAnnotations or EmbedMethod.UpdateAnnotation
             or EmbedMethod.DeleteAnnotations or EmbedMethod.SelectAnnotation or EmbedMethod.UnselectAnnotation or EmbedMethod.SetAnnotationConfig
-            or EmbedMethod.ExportXfdf or EmbedMethod.ImportXfdf)) return null;
+            or EmbedMethod.ExportXfdf or EmbedMethod.ImportXfdf or EmbedMethod.AddCustomStamp)) return null;
         if (!_config.EnableAnnotationApis || _session is not { } session)
             return EmbedProtocol.Error(id, EmbedErrors.NotEnabled, "Set enableAnnotationAPIs: true in the config of previewFile to use the annotation manager.");
-        bool writes = call.Method is EmbedMethod.AddAnnotations or EmbedMethod.UpdateAnnotation or EmbedMethod.DeleteAnnotations or EmbedMethod.ImportXfdf;
+        bool writes = call.Method is EmbedMethod.AddAnnotations or EmbedMethod.UpdateAnnotation or EmbedMethod.DeleteAnnotations or EmbedMethod.ImportXfdf
+            or EmbedMethod.AddCustomStamp;
         if (writes && session.AnnotateRestriction is { } restriction)
             return EmbedProtocol.Error(id, EmbedErrors.NotAllowed, restriction);
         try
@@ -729,7 +741,13 @@ public sealed partial class Viewer
                 case EmbedMethod.GetAnnotationManager:
                     return EmbedProtocol.Ok(id, null);
                 case EmbedMethod.GetAnnotations:
-                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(session.Store.Get(call.Filter), Source));
+                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(session.Store.Get(call.Filter), Source, call.IncludeStampData));
+                case EmbedMethod.AddCustomStamp:
+                {
+                    var added = AddCustomStampFromHost(session, call);
+                    _ = CommitEditsAsync();
+                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List([added], Source));
+                }
                 case EmbedMethod.AddAnnotations:
                 {
                     var added = session.AddAnnotations(call.Annotations);

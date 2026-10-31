@@ -140,8 +140,14 @@ public enum EmbedMethod
     Search, SearchNext, SearchPrevious, SearchClear,
     GetAnnotationManager, AddAnnotations, GetAnnotations, UpdateAnnotation, DeleteAnnotations,
     SelectAnnotation, UnselectAnnotation, SetAnnotationConfig, ExportXfdf, ImportXfdf,
-    SetSaveOptions, SaveResult,
+    SetSaveOptions, SaveResult, AddCustomStamp,
 }
+
+/// <summary>
+/// addCustomStamp's options: the page to stamp (from 1), the box to fit the stamp in (PDF user
+/// space; null: centred on the page at its usual size), and the page of a PDF given (from 1).
+/// </summary>
+public sealed record EmbedCustomStamp(int Page, Annotations.ViewerBox? Box, int SourcePage);
 
 /// <summary>
 /// An API call, its arguments checked: <see cref="Page"/>, <see cref="X"/> and <see cref="Y"/> for
@@ -165,6 +171,15 @@ public sealed record EmbedCall(int RequestId, int Document, EmbedMethod Method) 
 
     /// <summary>getAnnotations and deleteAnnotations.</summary>
     public Annotations.ViewerAnnotationFilter? Filter { get; init; }
+
+    /// <summary>getAnnotations with includeCustomStampData: custom stamps carry what they draw.</summary>
+    public bool IncludeStampData { get; init; }
+
+    /// <summary>addCustomStamp: its options; its picture or PDF is <see cref="Bytes"/>.</summary>
+    public EmbedCustomStamp? CustomStamp { get; init; }
+
+    /// <summary>The bytes that came beside the call (addCustomStamp's picture or PDF), or null.</summary>
+    public byte[]? Bytes { get; init; }
 
     /// <summary>selectAnnotation.</summary>
     public string? AnnotationId { get; init; }
@@ -381,6 +396,7 @@ public static class EmbedProtocol
         ["importXfdf"] = EmbedMethod.ImportXfdf,
         ["setSaveOptions"] = EmbedMethod.SetSaveOptions,
         ["saveResult"] = EmbedMethod.SaveResult,
+        ["addCustomStamp"] = EmbedMethod.AddCustomStamp,
     };
 
     private static EmbedCall ParseCall(JsonElement root, int requestId)
@@ -411,7 +427,12 @@ public static class EmbedProtocol
                 Annotations = [EmbedAnnotationJson.Parse(Arg(0), requestId, "", default, requireId: true)],
                 KeepsDash = !EmbedAnnotationJson.HasDashPattern(Arg(0)),
             },
-            EmbedMethod.GetAnnotations => call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) },
+            EmbedMethod.GetAnnotations => call with
+            {
+                Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name),
+                IncludeStampData = EmbedAnnotationJson.WantsStampData(Arg(0), requestId),
+            },
+            EmbedMethod.AddCustomStamp => call with { CustomStamp = CustomStampOptions(Arg(0)) },
             EmbedMethod.DeleteAnnotations => Arg(0).ValueKind == JsonValueKind.Object
                 ? call with { Filter = EmbedAnnotationJson.ParseFilter(Arg(0), requestId, name) }
                 : throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "deleteAnnotations: give a filter ({ annotationIds, pageRange }; {} deletes every annotation).", requestId),
@@ -429,6 +450,23 @@ public static class EmbedProtocol
             },
             _ => call,
         };
+
+        EmbedCustomStamp CustomStampOptions(JsonElement e)
+        {
+            if (e.ValueKind != JsonValueKind.Object)
+                throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "addCustomStamp: give { data, pageNumber, boundingBox, sourcePage }.", requestId);
+            int page = e.TryGetProperty("pageNumber", out var pn) && pn.ValueKind != JsonValueKind.Null ? Integer(pn, "pageNumber", 1, int.MaxValue) : 1;
+            int source = e.TryGetProperty("sourcePage", out var sp) && sp.ValueKind != JsonValueKind.Null ? Integer(sp, "sourcePage", 1, int.MaxValue) : 1;
+            Annotations.ViewerBox? box = null;
+            if (e.TryGetProperty("boundingBox", out var bb) && bb.ValueKind != JsonValueKind.Null)
+            {
+                if (bb.ValueKind != JsonValueKind.Array || bb.GetArrayLength() != 4)
+                    throw new EmbedProtocolException(EmbedErrors.InvalidArgument, "addCustomStamp: boundingBox must be [x1, y1, x2, y2].", requestId);
+                var v = bb.EnumerateArray().Select(n => Number(n, "boundingBox", -1e6, 1e6, fallback: null)).ToArray();
+                box = Annotations.ViewerBox.Normalized(v[0], v[1], v[2], v[3]);
+            }
+            return new EmbedCustomStamp(page, box, source);
+        }
 
         string Id(JsonElement e) =>
             e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 and <= Annotations.ViewerAnnotationStore.MaxIdLength } s

@@ -158,4 +158,32 @@ internal static partial class CanvasInterop
     /// <summary>Stops the worker; calls still waiting on it fail.</summary>
     [JSImport("workerTerminate", ModuleName)]
     public static partial void WorkerTerminate();
+
+    // ---------------------------------------------------------------- custom stamps (in this browser only)
+
+    /// <summary>Opens the file picker for a custom stamp: the bytes come to OnStampFile.</summary>
+    [JSImport("pickStampFile", ModuleName)]
+    public static partial void PickStampFile();
+
+    [JSImport("drawStampPreview", ModuleName)]
+    public static partial void DrawStampPreview([JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> bgra, int width, int height);
+
+    /// <summary>The saved stamps as JSON [{ id, name, kind, size }]; "null" when the browser keeps none.</summary>
+    [JSImport("stampLibraryList", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.String>>]
+    public static partial Task<string> StampLibraryList();
+
+    /// <summary>Keeps a stamp's one-page PDF in the browser; "" when kept, else why not.</summary>
+    [JSImport("stampLibrarySave", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.String>>]
+    public static partial Task<string> StampLibrarySave(string id, string name, string kind, [JSMarshalAs<JSType.MemoryView>] ArraySegment<byte> pdf);
+
+    /// <summary>Gives a saved stamp's bytes to OnStampLibraryBytes; false when it is not there.</summary>
+    [JSImport("stampLibraryLoad", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.Boolean>>]
+    public static partial Task<bool> StampLibraryLoad(string id);
+
+    [JSImport("stampLibraryDelete", ModuleName)]
+    [return: JSMarshalAs<JSType.Promise<JSType.Boolean>>]
+    public static partial Task<bool> StampLibraryDelete(string id);
 }

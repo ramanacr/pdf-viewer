@@ -244,13 +244,43 @@ internal static class PdfStampForms
         return Form(new PdfRect(0, 0, w, h), PdfMatrix.Identity, stamp.Rotation, resources, content.ToString());
     }
 
+    // The page forms of custom stamps already written into an update, by the stamp PDF's hash, its
+    // page and whether it is a group: a stamp placed many times is one copy in the file.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<PdfUpdate, Dictionary<string, (int Number, PdfRect BBox, PdfMatrix ToDisplay)>> Shared = new();
+
     private static PdfStream Page(PdfUpdate update, byte[] pdf, PdfStampAppearance stamp, double opacity)
     {
-        using var source = PdfVectorDocument.Open(new PdfMemoryByteSource(pdf));
-        if (source.IsEncrypted) throw new NotSupportedException("The stamp's PDF is encrypted; use an unencrypted copy.");
-        int pageNumber = stamp.SourcePage;
-        if (pageNumber < 1 || pageNumber > source.PageCount) throw new ArgumentOutOfRangeException(nameof(stamp), $"The stamp's PDF has no page {pageNumber}.");
-        var node = source.PageTree.Pages[pageNumber - 1];
+        bool group = opacity < 1;
+        string key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pdf)) + ":" + stamp.SourcePage.ToString(CultureInfo.InvariantCulture) + (group ? ":g" : "");
+        var shared = Shared.GetOrCreateValue(update);
+        if (!shared.TryGetValue(key, out var inner))
+        {
+            using var source = PdfVectorDocument.Open(new PdfMemoryByteSource(pdf));
+            if (source.IsEncrypted) throw new NotSupportedException("The stamp's PDF is encrypted; use an unencrypted copy.");
+            int pageNumber = stamp.SourcePage;
+            if (pageNumber < 1 || pageNumber > source.PageCount) throw new ArgumentOutOfRangeException(nameof(stamp), $"The stamp's PDF has no page {pageNumber}.");
+            var node = source.PageTree.Pages[pageNumber - 1];
+            var target = new CopyTarget(() => update.Add(PdfNull.Instance), update.Set);
+            // The page as one form; with opacity, one translucent group, so overlapping parts do not show through each other.
+            var (form, toDisplay) = PageForm(target, source, node, group);
+            inner = (update.Add(form), node.CropBox, toDisplay);
+            shared[key] = inner;
+        }
+        // Each stamp: a small form that draws the shared page form, turned and translucent as this stamp is.
+        var outer = new Dictionary<string, PdfObject> { ["XObject"] = Dict(("Pg0", new PdfIndirectRef(inner.Number))) };
+        var text = new StringBuilder();
+        Opacity(opacity, outer, text);
+        text.Append("/Pg0 Do\n");
+        return Form(inner.BBox, inner.ToDisplay, stamp.Rotation, outer, text.ToString());
+    }
+
+    /// <summary>
+    /// A page of <paramref name="source"/> as a form XObject (its content and its resources, copied
+    /// with <see cref="Copy"/>: no action, script or link to another file), and the matrix that
+    /// shows it as the page is shown (its crop box and /Rotate).
+    /// </summary>
+    private static (PdfStream Form, PdfMatrix ToDisplay) PageForm(CopyTarget target, PdfVectorDocument source, PdfPageNode node, bool group)
+    {
         var decoder = new PdfStreamDecoder(null, source.Resolver.Resolve);
         var content = new MemoryStream();
         foreach (var stream in node.Contents)
@@ -260,21 +290,59 @@ internal static class PdfStampForms
         }
         var (_, _, toUser) = PdfPageMarks.Display(node);
         toUser.TryInvert(out var toDisplay);
-        var copies = new Dictionary<int, int>();
-        var resources = ((PdfDictionary)Copy(update, node.Resources, source.Resolver, copies, 0)).Entries.ToDictionary(e => e.Key, e => e.Value);
-        string body = Encoding.Latin1.GetString(content.ToArray());
-        if (opacity < 1)
+        var resources = Copy(target, node.Resources, source.Resolver, new Dictionary<int, int>(), 0) is PdfDictionary copied
+            ? copied.Entries.ToDictionary(e => e.Key, e => e.Value)
+            : new Dictionary<string, PdfObject>();
+        return (Form(node.CropBox, PdfMatrix.Identity, 0, resources, Encoding.Latin1.GetString(content.ToArray()), group), toDisplay);
+    }
+
+    /// <summary>
+    /// A new one-page PDF that draws page <paramref name="pageNumber"/> of <paramref name="source"/>
+    /// and holds nothing else: a page the size of the page as shown (upright, no /Rotate) whose
+    /// content draws the page's content and resources as a form XObject. No annotation, page
+    /// action, piece information, metadata, document information, outline or form is kept; the
+    /// resources are copied without actions, scripts or links to other files. Unencrypted.
+    /// </summary>
+    internal static byte[] Isolate(PdfVectorDocument source, int pageNumber)
+    {
+        if (pageNumber < 1 || pageNumber > source.PageCount) throw new ArgumentOutOfRangeException(nameof(pageNumber));
+        var node = source.PageTree.Pages[pageNumber - 1];
+        var objects = new List<PdfObject?> { null, null, null, null, null }; // 1 catalog, 2 pages, 3 page, 4 content
+        var target = new CopyTarget(() => { objects.Add(PdfNull.Instance); return objects.Count - 1; }, (n, o) => objects[n] = o);
+        var (form, toDisplay) = PageForm(target, source, node, group: false);
+        objects.Add(form);
+        int formNumber = objects.Count - 1;
+        // The page shown upright from (0, 0): turned as /Rotate shows it, its crop box moved there.
+        var shown = toDisplay.Transform(node.CropBox);
+        double w = shown.Width, h = shown.Height;
+        var m = toDisplay;
+        string content = $"q {M(m.A)} {M(m.B)} {M(m.C)} {M(m.D)} {M(m.E - shown.Left)} {M(m.F - shown.Top)} cm /Fm0 Do Q\n";
+        objects[1] = Dict(("Type", new PdfName("Catalog")), ("Pages", new PdfIndirectRef(2)));
+        objects[2] = Dict(("Type", new PdfName("Pages")), ("Kids", new PdfArray(new PdfObject[] { new PdfIndirectRef(3) })), ("Count", new PdfInteger(1)));
+        objects[3] = Dict(("Type", new PdfName("Page")), ("Parent", new PdfIndirectRef(2)),
+            ("MediaBox", new PdfArray(new PdfObject[] { new PdfInteger(0), new PdfInteger(0), new PdfReal(Math.Round(w, 4)), new PdfReal(Math.Round(h, 4)) })),
+            ("Resources", Dict(("XObject", Dict(("Fm0", new PdfIndirectRef(formNumber)))))),
+            ("Contents", new PdfIndirectRef(4)));
+        objects[4] = PdfObjectWriter.NewStream(new Dictionary<string, PdfObject>(), Encoding.ASCII.GetBytes(content));
+
+        using var output = new MemoryStream();
+        void Raw(string text) => output.Write(Encoding.Latin1.GetBytes(text));
+        Raw("%PDF-1.7\n%\u00e2\u00e3\u00cf\u00d3\n");
+        var offsets = new long[objects.Count];
+        for (int n = 1; n < objects.Count; n++)
         {
-            // The page as one translucent group, so overlapping parts do not show through each other.
-            var inner = Form(node.CropBox, PdfMatrix.Identity, 0, resources, body, group: true);
-            int innerNumber = update.Add(inner);
-            var outer = new Dictionary<string, PdfObject> { ["XObject"] = Dict(("Pg0", new PdfIndirectRef(innerNumber))) };
-            var text = new StringBuilder();
-            Opacity(opacity, outer, text);
-            text.Append("/Pg0 Do\n");
-            return Form(node.CropBox, toDisplay, stamp.Rotation, outer, text.ToString());
+            offsets[n] = output.Position;
+            Raw(n.ToString(CultureInfo.InvariantCulture) + " 0 obj\n");
+            PdfObjectWriter.Write(output, objects[n] ?? PdfNull.Instance);
+            Raw("\nendobj\n");
         }
-        return Form(node.CropBox, toDisplay, stamp.Rotation, resources, body);
+        long xref = output.Position;
+        var sb = new StringBuilder();
+        sb.Append("xref\n0 ").Append(objects.Count).Append("\n0000000000 65535 f \n");
+        for (int n = 1; n < objects.Count; n++) sb.Append(offsets[n].ToString("D10", CultureInfo.InvariantCulture)).Append(" 00000 n \n");
+        sb.Append(CultureInfo.InvariantCulture, $"trailer\n<< /Size {objects.Count} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        Raw(sb.ToString());
+        return output.ToArray();
     }
 
     private static void Opacity(double opacity, Dictionary<string, PdfObject> resources, StringBuilder content)
@@ -329,10 +397,46 @@ internal static class PdfStampForms
             : PdfMatrix.Identity;
 
     /// <summary>Another document's form with everything it uses, copied into the update.</summary>
-    internal static PdfObject CopyInto(PdfUpdate update, PdfStream form, PdfObjectResolver r) => Copy(update, form, r, new Dictionary<int, int>(), 0);
+    internal static PdfObject CopyInto(PdfUpdate update, PdfStream form, PdfObjectResolver r) =>
+        Copy(new CopyTarget(() => update.Add(PdfNull.Instance), update.Set), form, r, new Dictionary<int, int>(), 0);
 
-    // Another document's object and what it refers to, renumbered into the update (each once, cycles kept).
-    private static PdfObject Copy(PdfUpdate update, PdfObject? obj, PdfObjectResolver r, Dictionary<int, int> copies, int depth)
+    /// <summary>Where copied objects go: a number for a new object, then the object.</summary>
+    private sealed record CopyTarget(Func<int> Reserve, Action<int, PdfObject> Set);
+
+    // An appearance draws and does nothing else (defence in depth: a reader does not run an
+    // appearance's actions anyway). An action dictionary (/S one of the action types) is not
+    // copied, and the action and script keys are left out of a dictionary shaped like an action
+    // (/S, or /Type /Action) or an annotation. A dictionary whose keys are names a page gives to
+    // its resources (/Font, /XObject, /ExtGState, /ColorSpace, /Pattern, /Shading, /Properties) or
+    // a Type 3 font to its glyphs (/CharProcs) is copied whole: a font named /A is a font.
+    private static readonly HashSet<string> ActionKeys = new(StringComparer.Ordinal) { "A", "AA", "JS", "JavaScript", "OpenAction", "URI", "Next" };
+    private static readonly HashSet<string> NameKeyed = new(StringComparer.Ordinal) { "Font", "XObject", "ExtGState", "ColorSpace", "Pattern", "Shading", "Properties", "CharProcs" };
+    private static readonly HashSet<string> ActionTypes = new(StringComparer.Ordinal)
+    {
+        "GoTo", "GoToR", "GoToE", "GoToDp", "Launch", "Thread", "URI", "Sound", "Movie", "Hide", "Named", "SubmitForm", "ResetForm",
+        "ImportData", "JavaScript", "SetOCGState", "Rendition", "Trans", "GoTo3DView", "RichMediaExecute",
+    };
+
+    // A stream's data stays in the stream: no external file (/F as a file specification, with
+    // /FFilter and /FDecodeParms), reference XObject target (/Ref) or OPI proxy, left out before
+    // they are copied so that nothing they point to is written (ISO 32000-2 7.3.8.2, 8.10.4, 14.11.7).
+    // /F as a filter name or array of names is kept.
+    private static bool KeepInStream(string key, PdfObject value, PdfObjectResolver r) => key switch
+    {
+        "FFilter" or "FDecodeParms" or "Ref" or "OPI" => false,
+        "F" => r.Resolve(value) is PdfName or PdfArray,
+        _ => true,
+    };
+
+    private static bool IsActionShaped(PdfDictionary d, PdfObjectResolver r) =>
+        d.Entries.ContainsKey("S") || r.Resolve(d["Type"]) is PdfName { Value: "Action" };
+
+    private static bool IsAnnotation(PdfDictionary d, PdfObjectResolver r) =>
+        r.Resolve(d["Type"]) is PdfName { Value: "Annot" } || d.Entries.ContainsKey("Subtype") && d.Entries.ContainsKey("Rect");
+
+    // Another document's object and what it refers to, renumbered into the target (each once,
+    // cycles kept). <paramref name="names"/>: a dictionary whose keys are resource or glyph names.
+    private static PdfObject Copy(CopyTarget target, PdfObject? obj, PdfObjectResolver r, Dictionary<int, int> copies, int depth, bool names = false)
     {
         if (depth > 256) return PdfNull.Instance;
         switch (obj)
@@ -341,27 +445,44 @@ internal static class PdfStampForms
             case PdfIndirectRef ir:
             {
                 if (copies.TryGetValue(ir.ObjectNumber, out int done)) return new PdfIndirectRef(done);
-                int n = update.Add(PdfNull.Instance);
+                var resolved = r.Resolve(ir);
+                if (!names && resolved is PdfDictionary action && IsAction(action, r)) return PdfNull.Instance;
+                int n = target.Reserve();
                 copies[ir.ObjectNumber] = n;
-                update.Set(n, Copy(update, r.Resolve(ir), r, copies, depth + 1));
+                target.Set(n, Copy(target, resolved, r, copies, depth + 1, names));
                 return new PdfIndirectRef(n);
             }
             case PdfStream s:
             {
-                var dict = (PdfDictionary)Copy(update, s.Dictionary, r, copies, depth + 1);
+                var entries = s.Dictionary.Entries.Where(e => KeepInStream(e.Key, e.Value, r))
+                    .ToDictionary(e => e.Key, e => Copy(target, e.Value, r, copies, depth + 1, NameKeyed.Contains(e.Key)));
                 byte[] raw = s.GetRawBytes().ToArray();
-                return new PdfStream(dict, 0, raw.Length, null, raw);
+                return new PdfStream(new PdfDictionary(entries), 0, raw.Length, null, raw);
             }
+            case PdfDictionary d when names:
+                return new PdfDictionary(d.Entries.ToDictionary(e => e.Key, e => Copy(target, e.Value, r, copies, depth + 1)));
             case PdfDictionary d:
-                return new PdfDictionary(d.Entries.Where(e => e.Key != "Parent").ToDictionary(e => e.Key, e => Copy(update, e.Value, r, copies, depth + 1)));
+            {
+                if (IsAction(d, r)) return PdfNull.Instance;
+                bool strip = IsActionShaped(d, r) || IsAnnotation(d, r);
+                return new PdfDictionary(d.Entries.Where(e => e.Key != "Parent" && !(strip && ActionKeys.Contains(e.Key)))
+                    .ToDictionary(e => e.Key, e => Copy(target, e.Value, r, copies, depth + 1, NameKeyed.Contains(e.Key))));
+            }
             case PdfArray a:
-                return new PdfArray(a.Items.Select(i => Copy(update, i, r, copies, depth + 1)).ToList());
+                return new PdfArray(a.Items.Select(i => Copy(target, i, r, copies, depth + 1)).ToList());
             default:
                 return obj;
         }
     }
 
+    /// <summary>An action dictionary: /S names an action type (ISO 32000-2 Table 201), and /Type is /Action or absent.</summary>
+    private static bool IsAction(PdfDictionary d, PdfObjectResolver r) =>
+        r.Resolve(d["S"]) is PdfName { } s && ActionTypes.Contains(s.Value)
+        && r.Resolve(d["Type"]) is null or PdfNull or PdfName { Value: "Action" };
+
     private static PdfDictionary Dict(params (string Key, PdfObject Value)[] entries) => new(entries.ToDictionary(e => e.Key, e => e.Value));
 
     private static string F(double v) => PdfObjectWriter.FormatReal(Math.Round(v, 4));
+
+    private static string M(double v) => PdfObjectWriter.FormatReal(Math.Round(v, 6));
 }

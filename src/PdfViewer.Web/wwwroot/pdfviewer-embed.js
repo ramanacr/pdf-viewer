@@ -47,6 +47,8 @@
         ANNOTATION_SELECTED: 'ANNOTATION_SELECTED', ANNOTATION_UNSELECTED: 'ANNOTATION_UNSELECTED', ANNOTATION_CLICKED: 'ANNOTATION_CLICKED',
     });
     const MAX_AUTOSAVE_SECONDS = 86400;
+    /** The largest picture or PDF addCustomStamp sends (the viewer's own limit). */
+    const MAX_STAMP_BYTES = 20 * 1024 * 1024;
     const Events = Object.freeze({
         DOCUMENT_OPEN: 'DOCUMENT_OPEN', PAGE_VIEW: 'PAGE_VIEW', TEXT_COPY: 'TEXT_COPY', TEXT_SEARCH: 'TEXT_SEARCH',
         ZOOM_CHANGE: 'ZOOM_CHANGE', DOCUMENT_DOWNLOAD: 'DOCUMENT_DOWNLOAD', DOCUMENT_PRINT: 'DOCUMENT_PRINT', PREVIEW_ERROR: 'PREVIEW_ERROR',
@@ -671,6 +673,25 @@
             return this._call('setAnnotationConfig', [jsonData(config, 'The config')]);
         }
 
+        /**
+         * Adds a custom stamp from a PNG or JPEG picture, or from a page of a PDF:
+         * { data: ArrayBuffer | typed array | Blob, pageNumber, boundingBox: [x1, y1, x2, y2], sourcePage }.
+         * pageNumber (from 1, default 1) is the page stamped; boundingBox (PDF points, optional) is the box
+         * the stamp is fitted in, keeping its shape (left out: centred on the page, 2 inches across);
+         * sourcePage (from 1, default 1) is the page of a PDF given. Resolves with the annotation.
+         */
+        async addCustomStamp(options) {
+            if (!options || typeof options !== 'object') throw fail(ErrorCode.INVALID_ARGUMENT, 'addCustomStamp needs { data, pageNumber }.');
+            const { data, ...rest } = options;
+            const size = sizeOf(data);
+            if (size === null) throw fail(ErrorCode.INVALID_ARGUMENT, 'addCustomStamp: data must be an ArrayBuffer, a typed array or a Blob.');
+            if (size === 0) throw fail(ErrorCode.INVALID_ARGUMENT, 'addCustomStamp: data is empty.');
+            if (size > MAX_STAMP_BYTES) throw fail(ErrorCode.TOO_LARGE, `addCustomStamp: data is larger than ${MAX_STAMP_BYTES / (1024 * 1024)} MB.`);
+            const buffer = await ownBuffer(data);
+            const list = await this._view._call('addCustomStamp', [jsonData(rest, 'The options')], this._document, buffer);
+            return Array.isArray(list) ? list[0] : list;
+        }
+
         /** Resolves with the annotations as an XFDF document (a string). */
         exportXfdf() { return this._call('exportXfdf'); }
 
@@ -1001,14 +1022,16 @@
             return new Promise((resolve, reject) => this._pending.set(requestId, { resolve, reject }));
         }
 
-        _call(method, args, documentId) {
+        _call(method, args, documentId, data) {
             if (!this._frame || this._document === 0) return Promise.reject(fail(ErrorCode.NO_DOCUMENT, 'No document is open.'));
             if (documentId !== undefined && documentId !== this._document) {
                 return Promise.reject(fail(ErrorCode.NO_DOCUMENT, 'This viewer object belongs to a document that is no longer open.'));
             }
             const requestId = this._nextId++;
             const result = this._request(requestId);
-            this._post({ type: 'call', requestId, document: this._document, method, args: args || [] });
+            // Bytes beside a call (addCustomStamp) are transferred, not copied: the caller's were copied already.
+            if (data instanceof ArrayBuffer) this._post({ type: 'call', requestId, document: this._document, method, args: args || [], data }, [data]);
+            else this._post({ type: 'call', requestId, document: this._document, method, args: args || [] });
             return result;
         }
 
