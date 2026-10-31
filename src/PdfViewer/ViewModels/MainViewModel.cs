@@ -725,9 +725,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // Deliberate jumps only - a bookmark, a search hit, a page box entry. Scrolling moves
     // CurrentPageNumber directly and is not recorded, so "back" returns you to where you
     // jumped from rather than undoing your reading.
-    private readonly List<int> _backHistory = new();
-    private readonly List<int> _forwardHistory = new();
+    private readonly List<ViewLocation> _backHistory = new();
+    private readonly List<ViewLocation> _forwardHistory = new();
     private const int MaxHistoryDepth = 50;
+
+    /// <summary>
+    /// A place in the document: a page and, when known, the point of it at the view's top-left
+    /// corner, as fractions of the page as it is shown (rotation applied) from its top-left.
+    /// </summary>
+    private readonly record struct ViewLocation(int Page, double? X = null, double? Y = null);
+
+    /// <summary>The page at the view's top-left corner and the point of it there (shown-page fractions); set by the window.</summary>
+    public Func<(int Page, double X, double Y)?>? CaptureViewFunc { get; set; }
+
+    /// <summary>Scrolls a point of a page (shown-page fractions; X null keeps the horizontal scroll) to the view's top-left; set by the window.</summary>
+    public Action<int, double?, double>? ScrollToLocationAction { get; set; }
 
     public bool CanGoBack => _backHistory.Count > 0;
     public bool CanGoForward => _forwardHistory.Count > 0;
@@ -747,27 +759,38 @@ public partial class MainViewModel : ObservableObject, IDisposable
         RaiseHistoryChanged();
     }
 
-    private static void PushBounded(List<int> stack, int value)
+    private static void PushBounded(List<ViewLocation> stack, ViewLocation value)
     {
         stack.Add(value);
         if (stack.Count > MaxHistoryDepth) stack.RemoveAt(0);
     }
 
-    public void NavigateToPage(int targetPage) => NavigateToPage(targetPage, recordHistory: true);
+    /// <summary>Where the view is now: the exact place when the window can tell, else the current page.</summary>
+    private ViewLocation CurrentLocation() =>
+        CaptureViewFunc?.Invoke() is { } view && view.Page == CurrentPageNumber
+            ? new ViewLocation(view.Page, view.X, view.Y)
+            : new ViewLocation(CurrentPageNumber);
 
-    private void NavigateToPage(int targetPage, bool recordHistory)
+    public void NavigateToPage(int targetPage) => NavigateTo(new ViewLocation(targetPage), recordHistory: true);
+
+    private void NavigateTo(ViewLocation target, bool recordHistory)
     {
+        int targetPage = target.Page;
         if (targetPage < 1 || (PageCount > 0 && targetPage > PageCount)) return;
 
-        if (recordHistory && CurrentPageNumber != targetPage && IsDocumentLoaded)
+        // A jump to a place on the current page (a link to a heading further down) is a jump too.
+        if (recordHistory && IsDocumentLoaded && (CurrentPageNumber != targetPage || target.Y != null))
         {
-            PushBounded(_backHistory, CurrentPageNumber);
+            PushBounded(_backHistory, CurrentLocation());
             _forwardHistory.Clear();
             RaiseHistoryChanged();
         }
 
         CurrentPageNumber = targetPage;
-        ScrollToPageAction?.Invoke(targetPage);
+        if (target.Y is { } y && ScrollToLocationAction != null)
+            ScrollToLocationAction(targetPage, target.X, y);
+        else
+            ScrollToPageAction?.Invoke(targetPage);
 
         if (ViewMode == ViewLayoutMode.Continuous)
         {
@@ -775,17 +798,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Returns to the page you jumped away from.</summary>
+    /// <summary>Returns to the place you jumped away from.</summary>
     [RelayCommand(CanExecute = nameof(CanGoBack))]
     public void GoBack()
     {
         if (_backHistory.Count == 0) return;
 
-        int target = _backHistory[^1];
+        var target = _backHistory[^1];
         _backHistory.RemoveAt(_backHistory.Count - 1);
-        PushBounded(_forwardHistory, CurrentPageNumber);
+        PushBounded(_forwardHistory, CurrentLocation());
 
-        NavigateToPage(target, recordHistory: false);
+        NavigateTo(target, recordHistory: false);
         RaiseHistoryChanged();
     }
 
@@ -795,11 +818,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (_forwardHistory.Count == 0) return;
 
-        int target = _forwardHistory[^1];
+        var target = _forwardHistory[^1];
         _forwardHistory.RemoveAt(_forwardHistory.Count - 1);
-        PushBounded(_backHistory, CurrentPageNumber);
+        PushBounded(_backHistory, CurrentLocation());
 
-        NavigateToPage(target, recordHistory: false);
+        NavigateTo(target, recordHistory: false);
         RaiseHistoryChanged();
     }
 

@@ -975,6 +975,43 @@ public sealed class ViewerDocument : IAsyncDisposable
             new(b.Title, b.TargetPageNumber >= 1 && b.TargetPageNumber <= PageCount ? b.TargetPageNumber : null, b.Children.Select(Convert).ToList());
     }
 
+    // Destinations and actions of the current revision, built on first use.
+    private PdfEngine.Vector.Services.PdfNavigation? _navigation;
+
+    /// <summary>
+    /// The page's link annotations in /Annots order, with their areas on the shown page and where
+    /// they go (empty for a page without links). Waits for the whole file when it is loading by ranges.
+    /// </summary>
+    public async Task<IReadOnlyList<ViewerLink>> GetLinksAsync(int page, CancellationToken cancellationToken = default)
+    {
+        if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (page > _document.PageCount) return [];
+            if (_navigation == null || !ReferenceEquals(_navigation.Document, _document))
+                _navigation = new PdfEngine.Vector.Services.PdfNavigation(_document);
+            var geometry = _geometry[page - 1];
+            var links = PdfEngine.Vector.Services.PdfDocumentInfo.ReadLinks(_document, page, _navigation);
+            var result = new List<ViewerLink>(links.Count);
+            foreach (var link in links)
+            {
+                var areas = PdfEngine.Vector.Services.PdfLinkTargets.Areas(link)
+                    .Select(a => geometry.ToShown(new Annotations.ViewerBox(a.X, a.Y, a.Right, a.Bottom)))
+                    .ToList();
+                if (areas.Count == 0) continue;
+                result.Add(new ViewerLink(page, link.Index, areas, PdfEngine.Vector.Services.PdfLinkTargets.Resolve(link, _document.PageCount)) { Source = link });
+            }
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>Uses other font substitutes from now on (for example fonts the user allowed the page to read).</summary>
     public async Task UseFontsAsync(SkiaFontSource fonts)
     {

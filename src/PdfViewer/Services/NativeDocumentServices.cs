@@ -138,6 +138,30 @@ internal sealed class NativeDocumentServices
         return roots;
     }
 
+    /// <summary>The page's links in overlay space (fractions of the unrotated crop box from its top-left).</summary>
+    public static IReadOnlyList<PageLink> Links(PdfVectorDocument doc, int pageNumber, PdfNavigation? navigation = null)
+    {
+        var crop = doc.PageTree.Pages[pageNumber - 1].CropBox;
+        var result = new List<PageLink>();
+        foreach (var link in PdfDocumentInfo.ReadLinks(doc, pageNumber, navigation))
+        {
+            var areas = PdfLinkTargets.Areas(link).Select(a => FromPage(a, crop)).ToList();
+            if (areas.Count == 0) continue;
+            var target = PdfLinkTargets.Resolve(link, doc.PageCount);
+            Point? point = null;
+            if (target.Kind == PdfLinkTargetKind.Page && (target.Left != null || target.Top != null))
+            {
+                var targetCrop = doc.PageTree.Pages[target.PageIndex].CropBox;
+                double w = targetCrop.Width > 0 ? targetCrop.Width : 612, h = targetCrop.Height > 0 ? targetCrop.Height : 792;
+                point = new Point(
+                    target.Left is { } x ? Math.Clamp((x - targetCrop.Left) / w, 0, 1) : double.NaN,
+                    target.Top is { } y ? Math.Clamp(1.0 - (y - targetCrop.Top) / h, 0, 1) : double.NaN);
+            }
+            result.Add(new PageLink(pageNumber, link, target, crop, areas, point));
+        }
+        return result;
+    }
+
     private static BookmarkItem Convert(PdfOutlineItem item, int pageCount)
     {
         var model = new BookmarkItem

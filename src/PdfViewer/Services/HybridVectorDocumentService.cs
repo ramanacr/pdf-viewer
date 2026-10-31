@@ -972,6 +972,25 @@ public sealed class HybridVectorDocumentService : IPdfDocumentService
         return new ObservableCollection<BookmarkItem>();
     }
 
+    // Links are document data, read from the vector parse whichever engine draws the pages.
+    private PdfEngine.Vector.Services.PdfNavigation? _navigation;
+
+    public IReadOnlyList<PageLink> GetPageLinks(int pageNumber)
+    {
+        var doc = _vectorDoc;
+        if (doc == null || pageNumber < 1 || pageNumber > doc.PageCount) return Array.Empty<PageLink>();
+        try
+        {
+            var nav = _navigation;
+            if (nav == null || !ReferenceEquals(nav.Document, doc)) _navigation = nav = new PdfEngine.Vector.Services.PdfNavigation(doc);
+            return NativeDocumentServices.Links(doc, pageNumber, nav);
+        }
+        catch (Exception ex) when (ex is PdfVectorException or InvalidOperationException)
+        {
+            return Array.Empty<PageLink>(); // a damaged annotation array: no links rather than an error
+        }
+    }
+
     // ------------------------------------------------------------------ text (native text page, M9)
 
     /// <summary>

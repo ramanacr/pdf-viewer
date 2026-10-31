@@ -332,6 +332,18 @@ function onKey(e) {
         app.invokeMethodAsync('OnShortcut', (e.key === 'y' || e.key === 'Y' || e.shiftKey) ? 'redo' : 'undo');
         return;
     }
+    // Alt+Left: back to where a link was followed from (as a browser's Back).
+    if (e.altKey && !mod && !e.shiftKey && e.key === 'ArrowLeft' && !inFieldOrList(e)) {
+        e.preventDefault();
+        app.invokeMethodAsync('OnShortcut', 'back');
+        return;
+    }
+    // Enter or Space on a link reached with Tab follows it.
+    if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && e.target instanceof Element && e.target.matches?.('.link-hit[data-link]')) {
+        e.preventDefault();
+        followLink(e.target);
+        return;
+    }
     if (mod && !e.altKey) {
         switch (e.key) {
             case 'f': case 'F': action = 'find'; break;
@@ -368,11 +380,42 @@ function onKey(e) {
 
 let selectionText = null;  // the viewer's selected text, for the copy event; null when none
 let dragging = null;       // { page, el } while the mouse button is down on a page
+let linkPress = null;      // { el, x, y } while a press on a link may still be a click
 let moveQueued = null;
 
 /** The text the next copy puts on the clipboard (null: nothing selected, or the document does not allow copying). */
 export function setSelectionText(text) {
     selectionText = text && text.length > 0 ? text : null;
+}
+
+/** Asks the viewer to follow the link this element stands for (the viewer checks the tool and the link). */
+function followLink(el) {
+    const page = Number(el.closest('.page')?.dataset.page);
+    const index = Number(el.dataset.link);
+    if (Number.isInteger(page) && Number.isInteger(index)) app.invokeMethodAsync('OnLinkActivate', page, index);
+}
+
+/**
+ * Opens a web link the reader agreed to open, in a new tab with no access back to this page.
+ * Only http, https and mailto: the viewer checked already, and this checks again.
+ */
+export function openExternal(url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { return false; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') return false;
+    window.open(parsed.href, '_blank', 'noopener,noreferrer');
+    return true;
+}
+
+/** The page at the view's top-left corner and the point of it there, in CSS pixels from the page's corner: [page, x, y]. */
+export function viewLocation() {
+    if (!scroller || inline) return [currentPage(), 0, 0];
+    const page = currentPage();
+    const el = document.getElementById(`page-${page}`);
+    if (!el) return [page, 0, 0];
+    const r = el.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    return [page, Math.max(0, view.left - r.left), Math.max(0, view.top - r.top)];
 }
 
 function pointOn(el, e) {
@@ -489,7 +532,15 @@ function moveAnnotation(dx, dy) {
 /** A mouse or a pen selects text on a page (touch scrolls). The engine finds the characters. */
 function initSelection() {
     scroller.dataset.tool = tool;
+    let touched = false;
+    // A tap (touch scrolls, so it does not start a selection) on a link follows it.
+    scroller.addEventListener('click', e => {
+        if (!touched || tool !== 'select') return;
+        const link = e.target.closest?.('.link-hit[data-link]');
+        if (link) { e.preventDefault(); followLink(link); }
+    });
     scroller.addEventListener('pointerdown', e => {
+        touched = e.pointerType === 'touch';
         if (e.button !== 0 || e.pointerType === 'touch') return;
         // Form fields and the note editor take their own input.
         if (e.target.closest?.('.form-field, .annot-editor')) return;
@@ -507,6 +558,9 @@ function initSelection() {
             if (selectionText !== null) app.invokeMethodAsync('OnSelectClear');
             return;
         }
+        // A press on a link: followed on release unless it becomes a drag (which selects text).
+        const link = tool === 'select' && e.detail <= 1 && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey ? e.target.closest?.('.link-hit[data-link]') : null;
+        linkPress = link ? { el: link, x: e.clientX, y: e.clientY } : null;
         if (polyTools.has(tool)) {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
@@ -544,6 +598,7 @@ function initSelection() {
             drawShape();
             return;
         }
+        if (linkPress && (Math.abs(e.clientX - linkPress.x) > 4 || Math.abs(e.clientY - linkPress.y) > 4)) linkPress = null;
         if (!dragging) return;
         const queued = moveQueued !== null;
         moveQueued = pointOn(dragging.el, e);
@@ -575,6 +630,12 @@ function initSelection() {
         const wasSelecting = dragging !== null;
         dragging = null;
         moveQueued = null;
+        const pressed = linkPress;
+        linkPress = null;
+        if (pressed && e.type === 'pointerup') {
+            followLink(pressed.el);
+            return;
+        }
         if (wasSelecting && e.type === 'pointerup' && tool !== 'select') app.invokeMethodAsync('OnSelectEnd');
     };
     scroller.addEventListener('pointerup', end);

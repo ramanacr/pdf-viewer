@@ -33,6 +33,10 @@
         @if (_doc != null)
         {
             <div class="group" role="group" aria-label="Pages">
+                @if (CanGoBackByLink)
+                {
+                    <button type="button" class="icon-button" title="Back to where the link was followed from (Alt+Left)" aria-label="Back" @onclick="GoBackByLink"><Icon Name="left" /></button>
+                }
                 <button type="button" class="icon-button" title="Previous page (Left arrow)" aria-label="Previous page" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(_currentPage - 1)"><Icon Name="up" /></button>
                 <label class="page-box">
                     <span class="visually-hidden">Page number</span>
@@ -396,8 +400,23 @@
                 {
                     var (w, h) = CssSize(pv);
                     <div class="page" id="page-@pv.Number" data-page="@pv.Number" style="width:@Px(w);height:@Px(h)"
-                         role="img" aria-label="@($"Page {pv.Number} of {_doc.PageCount}")">
-                        <canvas></canvas>
+                         role="group" aria-label="@($"Page {pv.Number} of {_doc.PageCount}")">
+                        <canvas role="img" aria-label="@($"Page {pv.Number}")"></canvas>
+                        @if (LinksActive && _linksByPage.TryGetValue(pv.Number, out var pageLinks))
+                        {
+                            @for (int li = 0; li < pageLinks.Count; li++)
+                            {
+                                var link = pageLinks[li];
+                                bool first = true;
+                                @foreach (var r in link.Areas)
+                                {
+                                    <span class="link-hit" role="link" data-link="@li" tabindex="@(first ? "0" : "-1")" aria-hidden="@(first ? null : "true")"
+                                          title="@link.Description" aria-label="@LinkLabel(link)"
+                                          style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(Math.Max(r.Width, 2) / pv.Width);height:@Pct(Math.Max(r.Height, 2) / pv.Height)"></span>
+                                    first = false;
+                                }
+                            }
+                        }
                         @if (_selection?.Page == pv.Number)
                         {
                             @foreach (var r in _selectionBands)
@@ -520,6 +539,8 @@
                     <tr><td><kbd>Enter</kbd>, <kbd>F3</kbd> / <kbd>Shift</kbd> <kbd>F3</kbd></td><td>Next / previous match</td></tr>
                     <tr><td><kbd>&rarr;</kbd> <kbd>&larr;</kbd>, <kbd>J</kbd> <kbd>K</kbd></td><td>Next / previous page</td></tr>
                     <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>First / last page</td></tr>
+                    <tr><td>Click, <kbd>Tab</kbd> <kbd>Enter</kbd></td><td>Follow a link on a page</td></tr>
+                    <tr><td><kbd>Alt</kbd> <kbd>&larr;</kbd></td><td>Back to where you followed a link from</td></tr>
                     <tr><td><kbd>Ctrl</kbd> <kbd>+</kbd> / <kbd>Ctrl</kbd> <kbd>-</kbd></td><td>Zoom in / out</td></tr>
                     <tr><td><kbd>Ctrl</kbd> <kbd>0</kbd> / <kbd>Ctrl</kbd> <kbd>9</kbd></td><td>Fit width / fit page</td></tr>
                     <tr><td>Drag, double click</td><td>Select text on a page, a word</td></tr>
@@ -549,6 +570,21 @@
                 </tbody>
             </table>
             <p class="muted">@(PlatformCrypto.CanDecrypt ? "Password-protected PDFs open here. Certificate-encrypted ones need RSA and the certificate store, which a browser does not have." : "Encrypted PDFs cannot be opened here.")</p>
+        </div>
+    }
+
+    @if (_dialog == Dialog.Link && _linkUri != null)
+    {
+        <div class="dialog-backdrop" @onclick="CancelPendingLink"></div>
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="link-title" aria-describedby="link-site">
+            <header><h2 id="link-title">@(_linkUri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase) ? "Write an email?" : "Open this link in your browser?")</h2></header>
+            <p id="link-site">@(_linkUri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase) ? "To" : "Site"): <strong>@_linkHost</strong></p>
+            <p class="link-url">@_linkUri</p>
+            <p class="muted">The link comes from the document. Open it only if you trust where it goes.</p>
+            <div class="dialog-actions">
+                <button type="button" class="button" id="link-cancel" @onclick="CancelPendingLink">Cancel</button>
+                <button type="button" class="button primary" @onclick="OpenPendingLink">Open link</button>
+            </div>
         </div>
     }
 
