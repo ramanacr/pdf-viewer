@@ -69,7 +69,7 @@ public class AndroidColourTests
     [InlineData("#GG63EB", null)]
     [InlineData("red", null)]
     [InlineData("#25 3EB", null)]
-    public void KeptColour_IsReadBackOnlyWhenItIsAColour(string? stored, string? expected)
+    public void Parse_AcceptsOnlyHexColours_AndColorOfFallsBackToTheDefault(string? stored, string? expected)
     {
         Assert.Equal(expected, ViewerToolColors.Parse(stored));
         // Nothing usable kept: the kind's default.

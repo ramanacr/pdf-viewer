@@ -2,8 +2,6 @@ using Android.App;
 using Android.Content;
 using Android.Graphics;
 using Android.Graphics.Drawables;
-using Android.Text;
-using Android.Text.Style;
 using Android.Widget;
 using PdfViewer.Web.Engine.Annotations;
 using Color = Android.Graphics.Color;
@@ -113,12 +111,18 @@ public sealed partial class MainActivity
     private void AskColour(string title, string? current, bool withDefault, Action<string?> chosen, string? defaultColour = null)
     {
         var palette = ViewerToolColors.Palette;
-        var items = palette.Select(p => Swatch(p.Value, p.Name)).ToList();
-        if (withDefault) items.Add(Swatch(defaultColour ?? "#000000", $"Default ({ViewerToolColors.NameOf(defaultColour ?? "")})"));
+        var names = palette.Select(p => p.Name).ToList();
+        var colours = palette.Select(p => p.Value).ToList();
+        if (withDefault)
+        {
+            names.Add($"Default ({ViewerToolColors.NameOf(defaultColour ?? "")})");
+            colours.Add(defaultColour ?? "#000000");
+        }
         int checkedItem = current == null && withDefault ? palette.Count : ViewerToolColors.IndexOf(current);
+        var adapter = new SwatchAdapter(this, names, colours.Select(c => SwatchDrawable(c, 18)).ToList(), (int)Dp(12));
         new AlertDialog.Builder(this)
             .SetTitle(title)!
-            .SetSingleChoiceItems(items.ToArray(), checkedItem, (sender, e) =>
+            .SetSingleChoiceItems(adapter, checkedItem, (sender, e) =>
             {
                 (sender as IDialogInterface)?.Dismiss();
                 chosen(e.Which < palette.Count ? palette[e.Which].Value : null);
@@ -128,14 +132,32 @@ public sealed partial class MainActivity
     }
 
     /// <summary>
-    /// A list line: a round swatch of the colour (an image, which TalkBack does not read; a grey ring
-    /// keeps black visible in the dark theme and white in the light one), then the colour's name.
+    /// The palette's lines: the system's single-choice line with the colour's name as its only text
+    /// (TalkBack reads the name and whether it is checked) and a round swatch of the colour before it,
+    /// a drawable, which TalkBack does not read (a grey ring keeps black visible in the dark theme).
     /// </summary>
-    private Java.Lang.ICharSequence Swatch(string colour, string name)
+    private sealed class SwatchAdapter : ArrayAdapter<string>
     {
-        var text = new SpannableString("￼  " + name);
-        text.SetSpan(new ImageSpan(SwatchDrawable(colour, 18)), 0, 1, SpanTypes.ExclusiveExclusive);
-        return text;
+        private readonly IList<Drawable> _swatches;
+        private readonly int _padding;
+
+        public SwatchAdapter(Context context, IList<string> names, IList<Drawable> swatches, int padding)
+            : base(context, global::Android.Resource.Layout.SelectDialogSingleChoice, names)
+        {
+            _swatches = swatches;
+            _padding = padding;
+        }
+
+        public override global::Android.Views.View GetView(int position, global::Android.Views.View? convertView, global::Android.Views.ViewGroup parent)
+        {
+            var view = base.GetView(position, convertView, parent);
+            if (view is TextView line)
+            {
+                line.SetCompoundDrawablesRelative(_swatches[position], null, null, null);
+                line.CompoundDrawablePadding = _padding;
+            }
+            return view;
+        }
     }
 
     private GradientDrawable SwatchDrawable(string colour, float sizeDp)
