@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using PdfEngine.Geometry;
 using PdfEngine.Rendering;
+using PdfEngine.Vector.Diagnostics;
 
 namespace PdfEngine.Vector.Windows;
 
@@ -44,6 +45,13 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
     /// what the engine draws of it by itself, with nothing laid over it.
     /// </summary>
     public bool OutlineUnsupportedRegions { get; set; }
+
+    /// <summary>
+    /// Ceiling on one render's pixel count, the same as the Direct2D backend's: past it the
+    /// stride x height product (4 bytes a pixel) leaves int range. A page whose MediaBox or
+    /// UserUnit asks for more is refused with a typed error before any bitmap is allocated.
+    /// </summary>
+    internal const long MaxRenderPixelCount = int.MaxValue / 4;
 
     private readonly StaRenderThread _sta = new("PdfVectorRender");
     private readonly WpfFontCache _fonts = new();
@@ -105,6 +113,9 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
         ArgumentNullException.ThrowIfNull(displayList);
 
         var geometry = RenderGeometry.From(displayList, request);
+        if ((long)geometry.PixelWidth * geometry.PixelHeight > MaxRenderPixelCount)
+            throw new PdfResourceLimitException(nameof(MaxRenderPixelCount),
+                $"Requested render of {geometry.PixelWidth} x {geometry.PixelHeight} pixels ({(long)geometry.PixelWidth * geometry.PixelHeight:N0}) exceeds the {MaxRenderPixelCount:N0}-pixel single-buffer limit.");
         var compileClock = System.Diagnostics.Stopwatch.StartNew();
         var compiled = await _sta.InvokeAsync(() => _compiler.Compile(displayList, null, cancellationToken), cancellationToken)
             .ConfigureAwait(false);
@@ -215,11 +226,22 @@ public sealed class WindowsVectorRenderer : IPdfVectorRenderer
             dc.Pop();
         }
 
-        var rtb = new RenderTargetBitmap(geometry.PixelWidth, geometry.PixelHeight, 96, 96, PixelFormats.Pbgra32);
-        rtb.Render(visual);
         int stride = geometry.PixelWidth * 4;
-        var memoryOwner = new ManagedMemoryOwner(checked(stride * geometry.PixelHeight));
-        rtb.CopyPixels(new Int32Rect(0, 0, geometry.PixelWidth, geometry.PixelHeight), memoryOwner.Buffer, stride, 0);
+        ManagedMemoryOwner memoryOwner;
+        try
+        {
+            // Under the pixel ceiling WPF can still refuse the size: RenderTargetBitmap needs
+            // native memory and has its own size limits (OutOfMemoryException / OverflowException).
+            var rtb = new RenderTargetBitmap(geometry.PixelWidth, geometry.PixelHeight, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(visual);
+            memoryOwner = new ManagedMemoryOwner(checked(stride * geometry.PixelHeight));
+            rtb.CopyPixels(new Int32Rect(0, 0, geometry.PixelWidth, geometry.PixelHeight), memoryOwner.Buffer, stride, 0);
+        }
+        catch (Exception ex) when (ex is OutOfMemoryException or OverflowException)
+        {
+            throw new PdfResourceLimitException(nameof(MaxRenderPixelCount),
+                $"Render of {geometry.PixelWidth} x {geometry.PixelHeight} pixels could not be allocated: {ex.Message}");
+        }
 
         return (new RenderedPage(list.PageNumber, geometry.PixelWidth, geometry.PixelHeight, stride, geometry.Dpi, request.Rotation, memoryOwner), composited);
     }
