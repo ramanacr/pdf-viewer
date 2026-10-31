@@ -666,6 +666,71 @@ public sealed class ViewerEditSession
         return Add(a);
     }
 
+    /// <summary>A drag smaller than this (points of the shown page, either way) places a custom stamp at its usual size, as a click does.</summary>
+    public const double MinStampDrag = 8;
+
+    /// <summary>The most bytes the custom stamps of one document may hold together (each picture or page counted once).</summary>
+    public const long MaxCustomStampBytes = 48L * 1024 * 1024;
+
+    /// <summary>
+    /// A custom stamp (<see cref="ViewerCustomStamp"/>: a picture or a PDF page) as one undo step,
+    /// kept to its shape: in <paramref name="box"/> (a rectangle of the shown page) as large as fits
+    /// and centred there, or, for a box smaller than <see cref="MinStampDrag"/> either way (a click
+    /// at its corner), at its usual size (<see cref="ViewerCustomStamp.DefaultSize"/>) centred on
+    /// that point. It is kept on the page (made smaller when the page is smaller) and drawn upright
+    /// as the page is shown. Refused when a number is not finite, or the document's custom stamps
+    /// would hold more than <see cref="MaxCustomStampBytes"/>.
+    /// </summary>
+    public ViewerAnnotation AddCustomStamp(int page, ViewerRect box, ViewerCustomStamp stamp)
+    {
+        ArgumentNullException.ThrowIfNull(stamp);
+        var g = Geometry(page);
+        if (!double.IsFinite(box.X) || !double.IsFinite(box.Y) || !double.IsFinite(box.Width) || !double.IsFinite(box.Height))
+            throw new ViewerAnnotationException("Tap or drag on the page where the stamp goes.");
+        var r = new ViewerRect(Math.Min(box.X, box.X + box.Width), Math.Min(box.Y, box.Y + box.Height), Math.Abs(box.Width), Math.Abs(box.Height));
+        double w, h, cx, cy;
+        if (r.Width >= MinStampDrag && r.Height >= MinStampDrag)
+        {
+            (w, h) = stamp.FitInside(r.Width, r.Height);
+            (cx, cy) = (r.X + r.Width / 2, r.Y + r.Height / 2);
+        }
+        else
+        {
+            (w, h) = stamp.DefaultSize;
+            (cx, cy) = (r.X, r.Y);
+        }
+        if (w > g.ShownWidth || h > g.ShownHeight)
+            (w, h) = stamp.FitInside(Math.Min(w, g.ShownWidth), Math.Min(h, g.ShownHeight));
+        var c = OnPage(new ViewerPoint(cx, cy), g);
+        var rect = new ViewerRect(Math.Clamp(c.X - w / 2, 0, g.ShownWidth - w), Math.Clamp(c.Y - h / 2, 0, g.ShownHeight - h), w, h);
+        CheckCanAnnotate();
+        long held = ViewerAnnotationStore.CustomStampBytes(Store.Current.Select(a => a.CustomStamp).Append(stamp));
+        if (held > MaxCustomStampBytes)
+            throw new ViewerAnnotationException($"The custom stamps of one document can hold at most {MaxCustomStampBytes / (1024 * 1024)} MB of pictures and pages; this one would make it more.");
+        var a = New(ViewerAnnotationKind.Stamp, page, ClampBox(g.ToUser(rect), g), null) with
+        {
+            StampName = ViewerCustomStamp.StampName,
+            StampTurn = g.Rotation is 90 or 180 or 270 ? g.Rotation : 0,
+            CustomStamp = stamp,
+        };
+        return Add(a);
+    }
+
+    /// <summary>
+    /// A custom stamp's box made to its shape again: the largest box of the stamp's shape (upright as
+    /// its turn shows it) inside <paramref name="box"/>, centred there.
+    /// </summary>
+    private static ViewerBox Shaped(ViewerBox box, ViewerCustomStamp stamp, int turn)
+    {
+        bool quarter = (turn % 360 + 360) % 360 is 90 or 270;
+        double aspect = quarter ? 1 / stamp.Aspect : stamp.Aspect;
+        double w = box.Width, h = box.Height;
+        if (w <= 0 || h <= 0) return box;
+        if (w / h > aspect) w = h * aspect; else h = w / aspect;
+        double cx = (box.X1 + box.X2) / 2, cy = (box.Y1 + box.Y2) / 2;
+        return new ViewerBox(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+    }
+
     /// <summary>The text a stamp shows ("APPROVED"), from its /Name; "STAMP" for a name the viewer does not offer.</summary>
     public static string StampLabel(string name) => Stamps.FirstOrDefault(s => s.Name == name)?.Label ?? "STAMP";
 
@@ -808,6 +873,12 @@ public sealed class ViewerEditSession
         ArgumentNullException.ThrowIfNull(annotation);
         CheckCanAnnotate();
         var old = Store.Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
+        // A custom stamp keeps what it draws and its turn (the host page has neither), and its shape: a new box is fitted to it.
+        if (old.CustomStamp is { } custom && annotation.Kind == ViewerAnnotationKind.Stamp)
+        {
+            annotation = annotation with { CustomStamp = custom, StampName = old.StampName, StampTurn = old.StampTurn, StampSubtitle = null };
+            if (annotation.Box != old.Box) annotation = annotation with { Box = Shaped(annotation.Box, custom, old.StampTurn) };
+        }
         // A callout whose box moved but whose line was given back as it was keeps its anchor: the line meets the box again.
         if (annotation.IsCallout && old.IsCallout && annotation.Page == old.Page && annotation.Box != old.Box && annotation.Callout.SequenceEqual(old.Callout))
             annotation = ViewerCallout.Relaid(annotation, Geometry(old.Page));
@@ -925,7 +996,9 @@ public sealed class ViewerEditSession
     private void AddThread(List<ViewerAnnotationListItem> result, ViewerAnnotation a, int level, ILookup<string, ViewerAnnotation> replies)
     {
         // A stamp without a comment is listed by what it shows.
-        string summary = a.Kind == ViewerAnnotationKind.Stamp && string.IsNullOrWhiteSpace(a.Contents) ? StampLabel(a.StampName) : Summary(a.Contents);
+        string summary = a.Kind == ViewerAnnotationKind.Stamp && string.IsNullOrWhiteSpace(a.Contents)
+            ? a.IsCustomStamp ? "Custom stamp" : StampLabel(a.StampName)
+            : Summary(a.Contents);
         result.Add(new ViewerAnnotationListItem(a, level, Label(a), summary, ReviewState(replies[a.Id])));
         // The store keeps threads within the depth limit; the level check is a second guard.
         if (level < ViewerAnnotationStore.MaxReplyDepth)

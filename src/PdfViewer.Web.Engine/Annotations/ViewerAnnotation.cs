@@ -101,6 +101,16 @@ public sealed record ViewerAnnotation
     /// </summary>
     public int StampTurn { get; init; }
 
+    /// <summary>
+    /// A custom stamp made here: the picture or PDF page it draws (its appearance is written from
+    /// it, kept to its shape). Null for every other annotation, and for a file's stamp (which keeps
+    /// the appearance it has).
+    /// </summary>
+    public ViewerCustomStamp? CustomStamp { get; init; }
+
+    /// <summary>A custom stamp: made here from a picture or a PDF page, or a file's stamp named <see cref="ViewerCustomStamp.StampName"/>.</summary>
+    public bool IsCustomStamp => Kind == ViewerAnnotationKind.Stamp && (CustomStamp != null || StampName == ViewerCustomStamp.StampName);
+
     /// <summary>A reply: the id of the annotation it answers. Empty for every other kind.</summary>
     public string InReplyTo { get; init; } = "";
 
@@ -504,7 +514,22 @@ public static class ViewerAnnotationPdf
                 // a file's stamp keeps its own appearance and a /Name this viewer does not write.
                 if (basis == null || IsStampName(basis.Icon)) p.Icon = a.StampName;
                 p.Color = basis?.Color;
-                if (basis == null && (a.StampSubtitle != null || a.StampTurn != 0))
+                if (basis == null && a.CustomStamp is { } custom)
+                {
+                    // The picture or page as a form XObject (the engine's custom-stamp path, as the desktop
+                    // app writes one), stretched to the box, which keeps its shape, and turned upright.
+                    int turn = (a.StampTurn % 360 + 360) % 360;
+                    bool quarter = turn is 90 or 270;
+                    p.Stamp = new PdfStampAppearance
+                    {
+                        Rotation = turn,
+                        Width = quarter ? a.Box.Height : a.Box.Width,
+                        Height = quarter ? a.Box.Width : a.Box.Height,
+                        SourcePdf = custom.Pdf,
+                        SourcePage = 1,
+                    };
+                }
+                else if (basis == null && (a.StampSubtitle != null || a.StampTurn != 0))
                 {
                     // Drawn upright at its own size and turned by the form's /Matrix (the engine's turned-stamp path).
                     int turn = (a.StampTurn % 360 + 360) % 360;

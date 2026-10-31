@@ -297,6 +297,10 @@ public sealed class ViewerAnnotationStore
             throw new ViewerAnnotationException($"The document's annotations can have at most {MaxPoints} ink, quadPoints and vertices points together.");
     }
 
+    /// <summary>The bytes the custom stamps hold together, each picture or page once (stamps placed twice share it).</summary>
+    public static long CustomStampBytes(IEnumerable<ViewerCustomStamp?> stamps) =>
+        stamps.OfType<ViewerCustomStamp>().DistinctBy(s => s.Hash, StringComparer.Ordinal).Sum(s => (long)s.Pdf.Length);
+
     /// <summary>The stamp names a host page or the reader may give (ISO 32000-2 Table 184 and Acrobat's Standard Business set).</summary>
     public static IReadOnlySet<string> StampNames { get; } =
         PdfStamps.Standard.Select(s => s.Name).Concat(["Experimental", "Sold", "Departmental"]).ToHashSet(StringComparer.Ordinal);
@@ -382,6 +386,11 @@ public sealed class ViewerAnnotationStore
         if (a.Kind == ViewerAnnotationKind.Stamp ? !ViewerAnnotationPdf.IsStampName(a.StampName) : a.StampName.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a stamp needs a stampName, such as Approved or Draft.");
         bool stamp = a.Kind == ViewerAnnotationKind.Stamp;
+        if (a.CustomStamp != null && (!stamp || a.StampName != ViewerCustomStamp.StampName || a.StampSubtitle != null))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp named {ViewerCustomStamp.StampName}, without a second line, draws a picture or a PDF page.");
+        // A custom stamp needs what it draws (addCustomStamp gives it); a file's custom stamp keeps the appearance it has.
+        if (stamp && a.StampName == ViewerCustomStamp.StampName && a.CustomStamp == null && was is not { Kind: ViewerAnnotationKind.Stamp, CustomStamp: null, StampName: ViewerCustomStamp.StampName })
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a custom stamp is made from a picture or a PDF page (addCustomStamp), not by its name.");
         if (a.StampTurn is not (0 or 90 or 180 or 270) || !stamp && a.StampTurn != 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp has a turn, and it is 0, 90, 180 or 270 degrees.");
         if (a.StampSubtitle != null && (!stamp || a.StampSubtitle.Length > MaxStampSubtitleLength || a.StampSubtitle.Any(char.IsControl)))

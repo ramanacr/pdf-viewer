@@ -1123,6 +1123,28 @@ public sealed class ViewerDocument : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Page <paramref name="page"/> of the file as opened, alone in a new unencrypted PDF (no
+    /// outline, no form): the source of a custom stamp made from this document's own page, which
+    /// an encrypted document can give because it is open already.
+    /// </summary>
+    public async Task<byte[]> ExtractPageAsync(int page, CancellationToken cancellationToken = default)
+    {
+        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (page < 1 || page > _original.PageCount) throw new ArgumentOutOfRangeException(nameof(page), $"The document has {_original.PageCount} pages.");
+            return PdfEngine.Vector.Services.PdfPageAssembler.Extract(_original, [page],
+                new PdfEngine.Vector.Services.PdfAssemblyOptions { KeepOutlines = false, KeepForms = false });
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>The widgets of the fillable form fields of the current revision, with their values.</summary>
     public async Task<IReadOnlyList<Annotations.ViewerFormWidget>> GetFormWidgetsAsync(CancellationToken cancellationToken = default)
     {

@@ -68,10 +68,17 @@ public sealed record ViewerEditSnapshot
     public string ToJson() => Encoding.UTF8.GetString(Write().WrittenSpan);
 
     /// <summary>The snapshot as UTF-8 JSON for a file, or null when it is larger than <see cref="MaxBytes"/> (it is then not kept).</summary>
-    public byte[]? ToUtf8()
+    public byte[]? ToUtf8() => ToUtf8(MaxBytes);
+
+    /// <summary><see cref="ToUtf8()"/> with another limit (for tests).</summary>
+    internal byte[]? ToUtf8(int maxBytes)
     {
+        // Custom stamps are most of a large snapshot (base64, 4 bytes for 3): one too large is
+        // known before it is written out, so a reader's many stamps never fill memory here.
+        long stamps = ViewerAnnotationStore.CustomStampBytes(Annotations.Select(i => i.Annotation?.CustomStamp));
+        if (stamps / 3 * 4 > maxBytes) return null;
         var buffer = Write();
-        return buffer.WrittenCount > MaxBytes ? null : buffer.WrittenSpan.ToArray();
+        return buffer.WrittenCount > maxBytes ? null : buffer.WrittenSpan.ToArray();
     }
 
     private ArrayBufferWriter<byte> Write()
@@ -84,6 +91,21 @@ public sealed record ViewerEditSnapshot
             w.WriteString("location", Location);
             w.WriteNumber("length", OriginalLength);
             w.WriteString("sha256", OriginalHash);
+            // The pictures and pages of custom stamps, each once (by its hash), as the one-page PDF that draws it.
+            var stamps = Annotations.Select(i => i.Annotation?.CustomStamp).OfType<ViewerCustomStamp>().DistinctBy(c => c.Hash, StringComparer.Ordinal).ToList();
+            if (stamps.Count > 0)
+            {
+                w.WriteStartArray("customStamps");
+                foreach (var c in stamps)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("hash", c.Hash);
+                    w.WriteString("kind", c.Kind.ToString());
+                    w.WriteBase64String("pdf", c.Pdf);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
             w.WriteStartArray("annotations");
             foreach (var item in Annotations)
             {
@@ -135,6 +157,7 @@ public sealed record ViewerEditSnapshot
         w.WriteString("stampName", a.StampName);
         if (a.StampSubtitle != null) w.WriteString("stampSubtitle", a.StampSubtitle);
         w.WriteNumber("stampTurn", a.StampTurn);
+        if (a.CustomStamp is { } custom) w.WriteString("customStamp", custom.Hash);
         w.WriteString("inReplyTo", a.InReplyTo);
         w.WriteString("state", a.State);
         w.WriteString("stateModel", a.StateModel);
@@ -174,11 +197,34 @@ public sealed record ViewerEditSnapshot
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || Int(root, "version") != FormatVersion) throw new FormatException("The kept edits are of another version.");
+            var stamps = new Dictionary<string, ViewerCustomStamp>(StringComparer.Ordinal);
+            // Kept edits written before custom stamps have no "customStamps".
+            if (root.TryGetProperty("customStamps", out _))
+            {
+                foreach (var c in Array(root, "customStamps"))
+                {
+                    if (!Enum.TryParse<ViewerCustomStampKind>(Str(c, "kind"), ignoreCase: false, out var kind) || !Enum.IsDefined(kind))
+                        throw new FormatException("A custom stamp is of an unknown kind.");
+                    string hash = Str(c, "hash");
+                    ViewerCustomStamp stamp;
+                    try
+                    {
+                        // Checked as a new stamp is: the file the edits were kept in is not trusted more.
+                        stamp = ViewerCustomStamp.FromKept(kind, c.GetProperty("pdf").GetBytesFromBase64());
+                    }
+                    catch (ViewerAnnotationException)
+                    {
+                        throw new FormatException("A custom stamp of the kept edits cannot be read.");
+                    }
+                    if (stamp.Hash != hash) throw new FormatException("A custom stamp of the kept edits is damaged.");
+                    stamps[hash] = stamp;
+                }
+            }
             var items = new List<ViewerSnapshotItem>();
             foreach (var e in Array(root, "annotations"))
             {
                 if (e.ValueKind != JsonValueKind.Object) throw new FormatException("An annotation is not an object.");
-                items.Add(e.TryGetProperty("kept", out var kept) ? new ViewerSnapshotItem(Text(kept), null) : new ViewerSnapshotItem(null, ReadAnnotation(e)));
+                items.Add(e.TryGetProperty("kept", out var kept) ? new ViewerSnapshotItem(Text(kept), null) : new ViewerSnapshotItem(null, ReadAnnotation(e, stamps)));
             }
             var values = new List<KeyValuePair<string, IReadOnlyList<string>>>();
             if (root.TryGetProperty("values", out var v))
@@ -204,7 +250,7 @@ public sealed record ViewerEditSnapshot
         }
     }
 
-    private static ViewerAnnotation ReadAnnotation(JsonElement e)
+    private static ViewerAnnotation ReadAnnotation(JsonElement e, IReadOnlyDictionary<string, ViewerCustomStamp> stamps)
     {
         if (!Enum.TryParse<ViewerAnnotationKind>(Str(e, "kind"), ignoreCase: false, out var kind) || !Enum.IsDefined(kind))
             throw new FormatException("An annotation is of an unknown kind.");
@@ -226,6 +272,9 @@ public sealed record ViewerEditSnapshot
             StampName = Str(e, "stampName"),
             StampSubtitle = e.TryGetProperty("stampSubtitle", out var sub) ? Text(sub) : null,
             StampTurn = Int(e, "stampTurn"),
+            CustomStamp = e.TryGetProperty("customStamp", out var cs)
+                ? stamps.GetValueOrDefault(Text(cs)) ?? throw new FormatException("An annotation names a custom stamp the kept edits do not have.")
+                : null,
             InReplyTo = Str(e, "inReplyTo"),
             State = Str(e, "state"),
             StateModel = Str(e, "stateModel"),

@@ -331,6 +331,11 @@ internal static class PdfStampForms
     /// <summary>Another document's form with everything it uses, copied into the update.</summary>
     internal static PdfObject CopyInto(PdfUpdate update, PdfStream form, PdfObjectResolver r) => Copy(update, form, r, new Dictionary<int, int>(), 0);
 
+    // Keys left out of what is copied from another document: actions and JavaScript (an appearance
+    // never acts), and a stream's link to data outside the file (ISO 32000-2 7.3.8.2, 8.10.4, 14.11.7).
+    private static readonly HashSet<string> ActionKeys = new(StringComparer.Ordinal) { "A", "AA", "JS", "JavaScript", "OpenAction", "URI", "Next" };
+    private static readonly HashSet<string> ExternalStreamKeys = new(StringComparer.Ordinal) { "F", "FFilter", "FDecodeParms", "Ref", "OPI" };
+
     // Another document's object and what it refers to, renumbered into the update (each once, cycles kept).
     private static PdfObject Copy(PdfUpdate update, PdfObject? obj, PdfObjectResolver r, Dictionary<int, int> copies, int depth)
     {
@@ -349,11 +354,16 @@ internal static class PdfStampForms
             case PdfStream s:
             {
                 var dict = (PdfDictionary)Copy(update, s.Dictionary, r, copies, depth + 1);
+                // A stream's data stays in the stream: no external file (/F), no reference XObject
+                // (/Ref) or OPI proxy that would point a reader at another file.
+                dict = new PdfDictionary(dict.Entries.Where(e => !ExternalStreamKeys.Contains(e.Key)).ToDictionary(e => e.Key, e => e.Value));
                 byte[] raw = s.GetRawBytes().ToArray();
                 return new PdfStream(dict, 0, raw.Length, null, raw);
             }
             case PdfDictionary d:
-                return new PdfDictionary(d.Entries.Where(e => e.Key != "Parent").ToDictionary(e => e.Key, e => Copy(update, e.Value, r, copies, depth + 1)));
+                // An appearance draws and does nothing else: actions and scripts are not copied.
+                return new PdfDictionary(d.Entries.Where(e => e.Key != "Parent" && !ActionKeys.Contains(e.Key))
+                    .ToDictionary(e => e.Key, e => Copy(update, e.Value, r, copies, depth + 1)));
             case PdfArray a:
                 return new PdfArray(a.Items.Select(i => Copy(update, i, r, copies, depth + 1)).ToList());
             default:
