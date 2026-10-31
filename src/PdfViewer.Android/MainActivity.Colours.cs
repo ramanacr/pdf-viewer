@@ -119,7 +119,7 @@ public sealed partial class MainActivity
             colours.Add(defaultColour ?? "#000000");
         }
         int checkedItem = current == null && withDefault ? palette.Count : ViewerToolColors.IndexOf(current);
-        var adapter = new SwatchAdapter(this, names, colours.Select(c => SwatchDrawable(c, 18)).ToList(), (int)Dp(12));
+        var adapter = new SwatchAdapter(this, names, colours.Select(c => (Drawable)SwatchDrawable(c, 18)).ToList(), (int)Dp(12));
         new AlertDialog.Builder(this)
             .SetTitle(title)!
             .SetSingleChoiceItems(adapter, checkedItem, (sender, e) =>
