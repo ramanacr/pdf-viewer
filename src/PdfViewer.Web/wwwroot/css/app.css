@@ -490,12 +490,16 @@ kbd {
 .annot-hit.selected { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .annot-hit.passive { pointer-events: none; }
 /* A callout's anchor: the selected callout's handle (drag to move the spot it points to), and the spot the callout tool took. */
-.callout-anchor, .callout-mark {
+.callout-anchor, .callout-mark, .vertex-handle {
     position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; box-sizing: border-box;
     background: var(--surface, #fff); border: 2px solid var(--accent);
 }
 .callout-anchor { cursor: grab; touch-action: none; z-index: 2; }
 .callout-anchor::after { content: ""; position: absolute; inset: -8px; } /* a larger target than it looks */
+/* A selected line's, polygon's or polyline's points: drag one to move only that point (viewer.js). */
+.vertex-handle { width: 12px; height: 12px; margin: -6px 0 0 -6px; cursor: move; touch-action: none; z-index: 2; }
+.vertex-handle::after { content: ""; position: absolute; inset: -7px; }
+.draw-preview.vertex-preview * { stroke-dasharray: none; stroke-linejoin: round; }
 .callout-mark { pointer-events: none; background: var(--accent); }
 /* A polygon or polyline drawn with a finger: its first and last points, where a tap ends it. */
 .poly-end {
@@ -509,7 +513,7 @@ kbd {
     content: ""; position: absolute; left: 50%; top: 50%;
     width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
 }
-.pages[data-input="touch"] .callout-anchor::after { inset: -15px; }
+.pages[data-input="touch"] .callout-anchor::after, .pages[data-input="touch"] .vertex-handle::after { inset: -16px; }
 .draw-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .draw-preview * { fill: none; stroke: var(--accent); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
 .draw-preview polyline { stroke-dasharray: none; stroke-linecap: round; stroke-linejoin: round; }
@@ -586,12 +590,13 @@ textarea.form-field { resize: none; overflow: hidden; }
     .swatch { position: relative; width: 24px; height: 24px; }
     .swatch::after { content: ""; position: absolute; inset: -12px; border-radius: 50%; }
     .dialog-actions .button, .annot-editor-actions .button { min-width: 44px; }
-    /* As .pages[data-input="touch"] above: annotations and a callout's anchor are 44 px targets. */
+    /* As .pages[data-input="touch"] above: annotations, a callout's anchor and a shape's points are 44 px targets. */
     .annot-hit::after {
         content: ""; position: absolute; left: 50%; top: 50%;
         width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
     }
     .callout-anchor::after { inset: -15px; }
+    .vertex-handle::after { inset: -16px; }
 }
 
 /* ------------------------------------------------------------ phone toolbar */

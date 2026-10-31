@@ -721,7 +721,7 @@ manager.registerEventListener(event => console.log(event.type, event.data),
 | Event | When |
 | --- | --- |
 | `ANNOTATION_ADDED` | The reader adds an annotation (or undoes a deletion). |
-| `ANNOTATION_UPDATED` | The reader moves or changes one (colour, text), or undo changes it back. |
+| `ANNOTATION_UPDATED` | The reader moves or changes one (colour, text, one point of a line or shape), or undo changes it back. |
 | `ANNOTATION_DELETED` | The reader deletes one (or undoes its addition). |
 | `ANNOTATION_SELECTED`, `ANNOTATION_UNSELECTED` | The reader selects one, or the selection ends. |
 | `ANNOTATION_CLICKED` | The reader clicks one with the select tool. |

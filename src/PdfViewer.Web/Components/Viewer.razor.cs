@@ -182,6 +182,8 @@ public sealed partial class Viewer : IAsyncDisposable
 
     private static string Px(double v) => v.ToString("0.##", CultureInfo.InvariantCulture) + "px";
     private static string Pct(double v) => (v * 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+    /// <summary>A fraction of the page for a data attribute viewer.js reads (a vertex handle's place).</summary>
+    private static string Frac(double v) => v.ToString("0.#####", CultureInfo.InvariantCulture);
     private static string Percent(double zoom) => Math.Round(zoom * 100).ToString(CultureInfo.InvariantCulture) + "%";
 
     protected override void OnInitialized()
@@ -195,7 +197,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=11");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=12");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {

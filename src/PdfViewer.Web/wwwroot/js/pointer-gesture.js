@@ -1,5 +1,6 @@
 // The pointer rules of the annotation tools that do not need a page: when a press is a tap, when two
-// presses are a double-click, which polygon point a finger tapped, and the fingers on the pages.
+// presses are a double-click, which polygon point a finger tapped, the fingers on the pages, and a
+// shape's points as a vertex handle is dragged.
 // viewer.js uses them for the mouse, the pen and touch (Pointer Events); tests/sdk/pointer-gesture.test.mjs
 // runs them in Node. The page's touch-action (app.css) decides what the browser does with a finger:
 // with the Select tool it scrolls and zooms; with any other tool the viewer takes the finger.
@@ -128,4 +129,24 @@ export function ownsEvent(owner, id) {
  */
 export function tapSuppressed(finishedAt, now, ms = 400) {
     return typeof finishedAt === 'number' && now >= finishedAt && now - finishedAt < ms;
+}
+
+/**
+ * A shape's points ([x0, y0, x1, y1, …], fractions of the page) with point index moved to (x, y),
+ * kept on the page (0 to 1): the live preview of a vertex handle being dragged, and the point given
+ * to the viewer on release. A copy; the points given are not changed. An index that is not one of
+ * the points gives the points unchanged.
+ */
+export function withPointMoved(points, index, x, y) {
+    const moved = Array.from(points);
+    if (!Number.isInteger(index) || index < 0 || 2 * index + 1 >= moved.length) return moved;
+    const clamp = v => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);
+    moved[2 * index] = clamp(x);
+    moved[2 * index + 1] = clamp(y);
+    return moved;
+}
+
+/** A press that moved more than slop CSS pixels on either axis is a drag (a handle's or an annotation's), not a click. */
+export function isDrag(dx, dy, slop = 3) {
+    return Math.abs(dx) > slop || Math.abs(dy) > slop;
 }

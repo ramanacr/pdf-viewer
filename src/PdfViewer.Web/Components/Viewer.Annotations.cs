@@ -600,6 +600,20 @@ public sealed partial class Viewer
         StateHasChanged();
     }
 
+    /// <summary>
+    /// The reader dragged point <paramref name="index"/> of the selected line, polygon or polyline to
+    /// (x, y), fractions of the shown page: only that point moves, one undo step (and an annotation
+    /// updated event for a host page, as every change).
+    /// </summary>
+    [JSInvokable]
+    public void OnVertexDrag(string id, int index, double x, double y)
+    {
+        if (!CanEditAnnotations || _session?.Store.Find(id) is not { HasVertices: true } a || !double.IsFinite(x) || !double.IsFinite(y)
+            || PageFrame(a.Page) is not (_, var width, var height)) return;
+        Change(s => s.MoveVertex(id, index, new ViewerPoint(Math.Clamp(x, 0, 1) * width, Math.Clamp(y, 0, 1) * height)));
+        StateHasChanged();
+    }
+
     private void Select(string id, bool user)
     {
         if (_selectedId == id) return;
