@@ -459,11 +459,11 @@ method returns a Promise.
 | `getAnnotations(filter?)` | The annotations, all or those of the filter. |
 | `selectAnnotation(id)` | Selects it and scrolls to it; resolves with it. |
 | `unselectAnnotation()` | |
-| `updateAnnotation(annotation)` | Replaces the annotation with the same `id` (its `subtype` cannot change); resolves with it. `modified` becomes now. |
+| `updateAnnotation(annotation)` | Replaces the annotation with the same `id` (its `subtype` cannot change); resolves with it. `modified` becomes now. Without a `creator`, the annotation keeps the author it has (none stays none). |
 | `deleteAnnotations(filter)` | Deletes the annotations of the filter (`{}` deletes all); resolves with the deleted ones. |
 | `setConfig(config)` | `{ showToolbar, showCommentsPanel, downloadWithAnnotations, printWithAnnotations, authorName }`, each optional. `authorName` is the author of the reader's new annotations (default `Guest`). |
 | `exportXfdf()` | The annotations as an XFDF document (ISO 19444-1), a string. |
-| `importXfdf(xml)` | Adds the annotations of an XFDF document (the supported types; others are skipped); resolves with them. Long texts are cut to the limits below; an annotation with more than 1000 quadrilaterals is skipped, and the viewer's status line counts the skipped ones. |
+| `importXfdf(xml)` | Adds the annotations of an XFDF document (the supported types; others are skipped) as one undo step; resolves with the ones added. Long texts are cut to the limits below. An annotation that is not valid here (more than 1000 quadrilaterals, off the document's pages, outside a page's media box) is skipped, with its replies, and the viewer's status line counts the skipped ones. A reply deeper than 64 levels is skipped the same way. The import is rejected as a whole with `INVALID_ARGUMENT` (a message that starts with `importXfdf: `) when the text is not XFDF, when it has more than 1000 annotations to add, or when they would take the document past its limits (10 000 annotations, or the total of points below); then nothing is added. *Changed in this version:* before, one annotation that was not valid (off the pages, for example) rejected the whole import; now it is skipped and the others are added, as in the Android app. |
 | `registerEventListener(handler, { listenOn })` | See [annotation events](#annotation-events). |
 
 A filter is `{ annotationIds: ['id1', …], pageRange: { startPage, endPage } }` (pages from 1),
@@ -552,7 +552,7 @@ A reply can answer a reply, up to 64 levels. What a reply answers cannot change 
 and resolves with them too. A reply is written with an empty appearance, so other readers list
 it in their comments and do not draw a second note on the page.
 
-A **review status** is a reply with a `status` object. Acrobat, the desktop app and the Android app write a status as a hidden reply with `/State` and `/StateModel` (Accepted, Rejected, Cancelled, Completed or None in the `Review` model):
+A **review status** is a reply with a `status` object. The reader sets one in the viewer's comments panel (select a comment, then pick its status). Acrobat, the desktop app, this viewer and the Android app write a status as a hidden reply with `/State` and `/StateModel` (Accepted, Rejected, Cancelled, Completed or None in the `Review` model):
 
 ```js
 { id: 's1', type: 'Annotation', motivation: 'replying', bodyValue: 'Accepted set by Bo',
@@ -663,8 +663,9 @@ with `downloadWithAnnotations`) writes the values into the PDF. XFA forms are no
 
 Values are checked as the reader enters them: a combo box (unless it is editable) and a list
 box take only their options (export value or display text), a text field takes at most its
-`/MaxLen` characters, every value at most 10 000 characters, and at most 10 000 fields change at
-once. A refused value is not kept, and the viewer shows why.
+`/MaxLen` characters (a single-line field loses line breaks), every value at most 10 000
+characters, and at most 10 000 fields change at once. A refused value is not kept, and the viewer
+shows why. The web viewer and the Android app check values with the same code (`ViewerEditSession`).
 
 **There is no API to set form values from your page in this version:** form fields take the
 reader's input only. The saved file (SAVE_API) has the values; read them on your server.

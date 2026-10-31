@@ -1,4 +1,5 @@
 using Microsoft.JSInterop;
+using PdfViewer.Web.Engine.Annotations;
 using PdfViewer.Web.Engine.Embed;
 using PdfViewer.Web.Interop;
 
@@ -47,32 +48,61 @@ public sealed partial class Viewer
             DownloadEdited();
             return true;
         }
-        if (!_edits.TryBeginSave()) return false;
-        bool posted = false;
+        if (_session is not { } session || session.IsSaving) return false;
         try
         {
             _status = "Saving…";
             StateHasChanged();
-            bool current = await WaitForEditsAsync();
-            // Another document was opened (or this one closed) meanwhile: its state is not this save's.
-            if (_doc != doc || !_edits.Saving) return false;
-            int saveId = current ? _edits.Post() : 0;
-            if (saveId == 0)
+            await PrepareFontsAsync(session);
+            // Another document was opened (or this one closed), or another save began, meanwhile.
+            if (_session != session || session.IsSaving) return false;
+            // The session writes what is left, then hands out the bytes with every edit (or none).
+            ViewerSave? save;
+            try
+            {
+                save = await session.BeginSaveAsync();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // The session ended the save itself. Type names only, never document content.
+                if (_session == session) NotPosted(ex);
+                return false;
+            }
+            if (_session != session)
+            {
+                if (save != null) session.EndSave(save, saved: false);
+                return false;
+            }
+            if (save == null)
             {
                 NotSaved();
                 return false;
             }
-            // The bytes posted are the ones Post recorded the version of: nothing runs in between.
-            CanvasInterop.EmbedPostBytes(EmbedProtocol.SaveRequest(saveId, DownloadName, _fileId, reason), doc.Bytes);
-            posted = true;
-            _ = SaveSlowAsync(saveId);
+            try
+            {
+                CanvasInterop.EmbedPostBytes(EmbedProtocol.SaveRequest(save.Id, DownloadName, _fileId, reason), save.Bytes);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Nothing reached the host page: the save ends, or the session would stay saving.
+                session.EndSave(save, saved: false);
+                NotPosted(ex);
+                return false;
+            }
+            _ = SaveSlowAsync(session, save.Id);
             return true;
         }
         finally
         {
-            if (!posted && _doc == doc) _edits.EndSave();
             StateHasChanged();
         }
+    }
+
+    /// <summary>The document could not be handed to the host page: nothing was saved, and the reader is told.</summary>
+    private void NotPosted(Exception ex)
+    {
+        _status = "Not saved";
+        _error = $"The file was not saved: it could not be sent to the page ({ex.GetType().Name}).";
     }
 
     /// <summary>The latest edits are not in the document's bytes: nothing is posted, and the reader is told.</summary>
@@ -82,10 +112,10 @@ public sealed partial class Viewer
         _error = "The file was not saved: the latest changes could not be written into the document.";
     }
 
-    private async Task SaveSlowAsync(int saveId)
+    private async Task SaveSlowAsync(ViewerEditSession session, int saveId)
     {
         await Task.Delay(SaveSlowMs);
-        if (_edits.Saving && _edits.PendingSave == saveId)
+        if (_session == session && session.IsSaving && session.PendingSave == saveId)
         {
             _status = "Still saving… (the page has not answered yet)";
             StateHasChanged();
@@ -95,7 +125,7 @@ public sealed partial class Viewer
     /// <summary>The host page's answer to a save (saveResult).</summary>
     private string SaveResult(EmbedCall call)
     {
-        if (_edits.Answer(call.SaveId, call.Saved))
+        if (_session?.EndSave(call.SaveId, call.Saved) == true)
         {
             if (call.Saved)
             {

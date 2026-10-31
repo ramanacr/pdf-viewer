@@ -231,8 +231,8 @@
                 </div>
             }
             <div class="group" role="group" aria-label="Edit">
-                <button type="button" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled="@(_store?.CanUndo != true)" @onclick="Undo"><Icon Name="undo" /></button>
-                <button type="button" class="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled="@(_store?.CanRedo != true)" @onclick="Redo"><Icon Name="redo" /></button>
+                <button type="button" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled="@(_session?.CanUndo != true)" @onclick="Undo"><Icon Name="undo" /></button>
+                <button type="button" class="icon-button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled="@(_session?.CanRedo != true)" @onclick="Redo"><Icon Name="redo" /></button>
                 @if (Selected is { } sel)
                 {
                     @if (sel.Kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText or ViewerAnnotationKind.Reply)
@@ -295,30 +295,43 @@
                     <button type="button" role="tab" id="tab-results" aria-selected="@(_panel == Panel.Results ? "true" : "false")" aria-controls="panel-results" @onclick="() => _panel = Panel.Results">Results @(_hits.Count > 0 ? $"({_hits.Count})" : "")</button>
                     @if (ShowsCommentsPanel)
                     {
-                        <button type="button" role="tab" id="tab-comments" aria-selected="@(_panel == Panel.Comments ? "true" : "false")" aria-controls="panel-comments" @onclick="() => _panel = Panel.Comments">Comments @(_store!.Current.Count > 0 ? $"({_store.Current.Count})" : "")</button>
+                        <button type="button" role="tab" id="tab-comments" aria-selected="@(_panel == Panel.Comments ? "true" : "false")" aria-controls="panel-comments" @onclick="() => _panel = Panel.Comments">Comments @(CommentCount > 0 ? $"({CommentCount})" : "")</button>
                     }
                 </div>
                 @if (_panel == Panel.Comments && ShowsCommentsPanel)
                 {
+                    var comments = _session!.List();
                     <div id="panel-comments" role="tabpanel" aria-labelledby="tab-comments" class="panel">
-                        @if (_store!.Current.Count == 0)
+                        @if (comments.Count == 0)
                         {
                             <p class="muted empty">@(CanEditAnnotations && _config.HasAnnotationTools ? "No comments yet. Use the tools above the pages to add one." : "This document has no comments.")</p>
                         }
                         else
                         {
                             <ol class="results comments">
-                                @foreach (var (annotation, level) in Threads().Take(2000))
+                                @foreach (var item in comments.Take(2000))
                                 {
-                                    var a = annotation;
+                                    var a = item.Annotation;
+                                    int level = item.Level;
                                     <li style="@(level > 0 ? $"margin-left:{Math.Min(level, 6) * 14}px;border-left:2px solid var(--border)" : null)">
                                         <button type="button" class="result@(a.Id == _selectedId ? " current" : "")" aria-current="@(a.Id == _selectedId ? "true" : null)" @onclick="() => SelectFromPanel(a)">
-                                            <span class="result-page"><span class="dot" style="background:@a.Color"></span>@KindLabel(a.Kind)@(level == 0 ? $", page {a.Page}" : "")@(a.Author.Length > 0 ? $", {a.Author}" : "")</span>
+                                            <span class="result-page"><span class="dot" style="background:@a.Color"></span>@item.Label@(level == 0 ? $", page {a.Page}" : "")@(a.Author.Length > 0 ? $", {a.Author}" : "")@(item.Status != null ? $", {item.Status}" : "")</span>
                                             @if (a.Contents.Length > 0)
                                             {
                                                 <span class="result-text">@(a.Contents.Length > 200 ? a.Contents[..200] + "…" : a.Contents)</span>
                                             }
                                         </button>
+                                        @if (a.Id == _selectedId && CanEditAnnotations && level == 0)
+                                        {
+                                            <div class="reply-form">
+                                                <select aria-label="Review status" title="Review status" value="@(item.Status ?? "None")" @onchange="e => SetReviewState(a, e)">
+                                                    @foreach (var state in ViewerEditSession.ReviewStates)
+                                                    {
+                                                        <option value="@state">@(state == "None" ? "No status" : state)</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                        }
                                         @if (a.Id == _selectedId && CanEditAnnotations)
                                         {
                                             @if (_replyTo == a.Id)
@@ -477,7 +490,7 @@
                             @foreach (var a in AnnotationsByPage[pv.Number].Where(a => a.Kind != ViewerAnnotationKind.Reply))
                             {
                                 var r = _doc.Geometry[pv.Number - 1].ToShown(a.Box);
-                                <span class="annot-hit@(a.Id == _selectedId ? " selected" : "")" data-annot="@a.Id" title="@(a.Contents.Length > 0 ? a.Contents : KindLabel(a.Kind))"
+                                <span class="annot-hit@(a.Id == _selectedId ? " selected" : "")" data-annot="@a.Id" title="@(a.Contents.Length > 0 ? a.Contents : ViewerEditSession.Label(a.Kind))"
                                       style="left:@Pct(r.X / pv.Width);top:@Pct(r.Y / pv.Height);width:@Pct(Math.Max(r.Width, 4) / pv.Width);height:@Pct(Math.Max(r.Height, 4) / pv.Height)"></span>
                             }
                         }
@@ -497,11 +510,11 @@
                                 @switch (f.Kind)
                                 {
                                     case ViewerFormKind.Text when f.Multiline:
-                                        <textarea class="form-field" style="@place" aria-label="@FieldLabel(f)" maxlength="@(f.MaxLength > 0 ? f.MaxLength : MaxFieldValueLength)" spellcheck="false" value="@f.Value" @onchange="e => OnFieldChange(f, e)"></textarea>
+                                        <textarea class="form-field" style="@place" aria-label="@FieldLabel(f)" maxlength="@(f.MaxLength > 0 ? f.MaxLength : ViewerEditSession.MaxFieldValueLength)" spellcheck="false" value="@f.Value" @onchange="e => OnFieldChange(f, e)"></textarea>
                                         break;
                                     case ViewerFormKind.Text:
                                         <input class="form-field" style="@place" type="@(f.Password ? "password" : "text")" aria-label="@FieldLabel(f)" value="@f.Value" autocomplete="off" spellcheck="false"
-                                               maxlength="@(f.MaxLength > 0 ? f.MaxLength : MaxFieldValueLength)" @onchange="e => OnFieldChange(f, e)" />
+                                               maxlength="@(f.MaxLength > 0 ? f.MaxLength : ViewerEditSession.MaxFieldValueLength)" @onchange="e => OnFieldChange(f, e)" />
                                         break;
                                     case ViewerFormKind.CheckBox or ViewerFormKind.Radio:
                                         <button type="button" class="form-field toggle" style="@place" role="@(f.Kind == ViewerFormKind.Radio ? "radio" : "checkbox")"
