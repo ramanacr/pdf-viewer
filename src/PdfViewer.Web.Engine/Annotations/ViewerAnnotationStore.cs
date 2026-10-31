@@ -220,7 +220,7 @@ public sealed class ViewerAnnotationStore
             : annotation with { IsMeasurement = false };
         // Moved to another page, a file's annotation is written as a new one there (and removed from its page).
         var updated = Fit(annotation with { SourceIndex = annotation.Page == old.Page ? old.SourceIndex : -1 });
-        Check(updated);
+        Check(updated, old);
         if (Points(updated) > Points(old)) CheckPoints(Points(Current) - Points(old) + Points(updated));
         var replies = updated.Page != old.Page ? Descendants(Current, [updated.Id]) : [];
         Commit(Ordered(Current.Select(a =>
@@ -302,7 +302,14 @@ public sealed class ViewerAnnotationStore
         PdfStamps.Standard.Select(s => s.Name).Concat(["Experimental", "Sold", "Departmental"]).ToHashSet(StringComparer.Ordinal);
 
     /// <summary>Refuses an annotation that is not on a page of this document or does not fit its media box and the limits.</summary>
-    public void Check(ViewerAnnotation a)
+    public void Check(ViewerAnnotation a) => Check(a, null);
+
+    /// <summary>
+    /// <see cref="Check(ViewerAnnotation)"/> for a change of <paramref name="was"/>: a callout's line that
+    /// keeps its anchor, and a line width it already had, are not refused (a file's callout may point
+    /// off the page or have a line 0 wide; it stays editable). New values get every check.
+    /// </summary>
+    private void Check(ViewerAnnotation a, ViewerAnnotation? was)
     {
         if (a.Id.Length is 0 or > MaxIdLength || a.Id.Any(char.IsControl)) throw new ViewerAnnotationException($"An id must be 1 to {MaxIdLength} characters, without control characters.");
         if (a.Page < 1 || a.Page > _pages.Count) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": the document has no page {a.Page} (target.selector.node.index counts from 0).");
@@ -356,9 +363,15 @@ public sealed class ViewerAnnotationStore
             var c = a.Callout;
             if (a.Kind != ViewerAnnotationKind.FreeText || c.Count is not (4 or 6))
                 throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a free text annotation has a callout, its line's points [x1, y1, x2, y2] or [x1, y1, x2, y2, x3, y3] (the spot it points to first).");
-            for (int i = 0; i < c.Count; i += 2)
-                if (!Inside(c[i], c[i + 1])) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a callout point is outside page {a.Page}.");
-            if (!(a.StrokeWidth > 0)) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a callout's line needs a strokeWidth above 0.");
+            // The viewer lays out the knee and the end from the anchor and the box (on the page): an
+            // anchor kept from before is not checked again, so a file's callout that points off the page can still move.
+            bool keptAnchor = was is { IsCallout: true } && was.Page == a.Page && was.Callout[0] == c[0] && was.Callout[1] == c[1];
+            if (!keptAnchor)
+                for (int i = 0; i < c.Count; i += 2)
+                    if (!Inside(c[i], c[i + 1])) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a callout point is outside page {a.Page}.");
+            // A line 0 wide is not drawn: refused, unless the callout had it already (a file's).
+            bool keptWidth = was is { IsCallout: true } && was.StrokeWidth == a.StrokeWidth;
+            if (!(a.StrokeWidth > 0) && !keptWidth) throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a callout's line needs a strokeWidth above 0.");
         }
         bool endings = a.StartEnding != "None" || a.EndEnding != "None";
         bool calloutEnding = a.IsCallout && a.EndEnding == "None" && PdfAnnotationLimits.LineEndings.Contains(a.StartEnding);
@@ -422,7 +435,7 @@ public sealed class ViewerAnnotationStore
         foreach (var a in annotations)
         {
             if (!byId.TryAdd(a.Id, a)) throw new ViewerAnnotationException($"An annotation with the id \"{a.Id}\" exists already.");
-            if (!fileSet.Contains(a)) Check(a);
+            if (!fileSet.Contains(a)) Check(a, FromFile.FirstOrDefault(f => f.Id == a.Id));
         }
         foreach (var a in annotations)
         {

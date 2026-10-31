@@ -250,7 +250,12 @@ public static class PdfAnnotationAppearances
             return 0;
         }
 
-        /// <summary>/RD: left, bottom, right, top insets of the drawing inside /Rect.</summary>
+        /// <summary>
+        /// /RD: left, bottom (low y), right, top (high y) insets of the drawing inside /Rect, in the
+        /// order of /Rect's numbers. Acrobat writes it so (its callouts' /RD and XFDF fringe put the
+        /// text box below a line that leaves the top), and PDFBox and MuPDF read it so; ISO 32000's
+        /// "left, top, right, and bottom" is taken as naming the same four edges.
+        /// </summary>
         private (double L, double B, double R, double T) Differences()
         {
             var rd = Numbers("RD");

@@ -580,7 +580,13 @@ public sealed class ViewerEditSession
             throw new ViewerAnnotationException("The spot a callout points to must be on the page.");
         var (x, y) = g.ToUser(to.X, to.Y);
         if (Math.Abs(x - a.Callout[0]) < 1e-6 && Math.Abs(y - a.Callout[1]) < 1e-6) return false;
-        Store.Update(a with { Callout = ViewerCallout.Leader(g, a.Box, x, y), Modified = DateTimeOffset.UtcNow });
+        // A file's line 0 wide is not drawn: once the reader moves it, it is drawn (1 point).
+        Store.Update(a with
+        {
+            Callout = ViewerCallout.Leader(g, a.Box, x, y),
+            StrokeWidth = a.StrokeWidth > 0 ? a.StrokeWidth : CalloutWidth,
+            Modified = DateTimeOffset.UtcNow,
+        });
         _edits.Edit();
         return true;
     }

@@ -74,7 +74,10 @@ public sealed partial class MainActivity
         // TalkBack reads the strip in order and scrolls it to the focused button.
         var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = true, FillViewport = true };
         strip.AddView(tools);
+        _annotateStrip = strip;
         _annotateBar.AddView(strip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        // While Move waits for a tap: what to tap, and Cancel, in place of the strip.
+        _annotateBar.AddView(BuildPlaceHint(), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         return _annotateBar;
     }
 
@@ -146,6 +149,7 @@ public sealed partial class MainActivity
         _annotateBar.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         if (!show)
         {
+            StopPlacing();
             _pages.Tool = PageView.PageTool.Browse;
             Pick(null);
         }
@@ -156,7 +160,7 @@ public sealed partial class MainActivity
     {
         _pages.Tool = _pages.Tool == tool ? PageView.PageTool.Browse : tool;
         Pick(null);
-        _placing = null;
+        StopPlacing(keepTool: true);
         if (PageView.Drags(_pages.Tool)) Toast.MakeText(this, "Draw with one finger; two fingers zoom.", ToastLength.Short)?.Show();
         else if (_pages.Tool == PageView.PageTool.Callout) Toast.MakeText(this, "Tap the spot the callout points to.", ToastLength.Short)?.Show();
         UpdateEditButtons();

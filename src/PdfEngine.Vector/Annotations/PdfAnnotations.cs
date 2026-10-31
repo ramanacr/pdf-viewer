@@ -81,7 +81,8 @@ public sealed class PdfAnnotation
 
     /// <summary>
     /// /RD of free text, a square, a circle, a polygon or a caret: how far the drawn box lies inside
-    /// /Rect (left, bottom, right, top, in default user space). A callout's /Rect holds its line,
+    /// /Rect (left, bottom, right, top insets in default user space: the order of /Rect's numbers, as
+    /// Acrobat writes it and PDFBox and MuPDF read it). A callout's /Rect holds its line,
     /// and /RD gives its text box. Null when absent; the editor writes it only when it is set, so a
     /// change that does not set it keeps the file's.
     /// </summary>

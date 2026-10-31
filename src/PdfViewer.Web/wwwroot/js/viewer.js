@@ -454,7 +454,7 @@ let tool = 'select';       // the annotation tool (Viewer.Annotations.cs): selec
 let drawing = null;        // { page, el, points, preview } while a shape or a stroke is drawn
 let moving = null;         // { id, el, x, y, dx, dy } while an annotation is dragged
 let anchorMoving = null;   // { id, el, page, x, y, dx, dy } while a callout's anchor handle is dragged
-let calloutAnchor = null;  // { el, x, y, mark } the spot the callout tool took, until its box is placed
+let calloutAnchor = null;  // { el, page, x, y, mark } the spot the callout tool took, until its box is placed
 const markupTools = new Set(['select', 'highlight', 'underline', 'strikeout']);
 const clickTools = new Set(['note', 'stamp']);       // a click places them
 const polyTools = new Set(['polygon', 'polyline']);  // a click a point, a double-click (or Enter) ends
@@ -478,7 +478,7 @@ function setCalloutAnchor(el, e) {
     mark.style.left = `${x * 100}%`;
     mark.style.top = `${y * 100}%`;
     el.appendChild(mark);
-    calloutAnchor = { el, x, y, mark };
+    calloutAnchor = { el, page: Number(el.dataset.page), x, y, mark };
 }
 
 function clearCalloutAnchor() {
@@ -543,7 +543,7 @@ function finishDrawing() {
         // The spot it points to first, then the text box's corners.
         const a = calloutAnchor;
         clearCalloutAnchor();
-        if (!a || a.el !== d.el) return;
+        if (!a || a.page !== d.page) return;
         points = [a.x, a.y].concat(points);
     }
     app.invokeMethodAsync('OnToolStroke', tool, d.page, points);
@@ -649,7 +649,7 @@ function initSelection() {
             return;
         }
         // The callout tool: the first press takes the spot it points to (on this page); the next one places the box.
-        if (tool === 'callout' && (!calloutAnchor || calloutAnchor.el !== el)) {
+        if (tool === 'callout' && (!calloutAnchor || calloutAnchor.page !== Number(el.dataset.page))) {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
             setCalloutAnchor(el, e);
@@ -745,7 +745,8 @@ function initSelection() {
     scroller.addEventListener('pointerup', end);
     scroller.addEventListener('pointercancel', end);
     scroller.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && calloutAnchor && !drawing) { clearCalloutAnchor(); return; }
+        // Esc drops the callout's spot, and its box while it is dragged.
+        if (e.key === 'Escape' && calloutAnchor) { e.preventDefault(); cancelDrawing(); clearCalloutAnchor(); return; }
         if (!drawing || !polyTools.has(tool)) return;
         if (e.key === 'Enter') { e.preventDefault(); finishDrawing(); }
         else if (e.key === 'Escape') { e.preventDefault(); cancelDrawing(); }

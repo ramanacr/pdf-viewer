@@ -412,7 +412,10 @@ public static class PdfAnnotationXfdf
             if (Numbers(e["callout"]) is { Length: 4 or 6 } cl) a.CalloutLine = cl;
             if (e["head"] is { } head && Ending(head) is var ending && ending != "None") a.LineEndings = new[] { ending };
             if (IsIntentName(e["intent"])) a.Intent = e["intent"];
-            if (Numbers(e["fringe"]) is { Length: 4 } fringe && fringe.All(v => v >= 0)) a.RectDifferences = fringe;
+            // fringe is /RD in the order of /Rect: left, bottom, right, top insets (as Acrobat writes it).
+            if (Numbers(e["fringe"]) is { Length: 4 } fringe && fringe.All(v => v >= 0)
+                && fringe[0] + fringe[2] < a.Rect.Width && fringe[1] + fringe[3] < a.Rect.Height) a.RectDifferences = fringe;
+            if (a.CalloutLine is { } line) HoldCallout(a, line);
         }
         if (subtype == "Ink")
         {
@@ -448,6 +451,29 @@ public static class PdfAnnotationXfdf
     /// <summary>A dash pattern: 1 to <see cref="MaxDashes"/> numbers, none negative, not all zero; else the default [3].</summary>
     internal static double[] Dashes(string? text) =>
         Numbers(text) is { Length: > 0 and <= MaxDashes } dashes && dashes.All(d => d >= 0) && dashes.Sum() > 0 ? dashes : new[] { 3.0 };
+
+    /// <summary>
+    /// A callout whose rect does not hold its line (another writer's XFDF): rect grows to hold the
+    /// line's points, and /RD grows by as much on each side, so the text box stays where rect less
+    /// fringe put it and the appearance (drawn inside /Rect) shows the whole line.
+    /// </summary>
+    private static void HoldCallout(PdfAnnotation a, double[] line)
+    {
+        var r = a.Rect;
+        double left = r.Left, bottom = r.Top, right = r.Right, top = r.Bottom; // PdfRect's Top is its low y
+        double x1 = left, y1 = bottom, x2 = right, y2 = top;
+        for (int i = 0; i + 1 < line.Length; i += 2)
+        {
+            x1 = Math.Min(x1, line[i]);
+            x2 = Math.Max(x2, line[i]);
+            y1 = Math.Min(y1, line[i + 1]);
+            y2 = Math.Max(y2, line[i + 1]);
+        }
+        if (x1 == left && y1 == bottom && x2 == right && y2 == top) return;
+        var rd = a.RectDifferences ?? new double[4];
+        a.RectDifferences = new[] { rd[0] + left - x1, rd[1] + bottom - y1, rd[2] + x2 - right, rd[3] + y2 - top };
+        a.Rect = new PdfRect(x1, y1, x2 - x1, y2 - y1);
+    }
 
     /// <summary>An /IT name this class writes and reads: 1 to 64 ASCII letters (FreeTextCallout, FreeTextTypewriter).</summary>
     private static bool IsIntentName(string? name) => name is { Length: > 0 and <= 64 } && name.All(char.IsAsciiLetter);
