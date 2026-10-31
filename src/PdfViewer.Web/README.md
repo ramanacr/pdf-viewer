@@ -36,6 +36,7 @@ Status: a demo, and the viewer of the [web embed SDK](#embed-sdk) (`wwwroot/pdfv
 | Text selection and copy | Drag with the mouse or a pen, double-click for a word, `Ctrl`+`A` for the page, `Ctrl`+`C` to copy (when the document allows it). One page at a time, with the engine's text layout (`ViewerTextLayout`, shared with the Android app). |
 | Annotations | Highlight, underline, strike-through, note, free text, callouts, ink, rectangle, ellipse, line, arrow, polygon, connected lines and stamps; select, move, delete, undo and redo; a comments panel with replies and review statuses. Shapes have a fill, a dash (solid, dashed, dotted) and, for lines, the ten line endings. A callout (the **Callout** tool: click the spot it points to, then click or drag its text box, then type) is free text with `/IT /FreeTextCallout`, a line with a knee and an open arrow (`/CL`, `/LE`) and `/RD` for its text box, as Acrobat writes one. Dragging its box keeps the spot it points to; the selected callout has a handle at that spot to drag it, each one undo step. The edits, their rules and undo live in `ViewerEditSession`, the editing core the Android app shares. Written by the engine's `PdfAnnotationEditor` as an incremental update with appearance streams (`ViewerDocument.ApplyEditsAsync`). |
 | Custom stamps | The stamp list's **Custom stamp…**: a PNG or JPEG picture, or a page of a PDF (chosen with a small preview), read in the browser and never uploaded; then click where it goes (2 inches across) or drag its box (it keeps its shape). Written as a `/Stamp` named `Custom` whose appearance draws the picture or page as a form XObject (`ViewerCustomStamp` in the shared editing core, the engine's `PdfStampForms`, as the desktop app writes one): a page stays vector content, a JPEG is embedded as it is. Untrusted input has caps (10 MB and 12 million pixels for a picture, decoded at most 4 million pixels; 20 MB for a PDF, 12 MB for the stamp made), a damaged picture or an encrypted PDF is refused, a JPEG loses its metadata, a PDF page keeps only its content and resources, and nothing copied carries an action, a script or an external link. A stamp placed many times is one copy in the file. **Keep it in this browser's stamp library** saves it in IndexedDB (a small record per stamp, listed without reading the bytes; at most 30 stamps and 64 MB, checked in the write's own transaction; every call guarded, so a private window simply has no library); saved stamps are in the stamp list, and the dialog deletes them. An embedded viewer keeps none (its origin is shared by every host page). The embed SDK has `addCustomStamp`. |
+| Touch and pen | Pointer Events for the mouse, a pen and a finger alike; a pen works as a mouse (no pressure). With the **Select** tool a finger scrolls and pinch-zooms the pages, taps links, taps an annotation to select it (a second tap on a selected note or text box edits its text, as a second click does), and drags the selected annotation or a callout's anchor. With any other tool the page takes one finger as a mouse button (`touch-action: none`, no long-press menu): draw ink, drag shapes, lines, arrows, text boxes, callouts and custom stamps, tap notes and stamps, drag over text to highlight, underline or strike out. Polygons and polylines: tap each point; a tap on the first or the last point (both marked) ends the shape, so a double-tap on the last point ends it too; a polygon needs 3 points, a polyline 2. A second finger drops what the first one began (a stroke, a shape, a move, a text selection; points of a polygon and a callout's spot stay) and two fingers scroll the pages. A `pointercancel` drops the stroke or shape in progress with nothing written. On a coarse pointer (`(pointer: coarse)`, or after a finger press) annotations and a callout's anchor are 44 × 44 CSS px targets; they look the same. The pure rules (taps, double-click, end points, the finger tracker) are in `wwwroot/js/pointer-gesture.js`. |
 | Forms | Text, check box, radio, combo and list fields filled over the page; values, formats and calculations by the engine (`PdfFormService.Fill`), without running document JavaScript. |
 | Download | The document with its annotations and form data as a Blob download (`Ctrl`+`S`); embedded, the bytes as given unless `downloadWithAnnotations`. |
 | Print | Pages rendered at 150 dpi and printed as images through a hidden iframe. Up to 500 pages. |
@@ -247,7 +248,13 @@ path can make the native link exceed the 260-character path limit; a short path 
    are unmeasured.
 6. **Single thread.** A long page blocks the tab while it is interpreted. Pages are drawn one at
    a time, and the UI yields between them.
-7. **Not in the demo:** annotations, forms, tiled rendering beyond 4096 × 4096 pixels. Print
+7. **Touch.** While a tool other than **Select** is on, two fingers scroll the pages but do not
+   zoom (use the zoom list, or the **Select** tool); a page embedded in line (the host page
+   scrolls) is not scrolled by two fingers. There is no long-press and no **Esc** on a phone: a
+   polygon being drawn is dropped by choosing another tool. The pen's pressure and tilt are not
+   used. The touch paths were checked in a desktop browser with emulated touch only, not on a
+   real phone or tablet (iOS Safari, Android Chrome) or with a real pen.
+8. **Not in the demo:** annotations, forms, tiled rendering beyond 4096 × 4096 pixels. Print
    sends 150 dpi page images, not the PDF, and every sheet has the first page's size.
 
 ### Fonts
@@ -426,6 +433,10 @@ longer, and the first page of a session pays the interpreter's warm-up.
   is not changed, measurements keep their style, undo, the API's `dashPattern`).
 - `tests/PdfEngine.Vector.Tests`: `RangeLoadingTests` (the chunk cache, the planner, opening and
   drawing by ranges, object streams, encryption, the fallback for a damaged cross-reference table).
+- `tests/sdk/pointer-gesture.test.mjs` (`node --test`): the touch and pointer rules of
+  `pointer-gesture.js` (which tools take a finger, a tap's slop, the mouse double-click, the
+  first and last point a finger ends a polygon or polyline on, a second finger as a gesture).
+  The browser side (touch-action, pointer capture, `pointercancel`) has no automated test.
 - `tests/sdk/embed-range.test.mjs` (`node --test`): the SDK script's range sources (URL and
   `linearizationInfo`) and its checks of the viewer's range requests.
 - CI: `web-demo.yml` publishes the app on every pull request and checks that the SDK scripts parse.

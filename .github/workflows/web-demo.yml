@@ -62,7 +62,7 @@ jobs:
         node --check publish/web/wwwroot/pdfviewer-embed.mjs
         node --check docs/sdk/examples/large-pdf.js
         node --check eng/webdemo/serve.mjs
-        node --test tests/sdk/embed-range.test.mjs tests/sdk/embed-fonts.test.mjs tests/sdk/font-base.test.mjs
+        node --test tests/sdk/embed-range.test.mjs tests/sdk/embed-fonts.test.mjs tests/sdk/font-base.test.mjs tests/sdk/pointer-gesture.test.mjs
 
     # Noto fonts for the scripts that the committed Liberation fonts lack (Arabic, Hebrew, Indic,
     # Sinhala, Thai, symbols, math, CJK). They are not committed: eng/webdemo/noto_fonts.py downloads
