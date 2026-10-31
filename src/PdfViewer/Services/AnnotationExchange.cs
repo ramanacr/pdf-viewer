@@ -50,7 +50,11 @@ public static class AnnotationExchange
         writer.WriteLine("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\" xml:space=\"preserve\">");
         writer.WriteLine("  <annots>");
 
-        foreach (var a in annotations)
+        var list = annotations.ToList();
+        // Comments that are answered carry a name, so their replies' inreplyto can refer to it (XFDF 3.0).
+        var answered = list.Where(a => a.InReplyToId != null).Select(a => a.InReplyToId!.Value).ToHashSet();
+
+        foreach (var a in list)
         {
             string dateStr = a.CreationDate.ToString("yyyyMMddHHmmss");
             string annotTag = a.Type switch
@@ -98,6 +102,13 @@ public static class AnnotationExchange
             string colorAttr = ToXfdfRgbHex(a.ColorHex);
 
             writer.Write($"    <{annotTag} page=\"{a.PageNumber - 1}\" rect=\"{rect}\" color=\"{colorAttr}\" title=\"{System.Security.SecurityElement.Escape(a.Author ?? string.Empty)}\" date=\"D:{dateStr}\"");
+            if (a.IsReply || answered.Contains(a.Id)) writer.Write($" name=\"{a.Id:D}\"");
+            if (a.InReplyToId is { } parent)
+            {
+                writer.Write($" inreplyto=\"{parent:D}\" replyType=\"reply\"");
+                if (a.IsStateChange)
+                    writer.Write($" state=\"{System.Security.SecurityElement.Escape(a.State ?? string.Empty)}\" statemodel=\"{System.Security.SecurityElement.Escape(a.StateModel ?? string.Empty)}\"");
+            }
 
             // Markup annotations are drawn from quadpoints; without coords most viewers
             // render nothing for highlight/underline/strikeout.

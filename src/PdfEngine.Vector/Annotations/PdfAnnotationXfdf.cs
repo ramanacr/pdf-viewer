@@ -111,7 +111,8 @@ public static class PdfAnnotationXfdf
             if (!string.IsNullOrEmpty(parentName))
             {
                 e.Add(new XAttribute("inreplyto", parentName));
-                if (a.ReplyType == "Group") e.Add(new XAttribute("replyType", "group"));
+                // XFDF (ISO 19444-1) replyType: "reply" (/RT /R, or none) or "group"; a reader takes a missing one as a reply.
+                e.Add(new XAttribute("replyType", a.ReplyType == "Group" ? "group" : "reply"));
             }
             if (a.Subtype == "FreeText" && a.Justification is 1 or 2) e.Add(new XAttribute("justification", a.Justification == 1 ? "centered" : "right"));
             if (!string.IsNullOrEmpty(a.Contents)) e.Add(new XElement(Ns + "contents", a.Contents));
