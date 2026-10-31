@@ -233,12 +233,21 @@ public interface IPdfDocumentService : IDisposable
     bool IsDrawnAsLoaded(AnnotationModel annotation) => annotation.HasOwnAppearance;
 
     /// <summary>
-    /// Saves the document with annotations applied.
+    /// Saving in <paramref name="mode"/> would break the document's signatures: it is signed and
+    /// the save cannot be an incremental update (a repaired file, or a flattened save).
+    /// </summary>
+    bool SaveWouldInvalidateSignatures(AnnotationSaveMode mode) => false;
+
+    /// <summary>
+    /// Saves the document with annotations applied. A save that would break the document's
+    /// signatures throws <see cref="SignedSaveException"/> unless
+    /// <paramref name="allowInvalidatingSignatures"/> says the user agreed to it.
     /// </summary>
     Task SaveAnnotatedDocumentAsync(
         string targetPath,
         AnnotationSaveMode mode,
         IEnumerable<AnnotationModel> annotations,
         string? originalPath = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool allowInvalidatingSignatures = false);
 }

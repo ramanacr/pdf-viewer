@@ -1102,64 +1102,250 @@
                                        VerticalAlignment="Center"
                                        Visibility="{Binding AllAnnotations.Count, Converter={StaticResource InverseBoolToVis}}" />
 
-                            <ListBox ItemsSource="{Binding AllAnnotations}"
-                                     Background="Transparent"
-                                     BorderThickness="0"
-                                     Padding="4"
-                                     MouseDoubleClick="AnnotationItem_MouseDoubleClick">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:AnnotationModel}">
-                                        <Border Padding="8,6"
-                                                BorderThickness="0,0,0,1"
-                                                BorderBrush="{DynamicResource BorderBrush}">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding PageNumber, StringFormat='Page {0}'}"
-                                                                   FontWeight="Bold"
-                                                                   FontSize="11"
-                                                                   Foreground="{DynamicResource AccentBrush}" />
-                                                        <TextBlock Text=" • " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
-                                                        <TextBlock Text="{Binding Type}"
-                                                                   FontWeight="SemiBold"
-                                                                   FontSize="11"
-                                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
-                                                        <Border Width="10" Height="10" CornerRadius="5" Background="{Binding ColorHex, Converter={StaticResource HexToBrushConverter}}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                            <!-- Comment threads (12.5.6.4): each comment with its status and replies, as Acrobat's comment pane lists them. -->
+                            <ScrollViewer x:Name="CommentsPanel"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Focusable="False">
+                                <ScrollViewer.Resources>
+                                    <!-- Small text buttons for a comment's actions: themed, with a visible keyboard focus. -->
+                                    <Style x:Key="CommentActionButton" TargetType="ButtonBase">
+                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderBrush" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                        <Setter Property="Padding" Value="5,1" />
+                                        <Setter Property="Margin" Value="0,0,4,0" />
+                                        <Setter Property="FontSize" Value="11" />
+                                        <Setter Property="Cursor" Value="Hand" />
+                                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ButtonBase">
+                                                    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3" Padding="{TemplateBinding Padding}">
+                                                        <ContentPresenter RecognizesAccessKey="True" VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentLightBrush}" />
+                                                        </Trigger>
+                                                        <Trigger Property="IsKeyboardFocused" Value="True">
+                                                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                        </Trigger>
+                                                        <Trigger Property="IsEnabled" Value="False">
+                                                            <Setter Property="Opacity" Value="0.4" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                    <Style x:Key="CommentCardButton" TargetType="Button">
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderBrush" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                        <Setter Property="Padding" Value="2" />
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Cursor" Value="Hand" />
+                                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3" Padding="{TemplateBinding Padding}">
+                                                        <ContentPresenter HorizontalAlignment="Stretch" />
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentLightBrush}" />
+                                                        </Trigger>
+                                                        <Trigger Property="IsKeyboardFocused" Value="True">
+                                                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                    <Style x:Key="CommentStatusBadge" TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                        <Setter Property="CornerRadius" Value="8" />
+                                        <Setter Property="Padding" Value="6,0" />
+                                        <Setter Property="Margin" Value="6,0,0,0" />
+                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                    </Style>
+                                </ScrollViewer.Resources>
+                                <ItemsControl ItemsSource="{Binding CommentThreads}"
+                                              Padding="4"
+                                              KeyboardNavigation.TabNavigation="Continue"
+                                              AutomationProperties.Name="Comments">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:CommentThreadViewModel}">
+                                            <Border Padding="6,6"
+                                                    BorderThickness="0,0,0,1"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    AutomationProperties.Name="{Binding AccessibleName}">
+                                                <StackPanel>
+                                                    <!-- The comment: Enter or a click goes to it on the page, a double-click edits it. -->
+                                                    <Button Style="{StaticResource CommentCardButton}"
+                                                            Tag="{Binding Root}"
+                                                            Click="CommentThread_Click"
+                                                            MouseDoubleClick="CommentThread_MouseDoubleClick"
+                                                            AutomationProperties.Name="{Binding AccessibleName}"
+                                                            ToolTip="Go to the comment on the page (double-click to edit it)">
+                                                        <StackPanel>
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding Root.PageNumber, StringFormat='Page {0}'}"
+                                                                           FontWeight="Bold"
+                                                                           FontSize="11"
+                                                                           Foreground="{DynamicResource AccentBrush}" />
+                                                                <TextBlock Text=" • " Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" />
+                                                                <TextBlock Text="{Binding Root.Type}"
+                                                                           FontWeight="SemiBold"
+                                                                           FontSize="11"
+                                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                                <Border Width="10" Height="10" CornerRadius="5" Background="{Binding Root.ColorHex, Converter={StaticResource HexToBrushConverter}}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                                                <Border Style="{StaticResource CommentStatusBadge}"
+                                                                        ToolTip="{Binding ReviewHistory}"
+                                                                        Visibility="{Binding ReviewState, Converter={StaticResource BoolToVis}}">
+                                                                    <TextBlock Text="{Binding ReviewState}" FontSize="10" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                                </Border>
+                                                            </StackPanel>
+                                                            <TextBlock FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis">
+                                                                <Run Text="{Binding Root.Author, Mode=OneWay}" FontWeight="SemiBold" />
+                                                                <Run Text="  " />
+                                                                <Run Text="{Binding Root.CreationDate, Mode=OneWay, StringFormat='{}{0:g}'}" />
+                                                            </TextBlock>
+                                                            <TextBlock Text="{Binding Root.Contents, FallbackValue='(No comment text)'}"
+                                                                       TextWrapping="Wrap"
+                                                                       FontSize="11"
+                                                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                       Margin="0,2,0,0" />
+                                                        </StackPanel>
+                                                    </Button>
+
+                                                    <!-- The comment's actions. -->
+                                                    <WrapPanel Margin="0,4,0,0">
+                                                        <Button x:Name="ReplyButton" Style="{StaticResource CommentActionButton}" Content="Reply"
+                                                                Command="{Binding StartReplyCommand}" ToolTip="Reply to this comment" />
+                                                        <Button Style="{StaticResource CommentActionButton}" Content="Status ▾"
+                                                                Click="CommentStatusButton_Click"
+                                                                AutomationProperties.Name="Set status"
+                                                                ToolTip="Set the review status (Accepted, Rejected, Cancelled, Completed, None)">
+                                                            <Button.ContextMenu>
+                                                                <ContextMenu>
+                                                                    <MenuItem Header="_Accepted" Command="{Binding SetStatusCommand}" CommandParameter="Accepted"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Check}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                                                                    <MenuItem Header="_Rejected" Command="{Binding SetStatusCommand}" CommandParameter="Rejected"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Close}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                                                                    <MenuItem Header="_Cancelled" Command="{Binding SetStatusCommand}" CommandParameter="Cancelled"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Deselect}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                                                                    <MenuItem Header="C_ompleted" Command="{Binding SetStatusCommand}" CommandParameter="Completed"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.Check}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                                                                    <Separator />
+                                                                    <MenuItem Header="_None" Command="{Binding SetStatusCommand}" CommandParameter="None"><MenuItem.Icon><TextBlock Text="{x:Static themes:IconGlyphs.ClearMarks}" Style="{StaticResource MenuGlyph}" /></MenuItem.Icon></MenuItem>
+                                                                </ContextMenu>
+                                                            </Button.ContextMenu>
+                                                        </Button>
+                                                        <Button Style="{StaticResource CommentActionButton}" Content="Edit"
+                                                                Click="EditAnnotationButton_Click" Tag="{Binding Root}" ToolTip="Edit the comment" />
+                                                        <Button Style="{StaticResource CommentActionButton}" Content="Delete"
+                                                                Command="{Binding DeleteCommand}" ToolTip="Delete the comment and its replies" />
+                                                        <ToggleButton Style="{StaticResource CommentActionButton}"
+                                                                      Content="{Binding ToggleText}"
+                                                                      IsChecked="{Binding IsExpanded}"
+                                                                      AutomationProperties.Name="{Binding ReplyCountText}"
+                                                                      AutomationProperties.HelpText="Shows or hides the replies"
+                                                                      Visibility="{Binding HasReplies, Converter={StaticResource BoolToVis}}" />
+                                                    </WrapPanel>
+
+                                                    <!-- The replies, each under the one it answers. -->
+                                                    <ItemsControl ItemsSource="{Binding Replies}"
+                                                                  Margin="8,4,0,0"
+                                                                  KeyboardNavigation.TabNavigation="Continue"
+                                                                  AutomationProperties.Name="{Binding ReplyCountText}"
+                                                                  Visibility="{Binding ShowsReplies, Converter={StaticResource BoolToVis}}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate DataType="{x:Type vm:CommentReplyViewModel}">
+                                                                <Border Margin="{Binding Indent}" Padding="8,3,0,3"
+                                                                        BorderThickness="2,0,0,0" BorderBrush="{DynamicResource BorderBrush}"
+                                                                        AutomationProperties.Name="{Binding AccessibleName}">
+                                                                    <StackPanel>
+                                                                        <StackPanel Orientation="Horizontal">
+                                                                            <TextBlock FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis">
+                                                                                <Run Text="{Binding Model.Author, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                                                <Run Text="  " />
+                                                                                <Run Text="{Binding Model.CreationDate, Mode=OneWay, StringFormat='{}{0:g}'}" />
+                                                                            </TextBlock>
+                                                                            <Border Style="{StaticResource CommentStatusBadge}"
+                                                                                    Visibility="{Binding ReviewState, Converter={StaticResource BoolToVis}}">
+                                                                                <TextBlock Text="{Binding ReviewState}" FontSize="10" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                                            </Border>
+                                                                        </StackPanel>
+                                                                        <TextBlock Text="{Binding Model.Contents}" TextWrapping="Wrap" FontSize="11" Margin="0,1,0,0"
+                                                                                   Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                                   Visibility="{Binding IsEditing, Converter={StaticResource InverseBoolToVis}}" />
+                                                                        <!-- Editing the user's own reply: Enter or Ctrl+Enter keeps it, Shift+Enter starts a new line, Esc leaves it. -->
+                                                                        <TextBox Text="{Binding EditText, UpdateSourceTrigger=PropertyChanged}"
+                                                                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="40" MaxHeight="160"
+                                                                                 VerticalScrollBarVisibility="Auto" Margin="0,2,0,0" FontSize="11"
+                                                                                 AutomationProperties.Name="Edit your reply"
+                                                                                 AutomationProperties.HelpText="Enter saves, Shift+Enter starts a new line, Esc cancels"
+                                                                                 Tag="{Binding ElementName=ReplyEditButton}"
+                                                                                 IsVisibleChanged="CommentTextBox_IsVisibleChanged"
+                                                                                 Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}">
+                                                                            <TextBox.InputBindings>
+                                                                                <KeyBinding Key="Enter" Command="{Binding SaveEditCommand}" />
+                                                                                <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding SaveEditCommand}" />
+                                                                                <KeyBinding Key="Escape" Command="{Binding CancelEditCommand}" />
+                                                                            </TextBox.InputBindings>
+                                                                        </TextBox>
+                                                                        <WrapPanel Margin="0,2,0,0" Visibility="{Binding IsOwn, Converter={StaticResource BoolToVis}}">
+                                                                            <Button x:Name="ReplyEditButton" Style="{StaticResource CommentActionButton}" Content="Edit"
+                                                                                    Command="{Binding StartEditCommand}" ToolTip="Edit your reply"
+                                                                                    Visibility="{Binding IsEditing, Converter={StaticResource InverseBoolToVis}}" />
+                                                                            <Button Style="{StaticResource CommentActionButton}" Content="Delete"
+                                                                                    Command="{Binding DeleteCommand}" ToolTip="Delete your reply"
+                                                                                    Visibility="{Binding IsEditing, Converter={StaticResource InverseBoolToVis}}" />
+                                                                            <Button Style="{StaticResource CommentActionButton}" Content="Save"
+                                                                                    Command="{Binding SaveEditCommand}" ToolTip="Keep the new text (Enter)"
+                                                                                    Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}" />
+                                                                            <Button Style="{StaticResource CommentActionButton}" Content="Cancel"
+                                                                                    Command="{Binding CancelEditCommand}" ToolTip="Leave the reply as it was (Esc)"
+                                                                                    Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}" />
+                                                                        </WrapPanel>
+                                                                    </StackPanel>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+
+                                                    <!-- The reply box: Enter or Ctrl+Enter posts, Shift+Enter starts a new line, Esc closes it. -->
+                                                    <StackPanel Margin="8,4,0,0" Visibility="{Binding IsReplying, Converter={StaticResource BoolToVis}}">
+                                                        <TextBox Text="{Binding ReplyText, UpdateSourceTrigger=PropertyChanged}"
+                                                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="40" MaxHeight="160"
+                                                                 VerticalScrollBarVisibility="Auto" FontSize="11"
+                                                                 AutomationProperties.Name="{Binding ReplyBoxName}"
+                                                                 AutomationProperties.HelpText="Enter posts the reply, Shift+Enter starts a new line, Esc cancels"
+                                                                 Tag="{Binding ElementName=ReplyButton}"
+                                                                 IsVisibleChanged="CommentTextBox_IsVisibleChanged">
+                                                            <TextBox.InputBindings>
+                                                                <KeyBinding Key="Enter" Command="{Binding PostReplyCommand}" />
+                                                                <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding PostReplyCommand}" />
+                                                                <KeyBinding Key="Escape" Command="{Binding CancelReplyCommand}" />
+                                                            </TextBox.InputBindings>
+                                                        </TextBox>
+                                                        <WrapPanel Margin="0,3,0,0">
+                                                            <Button Style="{StaticResource CommentActionButton}" Content="Post"
+                                                                    Command="{Binding PostReplyCommand}" ToolTip="Post the reply (Enter)" />
+                                                            <Button Style="{StaticResource CommentActionButton}" Content="Cancel"
+                                                                    Command="{Binding CancelReplyCommand}" ToolTip="Close without replying (Esc)" />
+                                                        </WrapPanel>
                                                     </StackPanel>
-                                                    <TextBlock Text="{Binding Contents, FallbackValue='(No comment text)'}"
-                                                               TextWrapping="Wrap"
-                                                               FontSize="11"
-                                                               Foreground="{DynamicResource TextSecondaryBrush}"
-                                                               Margin="0,2,0,0" />
-                                                    <TextBlock Text="{Binding CreationDate, StringFormat='{}{0:g}'}"
-                                                               FontSize="10"
-                                                               Foreground="{DynamicResource TextSecondaryBrush}"
-                                                               Margin="0,2,0,0" />
                                                 </StackPanel>
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <Button Style="{StaticResource ToolbarIconButton}"
-                                                            Click="EditAnnotationButton_Click"
-                                                            Tag="{Binding}"
-                                                            ToolTip="Edit Comment"
-                                                            Margin="0,0,4,0">
-                                                        <TextBlock Text="{x:Static themes:IconGlyphs.EditContent}" Style="{StaticResource SmallGlyph}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                    </Button>
-                                                    <Button Style="{StaticResource ToolbarIconButton}"
-                                                            Command="{Binding DataContext.DeleteAnnotationCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                            CommandParameter="{Binding}"
-                                                            ToolTip="Delete Annotation">
-                                                        <TextBlock Text="{x:Static themes:IconGlyphs.Delete}" Style="{StaticResource SmallGlyph}" Foreground="#D83B01" />
-                                                    </Button>
-                                                </StackPanel>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </Grid>
                     </TabItem>
 
@@ -1842,7 +2028,8 @@
                                                     MouseDown="PageCanvas_MouseDown"
                                                     MouseMove="PageCanvas_MouseMove"
                                                     MouseUp="PageCanvas_MouseUp"
-                                                    MouseLeave="PageCanvas_MouseLeave">
+                                                    MouseLeave="PageCanvas_MouseLeave"
+                                                    ContextMenuOpening="PageCanvas_ContextMenuOpening">
                                                 <Canvas.ContextMenu>
                                                     <ContextMenu>
                                                         <MenuItem Header="_Copy Text" Command="{Binding Owner.CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding Owner.HasTextSelection}">
@@ -2289,7 +2476,8 @@
                                         MouseDown="PageCanvas_MouseDown"
                                         MouseMove="PageCanvas_MouseMove"
                                         MouseUp="PageCanvas_MouseUp"
-                                        MouseLeave="PageCanvas_MouseLeave">
+                                        MouseLeave="PageCanvas_MouseLeave"
+                                                    ContextMenuOpening="PageCanvas_ContextMenuOpening">
                                     <Canvas.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="_Copy Text" Command="{Binding CopySelectedTextCommand}" InputGestureText="Ctrl+C" IsEnabled="{Binding HasTextSelection}">

@@ -363,6 +363,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         TextSelection = new TextSelectionController(() => Pages, UpdateSelectionFromPages);
         Session = new DocumentSession(SecurityPolicy);
         CommandHistory = new CommandHistory(MaxUndo, FeatureGate);
+        AllAnnotations.CollectionChanged += (_, _) => OnAnnotationsChangedForThreads();
 
         _docService = PdfDocumentServiceFactory.CreateService(SecurityPolicy);
         // Bounded by bytes, not just by entry count: a rendered page runs from a few megabytes
@@ -550,9 +551,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             // Load Existing Document Annotations
             var existingAnnots = _docService.LoadExistingAnnotations();
-            foreach (var a in existingAnnots)
+            using (DeferCommentThreads())
             {
-                AllAnnotations.Add(a);
+                foreach (var a in existingAnnots)
+                {
+                    AllAnnotations.Add(a);
+                }
             }
 
             // A refusal reported for a previous document must not suppress the alert for this one.
@@ -573,7 +577,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 // Attach annotations on this page
                 foreach (var a in existingAnnots)
                 {
-                    if (a.PageNumber == i)
+                    if (a.PageNumber == i && !a.IsReply) // replies are listed in the comments panel, not drawn
                     {
                         pageVm.AnnotationsOnPage.Add(a);
                     }
@@ -1915,9 +1919,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void DeleteAnnotation(AnnotationModel annot)
     {
         if (annot == null || !AllAnnotations.Contains(annot)) return;
-        RecordAnnotationChange($"Delete {AnnotationTypeName(annot.Type)}",
-            new() { new(annot, AnnotationState.Of(annot), null, AllAnnotations.IndexOf(annot), PageIndexOf(annot)) });
-        StatusText = $"Removed annotation from page {annot.PageNumber}";
+        // Its replies (and statuses) go with it, as in Acrobat: one step, which Undo puts back whole.
+        var replies = RepliesOf(annot);
+        int said = replies.Count(r => !r.IsStateChange);
+        if (said > 0 && ConfirmFunc != null && !ConfirmFunc(
+                said == 1 ? "Delete this comment and its reply?" : $"Delete this comment and its {said} replies?", "Delete Comment"))
+            return;
+        var changes = new List<AnnotationChange> { new(annot, AnnotationState.Of(annot), null, AllAnnotations.IndexOf(annot), PageIndexOf(annot)) };
+        changes.AddRange(replies.Select(r => new AnnotationChange(r, AnnotationState.Of(r), null, AllAnnotations.IndexOf(r), PageIndexOf(r))));
+        string name = annot.IsStateChange ? "Status" : annot.IsReply ? "Reply" : AnnotationTypeName(annot.Type);
+        RecordAnnotationChange(said > 0 ? $"Delete {name} and Replies" : $"Delete {name}", changes);
+        StatusText = annot.IsReply ? "Deleted the reply." : $"Removed annotation from page {annot.PageNumber}";
     }
 
     /// <summary>
@@ -2242,6 +2254,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var result = ShowSaveAnnotatedDialogFunc(Metadata);
             if (result.Confirmed && !string.IsNullOrWhiteSpace(result.TargetPath))
             {
+                // A signed document that cannot take an incremental update (or is flattened) is
+                // written whole: the copy keeps no valid signature. Only with the user's yes.
+                bool breaksSignatures = _docService.SaveWouldInvalidateSignatures(result.Mode);
+                if (breaksSignatures && !Confirm(
+                        "This document is signed, and this copy cannot be saved in a way that keeps the signatures: " +
+                        (result.Mode == AnnotationSaveMode.Flattened ? "flattening rewrites the whole file" : "its file structure had to be repaired") +
+                        ".\n\nThe signatures in the copy will no longer be valid. The original file is not changed.\n\nSave the copy anyway?",
+                        "Signatures Will Be Invalid"))
+                {
+                    StatusText = "Save As cancelled: the signatures would no longer be valid.";
+                    return;
+                }
                 try
                 {
                     StatusText = "Saving annotated document...";
@@ -2249,7 +2273,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         result.TargetPath,
                         result.Mode,
                         AllAnnotations,
-                        Metadata.FilePath);
+                        Metadata.FilePath,
+                        allowInvalidatingSignatures: breaksSignatures);
 
                     // Only an embedded save captures the annotations in the document itself;
                     // an XFDF export leaves the PDF as it was, so the work is still unsaved.
