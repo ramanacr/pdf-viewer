@@ -326,6 +326,96 @@ public class PageLinkViewerTests : IDisposable
         Assert.Equal(2, vm.CurrentPageNumber);
     }
 
+    private async Task<MainViewModel> OpenAnnotatedAndLinked()
+    {
+        string path = Path.Combine(_dir, $"tab_{Guid.NewGuid():N}.pdf");
+        File.WriteAllBytes(path, Raw(new[]
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 300 400] >>",
+            "<< /Type /Page /Parent 2 0 R /Annots [5 0 R 6 0 R 7 0 R] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+            "<< /Type /Annot /Subtype /Square /Rect [150 150 250 250] /C [1 0 0] /Contents (A box) >>",
+            "<< /Type /Annot /Subtype /Link /Rect [10 350 110 370] /Dest [4 0 R /Fit] >>",
+            "<< /Type /Annot /Subtype /Link /Rect [10 320 110 340] /A << /S /Named /N /LastPage >> >>",
+        }));
+        var vm = new MainViewModel { LinkOpener = new FakeOpener() };
+        await vm.LoadDocumentAsync(path);
+        return vm;
+    }
+
+    [Fact]
+    public async Task Tab_GoesThroughThePagesAnnotationsThenItsLinks()
+    {
+        using var vm = await OpenAnnotatedAndLinked();
+        var links = vm.GetPageLinks(1);
+        Assert.Equal(2, links.Count);
+        var box = Assert.Single(vm.Pages[0].AnnotationsOnPage);
+
+        Assert.True(vm.MoveKeyboardFocus());
+        Assert.Same(box, vm.SelectedAnnotation);
+        Assert.Null(vm.FocusedLink);
+
+        Assert.True(vm.MoveKeyboardFocus());
+        Assert.Null(vm.SelectedAnnotation);
+        Assert.Same(links[0], vm.FocusedLink);
+
+        Assert.True(vm.MoveKeyboardFocus());
+        Assert.Same(links[1], vm.FocusedLink);
+
+        // Past the last one: focus moves on through the window.
+        Assert.False(vm.MoveKeyboardFocus());
+        Assert.Null(vm.FocusedLink);
+        Assert.Null(vm.SelectedAnnotation);
+    }
+
+    [Fact]
+    public async Task ShiftTab_GoesBackFromTheLastLinkToTheAnnotations()
+    {
+        using var vm = await OpenAnnotatedAndLinked();
+        var links = vm.GetPageLinks(1);
+        var box = vm.Pages[0].AnnotationsOnPage[0];
+
+        Assert.True(vm.MoveKeyboardFocus(backwards: true));
+        Assert.Same(links[1], vm.FocusedLink);
+        Assert.True(vm.MoveKeyboardFocus(backwards: true));
+        Assert.Same(links[0], vm.FocusedLink);
+        Assert.True(vm.MoveKeyboardFocus(backwards: true));
+        Assert.Same(box, vm.SelectedAnnotation);
+        Assert.Null(vm.FocusedLink);
+        Assert.False(vm.MoveKeyboardFocus(backwards: true));
+        Assert.Null(vm.SelectedAnnotation);
+    }
+
+    [Fact]
+    public async Task EnterOnTheFocusedLinkFollowsIt()
+    {
+        using var vm = await OpenAnnotatedAndLinked();
+        vm.MoveKeyboardFocus();
+        vm.MoveKeyboardFocus(); // the first link: page 2
+        Assert.True(vm.ActivateFocusedLink());
+        Assert.Equal(2, vm.CurrentPageNumber);
+        Assert.Null(vm.FocusedLink);
+        Assert.True(vm.CanGoBack);
+        Assert.False(vm.ActivateFocusedLink()); // nothing has the keyboard now
+    }
+
+    [Fact]
+    public async Task WithAToolOn_TabSkipsLinksAndEnterDoesNotFollow()
+    {
+        using var vm = await OpenAnnotatedAndLinked();
+        var links = vm.GetPageLinks(1);
+        vm.ActiveAnnotationTool = AnnotationType.Ink;
+
+        Assert.True(vm.MoveKeyboardFocus());
+        Assert.NotNull(vm.SelectedAnnotation);
+        Assert.False(vm.MoveKeyboardFocus()); // no links in the cycle while a tool is on
+
+        vm.FocusedLink = links[1];
+        Assert.False(vm.ActivateFocusedLink());
+        Assert.Equal(1, vm.CurrentPageNumber);
+    }
+
     [Fact]
     public async Task WebLink_TheDialogShowsAndTheOpenerOpensTheSameNormalizedUri()
     {

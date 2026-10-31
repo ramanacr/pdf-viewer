@@ -45,6 +45,79 @@ public partial class MainViewModel
         IsDocumentLoaded && ActiveAnnotationTool == null && !IsMeasuring && !IsPlacingStamp
         && !IsPlacingSignature && !IsMarkingRedaction && !IsEditingContent;
 
+    private PageLink? _focusedLink;
+
+    /// <summary>
+    /// The link that has the keyboard (Tab reaches the page's annotations, then its links); Enter
+    /// or Space follows it. Null when no link has it.
+    /// </summary>
+    public PageLink? FocusedLink
+    {
+        get => _focusedLink;
+        set
+        {
+            if (ReferenceEquals(_focusedLink, value)) return;
+            _focusedLink = value;
+            OnPropertyChanged(nameof(FocusedLink));
+        }
+    }
+
+    /// <summary>
+    /// Tab (or Shift+Tab with <paramref name="backwards"/>) on a page: its annotations first, then
+    /// its links, in /Annots order. Starts on the page of the selected annotation or focused link,
+    /// else the current page. False past either end (focus then moves on through the window),
+    /// with nothing selected or focused. Links take part only while they can be followed.
+    /// </summary>
+    public bool MoveKeyboardFocus(bool backwards = false)
+    {
+        int page = SelectedAnnotation?.PageNumber ?? FocusedLink?.PageNumber ?? CurrentPageNumber;
+        if (page < 1 || page > Pages.Count)
+        {
+            FocusedLink = null;
+            SelectedAnnotation = null;
+            return false;
+        }
+        var annotations = Pages[page - 1].AnnotationsOnPage;
+        IReadOnlyList<PageLink> links = CanFollowLinks ? GetPageLinks(page) : Array.Empty<PageLink>();
+        int count = annotations.Count + links.Count;
+        int at = SelectedAnnotation != null ? annotations.IndexOf(SelectedAnnotation)
+            : FocusedLink != null ? FindLink(links, FocusedLink) is int i and >= 0 ? annotations.Count + i : -1
+            : -1;
+        int next = at < 0 ? (backwards ? count - 1 : 0) : at + (backwards ? -1 : 1);
+        if (count == 0 || next < 0 || next >= count)
+        {
+            FocusedLink = null;
+            SelectedAnnotation = null;
+            return false;
+        }
+        if (next < annotations.Count)
+        {
+            FocusedLink = null;
+            SelectedAnnotation = annotations[next];
+        }
+        else
+        {
+            SelectedAnnotation = null;
+            FocusedLink = links[next - annotations.Count];
+        }
+        return true;
+
+        static int FindLink(IReadOnlyList<PageLink> list, PageLink link)
+        {
+            for (int k = 0; k < list.Count; k++)
+                if (ReferenceEquals(list[k], link) || (list[k].PageNumber == link.PageNumber && list[k].Index == link.Index)) return k;
+            return -1;
+        }
+    }
+
+    /// <summary>Enter or Space on the focused link: follows it (when links can be followed). True when it was acted on.</summary>
+    public bool ActivateFocusedLink()
+    {
+        if (FocusedLink is not { } link || !CanFollowLinks) return false;
+        FocusedLink = null;
+        return ActivateLink(link);
+    }
+
     /// <summary>The topmost link at a point of the page (fractions of the unrotated page from its top-left), or null.</summary>
     public PageLink? LinkAt(int pageNumber, Point normalized)
     {

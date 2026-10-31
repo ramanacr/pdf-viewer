@@ -5,6 +5,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Media;
 using PdfViewer.Models;
 using PdfViewer.ViewModels;
 
@@ -48,6 +49,25 @@ public sealed class PageLinksLayer : Canvas
             Rebuild();
     }
 
+    /// <summary>Gives the hotspot of <paramref name="link"/> under <paramref name="root"/> the keyboard; false when it is not laid out.</summary>
+    public static bool FocusHotspot(DependencyObject root, PageLink link)
+    {
+        var spot = Find(root);
+        return spot != null && spot.Focus();
+
+        LinkHotspot? Find(DependencyObject node)
+        {
+            int n = VisualTreeHelper.GetChildrenCount(node);
+            for (int i = 0; i < n; i++)
+            {
+                var child = VisualTreeHelper.GetChild(node, i);
+                if (child is LinkHotspot hot && hot.Link.PageNumber == link.PageNumber && hot.Link.Index == link.Index && hot.IsVisible) return hot;
+                if (Find(child) is { } found) return found;
+            }
+            return null;
+        }
+    }
+
     private void Rebuild()
     {
         Children.Clear();
@@ -61,7 +81,7 @@ public sealed class PageLinksLayer : Canvas
             var spot = new LinkHotspot(link, owner) { Width = System.Math.Max(1, bounds.Width * w), Height = System.Math.Max(1, bounds.Height * h) };
             AutomationProperties.SetName(spot, link.AccessibleName);
             AutomationProperties.SetHelpText(spot, link.Target.IsInternal || link.Target.Kind == PdfEngine.Vector.Services.PdfLinkTargetKind.WebUri
-                ? "Click the link on the page, or invoke it, to follow it." : link.Description);
+                ? "Press Enter to follow the link." : link.Description);
             SetLeft(spot, bounds.X * w);
             SetTop(spot, bounds.Y * h);
             Children.Add(spot);
@@ -76,11 +96,39 @@ public sealed class PageLinksLayer : Canvas
             Link = link;
             Document = owner;
             IsHitTestVisible = false;
-            Focusable = false;
+            // Tab reaches it (the window's Tab cycle: the page's annotations, then its links).
+            Focusable = true;
+            FocusVisualStyle = null; // drawn below, turned with the page
         }
 
         public PageLink Link { get; }
         public MainViewModel Document { get; }
+
+        private static readonly Pen FocusOuter = Freeze(new Pen(Brushes.White, 3));
+        private static readonly Pen FocusInner = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x1A, 0x73, 0xE8)), 2) { DashStyle = DashStyles.Dash });
+
+        private static Pen Freeze(Pen pen)
+        {
+            pen.Freeze();
+            return pen;
+        }
+
+        protected override void OnIsKeyboardFocusedChanged(DependencyPropertyChangedEventArgs e)
+        {
+            base.OnIsKeyboardFocusedChanged(e);
+            InvalidateVisual();
+            // Focus taken away (a click elsewhere, Tab out of the window): the link no longer has the keyboard.
+            if (!IsKeyboardFocused && ReferenceEquals(Document.FocusedLink, Link)) Document.FocusedLink = null;
+        }
+
+        /// <summary>The focus rectangle: a dashed accent line on a white one, visible on any page.</summary>
+        protected override void OnRender(DrawingContext dc)
+        {
+            if (!IsKeyboardFocused) return;
+            var r = new Rect(-2, -2, ActualWidth + 4, ActualHeight + 4);
+            dc.DrawRectangle(null, FocusOuter, r);
+            dc.DrawRectangle(null, FocusInner, r);
+        }
 
         protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
 
@@ -91,6 +139,7 @@ public sealed class PageLinksLayer : Canvas
             protected override bool IsContentElementCore() => true;
             protected override bool IsControlElementCore() => true;
             protected override List<AutomationPeer>? GetChildrenCore() => null;
+            protected override bool IsKeyboardFocusableCore() => ((LinkHotspot)Owner).Document.CanFollowLinks;
 
             public override object? GetPattern(PatternInterface patternInterface) =>
                 patternInterface == PatternInterface.Invoke ? this : base.GetPattern(patternInterface);

@@ -109,6 +109,39 @@ public partial class MainWindow
         _linkToolTipCanvas = null;
     }
 
+    // ------------------------------------------------------------------ the keyboard
+
+    /// <summary>Enter or Space follows the focused link; Esc lets go of it. True when the key was the link's.</summary>
+    private bool TryFollowFocusedLinkWithKeyboard(KeyEventArgs e, ModifierKeys mods)
+    {
+        if (_vm.FocusedLink == null || _vm.SelectedAnnotation != null || mods != ModifierKeys.None) return false;
+        switch (e.Key)
+        {
+            case Key.Enter:
+            case Key.Space:
+                _vm.ActivateFocusedLink();
+                Keyboard.Focus(DocumentScrollViewer);
+                return true;
+            case Key.Escape:
+                _vm.FocusedLink = null;
+                Keyboard.Focus(DocumentScrollViewer);
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Gives the focused link's hotspot the keyboard (its focus rectangle shows), scrolling to its page first.</summary>
+    private void FocusLinkHotspot(PageLink link)
+    {
+        if (link.PageNumber != _vm.CurrentPageNumber) ScrollToPage(link.PageNumber);
+        // The page's layer may be laid out only after the scroll: focus it once it is.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!ReferenceEquals(_vm.FocusedLink, link)) return;
+            if (!PageLinksLayer.FocusHotspot(this, link)) Keyboard.Focus(DocumentScrollViewer);
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
     // ------------------------------------------------------------------ the view's place, for Back
 
     /// <summary>The current page and the point of it at the view's top-left corner (shown-page fractions).</summary>

@@ -700,17 +700,25 @@ public partial class MainWindow : Window
             || _vm.IsPlacingSignature || _vm.IsMarkingRedaction)
         {
             _vm.SelectedAnnotation = null;
+            _vm.FocusedLink = null;
             return false;
         }
         var mods = Keyboard.Modifiers;
+        // A link that has the keyboard: Enter or Space follows it, Esc lets go of it.
+        if (TryFollowFocusedLinkWithKeyboard(e, mods)) return true;
         if (e.Key == Key.Tab && (mods & ~ModifierKeys.Shift) == ModifierKeys.None
-            && (_vm.SelectedAnnotation != null || IsDocumentFocused()))
+            && (_vm.SelectedAnnotation != null || _vm.FocusedLink != null || IsDocumentFocused()))
         {
-            bool found = _vm.SelectNextAnnotation(backwards: mods == ModifierKeys.Shift);
+            // The page's annotations, then its links.
+            bool found = _vm.MoveKeyboardFocus(backwards: mods == ModifierKeys.Shift);
             if (found && _vm.SelectedAnnotation is { } next)
             {
                 if (next.PageNumber != _vm.CurrentPageNumber) ScrollToPage(next.PageNumber);
                 Keyboard.Focus(DocumentScrollViewer);
+            }
+            else if (found && _vm.FocusedLink is { } link)
+            {
+                FocusLinkHotspot(link);
             }
             return found;
         }
@@ -1231,6 +1239,7 @@ public partial class MainWindow : Window
 
         // A click on the page, away from the selected annotation's handles, lets go of it.
         _vm.SelectedAnnotation = null;
+        _vm.FocusedLink = null;
 
         // Placing a signature, or marking an area for redaction: drag a box.
         if (_vm.IsPlacingSignature || _vm.IsMarkingRedaction)
