@@ -31,7 +31,7 @@ internal sealed class WpfImageCache
     /// </summary>
     internal static bool IsDecodeFailure(Exception ex) =>
         ex is Diagnostics.PdfVectorException and not Parsing.PdfDataNotLoadedException or InvalidDataException or IOException or NotSupportedException
-           or FileFormatException or ArgumentException or OverflowException;
+           or FileFormatException or ArgumentException or OverflowException or OutOfMemoryException;
 
     // Images that failed to decode, by source, with the fallback reason. Like the Direct2D replayer,
     // this cache decodes a damaged image once and remembers the failure, instead of decoding it
@@ -144,6 +144,11 @@ internal sealed class WpfImageCache
             using var stream = new MemoryStream(image.Data.ToArray(), writable: false);
             var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
             BitmapSource frame = decoder.Frames[0];
+            // The frame size comes from the image data (a JPEG header), not from the checked
+            // /Width and /Height: refuse a frame whose BGRA copy would not fit one buffer.
+            if ((long)frame.PixelWidth * frame.PixelHeight > WindowsVectorRenderer.MaxRenderPixelCount)
+                throw new Diagnostics.PdfResourceLimitException(nameof(WindowsVectorRenderer.MaxRenderPixelCount),
+                    $"Image frame of {frame.PixelWidth} x {frame.PixelHeight} pixels exceeds the single-buffer limit.");
 
             if (image.MapJpegComponents is { } map)
             {

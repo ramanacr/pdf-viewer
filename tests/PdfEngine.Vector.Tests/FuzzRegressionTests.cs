@@ -22,7 +22,9 @@ namespace PdfEngine.Vector.Tests;
 public class FuzzRegressionTests
 {
     // 769: corrupt deflate raised ZLibException (IOException) instead of a typed error.
-    private static readonly int[] RegressionSeeds = { 769 };
+    // 26500: a 200001073-point MediaBox made the WPF renderer allocate a RenderTargetBitmap
+    // of 1e10 pixels (OutOfMemoryException / OverflowException) instead of a typed error.
+    private static readonly int[] RegressionSeeds = { 769, 26500 };
 
     private static byte[] Seed()
     {
