@@ -47,7 +47,8 @@ the opened file. It builds, and it has been run on an Android 13 emulator (see
 | Existing annotations and fields | The engine draws each annotation's and widget's appearance into the page. Fillable fields are tinted light blue (read-only ones are not). |
 | Form filling | Tap a field. A text field opens a dialog with the soft keyboard: one line or several, hidden for a password field, at most the field's `/MaxLen` characters. A check box or radio button switches at once. A combo box or list box offers its options (several for a multi-select list; an editable combo box also takes typed text). Read-only fields say so and do not change. After each value the engine writes it with a new appearance and recalculates calculated fields (formats, ranges and simple sums, the desktop's rules, **without** running the document's JavaScript); a value that a field's rule refuses goes back and the rule's message is shown. |
 | Markup | Select text (long press, handles), then **Highlight**, **Underline** or **Strike** in the selection bar. |
-| Ink and notes | **✎** opens the annotation bar. Its tools, then undo, redo, reply, move, delete and close, are one strip that scrolls sideways (it fits a 360 dp phone). **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. |
+| Ink and notes | **✎** opens the annotation bar. Its tools, then colour, undo, redo, reply, move, delete and close, are one strip that scrolls sideways (it fits a 360 dp phone). **Draw**: one finger draws on a page, two fingers still zoom. **Note**: tap where a sticky note goes, then type its comment. A note's icon stays 20 points (its `/Rect` does not change), but a tap within a 48 dp square around it chooses it at any zoom; an annotation under the finger that is smaller than the note, or another note's icon, keeps the tap, and of two notes the nearer one wins. |
+| Colours | **Colour** in the annotation bar opens the web viewer's palette: Yellow, Green, Red, Blue and Black, each named (TalkBack reads the name and "checked") with a swatch, and **Default** (the kind's own colour). With a tool on, it sets the colour of that tool's new annotations; with an annotation chosen, it recolours that one (one undo step; not stamps); with neither, it first asks for which kind (highlights, underlines, strike-throughs, drawings, notes, text boxes and callouts, rectangles, ellipses, lines and arrows). The last choice for each kind is kept in app-private preferences (`annotation-colours`) and stays after a restart. The button and the markup buttons show the colour as a swatch; a stroke or shape is drawn in it while it is dragged. |
 | Shapes | **Rectangle**, **Ellipse**, **Line** and **Arrow**: drag with one finger from one corner (or end) to the other; two fingers still zoom, and the page does not scroll while the tool is on. A drag shorter than 4 points adds nothing. Red, 2 points wide, as in the web viewer; an arrow is a line with `/LE [/None /OpenArrow]`. |
 | Text boxes | **Text**: tap where the box goes, then type. Black 12-point Helvetica on no background, at most 220 points wide and as tall as its text. The box is sized with the fonts and line wrap that the saved appearance uses, so no line is cut off; on a turned page the text reads upright as shown. Tap the box to change its text; the box fits the new text. Text with a character that no font on the device can draw is refused with a message (see limits). |
 | Callouts | **Callout**: tap the spot the callout points to (a ring marks it), then tap where its text box goes, then type. A tap on another page starts again there. The text box is as wide as a text box and as tall as its text, with a 1-point border; the line has an open arrow at the spot and a knee next to the box, laid out on the page as shown (on a turned page too). Saved as Acrobat writes a callout: free text with `/IT /FreeTextCallout`, `/CL`, `/LE /OpenArrow` and `/RD` for the text box, with an appearance stream. The chosen callout shows a ring at its spot. **Move** then asks whether the text box or the spot moves, and the next tap says where; moving the box keeps the spot, and the line meets the box again. Each change is one undo step. The text follows the text box rules (a character without a font is refused). The rules live in the shared `ViewerEditSession` (`AddCallout`, `MoveCalloutAnchor`), the same as the web viewer. |
@@ -70,6 +71,7 @@ the opened file. It builds, and it has been run on an Android 13 emulator (see
  │ MainActivity     toolbar, menu, search and selection bars, document       │
  │                  picker, outline, share, recent files, saved state;       │
  │                  .Edits: fields, markup, ink, notes, list, save, copy     │
+ │                  .Colours: colour of new annotations, recolour            │
  │ PageView         gestures, selection handles, render loop, tiles,         │
  │                  field tint, ink strokes, taps on fields and annotations  │
  │ ThumbnailView    page grid                                                │
@@ -255,6 +257,10 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
    CMYK JPEG (the managed decoder is slower than a native one), memory under pressure.
 7. **Certificate-encrypted PDFs.** RSA is available on Android, but the app has no certificate
    store and was not tested with such a file.
+8. **The colour choice and the note tap target on a device.** The Colour button, its dialogs (the
+   swatches, TalkBack, the dark theme), the kept choice after a restart and the 48 dp note target
+   were built by CI but not run on an emulator or phone; the shared logic is unit-tested
+   (`AndroidColourTests.cs`).
 
 ## Known gaps
 
@@ -265,7 +271,7 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
 3. **Selection** is on one page at a time, and the view does not scroll by itself while a handle
    is dragged to the edge. No floating copy toolbar: the bar over the pages holds the actions.
 4. **Not in the app:** printing, a document properties view, and these annotation tools of the web
-   viewer: polygons, connected lines, resizing an annotation (stamps too), colours. A custom stamp is
+   viewer: polygons, connected lines, resizing an annotation (stamps too), a fill or dash for shapes. A custom stamp is
    placed with a tap at its usual size (the web viewer also takes a dragged box). Text
    with a character that no font on the device has is refused with a message. CFF2 (variable CFF)
    fonts are not used for new text.
@@ -281,7 +287,8 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
    this app's own save only the size is compared until the file is opened again. If Android
    ends the process during a save, the write stops part-way and the file may be incomplete.
 7. **Markup needs a text selection**, so a document that does not allow copying cannot be
-   highlighted. A note's icon is 20 points, a small target at fit width. With the draw tool on,
+   highlighted. A note's larger tap target (48 dp) can take a tap meant for a link or a larger
+   annotation next to the icon. With the draw tool on,
    one finger only draws: scrolling needs the tool off.
 
 ## Tests
@@ -308,6 +315,12 @@ yet; the selection handles of a short word overlapped; the selection bar pushed 
   and highlights made from touches and read back from the saved file, rectangles, ellipses,
   lines, arrows and text boxes saved with their appearance streams (short drags add nothing), editing and deleting a file's
   own annotation, undo and redo, the annotation list, and one save at a time.
+- `tests/PdfEngine.Vector.Skia.Tests/AndroidColourTests.cs`: the palette and its names, one preference
+  key per kind (none for stamps and replies), a kept colour read back only when it is a `#RRGGBB`
+  colour, notes, ink, shapes and markup made with a colour (and without one, the default) read back
+  from the saved file, recolouring with undo, and the note tap target (grown to 48 points only for
+  notes, the smallest annotation still winning, a smaller neighbour keeping its taps, the nearer of
+  two notes winning).
 - `tests/PdfEngine.Vector.Skia.Tests/CustomStampTests.cs`: custom stamps in the shared core: a picture
   and a PDF page placed, drawn where expected (pixels) and saved as `/Stamp` `Custom`, a page as
   vector content, the shape kept, a turned page and a turned source page, undo, move and delete,

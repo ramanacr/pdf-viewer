@@ -64,7 +64,22 @@ internal sealed class PageView : SkiaView
     private readonly Dictionary<(int Page, bool Night), int> _imageGeneration = new();
     private List<ViewerPoint>? _stroke;
     private int _strokePage;
-    private readonly List<(int Page, int Generation, List<ViewerPoint> Points)> _pendingInk = new();
+    private readonly List<(int Page, int Generation, List<ViewerPoint> Points, SKColor Color)> _pendingInk = new();
+    private SKColor _strokeColor = SKColor.Parse(ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Ink));
+
+    /// <summary>
+    /// The colour ("#RRGGBB") the stroke or shape outline being drawn is shown in: the colour the
+    /// reader chose for the tool. A stroke keeps the colour it was drawn in until the page is drawn with it.
+    /// </summary>
+    public string StrokeColor
+    {
+        set
+        {
+            if (!SKColor.TryParse(value, out var color) || color == _strokeColor) return;
+            _strokeColor = color;
+            Invalidate();
+        }
+    }
 
     private ViewerDocument? _doc;
     private ContinuousPageLayout? _layout;
@@ -391,6 +406,12 @@ internal sealed class PageView : SkiaView
 
     private float Density => Resources?.DisplayMetrics?.Density ?? 1f;
 
+    /// <summary>How far (dp) a tap may miss an annotation and still choose it.</summary>
+    private const float TapSlackDp = 8;
+
+    /// <summary>The smallest tap target (dp) of a sticky note: Android's 48 dp touch-target guideline.</summary>
+    private const float NoteTargetDp = 48;
+
     private bool IsHitInView(ViewerSearchHit hit)
     {
         if (_layout == null || hit.Rects.Count == 0) return false;
@@ -473,10 +494,13 @@ internal sealed class PageView : SkiaView
             }
         }
         if (_calloutMark is var (markPage, markPoint) && visible.Contains(markPage)) DrawMark(canvas, markPage, markPoint);
-        _ink.Color = SKColor.Parse(ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Ink));
         _ink.StrokeWidth = (float)(ViewerEditSession.InkWidth * _layout.PixelsPerPoint);
-        foreach (var (page, _, points) in _pendingInk)
+        foreach (var (page, _, points, color) in _pendingInk)
+        {
+            _ink.Color = color;
             if (visible.Contains(page)) DrawStroke(canvas, page, points);
+        }
+        _ink.Color = _strokeColor;
         if (_stroke != null) DrawStroke(canvas, _strokePage, _tool == PageTool.Ink || _stroke.Count < 2 ? _stroke : Outline(_tool, _stroke[0], _stroke[^1]));
     }
 
@@ -771,7 +795,10 @@ internal sealed class PageView : SkiaView
         var session = Session;
         if (session?.WidgetAt(page, point) is { } widget)
             FieldTapped?.Invoke(widget);
-        else if (session?.AnnotationAt(page, point, slack: 8 * Density / _layout.PixelsPerPoint) is { } annotation)
+        // A sticky note's icon is 20 points, small at fit width: its tap target is grown to 48 dp
+        // square at any zoom (32 dp, then the 8 dp slack on each side), its box in the PDF unchanged.
+        else if (session?.AnnotationAt(page, point, slack: TapSlackDp * Density / _layout.PixelsPerPoint,
+                     minNoteSize: (NoteTargetDp - 2 * TapSlackDp) * Density / _layout.PixelsPerPoint) is { } annotation)
             AnnotationTapped?.Invoke(annotation);
         else if (_tool == PageTool.Browse && LinkAt(page, point) is { } link)
             LinkTapped?.Invoke(link);
@@ -818,12 +845,12 @@ internal sealed class PageView : SkiaView
                 {
                     var end = ToPage(_strokePage, e.GetX(), e.GetY());
                     var outline = Outline(_tool, stroke[0], end);
-                    _pendingInk.Add((_strokePage, _generation, outline));
+                    _pendingInk.Add((_strokePage, _generation, outline, _strokeColor));
                     Invalidate();
                     ShapeDrawn?.Invoke(_tool, _strokePage, stroke[0], end, outline);
                     return true;
                 }
-                _pendingInk.Add((_strokePage, _generation, stroke));
+                _pendingInk.Add((_strokePage, _generation, stroke, _strokeColor));
                 Invalidate();
                 InkDrawn?.Invoke(_strokePage, stroke);
                 return true;

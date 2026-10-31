@@ -23,10 +23,6 @@ What is planned next for PDF Viewer Native. Plans change; dates are not promised
 - One editing core for the web viewer and Android (the shared `ViewerEditSession`).
 
 ### Android
-- Choose the colour of new highlights, ink and notes. **help wanted:**
-  [#141](https://github.com/ramanacr/pdf-viewer/issues/141).
-- A larger tap target for sticky-note icons. **help wanted:**
-  [#142](https://github.com/ramanacr/pdf-viewer/issues/142).
 - Production release on Google Play after the closed test.
 
 ### Engine (NuGet packages)
