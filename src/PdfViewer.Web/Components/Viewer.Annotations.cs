@@ -108,8 +108,8 @@ public sealed partial class Viewer
         (Tool.Circle, "circle", "Draw an ellipse"),
         (Tool.Line, "line", "Draw a line"),
         (Tool.Arrow, "arrow", "Draw an arrow"),
-        (Tool.Polygon, "polygon", "Draw a polygon (double-click to end)"),
-        (Tool.PolyLine, "polyline", "Draw connected lines (double-click to end)"),
+        (Tool.Polygon, "polygon", "Draw a polygon (double-click, or tap its first or last point, to end)"),
+        (Tool.PolyLine, "polyline", "Draw connected lines (double-click, or tap its first or last point, to end)"),
         (Tool.Stamp, "stamp", "Place a stamp"),
     ];
 

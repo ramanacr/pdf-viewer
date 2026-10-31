@@ -252,8 +252,11 @@ path can make the native link exceed the 260-character path limit; a short path 
    zoom (use the zoom list, or the **Select** tool); a page embedded in line (the host page
    scrolls) is not scrolled by two fingers. There is no long-press and no **Esc** on a phone: a
    polygon being drawn is dropped by choosing another tool. The pen's pressure and tilt are not
-   used. The touch paths were checked in a desktop browser with emulated touch only, not on a
-   real phone or tablet (iOS Safari, Android Chrome) or with a real pen.
+   used. The touch paths were checked in a desktop Chromium with synthetic touch `PointerEvent`s
+   (ink, a dropped stroke on a second finger and on `pointercancel`, two-finger scroll, polygon
+   and polyline taps, tap to select and drag to move, a note by a tap, the computed
+   `touch-action` and the 44 px targets). They were not checked on a real phone or tablet (iOS
+   Safari, Android Chrome) or with a real pen, where the browser's own gesture handling decides.
 8. **Not in the demo:** annotations, forms, tiled rendering beyond 4096 × 4096 pixels. Print
    sends 150 dpi page images, not the PDF, and every sheet has the first page's size.
 
