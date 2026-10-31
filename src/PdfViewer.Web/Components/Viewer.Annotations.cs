@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using PdfEngine.Vector.Annotations;
-using PdfEngine.Vector.Forms;
 using PdfViewer.Web.Engine;
 using PdfViewer.Web.Engine.Annotations;
 using PdfViewer.Web.Engine.Embed;
@@ -13,17 +12,21 @@ namespace PdfViewer.Web.Components;
 
 /// <summary>
 /// Annotations: the annotation toolbar (highlight, underline and strike-out on a text selection,
-/// note, free text, ink, rectangle, ellipse; select, move, delete; undo and redo), the comments
-/// panel, and the host page's annotation manager. The annotations live in a
-/// <see cref="ViewerAnnotationStore"/>; after every change the engine writes them into the
-/// document (<see cref="ViewerDocument.ApplyEditsAsync"/>) and the pages are drawn again from
-/// it, so what the reader sees is what a save writes.
+/// note, free text, ink, rectangle, ellipse, lines, polygons, stamps; select, move, delete; undo
+/// and redo), the comments panel with replies and review statuses, and the host page's annotation
+/// manager. The edits live in a <see cref="ViewerEditSession"/>, the editing core the Android app
+/// shares, so both follow one set of rules; after every change the engine writes them into the
+/// document (<see cref="ViewerEditSession.ApplyAsync"/>) and the pages are drawn again from it,
+/// so what the reader sees is what a save writes.
 /// </summary>
 public sealed partial class Viewer
 {
     private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Ink, Square, Circle, Line, Arrow, Polygon, PolyLine, Stamp }
 
     private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "ink", "square", "circle", "line", "arrow", "polygon", "polyline", "stamp"];
+
+    /// <summary>What the host page is told when it opened the file with hasReadOnlyAccess and tries a change.</summary>
+    private const string ReadOnlyReason = "The file was opened with hasReadOnlyAccess.";
 
     /// <summary>The stamp the stamp tool places (a /Name of <see cref="PdfStamps.Standard"/>).</summary>
     private string _stampName = "Approved";
@@ -35,7 +38,8 @@ public sealed partial class Viewer
     /// <summary>The colours offered in the annotation toolbar.</summary>
     private static readonly string[] Palette = ["#FFD400", "#22A06B", "#E5484D", "#2563EB", "#000000"];
 
-    private ViewerAnnotationStore? _store;
+    /// <summary>The reader's edits of the shown document; null while there is none, or a ranged one is not read whole.</summary>
+    private ViewerEditSession? _session;
     private ILookup<int, ViewerAnnotation> _annotsByPage = Array.Empty<ViewerAnnotation>().ToLookup(a => a.Page);
     private int _annotsVersion = -1;
     private Tool _tool = Tool.Select;
@@ -46,31 +50,27 @@ public sealed partial class Viewer
     private bool _editIsNew;
     private bool _showAnnotationToolbar = true, _showCommentsPanel = true;
     private string _authorName = "Guest";
-    private bool _readOnly;
-
-    // Edits (annotations and form values) are counted; the document is written again until it has the latest.
-    private readonly ViewerEditState _edits = new();
-    private bool _applying;
-    // A signed document's notice ("changes are a new revision") is shown once, at the first change.
-    private bool _signedNoticeShown;
-    private bool _appearanceFontsReady;
+    private Task? _appearanceFonts;
 
     /// <summary>The reader or the host page may change annotations.</summary>
-    private bool CanEditAnnotations => _store != null && !_readOnly && _doc?.CanAnnotate == true;
+    private bool CanEditAnnotations => _session?.CanAnnotate == true;
 
     private bool ShowsAnnotationToolbar => CanEditAnnotations && _config.HasAnnotationTools && _showAnnotationToolbar;
 
-    private bool ShowsCommentsPanel => _store != null && _showCommentsPanel && _config.HasSidePanel
+    private bool ShowsCommentsPanel => _session != null && _showCommentsPanel && _config.HasSidePanel
                                        && (_config.HasAnnotationTools || _config.IncludePdfAnnotations);
 
     /// <summary>Annotations can be clicked (selected) on the pages.</summary>
-    private bool AnnotationsClickable => _store != null && _tool == Tool.Select && (_config.HasAnnotationTools || _config.EnableAnnotationApis);
+    private bool AnnotationsClickable => _session != null && _tool == Tool.Select && (_config.HasAnnotationTools || _config.EnableAnnotationApis);
 
-    private bool IsDirty => _edits.IsDirty;
+    private bool IsDirty => _session?.IsDirty == true;
 
-    private bool Saving => _edits.Saving;
+    /// <summary>The comments panel's count: the annotations and replies (a review status is not a comment of its own).</summary>
+    private int CommentCount => _session?.Store.Current.Count(a => !a.IsStatus) ?? 0;
 
-    private ViewerAnnotation? Selected => _selectedId == null ? null : _store?.Find(_selectedId);
+    private bool Saving => _session?.IsSaving == true;
+
+    private ViewerAnnotation? Selected => _selectedId == null ? null : _session?.Store.Find(_selectedId);
 
     private string ToolColor(Tool tool) => _toolColors.TryGetValue(tool, out var c) ? c : ViewerAnnotationPdf.DefaultColor(KindOf(tool) ?? ViewerAnnotationKind.Square);
 
@@ -117,53 +117,47 @@ public sealed partial class Viewer
     {
         get
         {
-            if (_store == null) return _annotsByPage;
-            if (_annotsVersion != _store.Version)
+            if (_session == null) return _annotsByPage;
+            if (_annotsVersion != _session.Store.Version)
             {
-                _annotsVersion = _store.Version;
-                _annotsByPage = _store.Current.ToLookup(a => a.Page);
+                _annotsVersion = _session.Store.Version;
+                _annotsByPage = _session.Store.Current.ToLookup(a => a.Page);
             }
             return _annotsByPage;
         }
     }
 
-    /// <summary>A new document: its annotations (when they are managed) and form fields.</summary>
+    /// <summary>A new document: its edit session (its annotations when they are managed, and its form fields).</summary>
     private async Task StartEditsAsync(ViewerDocument doc, bool readOnly)
     {
-        _readOnly = readOnly;
         _tool = Tool.Select;
         CanvasInterop.SetTool(ToolNames[0]);
         _selectedId = _editingId = null;
         _showAnnotationToolbar = _showCommentsPanel = true;
-        _edits.Reset();
-        _signedNoticeShown = false;
-        _formValues.Clear();
+        _session = null;
         _annotsVersion = -1;
-        IReadOnlyList<ViewerAnnotation> fromFile = [];
-        if (_config.IncludePdfAnnotations)
+        var session = await ViewerEditSession.StartAsync(doc, new ViewerEditOptions
         {
-            try
-            {
-                fromFile = await doc.ReadAnnotationsAsync();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException)
-            {
-                _status = $"The document's annotations could not be read ({ex.GetType().Name}).";
-            }
-        }
-        _store = new ViewerAnnotationStore(doc.Geometry, fromFile);
-        _formWidgets = CanFillForms ? await doc.GetFormWidgetsAsync() : [];
+            Author = _authorName,
+            ReadFileAnnotations = _config.IncludePdfAnnotations,
+            FillForms = _config.EnableFormFilling,
+            ReadOnlyReason = readOnly ? ReadOnlyReason : null,
+        });
+        if (_doc != doc) return;
+        if (session.Problem is { } problem) _status = problem;
+        session.Written += () => OnEditsWritten(session);
+        _session = session;
+        _formWidgets = session.Widgets;
         _formWidgetsByPage = _formWidgets.ToLookup(w => w.Page);
     }
 
     private void StopEdits()
     {
-        _store = null;
+        _session = null;
         _selectedId = _editingId = null;
         _formWidgets = [];
         _formWidgetsByPage = _formWidgets.ToLookup(w => w.Page);
         _autoSaveCts?.Cancel();
-        _edits.Reset();
     }
 
     // ---------------------------------------------------------------- writing the edits
@@ -171,95 +165,54 @@ public sealed partial class Viewer
     /// <summary>Something changed: the document is written again (once at a time, until it has the latest edit).</summary>
     private async Task CommitEditsAsync()
     {
-        _edits.Edit();
-        ShowSignedNotice();
+        // A signed document: the reader is told once, at the first change, that changes are a new revision.
+        if (_session?.TakeNotice() is { } notice)
+        {
+            _noticeIsFonts = false;
+            _noticeDismissed = false;
+            _notice = notice;
+        }
         StateHasChanged();
         await ApplyEditsAsync();
-    }
-
-    /// <summary>A signed document: the reader is told once, at the first change, that changes are a new revision.</summary>
-    private void ShowSignedNotice()
-    {
-        if (_signedNoticeShown || _doc?.EditNotice is not { } notice) return;
-        _signedNoticeShown = true;
-        _noticeIsFonts = false;
-        _noticeDismissed = false;
-        _notice = notice;
     }
 
     /// <summary>Writes the edits into the document (once at a time, until it has the latest or writing fails).</summary>
     private async Task ApplyEditsAsync()
     {
-        if (_applying) return;
-        _applying = true;
-        var doc = _doc;
-        try
+        if (_session is not { } session) return;
+        await PrepareFontsAsync(session);
+        if (_session != session) return;
+        var result = await session.ApplyAsync();
+        if (_session != session) return;
+        if (result.Refused is { } refused)
         {
-            int attempts = 0;
-            while (doc != null && _doc == doc && _store != null && _edits.NeedsApply && attempts++ < 50)
-            {
-                int version = _edits.EditVersion;
-                var store = _store;
-                if (store.Current.Any(a => a.Kind is ViewerAnnotationKind.FreeText or ViewerAnnotationKind.Stamp)) await EnsureAppearanceFontsAsync();
-                var values = _formValues.Select(p => (p.Key, p.Value)).ToList();
-                try
-                {
-                    await doc.ApplyEditsAsync(store.FromFile, store.Current, values);
-                }
-                catch (PdfFieldValidationException ex)
-                {
-                    // The field's own rule refused the value: it goes back to what it was.
-                    _formValues.Remove(ex.FieldName);
-                    if (_lastFormField != null) _formValues.Remove(_lastFormField);
-                    _status = ex.Message;
-                    _error = $"{ex.FieldName}: {ex.Message}";
-                    continue;
-                }
-                catch (Exception ex) when (ex is KeyNotFoundException or ArgumentException or InvalidOperationException && _lastFormField != null && _formValues.ContainsKey(_lastFormField))
-                {
-                    // The engine's message names the field and the rule (an option, a length), never other content.
-                    _formValues.Remove(_lastFormField!);
-                    _status = "That value is not accepted.";
-                    _error = ex is ArgumentException ? ex.Message : $"That value is not accepted ({ex.GetType().Name}).";
-                    continue;
-                }
-                catch (ObjectDisposedException)
-                {
-                    return;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // Type names only, never document content. The version is not applied: the
-                    // document stays dirty, and a save refuses bytes that lack these edits.
-                    _edits.Failed(version);
-                    _error = $"The changes could not be written into the document ({ex.GetType().Name}). They are not saved.";
-                    _status = "Changes not written";
-                    StateHasChanged();
-                    break;
-                }
-                _edits.Applied(version);
-                if (_doc != doc) return;
-                _cache.Clear();
-                _drawn.Clear();
-                _failed.Clear();
-                _thumbsDrawn.Clear();
-                if (CanFillForms)
-                {
-                    _formWidgets = await doc.GetFormWidgetsAsync();
-                    _formWidgetsByPage = _formWidgets.ToLookup(w => w.Page);
-                }
-                StateHasChanged();
-                _ = PumpAsync();
-            }
+            // The field's own rule refused the value: it went back to what it was.
+            _status = refused;
+            _error = refused;
         }
-        catch (ObjectDisposedException)
+        if (result.Failed is { } failed)
         {
-            // The document was closed.
+            _error = failed;
+            _status = "Changes not written";
         }
-        finally
+        StateHasChanged();
+    }
+
+    /// <summary>The engine wrote the edits into the document: the pages and the form fields are drawn again from it.</summary>
+    private void OnEditsWritten(ViewerEditSession session)
+    {
+        if (_session != session) return;
+        _cache.Clear();
+        _drawn.Clear();
+        _failed.Clear();
+        _thumbsDrawn.Clear();
+        if (!ReferenceEquals(_formWidgets, session.Widgets))
         {
-            _applying = false;
+            _formWidgets = session.Widgets;
+            _formWidgetsByPage = _formWidgets.ToLookup(w => w.Page);
         }
+        StateHasChanged();
+        _ = PumpAsync();
     }
 
     /// <summary>
@@ -268,31 +221,25 @@ public sealed partial class Viewer
     /// </summary>
     private async Task<bool> WaitForEditsAsync()
     {
-        // A write under way always ends (it clears _applying when it does); new writes are tried a few times.
-        int tries = 0;
-        while (_applying || _edits.NeedsApply)
-        {
-            if (_applying)
-            {
-                await Task.Delay(20);
-                continue;
-            }
-            if (++tries > 20) break;
-            await ApplyEditsAsync();
-            if (_doc == null) return false;
-        }
-        return !_applying && _edits.IsCurrent;
+        if (_session is not { } session) return true;
+        await PrepareFontsAsync(session);
+        return await session.WriteAllAsync();
     }
+
+    /// <summary>Text boxes and stamps need the appearance fonts before the engine writes or measures them.</summary>
+    private Task PrepareFontsAsync(ViewerEditSession session) =>
+        session.Store.Current.Any(a => a.Kind is ViewerAnnotationKind.FreeText or ViewerAnnotationKind.Stamp) ? EnsureAppearanceFontsAsync() : Task.CompletedTask;
 
     /// <summary>
     /// Free text appearances embed a font, and a browser has none installed: the bundled
     /// Liberation Sans is written to the runtime's in-memory file system once and given to the
     /// engine's appearance generator, standing in for Arial and Helvetica.
     /// </summary>
-    private async Task EnsureAppearanceFontsAsync()
+    private Task EnsureAppearanceFontsAsync() => _appearanceFonts ??= LoadAppearanceFontsAsync();
+
+    private async Task LoadAppearanceFontsAsync()
     {
-        if (_appearanceFontsReady || !OperatingSystem.IsBrowser()) return;
-        _appearanceFontsReady = true;
+        if (!OperatingSystem.IsBrowser()) return;
         const string directory = "/annotation-fonts";
         try
         {
@@ -311,31 +258,35 @@ public sealed partial class Viewer
         }
         catch (Exception ex) when (ex is IOException or JSException or UnauthorizedAccessException)
         {
-            // Free text then shows its box without text.
+            // A text box then cannot be given text: the session says so.
         }
     }
 
     // ---------------------------------------------------------------- changes and their events
 
-    /// <summary>Runs a change of the reader's, then tells the host page what it added, changed and removed.</summary>
-    private void Change(Action change)
+    /// <summary>
+    /// Runs a change of the reader's on the session, then tells the host page what it added,
+    /// changed and removed. False when the session refused it (the reason is in the status line).
+    /// </summary>
+    private bool Change(Action<ViewerEditSession> change)
     {
-        if (_store == null) return;
-        var before = _store.Current;
+        if (_session is not { } session) return false;
+        var before = session.Store.Current;
         try
         {
-            change();
+            change(session);
         }
         catch (ViewerAnnotationException ex)
         {
             _status = ex.Message;
             StateHasChanged();
-            return;
+            return false;
         }
-        if (ReferenceEquals(before, _store.Current)) return;
-        EmitDifference(before, _store.Current);
-        if (_selectedId != null && _store.Find(_selectedId) == null) _selectedId = null;
+        if (ReferenceEquals(before, session.Store.Current)) return true;
+        EmitDifference(before, session.Store.Current);
+        if (_selectedId != null && session.Store.Find(_selectedId) == null) _selectedId = null;
         _ = CommitEditsAsync();
+        return true;
     }
 
     private bool AnnotationEventsOn => Listening && _config.EnableAnnotationApis;
@@ -383,6 +334,8 @@ public sealed partial class Viewer
         }
         _tool = _tool == tool && tool != Tool.Select ? Tool.Select : tool;
         if (_tool != Tool.Select) Unselect(user: true);
+        // A text box or stamp needs the appearance fonts: they are read while the reader places it.
+        if (_tool is Tool.FreeText or Tool.Stamp) _ = EnsureAppearanceFontsAsync();
         CanvasInterop.SetTool(ToolNames[(int)_tool]);
         _status = _tool switch
         {
@@ -402,9 +355,8 @@ public sealed partial class Viewer
     {
         if (Selected is { } a && CanEditAnnotations)
         {
-            // A stamp is drawn in the colour of its kind.
-            if (a.Kind != ViewerAnnotationKind.Stamp)
-                Change(() => _store!.Update(a with { Color = color, Modified = DateTimeOffset.UtcNow }));
+            // A stamp is drawn in the colour of its kind: the session leaves it.
+            Change(s => s.SetColor(a.Id, color));
             return;
         }
         if (_tool != Tool.Select) _toolColors[_tool] = color;
@@ -414,10 +366,7 @@ public sealed partial class Viewer
 
     // ---------------------------------------------------------------- shape style
 
-    /// <summary>A shape's fill (null: none), dash (null: solid) and line endings.</summary>
-    private sealed record ShapeStyle(string? Fill, IReadOnlyList<double>? Dash, string Start, string End);
-
-    private readonly Dictionary<Tool, ShapeStyle> _toolStyles = new();
+    private readonly Dictionary<Tool, ViewerShapeStyle> _toolStyles = new();
 
     private static readonly (string Value, string Label)[] PaletteNames =
         [("#FFD400", "Yellow"), ("#22A06B", "Green"), ("#E5484D", "Red"), ("#2563EB", "Blue"), ("#000000", "Black")];
@@ -431,50 +380,27 @@ public sealed partial class Viewer
 
     private static bool IsShapeTool(Tool tool) => tool is Tool.Square or Tool.Circle or Tool.Line or Tool.Arrow or Tool.Polygon or Tool.PolyLine;
 
-    private ShapeStyle ToolStyle(Tool tool) =>
-        _toolStyles.TryGetValue(tool, out var s) ? s : new ShapeStyle(null, null, "None", tool == Tool.Arrow ? "OpenArrow" : "None");
-
-    private static ShapeStyle StyleOf(ViewerAnnotation a) => new(a.FillColor, a.Dash, a.StartEnding, a.EndEnding);
+    private ViewerShapeStyle ToolStyle(Tool tool) =>
+        _toolStyles.TryGetValue(tool, out var s) ? s : new ViewerShapeStyle(End: tool == Tool.Arrow ? "OpenArrow" : "None");
 
     /// <summary>
     /// The style the shape style controls show and change: the selected shape's, else the shape
     /// tool's; null hides them (another kind, or a measurement).
     /// </summary>
-    private ShapeStyle? CurrentShapeStyle =>
-        Selected is { } a ? (a.HasShapeStyle ? StyleOf(a) : null)
+    private ViewerShapeStyle? CurrentShapeStyle =>
+        Selected is { } a ? (a.HasShapeStyle ? ViewerShapeStyle.Of(a) : null)
         : IsShapeTool(_tool) ? ToolStyle(_tool) : null;
 
     /// <summary>The selected shape, or the shape tool, has line endings.</summary>
     private bool CurrentHasEndings => Selected is { } a ? a.HasEndings : _tool is Tool.Line or Tool.Arrow or Tool.PolyLine;
 
-    /// <summary>A shape drawn with a tool gets the tool's style.</summary>
-    private ViewerAnnotation WithToolStyle(ViewerAnnotation a)
-    {
-        if (!a.IsShape) return a;
-        var s = ToolStyle(_tool);
-        return a with
-        {
-            FillColor = s.Fill,
-            Dash = s.Dash,
-            StartEnding = a.HasEndings ? s.Start : "None",
-            EndEnding = a.HasEndings ? s.End : "None",
-        };
-    }
-
     /// <summary>Changes the selected shape's style (one undo step), else the shape tool's.</summary>
-    private void SetShapeStyle(Func<ShapeStyle, ShapeStyle> change)
+    private void SetShapeStyle(Func<ViewerShapeStyle, ViewerShapeStyle> change)
     {
         if (Selected is { } a)
         {
             if (!a.HasShapeStyle || !CanEditAnnotations) return;
-            var was = StyleOf(a);
-            var s = change(was);
-            if (!a.HasEndings) s = s with { Start = was.Start, End = was.End };
-            if (s.Fill == was.Fill && ViewerAnnotation.SameDash(s.Dash, was.Dash) && s.Start == was.Start && s.End == was.End) return;
-            var changed = a with { FillColor = s.Fill, Dash = s.Dash, StartEnding = s.Start, EndEnding = s.End, Modified = DateTimeOffset.UtcNow };
-            // New endings may reach past the box: it grows to hold them.
-            if (s.Start != was.Start || s.End != was.End) changed = changed with { Box = ViewerAnnotationStore.GrownForEndings(changed) };
-            Change(() => _store!.Update(changed));
+            Change(s => s.SetShapeStyle(a.Id, change(ViewerShapeStyle.Of(a))));
             return;
         }
         if (IsShapeTool(_tool)) _toolStyles[_tool] = change(ToolStyle(_tool));
@@ -517,23 +443,22 @@ public sealed partial class Viewer
     {
         if (!CanEditAnnotations) return;
         _editingId = null;
-        Change(() => _store!.Undo());
+        Change(s => s.Undo());
     }
 
     private void Redo()
     {
         if (!CanEditAnnotations) return;
         _editingId = null;
-        Change(() => _store!.Redo());
+        Change(s => s.Redo());
     }
 
     private void DeleteSelected()
     {
         if (!CanEditAnnotations || Selected is not { } a) return;
         _editingId = null;
-        Change(() => _store!.Delete(new ViewerAnnotationFilter(new HashSet<string> { a.Id })));
+        if (Change(s => s.Delete(a.Id))) _status = "Annotation deleted";
         _selectedId = null;
-        _status = "Annotation deleted";
     }
 
     // ---------------------------------------------------------------- the pages (from viewer.js)
@@ -543,125 +468,39 @@ public sealed partial class Viewer
             ? (_doc.Geometry[page - 1], _doc.Geometry[page - 1].ShownWidth, _doc.Geometry[page - 1].ShownHeight)
             : null;
 
-    private ViewerAnnotation NewAnnotation(ViewerAnnotationKind kind, int page, ViewerBox box)
-    {
-        var now = DateTimeOffset.UtcNow;
-        return new ViewerAnnotation
-        {
-            Id = ViewerAnnotationStore.NewId(),
-            Page = page,
-            Kind = kind,
-            Box = box,
-            Color = ToolColor(_tool),
-            Author = _authorName,
-            Created = now,
-            Modified = now,
-            StrokeWidth = kind switch
-            {
-                ViewerAnnotationKind.Ink or ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.Line
-                    or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine => 2,
-                ViewerAnnotationKind.FreeText => 0,
-                _ => 1,
-            },
-        };
-    }
-
     /// <summary>
     /// A tool was used on a page: <paramref name="points"/> are fractions of the shown page
-    /// (x, y, x, y, …): two corners for a shape or free text, the click for a note, the stroke for ink.
+    /// (x, y, x, y, …): two corners for a shape or free text, the click for a note or stamp, the
+    /// stroke for ink, the points of a line, polygon or connected lines. The session makes the annotation.
     /// </summary>
     [JSInvokable]
     public void OnToolStroke(string tool, int page, double[] points)
     {
-        if (!CanEditAnnotations || PageFrame(page) is not (var g, var width, var height) || points.Length < 2 || points.Length > 2 * ViewerAnnotationStore.MaxInkPointsPerStroke
+        if (!CanEditAnnotations || PageFrame(page) is not (_, var width, var height) || points.Length < 2 || points.Length > 2 * ViewerAnnotationStore.MaxInkPointsPerStroke
             || points.Any(p => !double.IsFinite(p))) return;
         int t = Array.IndexOf(ToolNames, tool);
         if (t < 0 || (Tool)t != _tool || KindOf(_tool) is not { } kind) return;
-        (double X, double Y) Shown(int i) => (Math.Clamp(points[i], 0, 1) * width, Math.Clamp(points[i + 1], 0, 1) * height);
+        var shown = new List<ViewerPoint>(points.Length / 2);
+        for (int i = 0; i + 1 < points.Length; i += 2)
+            shown.Add(new ViewerPoint(Math.Clamp(points[i], 0, 1) * width, Math.Clamp(points[i + 1], 0, 1) * height));
+        var first = shown[0];
+        var last = shown[^1];
+        string color = ToolColor(_tool);
+        var style = ToolStyle(_tool);
 
-        ViewerAnnotation a;
-        switch (kind)
+        ViewerAnnotation? a = null;
+        bool changed = Change(s => a = kind switch
         {
-            case ViewerAnnotationKind.Ink:
-            {
-                var user = new List<double>();
-                (double X, double Y)? last = null;
-                for (int i = 0; i + 1 < points.Length; i += 2)
-                {
-                    var (sx, sy) = Shown(i);
-                    if (last is (var lx, var ly) && Math.Abs(sx - lx) + Math.Abs(sy - ly) < 0.75) continue;
-                    last = (sx, sy);
-                    var (ux, uy) = g.ToUser(sx, sy);
-                    user.Add(ux);
-                    user.Add(uy);
-                }
-                if (user.Count < 4) return;
-                var ink = NewAnnotation(kind, page, default);
-                a = ink with { InkList = [user.ToArray()], Box = ClampBox(ViewerBox.Around(user, ink.StrokeWidth / 2 + 1), g) };
-                break;
-            }
-            case ViewerAnnotationKind.Note:
-            {
-                var (sx, sy) = Shown(0);
-                var box = g.ToUser(new ViewerRect(Math.Min(sx, width - 20), Math.Min(sy, height - 20), 20, 20));
-                a = NewAnnotation(kind, page, ClampBox(box, g));
-                break;
-            }
-            case ViewerAnnotationKind.Stamp:
-            {
-                // The stamp's usual size, centred on the click and kept on the page. On a turned page the
-                // stamp turns with it, so it reads upright as the page is shown.
-                var stamp = PdfStamps.Standard.FirstOrDefault(s => s.Name == _stampName) ?? PdfStamps.Standard[0];
-                var (sw, sh) = PdfStamps.DefaultSize(stamp.Label, dynamic: false);
-                var (sx, sy) = Shown(0);
-                sw = Math.Min(sw, width);
-                sh = Math.Min(sh, height);
-                var rect = new ViewerRect(Math.Clamp(sx - sw / 2, 0, width - sw), Math.Clamp(sy - sh / 2, 0, height - sh), sw, sh);
-                a = NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g)) with
-                {
-                    StampName = stamp.Name,
-                    StampTurn = g.Rotation is 90 or 180 or 270 ? g.Rotation : 0,
-                    Color = ViewerAnnotationPdf.DefaultColor(kind),
-                };
-                break;
-            }
-            case ViewerAnnotationKind.Line or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine:
-            {
-                // The points in user space, without repeats (a double-click gives its point twice).
-                var user = new List<double>();
-                (double X, double Y)? last = null;
-                for (int i = 0; i + 1 < points.Length && user.Count < 2 * ViewerAnnotationStore.MaxVertices; i += 2)
-                {
-                    var (sx, sy) = Shown(i);
-                    if (last is (var lx, var ly) && Math.Abs(sx - lx) + Math.Abs(sy - ly) < 2) continue;
-                    last = (sx, sy);
-                    var (ux, uy) = g.ToUser(sx, sy);
-                    user.Add(ux);
-                    user.Add(uy);
-                }
-                int least = kind == ViewerAnnotationKind.Polygon ? 3 : 2;
-                if (user.Count / 2 < least) return;
-                if (kind == ViewerAnnotationKind.Line) user = [user[0], user[1], user[^2], user[^1]];
-                var shape = WithToolStyle(NewAnnotation(kind, page, default) with { Vertices = user.ToArray() });
-                a = shape with { Box = ClampBox(ViewerBox.Around(user, ViewerAnnotationStore.ShapeMargin(shape.StrokeWidth, shape.StartEnding, shape.EndEnding)), g) };
-                break;
-            }
-            default:
-            {
-                if (points.Length < 4) return;
-                var (x0, y0) = Shown(0);
-                var (x1, y1) = Shown(2);
-                var rect = new ViewerRect(Math.Min(x0, x1), Math.Min(y0, y1), Math.Abs(x1 - x0), Math.Abs(y1 - y0));
-                if (kind == ViewerAnnotationKind.FreeText && (rect.Width < 24 || rect.Height < 12))
-                    rect = new ViewerRect(Math.Min(x0, width - 200), Math.Min(y0, height - 40), 200, 40);
-                else if (rect.Width < 4 || rect.Height < 4)
-                    return;
-                a = WithToolStyle(NewAnnotation(kind, page, ClampBox(g.ToUser(rect), g)));
-                break;
-            }
-        }
-        Change(() => _store!.Add([a]));
-        if (kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText)
+            ViewerAnnotationKind.Ink => s.AddInk(page, shown, color),
+            ViewerAnnotationKind.Note => s.AddNote(page, first, ""),
+            ViewerAnnotationKind.FreeText => s.AddTextBox(page, first, last, color),
+            ViewerAnnotationKind.Stamp => s.AddStamp(page, first, PdfStamps.Standard.FirstOrDefault(st => st.Name == _stampName) ?? PdfStamps.Standard[0]),
+            ViewerAnnotationKind.Line => s.AddLine(page, first, last, style, color),
+            ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine => s.AddPolyline(kind, page, shown, style, color),
+            ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle => s.AddShape(kind, page, first, last, color, style),
+            _ => null,
+        });
+        if (changed && a != null && kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText)
         {
             // A new note or text box: type its text at once.
             _tool = Tool.Select;
@@ -670,12 +509,6 @@ public sealed partial class Viewer
             StartEditing(a, isNew: true);
         }
         StateHasChanged();
-    }
-
-    private static ViewerBox ClampBox(ViewerBox b, ViewerPageGeometry g)
-    {
-        var m = g.MediaBox;
-        return new ViewerBox(Math.Clamp(b.X1, m.Left, m.Right), Math.Clamp(b.Y1, m.Top, m.Bottom), Math.Clamp(b.X2, m.Left, m.Right), Math.Clamp(b.Y2, m.Top, m.Bottom));
     }
 
     /// <summary>The mouse button was released after a text selection: with a markup tool, the selection is marked.</summary>
@@ -687,14 +520,9 @@ public sealed partial class Viewer
 
     private void MarkSelection(Tool tool)
     {
-        if (_selection is not { IsEmpty: false } s || PageFrame(s.Page) is not (var g, _, _) || KindOf(tool) is not { } kind) return;
-        var quads = s.Bands.SelectMany(g.ToQuad).ToArray();
-        if (quads.Length == 0) return;
-        var toolBefore = _tool;
-        _tool = tool;
-        var a = NewAnnotation(kind, s.Page, ClampBox(ViewerBox.Around(quads), g)) with { QuadPoints = quads, Contents = "" };
-        _tool = toolBefore;
-        Change(() => _store!.Add([a]));
+        if (_selection is not { IsEmpty: false } selection || KindOf(tool) is not { } kind) return;
+        ViewerAnnotation? a = null;
+        if (!Change(s => a = s.MarkText(kind, selection, ToolColor(tool))) || a == null) return;
         ClearSelection();
         _status = kind switch { ViewerAnnotationKind.Highlight => "Highlighted", ViewerAnnotationKind.Underline => "Underlined", _ => "Struck out" };
     }
@@ -703,7 +531,7 @@ public sealed partial class Viewer
     [JSInvokable]
     public void OnAnnotationPointer(string id)
     {
-        if (_store?.Find(id) is not { } a) return;
+        if (_session?.Store.Find(id) is not { } a) return;
         if (AnnotationEventsOn) EmitAnnotation(EmbedEvents.AnnotationClicked, a);
         if (_selectedId == id && a.Kind is ViewerAnnotationKind.Note or ViewerAnnotationKind.FreeText && CanEditAnnotations && _editingId == null)
             StartEditing(a, isNew: false);
@@ -716,9 +544,8 @@ public sealed partial class Viewer
     [JSInvokable]
     public void OnAnnotationDrag(string id, double dx, double dy)
     {
-        if (!CanEditAnnotations || _store?.Find(id) is not { } a || !double.IsFinite(dx) || !double.IsFinite(dy) || PageFrame(a.Page) is not (var g, var width, var height)) return;
-        var (ux, uy) = g.ToUserDelta(Math.Clamp(dx, -1, 1) * width, Math.Clamp(dy, -1, 1) * height);
-        Change(() => _store!.Move(id, ux, uy, DateTimeOffset.UtcNow));
+        if (!CanEditAnnotations || _session?.Store.Find(id) is not { } a || !double.IsFinite(dx) || !double.IsFinite(dy) || PageFrame(a.Page) is not (_, var width, var height)) return;
+        Change(s => s.Move(id, Math.Clamp(dx, -1, 1) * width, Math.Clamp(dy, -1, 1) * height));
         StateHasChanged();
     }
 
@@ -727,13 +554,13 @@ public sealed partial class Viewer
         if (_selectedId == id) return;
         if (_selectedId != null) Unselect(user);
         _selectedId = id;
-        if (user && _store?.Find(id) is { } a) EmitAnnotation(EmbedEvents.AnnotationSelected, a);
+        if (user && _session?.Store.Find(id) is { } a) EmitAnnotation(EmbedEvents.AnnotationSelected, a);
     }
 
     private void Unselect(bool user)
     {
         if (_selectedId == null) return;
-        var was = _store?.Find(_selectedId);
+        var was = _session?.Store.Find(_selectedId);
         _selectedId = null;
         if (_editingId != null) CommitEditing();
         if (user && was != null) EmitAnnotation(EmbedEvents.AnnotationUnselected, was);
@@ -761,26 +588,46 @@ public sealed partial class Viewer
         _editText = a.Contents;
         _editIsNew = isNew;
         _focusEditor = true;
+        if (a.Kind == ViewerAnnotationKind.FreeText) _ = EnsureAppearanceFontsAsync();
     }
 
     private bool _focusEditor;
 
     private void CommitEditing()
     {
-        if (_editingId == null || _store?.Find(_editingId) is not { } a)
+        if (_editingId == null || _session?.Store.Find(_editingId) is not { } a)
         {
             _editingId = null;
             return;
         }
         _editingId = null;
-        string text = _editText.Length > ViewerAnnotationStore.MaxContentsLength ? _editText[..ViewerAnnotationStore.MaxContentsLength] : _editText;
-        if (_editIsNew && text.Trim().Length == 0 && a.Kind == ViewerAnnotationKind.FreeText)
+        string text = _editText;
+        bool isNew = _editIsNew;
+        if (a.Kind == ViewerAnnotationKind.FreeText)
         {
-            // An empty new text box is not kept.
-            Change(() => _store!.Delete(new ViewerAnnotationFilter(new HashSet<string> { a.Id })));
+            // An empty new text box is not kept; a text box with text needs the fonts it is measured and drawn with.
+            if (isNew && text.Trim().Length == 0) Change(s => s.Delete(a.Id));
+            else _ = CommitTextBoxAsync(a.Id, text, isNew);
             return;
         }
-        if (text != a.Contents) Change(() => _store!.Update(a with { Contents = text, Modified = DateTimeOffset.UtcNow }));
+        Change(s => s.SetContents(a.Id, text));
+    }
+
+    private async Task CommitTextBoxAsync(string id, string text, bool isNew)
+    {
+        var session = _session;
+        await EnsureAppearanceFontsAsync();
+        if (_session != session || session?.Store.Find(id) == null) return;
+        if (!Change(s => s.SetContents(id, text)))
+        {
+            // Refused (a character without a font, or no text): the reader can correct it.
+            _selectedId = id;
+            _editingId = id;
+            _editText = text;
+            _editIsNew = isNew;
+            _focusEditor = true;
+        }
+        StateHasChanged();
     }
 
     private void CancelEditing()
@@ -791,42 +638,7 @@ public sealed partial class Viewer
         CommitEditing();
     }
 
-    private static string KindLabel(ViewerAnnotationKind kind) => kind switch
-    {
-        ViewerAnnotationKind.Highlight => "Highlight",
-        ViewerAnnotationKind.Underline => "Underline",
-        ViewerAnnotationKind.StrikeOut => "Strike-through",
-        ViewerAnnotationKind.Note => "Note",
-        ViewerAnnotationKind.FreeText => "Text box",
-        ViewerAnnotationKind.Ink => "Drawing",
-        ViewerAnnotationKind.Square => "Rectangle",
-        ViewerAnnotationKind.Circle => "Ellipse",
-        ViewerAnnotationKind.Line => "Line",
-        ViewerAnnotationKind.Polygon => "Polygon",
-        ViewerAnnotationKind.PolyLine => "Connected lines",
-        ViewerAnnotationKind.Stamp => "Stamp",
-        _ => "Reply",
-    };
-
     // ---------------------------------------------------------------- comment threads
-
-    /// <summary>The comments panel's list: each annotation that starts a thread, then its replies with their level.</summary>
-    private List<(ViewerAnnotation Annotation, int Level)> Threads()
-    {
-        var list = _store?.Current ?? [];
-        // A review status (a hidden reply with /State, as Acrobat and the desktop viewer write it) is not a line of its own.
-        var replies = list.Where(a => a.Kind == ViewerAnnotationKind.Reply && !a.IsStatus).ToLookup(a => a.InReplyTo);
-        var result = new List<(ViewerAnnotation, int)>();
-        void Add(ViewerAnnotation a, int level)
-        {
-            result.Add((a, level));
-            // The store keeps threads within the depth limit; the level check is a second guard.
-            if (level < ViewerAnnotationStore.MaxReplyDepth)
-                foreach (var r in replies[a.Id]) Add(r, level + 1);
-        }
-        foreach (var a in list.Where(a => a.Kind != ViewerAnnotationKind.Reply)) Add(a, 0);
-        return result;
-    }
 
     private void StartReply(ViewerAnnotation a)
     {
@@ -837,24 +649,22 @@ public sealed partial class Viewer
 
     private void SendReply()
     {
-        if (_replyTo == null || _store?.Find(_replyTo) is null || !CanEditAnnotations) return;
-        string text = _replyText.Trim();
-        if (text.Length > ViewerAnnotationStore.MaxContentsLength) text = text[..ViewerAnnotationStore.MaxContentsLength];
-        if (text.Length == 0) return;
-        var now = DateTimeOffset.UtcNow;
-        var reply = new ViewerAnnotation
-        {
-            Id = ViewerAnnotationStore.NewId(), Page = 1, Kind = ViewerAnnotationKind.Reply, Box = default, InReplyTo = _replyTo,
-            Color = ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Reply), Contents = text, Author = _authorName, Created = now, Modified = now,
-        };
+        if (_replyTo is not { } parent || !CanEditAnnotations) return;
+        string text = _replyText;
         _replyTo = null;
         _replyText = "";
-        // The status says so only when the store took it; a refusal leaves Change's message.
-        Change(() =>
-        {
-            _store!.Add([reply]);
-            _status = "Reply added";
-        });
+        ViewerAnnotation? reply = null;
+        // The status says so only when the session took it; a refusal leaves Change's message.
+        if (Change(s => reply = s.AddReply(parent, text)) && reply != null) _status = "Reply added";
+    }
+
+    /// <summary>The reader set a comment's review status (Acrobat's Review model; "None" clears it).</summary>
+    private void SetReviewState(ViewerAnnotation a, ChangeEventArgs e)
+    {
+        if (!CanEditAnnotations || e.Value is not string state) return;
+        ViewerAnnotation? status = null;
+        if (Change(s => status = s.SetReviewState(a.Id, state)) && status != null)
+            _status = state == "None" ? "Status cleared" : $"Status: {state}";
     }
 
     // ---------------------------------------------------------------- the host page's annotation manager
@@ -866,13 +676,11 @@ public sealed partial class Viewer
         if (call.Method is not (EmbedMethod.GetAnnotationManager or EmbedMethod.AddAnnotations or EmbedMethod.GetAnnotations or EmbedMethod.UpdateAnnotation
             or EmbedMethod.DeleteAnnotations or EmbedMethod.SelectAnnotation or EmbedMethod.UnselectAnnotation or EmbedMethod.SetAnnotationConfig
             or EmbedMethod.ExportXfdf or EmbedMethod.ImportXfdf)) return null;
-        if (!_config.EnableAnnotationApis || _store == null)
+        if (!_config.EnableAnnotationApis || _session is not { } session)
             return EmbedProtocol.Error(id, EmbedErrors.NotEnabled, "Set enableAnnotationAPIs: true in the config of previewFile to use the annotation manager.");
-        var store = _store;
         bool writes = call.Method is EmbedMethod.AddAnnotations or EmbedMethod.UpdateAnnotation or EmbedMethod.DeleteAnnotations or EmbedMethod.ImportXfdf;
-        if (writes && !CanEditAnnotations)
-            return EmbedProtocol.Error(id, EmbedErrors.NotAllowed, _readOnly ? "The file was opened with hasReadOnlyAccess." : _doc?.EditRestriction ?? "This document does not allow annotations.");
-        var now = DateTimeOffset.UtcNow;
+        if (writes && session.AnnotateRestriction is { } restriction)
+            return EmbedProtocol.Error(id, EmbedErrors.NotAllowed, restriction);
         try
         {
             switch (call.Method)
@@ -880,34 +688,30 @@ public sealed partial class Viewer
                 case EmbedMethod.GetAnnotationManager:
                     return EmbedProtocol.Ok(id, null);
                 case EmbedMethod.GetAnnotations:
-                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(store.Get(call.Filter), Source));
+                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(session.Store.Get(call.Filter), Source));
                 case EmbedMethod.AddAnnotations:
                 {
-                    var given = call.Annotations.Select(a => Defaults(a, now, null)).ToList();
-                    var added = store.Add(given);
-                    _ = CommitEditsAsync();
+                    var added = session.AddAnnotations(call.Annotations);
+                    if (added.Count > 0) _ = CommitEditsAsync();
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(added, Source));
                 }
                 case EmbedMethod.UpdateAnnotation:
                 {
-                    var given = call.Annotations[0];
-                    var old = store.Find(given.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{given.Id}\".");
                     // No dashPattern property: the dash stays (null or [] makes the line solid).
-                    if (call.KeepsDash) given = given with { Dash = old.Dash };
-                    var updated = store.Update(Defaults(given, now, old));
+                    var updated = session.UpdateAnnotation(call.Annotations[0], keepDash: call.KeepsDash);
                     _ = CommitEditsAsync();
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List([updated], Source));
                 }
                 case EmbedMethod.DeleteAnnotations:
                 {
-                    var removed = store.Delete(call.Filter ?? ViewerAnnotationFilter.All);
-                    if (_selectedId != null && store.Find(_selectedId) == null) _selectedId = _editingId = null;
+                    var removed = session.DeleteAnnotations(call.Filter ?? ViewerAnnotationFilter.All);
+                    if (_selectedId != null && session.Store.Find(_selectedId) == null) _selectedId = _editingId = null;
                     if (removed.Count > 0) _ = CommitEditsAsync();
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(removed, Source));
                 }
                 case EmbedMethod.SelectAnnotation:
                 {
-                    var a = store.Find(call.AnnotationId!) ?? throw new ViewerAnnotationException($"No annotation has the id \"{call.AnnotationId}\".");
+                    var a = session.Store.Find(call.AnnotationId!) ?? throw new ViewerAnnotationException($"No annotation has the id \"{call.AnnotationId}\".");
                     Select(a.Id, user: false);
                     ScrollToAnnotation(a);
                     return EmbedProtocol.Ok(id, EmbedAnnotationJson.List([a], Source));
@@ -922,38 +726,30 @@ public sealed partial class Viewer
                     if (c.ShowCommentsPanel is bool p) _showCommentsPanel = p;
                     if (c.DownloadWithAnnotations is bool d) _config = _config with { DownloadWithAnnotations = d };
                     if (c.PrintWithAnnotations is bool pr) _config = _config with { PrintWithAnnotations = pr };
-                    if (c.AuthorName is { } n) _authorName = n.Trim().Length > 0 ? n.Trim() : "Guest";
+                    if (c.AuthorName is { } n)
+                    {
+                        _authorName = n.Trim().Length > 0 ? n.Trim() : "Guest";
+                        session.Author = _authorName;
+                    }
                     if (!_showCommentsPanel && _panel == Panel.Comments) _panel = Panel.Outline;
                     return EmbedProtocol.Ok(id, null);
                 }
                 case EmbedMethod.ExportXfdf:
                 {
-                    string xfdf = PdfAnnotationXfdf.Export(store.Current.Select(a => ViewerAnnotationPdf.ToPdf(a, null)), _fileName);
+                    string xfdf = session.ExportXfdf(_fileName);
                     return EmbedProtocol.Ok(id, w => w.WriteStringValue(xfdf));
                 }
                 case EmbedMethod.ImportXfdf:
                 {
-                    List<PdfEngine.Vector.Annotations.PdfAnnotation> read;
-                    try
-                    {
-                        var import = PdfAnnotationXfdf.ImportWithReport(call.Xfdf!);
-                        read = import.Annotations;
-                        if (import.Skipped > 0)
-                        {
-                            _status = $"{import.Skipped} XFDF {(import.Skipped == 1 ? "annotation was" : "annotations were")} skipped (unreadable, or larger than the limits).";
-                            StateHasChanged();
-                        }
-                    }
-                    catch (FormatException ex)
-                    {
-                        return EmbedProtocol.Error(id, EmbedErrors.InvalidArgument, "importXfdf: " + ex.Message);
-                    }
-                    var ids = store.Current.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
                     // Names in use get new ids; replies are linked to their parents, or added on their own.
-                    var list = ViewerAnnotationPdf.FromXfdf(read, ids).Select(a => Defaults(a, now, null)).ToList();
-                    var added = store.Add(list);
-                    if (added.Count > 0) _ = CommitEditsAsync();
-                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(added, Source));
+                    var import = session.ImportXfdf(call.Xfdf!);
+                    if (import.Skipped > 0)
+                    {
+                        _status = $"{import.Skipped} XFDF {(import.Skipped == 1 ? "annotation was" : "annotations were")} skipped (unreadable, off the document's pages, or larger than the limits).";
+                        StateHasChanged();
+                    }
+                    if (import.Added > 0) _ = CommitEditsAsync();
+                    return EmbedProtocol.Ok(id, EmbedAnnotationJson.List(import.Annotations, Source));
                 }
             }
         }
@@ -963,12 +759,4 @@ public sealed partial class Viewer
         }
         return null;
     }
-
-    /// <summary>What the host page left out: the author, the dates (a change keeps the creation date).</summary>
-    private ViewerAnnotation Defaults(ViewerAnnotation a, DateTimeOffset now, ViewerAnnotation? old) => a with
-    {
-        Author = a.Author.Length > 0 ? a.Author : old?.Author ?? _authorName,
-        Created = a.Created != default ? a.Created : old?.Created ?? now,
-        Modified = a.Modified != default && old == null ? a.Modified : now,
-    };
 }

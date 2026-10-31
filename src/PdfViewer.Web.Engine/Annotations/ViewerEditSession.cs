@@ -10,7 +10,46 @@ namespace PdfViewer.Web.Engine.Annotations;
 public sealed record ViewerAnnotationListItem(ViewerAnnotation Annotation, int Level, string Label, string Summary, string? Status = null);
 
 /// <summary>What an XFDF import added, and how many of its annotations were left out (unreadable, off the document's pages or outside the limits).</summary>
-public readonly record struct ViewerXfdfImport(int Added, int Skipped);
+public readonly record struct ViewerXfdfImport(int Added, int Skipped)
+{
+    private readonly IReadOnlyList<ViewerAnnotation>? _annotations;
+
+    /// <summary>The annotations added, as the store keeps them.</summary>
+    public IReadOnlyList<ViewerAnnotation> Annotations { get => _annotations ?? []; init => _annotations = value; }
+}
+
+/// <summary>
+/// A shape's look: its fill (null: none), its dash (null: solid) and, for a line or connected
+/// lines, its line endings (/LE names, ISO 32000-2 Table 179).
+/// </summary>
+public sealed record ViewerShapeStyle(string? Fill = null, IReadOnlyList<double>? Dash = null, string Start = "None", string End = "None")
+{
+    /// <summary>No fill, solid, no line endings.</summary>
+    public static ViewerShapeStyle Plain { get; } = new();
+
+    /// <summary>The style of an annotation (meaningful for a shape).</summary>
+    public static ViewerShapeStyle Of(ViewerAnnotation a) => new(a.FillColor, a.Dash, a.StartEnding, a.EndEnding);
+
+    /// <summary>The same style as <paramref name="other"/>.</summary>
+    public bool SameAs(ViewerShapeStyle other) =>
+        string.Equals(Fill, other.Fill, StringComparison.OrdinalIgnoreCase) && ViewerAnnotation.SameDash(Dash, other.Dash) && Start == other.Start && End == other.End;
+}
+
+/// <summary>How a viewer edits a document (<see cref="ViewerEditSession.StartAsync(ViewerDocument, ViewerEditOptions, CancellationToken)"/>).</summary>
+public sealed record ViewerEditOptions
+{
+    /// <summary>The name written as the author of new annotations.</summary>
+    public string Author { get; init; } = "";
+
+    /// <summary>The document's own annotations are read, listed and may be changed; when false only the ones added are managed.</summary>
+    public bool ReadFileAnnotations { get; init; } = true;
+
+    /// <summary>The reader may fill the document's form fields (when the document allows it).</summary>
+    public bool FillForms { get; init; } = true;
+
+    /// <summary>Not null: nothing may change (no annotations, no form values), for this reason.</summary>
+    public string? ReadOnlyReason { get; init; }
+}
 
 /// <summary>What writing the edits into the document did: written (pages must be drawn again), a value refused, or a failure.</summary>
 public readonly record struct ViewerApplyResult(bool Written, string? Refused, string? Failed);
@@ -19,12 +58,13 @@ public readonly record struct ViewerApplyResult(bool Written, string? Refused, s
 public sealed record ViewerSave(int Id, byte[] Bytes);
 
 /// <summary>
-/// The reader's edits of one document for a native viewer (the Android app): its annotations in a
-/// <see cref="ViewerAnnotationStore"/> with undo and redo, the form values the reader set, and
-/// the rules for both. After each change the viewer calls <see cref="ApplyAsync"/>, which has the
-/// engine write everything into the document (<see cref="ViewerDocument.ApplyEditsAsync"/>, an
-/// incremental update of the file as opened), so the pages drawn again are what a save writes.
-/// The rules are the web viewer's: the document's permissions and signatures decide whether
+/// The reader's edits of one document, shared by the web viewer (and its embed SDK) and the Android
+/// app: its annotations in a <see cref="ViewerAnnotationStore"/> with undo and redo, the form
+/// values the reader set, and the rules for both. After each change the viewer calls
+/// <see cref="ApplyAsync"/>, which has the engine write everything into the document
+/// (<see cref="ViewerDocument.ApplyEditsAsync"/>, an incremental update of the file as opened), so
+/// the pages drawn again are what a save writes (<see cref="Written"/> says when to draw them).
+/// The rules: a read-only open (<see cref="ViewerEditOptions.ReadOnlyReason"/>) and the document's permissions and signatures decide whether
 /// annotations and form values may change at all (<see cref="ViewerDocument.CanAnnotate"/>,
 /// <see cref="ViewerDocument.CanFillForms"/>), read-only fields are never changed, a text is cut
 /// to the field's /MaxLen, a choice must be one of the field's options, and the engine's format
@@ -56,15 +96,19 @@ public sealed class ViewerEditSession
 
     private readonly Dictionary<string, IReadOnlyList<string>> _values = new(StringComparer.Ordinal);
     private readonly ViewerEditState _edits = new();
+    // Text boxes whose size the reader dragged: their text wraps in that box, which a new text keeps.
+    private readonly HashSet<string> _sizedByReader = new(StringComparer.Ordinal);
+    private readonly ViewerEditOptions _options;
     private string? _lastField;
     private bool _noticeTaken, _applying;
 
-    private ViewerEditSession(ViewerDocument document, ViewerAnnotationStore store, IReadOnlyList<ViewerFormWidget> widgets, string author, string? problem)
+    private ViewerEditSession(ViewerDocument document, ViewerAnnotationStore store, IReadOnlyList<ViewerFormWidget> widgets, ViewerEditOptions options, string? problem)
     {
         Document = document;
         Store = store;
         Widgets = widgets;
-        Author = author;
+        Author = options.Author;
+        _options = options;
         Problem = problem;
     }
 
@@ -72,23 +116,47 @@ public sealed class ViewerEditSession
     /// Starts editing <paramref name="document"/>: its own annotations (when they can be read) and,
     /// when the document allows form filling, its fillable fields.
     /// </summary>
-    public static async Task<ViewerEditSession> StartAsync(ViewerDocument document, string author = "", CancellationToken cancellationToken = default)
+    public static Task<ViewerEditSession> StartAsync(ViewerDocument document, string author = "", CancellationToken cancellationToken = default) =>
+        StartAsync(document, new ViewerEditOptions { Author = author }, cancellationToken);
+
+    /// <summary>
+    /// Starts editing <paramref name="document"/> as <paramref name="options"/> say: its own
+    /// annotations when they are read (and can be), and its fillable fields when the reader may fill them.
+    /// </summary>
+    public static async Task<ViewerEditSession> StartAsync(ViewerDocument document, ViewerEditOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(options);
         IReadOnlyList<ViewerAnnotation> fromFile = [];
         string? problem = null;
-        try
+        if (options.ReadFileAnnotations)
         {
-            fromFile = await document.ReadAnnotationsAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                fromFile = await document.ReadAnnotationsAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException and not OutOfMemoryException)
+            {
+                // Type names only, never document content; the annotations are still drawn, but not listed.
+                problem = $"The document's annotations could not be read ({ex.GetType().Name}).";
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException and not OutOfMemoryException)
-        {
-            // Type names only, never document content; the annotations are still drawn, but not listed.
-            problem = $"The document's annotations could not be read ({ex.GetType().Name}).";
-        }
-        var widgets = document.CanFillForms ? await document.GetFormWidgetsAsync(cancellationToken).ConfigureAwait(false) : [];
-        return new ViewerEditSession(document, new ViewerAnnotationStore(document.Geometry, fromFile), widgets, author, problem);
+        bool fill = options.FillForms && options.ReadOnlyReason == null && document.CanFillForms;
+        var widgets = fill ? await document.GetFormWidgetsAsync(cancellationToken).ConfigureAwait(false) : [];
+        return new ViewerEditSession(document, new ViewerAnnotationStore(document.Geometry, fromFile), widgets, options, problem);
     }
+
+    /// <summary>
+    /// A write of the edits into the document ended with the bytes changed: the pages must be drawn
+    /// again. Raised on the thread that called <see cref="ApplyAsync"/> (a save's writes too).
+    /// </summary>
+    public event Action? Written;
+
+    /// <summary>The document was opened for reading only (<see cref="ViewerEditOptions.ReadOnlyReason"/>).</summary>
+    public bool ReadOnly => _options.ReadOnlyReason != null;
+
+    /// <summary>Why nothing may change: read-only, the document's permissions or signatures; or the fallback.</summary>
+    private string Restriction(string fallback) => _options.ReadOnlyReason ?? Document.EditRestriction ?? fallback;
 
     public ViewerDocument Document { get; }
 
@@ -103,9 +171,12 @@ public sealed class ViewerEditSession
     /// <summary>Why the document's annotations are not listed, or null.</summary>
     public string? Problem { get; }
 
-    public bool CanAnnotate => Document.CanAnnotate;
+    public bool CanAnnotate => !ReadOnly && Document.CanAnnotate;
 
-    public bool CanFillForms => Document.CanFillForms;
+    public bool CanFillForms => _options.FillForms && !ReadOnly && Document.CanFillForms;
+
+    /// <summary>Why annotations may not change (read-only, the document's permissions or signatures), or null when they may.</summary>
+    public string? AnnotateRestriction => CanAnnotate ? null : Restriction("This document does not allow annotations.");
 
     /// <summary>There are edits that no save has written.</summary>
     public bool IsDirty => _edits.IsDirty;
@@ -222,7 +293,7 @@ public sealed class ViewerEditSession
     {
         if (!CanFillForms)
         {
-            refusal = Document.EditRestriction ?? "This document does not allow form filling.";
+            refusal = Restriction("This document does not allow form filling.");
             return false;
         }
         if (Normalize(widget, values, out refusal) is not { } taken) return false;
@@ -274,7 +345,8 @@ public sealed class ViewerEditSession
             StrokeWidth = kind switch
             {
                 ViewerAnnotationKind.Ink => InkWidth,
-                ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.Line => ShapeWidth,
+                ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.Line
+                    or ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine => ShapeWidth,
                 ViewerAnnotationKind.FreeText => 0,
                 _ => 1,
             },
@@ -324,7 +396,7 @@ public sealed class ViewerEditSession
     /// (shown-page points, kept on the page). Null when the drag is shorter than
     /// <see cref="MinShapeSize"/> across or down.
     /// </summary>
-    public ViewerAnnotation? AddShape(ViewerAnnotationKind kind, int page, ViewerPoint from, ViewerPoint to, string? color = null)
+    public ViewerAnnotation? AddShape(ViewerAnnotationKind kind, int page, ViewerPoint from, ViewerPoint to, string? color = null, ViewerShapeStyle? style = null)
     {
         if (kind is not (ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle)) throw new ArgumentOutOfRangeException(nameof(kind));
         var g = Geometry(page);
@@ -332,7 +404,9 @@ public sealed class ViewerEditSession
         var (a, b) = (OnPage(from, g), OnPage(to, g));
         var rect = new ViewerRect(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y));
         if (rect.Width < MinShapeSize || rect.Height < MinShapeSize) return null;
-        return Add(New(kind, page, ClampBox(g.ToUser(rect), g), color));
+        var s = style ?? ViewerShapeStyle.Plain;
+        // A rectangle or ellipse has no line endings.
+        return Add(New(kind, page, ClampBox(g.ToUser(rect), g), color) with { FillColor = s.Fill, Dash = s.Dash });
     }
 
     /// <summary>
@@ -340,8 +414,17 @@ public sealed class ViewerEditSession
     /// dragged from <paramref name="from"/> to <paramref name="to"/> (shown-page points, kept on the
     /// page). Null when it is shorter than <see cref="MinShapeSize"/>.
     /// </summary>
-    public ViewerAnnotation? AddLine(int page, ViewerPoint from, ViewerPoint to, bool arrow, string? color = null)
+    public ViewerAnnotation? AddLine(int page, ViewerPoint from, ViewerPoint to, bool arrow, string? color = null) =>
+        AddLine(page, from, to, new ViewerShapeStyle(End: arrow ? "OpenArrow" : "None"), color);
+
+    /// <summary>
+    /// A line with the style of <paramref name="style"/> (its fill is the inside of closed endings, /IC),
+    /// dragged from <paramref name="from"/> to <paramref name="to"/> (shown-page points, kept on the
+    /// page). Null when it is shorter than <see cref="MinShapeSize"/>.
+    /// </summary>
+    public ViewerAnnotation? AddLine(int page, ViewerPoint from, ViewerPoint to, ViewerShapeStyle style, string? color = null)
     {
+        ArgumentNullException.ThrowIfNull(style);
         var g = Geometry(page);
         if (!Finite(from) || !Finite(to)) return null;
         var (a, b) = (OnPage(from, g), OnPage(to, g));
@@ -349,8 +432,46 @@ public sealed class ViewerEditSession
         var (x1, y1) = g.ToUser(a.X, a.Y);
         var (x2, y2) = g.ToUser(b.X, b.Y);
         double[] points = [x1, y1, x2, y2];
-        var line = New(ViewerAnnotationKind.Line, page, default, color) with { Vertices = points, EndEnding = arrow ? "OpenArrow" : "None" };
-        return Add(line with { Box = ClampBox(ViewerBox.Around(points, ViewerAnnotationStore.ShapeMargin(line.StrokeWidth, arrow)), g) });
+        var line = New(ViewerAnnotationKind.Line, page, default, color) with { Vertices = points, FillColor = style.Fill, Dash = style.Dash, StartEnding = style.Start, EndEnding = style.End };
+        return Add(line with { Box = ClampBox(ViewerBox.Around(points, ViewerAnnotationStore.ShapeMargin(line.StrokeWidth, line.StartEnding, line.EndEnding)), g) });
+    }
+
+    /// <summary>
+    /// A polygon or connected lines through <paramref name="points"/> (shown-page points, kept on
+    /// the page; a point within two points of the one before is dropped, as a double-click gives its
+    /// point twice). A polygon needs three points, connected lines two; null with fewer. Both take
+    /// the fill and dash of <paramref name="style"/>; connected lines its line endings too.
+    /// </summary>
+    public ViewerAnnotation? AddPolyline(ViewerAnnotationKind kind, int page, IReadOnlyList<ViewerPoint> points, ViewerShapeStyle? style = null, string? color = null)
+    {
+        if (kind is not (ViewerAnnotationKind.Polygon or ViewerAnnotationKind.PolyLine)) throw new ArgumentOutOfRangeException(nameof(kind));
+        ArgumentNullException.ThrowIfNull(points);
+        var g = Geometry(page);
+        var s = style ?? ViewerShapeStyle.Plain;
+        var user = new List<double>();
+        ViewerPoint? last = null;
+        foreach (var p in points)
+        {
+            if (!Finite(p)) continue;
+            if (user.Count >= 2 * ViewerAnnotationStore.MaxVertices) break;
+            var q = OnPage(p, g);
+            if (last is { } l && Math.Abs(q.X - l.X) + Math.Abs(q.Y - l.Y) < 2) continue;
+            last = q;
+            var (ux, uy) = g.ToUser(q.X, q.Y);
+            user.Add(ux);
+            user.Add(uy);
+        }
+        if (user.Count / 2 < (kind == ViewerAnnotationKind.Polygon ? 3 : 2)) return null;
+        bool polygon = kind == ViewerAnnotationKind.Polygon;
+        var shape = New(kind, page, default, color) with
+        {
+            Vertices = user.ToArray(),
+            FillColor = s.Fill,
+            Dash = s.Dash,
+            StartEnding = polygon ? "None" : s.Start,
+            EndEnding = polygon ? "None" : s.End,
+        };
+        return Add(shape with { Box = ClampBox(ViewerBox.Around(user, ViewerAnnotationStore.ShapeMargin(shape.StrokeWidth, shape.StartEnding, shape.EndEnding)), g) });
     }
 
     /// <summary>
@@ -365,6 +486,32 @@ public sealed class ViewerEditSession
         if (string.IsNullOrWhiteSpace(text) || !Finite(at)) return null;
         var a = New(ViewerAnnotationKind.FreeText, page, default, color) with { Contents = text };
         return Add(a with { Box = FreeTextBox(g, OnPage(at, g), text, a.FontSize) });
+    }
+
+    /// <summary>The size of a text box placed with a click (not dragged), in points of the shown page.</summary>
+    public const double TextBoxWidth = 200, TextBoxHeight = 40;
+
+    /// <summary>
+    /// An empty text box for the reader to type into (<see cref="SetContents"/>), in the box dragged
+    /// from <paramref name="from"/> to <paramref name="to"/> (shown-page points, kept on the page).
+    /// A drag smaller than 24 by 12 points is a click: the box is <see cref="TextBoxWidth"/> by
+    /// <see cref="TextBoxHeight"/> from there. Its text wraps in the box, which keeps its size.
+    /// Delete it when the reader leaves it empty: a text box needs text.
+    /// </summary>
+    public ViewerAnnotation? AddTextBox(int page, ViewerPoint from, ViewerPoint to, string? color = null)
+    {
+        var g = Geometry(page);
+        if (!Finite(from) || !Finite(to)) return null;
+        var (a, b) = (OnPage(from, g), OnPage(to, g));
+        var rect = new ViewerRect(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y));
+        if (rect.Width < 24 || rect.Height < 12)
+        {
+            double w = Math.Min(TextBoxWidth, g.ShownWidth), h = Math.Min(TextBoxHeight, g.ShownHeight);
+            rect = new ViewerRect(Math.Clamp(a.X, 0, g.ShownWidth - w), Math.Clamp(a.Y, 0, g.ShownHeight - h), w, h);
+        }
+        var added = Add(New(ViewerAnnotationKind.FreeText, page, ClampBox(g.ToUser(rect), g), color));
+        _sizedByReader.Add(added.Id);
+        return added;
     }
 
     /// <summary>
@@ -470,15 +617,70 @@ public sealed class ViewerEditSession
         if (text == a.Contents) return false;
         if (a.Kind == ViewerAnnotationKind.FreeText && string.IsNullOrWhiteSpace(text)) throw new ViewerAnnotationException("A text box needs text; delete it instead.");
         var changed = a with { Contents = text, Modified = DateTimeOffset.UtcNow };
-        // A text box made here fits its new text; one from the file keeps its size.
+        // A text box made here fits its new text; one from the file, or one the reader sized, keeps its size.
         if (a.Kind == ViewerAnnotationKind.FreeText)
         {
             var g = Geometry(a.Page);
             var shown = g.ToShown(a.Box);
-            if (!a.FromFile) changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize) };
+            if (_sizedByReader.Contains(a.Id)) MeasureText(text, a.FontSize, Math.Max(shown.Width, 1)); // only the fonts are checked
+            else if (!a.FromFile) changed = changed with { Box = FreeTextBox(g, new ViewerPoint(shown.X, shown.Y), text, a.FontSize) };
             else MeasureText(text, a.FontSize, FreeTextWidth); // its size is kept: only the fonts are checked
         }
         Store.Update(changed);
+        _edits.Edit();
+        return true;
+    }
+
+    /// <summary>Changes an annotation's colour; false when it is the same, or it is a stamp (drawn in the colour of its kind).</summary>
+    public bool SetColor(string id, string color)
+    {
+        ArgumentNullException.ThrowIfNull(color);
+        CheckCanAnnotate();
+        var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (a.Kind == ViewerAnnotationKind.Stamp || string.Equals(a.Color, color, StringComparison.OrdinalIgnoreCase)) return false;
+        Store.Update(a with { Color = color, Modified = DateTimeOffset.UtcNow });
+        _edits.Edit();
+        return true;
+    }
+
+    /// <summary>
+    /// Changes a shape's fill, dash and (for a line or connected lines) line endings as one undo
+    /// step; its box grows to hold new endings. False when nothing changed, or it is not a shape
+    /// whose style may change (a measurement keeps its own).
+    /// </summary>
+    public bool SetShapeStyle(string id, ViewerShapeStyle style)
+    {
+        ArgumentNullException.ThrowIfNull(style);
+        CheckCanAnnotate();
+        var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (!a.HasShapeStyle) return false;
+        var was = ViewerShapeStyle.Of(a);
+        var s = a.HasEndings ? style : style with { Start = was.Start, End = was.End };
+        if (s.SameAs(was)) return false;
+        var changed = a with { FillColor = s.Fill, Dash = s.Dash, StartEnding = s.Start, EndEnding = s.End, Modified = DateTimeOffset.UtcNow };
+        // New endings may reach past the box: it grows to hold them.
+        if (s.Start != was.Start || s.End != was.End) changed = changed with { Box = ViewerAnnotationStore.GrownForEndings(changed) };
+        Store.Update(changed);
+        _edits.Edit();
+        return true;
+    }
+
+    /// <summary>
+    /// Moves an annotation by (<paramref name="dx"/>, <paramref name="dy"/>) points of the shown
+    /// page, kept on its page; its replies go with it. False when it did not move.
+    /// </summary>
+    public bool Move(string id, double dx, double dy)
+    {
+        CheckCanAnnotate();
+        var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (!double.IsFinite(dx) || !double.IsFinite(dy) || a.Kind == ViewerAnnotationKind.Reply) return false;
+        var g = Geometry(a.Page);
+        var (ux, uy) = g.ToUserDelta(Math.Clamp(dx, -g.ShownWidth, g.ShownWidth), Math.Clamp(dy, -g.ShownHeight, g.ShownHeight));
+        // The store keeps the box on the page (as here): a move that the page edge stops is no step.
+        var m = g.MediaBox;
+        static double Clamp(double v, double lo, double hi) => lo > hi ? 0 : Math.Clamp(v, lo, hi);
+        if (Clamp(ux, m.Left - a.Box.X1, m.Right - a.Box.X2) == 0 && Clamp(uy, m.Top - a.Box.Y1, m.Bottom - a.Box.Y2) == 0) return false;
+        Store.Move(id, ux, uy, DateTimeOffset.UtcNow);
         _edits.Edit();
         return true;
     }
@@ -490,6 +692,59 @@ public sealed class ViewerEditSession
         if (Store.Delete(new ViewerAnnotationFilter(new HashSet<string>(StringComparer.Ordinal) { id })).Count == 0) return false;
         _edits.Edit();
         return true;
+    }
+
+    // ------------------------------------------------------------------ a host page's annotations (the embed SDK)
+
+    /// <summary>
+    /// Adds annotations a host page gives (all or none), as the store checks them: a missing
+    /// author is the reader's name, missing dates are now. They are not the reader's own
+    /// (<see cref="MadeHere"/>): the page made them.
+    /// </summary>
+    public IReadOnlyList<ViewerAnnotation> AddAnnotations(IReadOnlyList<ViewerAnnotation> annotations)
+    {
+        ArgumentNullException.ThrowIfNull(annotations);
+        CheckCanAnnotate();
+        var now = DateTimeOffset.UtcNow;
+        var added = Store.Add(annotations.Select(a => a with
+        {
+            Author = a.Author.Length > 0 ? a.Author : Author,
+            Created = a.Created != default ? a.Created : now,
+            Modified = a.Modified != default ? a.Modified : now,
+        }).ToList());
+        if (added.Count > 0) _edits.Edit();
+        return added;
+    }
+
+    /// <summary>
+    /// Replaces the annotation with the same id by one a host page gives: a missing author or
+    /// creation date stays the annotation's, the modification date is now. With
+    /// <paramref name="keepDash"/> (the page gave no dash) the dash stays.
+    /// </summary>
+    public ViewerAnnotation UpdateAnnotation(ViewerAnnotation annotation, bool keepDash = false)
+    {
+        ArgumentNullException.ThrowIfNull(annotation);
+        CheckCanAnnotate();
+        var old = Store.Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
+        var updated = Store.Update(annotation with
+        {
+            Author = annotation.Author.Length > 0 ? annotation.Author : old.Author.Length > 0 ? old.Author : Author,
+            Created = annotation.Created != default ? annotation.Created : old.Created,
+            Modified = DateTimeOffset.UtcNow,
+            Dash = keepDash ? old.Dash : annotation.Dash,
+        });
+        _edits.Edit();
+        return updated;
+    }
+
+    /// <summary>Deletes the annotations the filter matches, with their replies and statuses; returns them.</summary>
+    public IReadOnlyList<ViewerAnnotation> DeleteAnnotations(ViewerAnnotationFilter filter)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        CheckCanAnnotate();
+        var removed = Store.Delete(filter);
+        if (removed.Count > 0) _edits.Edit();
+        return removed;
     }
 
     public bool Undo()
@@ -520,7 +775,7 @@ public sealed class ViewerEditSession
 
     private void CheckCanAnnotate()
     {
-        if (!CanAnnotate) throw new ViewerAnnotationException(Document.EditRestriction ?? "This document does not allow annotations.");
+        if (!CanAnnotate) throw new ViewerAnnotationException(Restriction("This document does not allow annotations."));
     }
 
     private static string Clip(string text) => text.Length > ViewerAnnotationStore.MaxContentsLength ? text[..ViewerAnnotationStore.MaxContentsLength] : text;
@@ -741,12 +996,13 @@ public sealed class ViewerEditSession
         }
         if (taken.Count > ViewerAnnotationStore.MaxPerCall)
             throw new ViewerAnnotationException($"An XFDF file can add at most {ViewerAnnotationStore.MaxPerCall} annotations at once; this one has {taken.Count}.");
+        IReadOnlyList<ViewerAnnotation> added = [];
         if (taken.Count > 0)
         {
-            Store.Add(taken);
+            added = Store.Add(taken);
             _edits.Edit();
         }
-        return new ViewerXfdfImport(taken.Count, skipped);
+        return new ViewerXfdfImport(added.Count, skipped) { Annotations = added };
     }
 
     // ------------------------------------------------------------------ keeping the edits while the app is ended
@@ -895,6 +1151,7 @@ public sealed class ViewerEditSession
                     {
                     }
                 }
+                Written?.Invoke();
             }
         }
         catch (ObjectDisposedException)
@@ -917,19 +1174,14 @@ public sealed class ViewerEditSession
         if (!_edits.TryBeginSave()) return null;
         try
         {
-            // A write under way always ends; new writes are tried a few times.
-            for (int tries = 0; (_applying || _edits.NeedsApply) && tries < 200; tries++)
-            {
-                if (_applying) await Task.Delay(20, cancellationToken);
-                else await ApplyAsync(cancellationToken);
-            }
+            await WriteOutAsync(cancellationToken);
         }
         catch
         {
             _edits.EndSave();
             throw;
         }
-        if (_applying)
+        if (_applying || !_edits.Saving)
         {
             _edits.EndSave();
             return null;
@@ -938,10 +1190,39 @@ public sealed class ViewerEditSession
         return id == 0 ? null : new ViewerSave(id, Document.Bytes);
     }
 
-    /// <summary>The save ended: <paramref name="saved"/> when its bytes were written to the file.</summary>
-    public void EndSave(ViewerSave save, bool saved)
+    /// <summary>
+    /// Waits until the document's bytes have every edit made so far, writing them when needed (a
+    /// download or a print takes the bytes then). False when the latest edit could not be written.
+    /// </summary>
+    public async Task<bool> WriteAllAsync(CancellationToken cancellationToken = default)
+    {
+        await WriteOutAsync(cancellationToken);
+        return !_applying && _edits.IsCurrent;
+    }
+
+    private async Task WriteOutAsync(CancellationToken cancellationToken)
+    {
+        // A write under way always ends; new writes are tried a few times.
+        for (int tries = 0; (_applying || _edits.NeedsApply) && tries < 200; tries++)
+        {
+            if (_applying) await Task.Delay(20, cancellationToken);
+            else await ApplyAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>The id of the save whose bytes were handed out and not yet answered, or 0.</summary>
+    public int PendingSave => _edits.PendingSave;
+
+    /// <summary>The save ended: <paramref name="saved"/> when its bytes were written to the file. False when it is not the save in flight.</summary>
+    public bool EndSave(ViewerSave save, bool saved)
     {
         ArgumentNullException.ThrowIfNull(save);
-        _edits.Answer(save.Id, saved);
+        return _edits.Answer(save.Id, saved);
     }
+
+    /// <summary>
+    /// The answer to save <paramref name="saveId"/> (<see cref="ViewerSave.Id"/>), for a viewer that
+    /// hands the bytes to another party and gets back only the id. False when it is not the save in flight.
+    /// </summary>
+    public bool EndSave(int saveId, bool saved) => _edits.Answer(saveId, saved);
 }
