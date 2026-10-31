@@ -8,13 +8,13 @@ using PdfEngine.Vector.Services;
 namespace PdfViewer.Views.Dialogs;
 
 /// <summary>
-/// "Open this link in your browser?": the full URL as the document gives it, with the site (or
+/// "Open this link in your browser?": the URL exactly as it will open (normalized), with the site (or
 /// mail address) it goes to in bold, so a link whose text says one thing and whose target is
 /// another is caught before the browser opens. Cancel is the default button.
 /// </summary>
 public sealed class OpenLinkDialog : Window
 {
-    public OpenLinkDialog(Uri uri, string text)
+    public OpenLinkDialog(Uri uri)
     {
         bool mail = uri.Scheme == Uri.UriSchemeMailto;
         Title = mail ? "Write an email" : "Open link";
@@ -43,7 +43,7 @@ public sealed class OpenLinkDialog : Window
 
         var full = new TextBox
         {
-            Text = text,
+            Text = uri.AbsoluteUri, // exactly what opens
             IsReadOnly = true,
             TextWrapping = TextWrapping.Wrap,
             MaxHeight = 120,

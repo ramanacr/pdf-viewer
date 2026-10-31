@@ -34,6 +34,7 @@ public sealed partial class Viewer
             _linksByPage.Clear();
             _linksLoading.Clear();
             _linkBack.Clear();
+            SyncLinkBack();
             _linksFor = doc;
         }
         foreach (int page in pages)
@@ -115,6 +116,7 @@ public sealed partial class Viewer
     {
         if (_doc == null) return;
         _linkBack.Push(CurrentLocation());
+        SyncLinkBack();
         ShowLocation(location);
     }
 
@@ -143,10 +145,14 @@ public sealed partial class Viewer
 
     private bool CanGoBackByLink => _linkBack.CanGoBack;
 
+    /// <summary>viewer.js takes Alt+Left from the browser only while there is a place to go back to.</summary>
+    private void SyncLinkBack() => CanvasInterop.SetLinkBack(_linkBack.CanGoBack);
+
     /// <summary>Back (the toolbar button, Alt+Left): returns to where the last link was followed from.</summary>
     private void GoBackByLink()
     {
         if (_doc == null || !_linkBack.TryPop(out var location)) return;
+        SyncLinkBack();
         ShowLocation(location);
     }
 
@@ -155,8 +161,9 @@ public sealed partial class Viewer
         string? uri = _linkUri;
         _linkUri = null;
         _dialog = Dialog.None;
-        if (uri == null || !PdfLinkTargets.TryGetWebUri(uri, out var safe)) return;
-        _status = CanvasInterop.OpenExternal(safe.AbsoluteUri) ? $"Opened {_linkHost}." : "The link could not be opened.";
+        // The dialog showed _linkUri (a normalized absolute URI): exactly that string opens.
+        if (uri == null || !PdfLinkTargets.TryGetWebUri(uri, out var safe) || safe.AbsoluteUri != uri) return;
+        _status = CanvasInterop.OpenExternal(uri) ? $"Opened {_linkHost}." : "The link could not be opened.";
     }
 
     private void CancelPendingLink()

@@ -401,7 +401,7 @@
                     var (w, h) = CssSize(pv);
                     <div class="page" id="page-@pv.Number" data-page="@pv.Number" style="width:@Px(w);height:@Px(h)"
                          role="group" aria-label="@($"Page {pv.Number} of {_doc.PageCount}")">
-                        <canvas role="img" aria-label="@($"Page {pv.Number}")"></canvas>
+                        <canvas role="img" aria-label="@($"Page {pv.Number} of {_doc.PageCount}")"></canvas>
                         @if (LinksActive && _linksByPage.TryGetValue(pv.Number, out var pageLinks))
                         {
                             @for (int li = 0; li < pageLinks.Count; li++)

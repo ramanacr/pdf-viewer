@@ -36,9 +36,9 @@ public class PageLinkViewerTests : IDisposable
         public List<string> Asked { get; } = new();
         public List<Uri> Opened { get; } = new();
 
-        public bool Confirm(Uri uri, string text)
+        public bool Confirm(Uri uri)
         {
-            Asked.Add(text);
+            Asked.Add(uri.AbsoluteUri);
             return Answer;
         }
 
@@ -301,14 +301,50 @@ public class PageLinkViewerTests : IDisposable
     [Fact]
     public async Task LinksAreNotFollowedWhileADrawingToolIsOn()
     {
-        var (vm, _, _) = await Open();
+        var (vm, opener, scrolls) = await Open();
         using var _vm = vm;
+        opener.Answer = true;
         Assert.True(vm.CanFollowLinks);
         vm.IsPanningEnabled = true;
         Assert.True(vm.CanFollowLinks); // the hand tool follows links on a click
         vm.ActiveAnnotationTool = AnnotationType.Rectangle;
         Assert.False(vm.CanFollowLinks);
+
+        // Every way in (mouse, keyboard, UI Automation Invoke) goes through ActivateLink: all blocked.
+        var links = vm.GetPageLinks(1);
+        Assert.False(vm.ActivateLink(links[0]));
+        Assert.False(vm.ActivateLink(links[2]));
+        Assert.False(vm.ActivateLink(links[4]));
+        Assert.Equal(1, vm.CurrentPageNumber);
+        Assert.Empty(scrolls);
+        Assert.Empty(opener.Asked);
+        Assert.False(vm.CanGoBack);
+
         vm.ActiveAnnotationTool = null;
         Assert.True(vm.CanFollowLinks);
+        Assert.True(vm.ActivateLink(links[2]));
+        Assert.Equal(2, vm.CurrentPageNumber);
+    }
+
+    [Fact]
+    public async Task WebLink_TheDialogShowsAndTheOpenerOpensTheSameNormalizedUri()
+    {
+        string path = Path.Combine(_dir, "normalized.pdf");
+        File.WriteAllBytes(path, Raw(new[]
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 400] >>",
+            "<< /Type /Page /Parent 2 0 R /Annots [4 0 R] >>",
+            "<< /Type /Annot /Subtype /Link /Rect [10 10 110 30] /A << /S /URI /URI (  HTTPS://EXAMPLE.org:443/a/../docs  ) >> >>",
+        }));
+        var opener = new FakeOpener { Answer = true };
+        using var vm = new MainViewModel { LinkOpener = opener };
+        await vm.LoadDocumentAsync(path);
+
+        var link = Assert.Single(vm.GetPageLinks(1));
+        Assert.Equal("https://example.org/docs", link.Description);
+        vm.ActivateLink(link);
+        Assert.Equal(new[] { "https://example.org/docs" }, opener.Asked);
+        Assert.Equal("https://example.org/docs", Assert.Single(opener.Opened).AbsoluteUri);
     }
 }

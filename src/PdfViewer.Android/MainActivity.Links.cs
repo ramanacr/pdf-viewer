@@ -70,7 +70,7 @@ public sealed partial class MainActivity
         int start = message.Length();
         message.Append(host);
         message.SetSpan(new StyleSpan(TypefaceStyle.Bold), start, message.Length(), SpanTypes.ExclusiveExclusive);
-        message.Append("\n\n" + uri.OriginalString + "\n\nThe link comes from the document. Open it only if you trust where it goes.");
+        message.Append("\n\n" + uri.AbsoluteUri + "\n\nThe link comes from the document. Open it only if you trust where it goes.");
         new AlertDialog.Builder(this)
             .SetTitle(mail ? "Write an email?" : "Open this link in your browser?")!
             .SetMessage(message)!
@@ -82,11 +82,21 @@ public sealed partial class MainActivity
     private void Open(System.Uri uri)
     {
         // Checked again: only an absolute http, https or mailto URI leaves the app.
-        if (!PdfLinkTargets.TryGetWebUri(uri.OriginalString, out var safe)) return;
+        string shown = uri.AbsoluteUri; // the string the dialog showed
+        if (!PdfLinkTargets.TryGetWebUri(shown, out var safe) || safe.AbsoluteUri != shown) return;
         try
         {
-            var intent = new Intent(Intent.ActionView, Uri.Parse(safe.AbsoluteUri));
-            intent.AddCategory(Intent.CategoryBrowsable);
+            Intent intent;
+            if (safe.Scheme == System.Uri.UriSchemeMailto)
+            {
+                // Many mail apps do not declare BROWSABLE: SENDTO reaches them.
+                intent = new Intent(Intent.ActionSendto, Uri.Parse(shown));
+            }
+            else
+            {
+                intent = new Intent(Intent.ActionView, Uri.Parse(shown));
+                intent.AddCategory(Intent.CategoryBrowsable);
+            }
             StartActivity(intent);
         }
         catch (ActivityNotFoundException)

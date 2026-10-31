@@ -64,6 +64,9 @@ internal static partial class CanvasInterop
     [JSImport("openExternal", ModuleName)]
     public static partial bool OpenExternal(string url);
 
+    [JSImport("setLinkBack", ModuleName)]
+    public static partial void SetLinkBack(bool value);
+
     [JSImport("viewLocation", ModuleName)]
     [return: JSMarshalAs<JSType.Array<JSType.Number>>]
     public static partial double[] ViewLocation();

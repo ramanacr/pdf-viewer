@@ -332,8 +332,9 @@ function onKey(e) {
         app.invokeMethodAsync('OnShortcut', (e.key === 'y' || e.key === 'Y' || e.shiftKey) ? 'redo' : 'undo');
         return;
     }
-    // Alt+Left: back to where a link was followed from (as a browser's Back).
-    if (e.altKey && !mod && !e.shiftKey && e.key === 'ArrowLeft' && !inFieldOrList(e)) {
+    // Alt+Left: back to where a link was followed from, only when there is such a place; else
+    // the browser's own Back is left alone.
+    if (canGoBackByLink && e.altKey && !mod && !e.shiftKey && e.key === 'ArrowLeft' && !inFieldOrList(e)) {
         e.preventDefault();
         app.invokeMethodAsync('OnShortcut', 'back');
         return;
@@ -381,6 +382,12 @@ function onKey(e) {
 let selectionText = null;  // the viewer's selected text, for the copy event; null when none
 let dragging = null;       // { page, el } while the mouse button is down on a page
 let linkPress = null;      // { el, x, y } while a press on a link may still be a click
+let canGoBackByLink = false; // the viewer has a place to go back to (Alt+Left is then the viewer's)
+
+/** The viewer's link history became empty (false) or not (true). */
+export function setLinkBack(value) {
+    canGoBackByLink = !!value;
+}
 let moveQueued = null;
 
 /** The text the next copy puts on the clipboard (null: nothing selected, or the document does not allow copying). */
@@ -403,7 +410,7 @@ export function openExternal(url) {
     let parsed;
     try { parsed = new URL(url); } catch { return false; }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') return false;
-    window.open(parsed.href, '_blank', 'noopener,noreferrer');
+    window.open(url, '_blank', 'noopener,noreferrer'); // the string the dialog showed
     return true;
 }
 

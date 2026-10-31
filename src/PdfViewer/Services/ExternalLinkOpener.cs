@@ -12,28 +12,29 @@ namespace PdfViewer.Services;
 /// </summary>
 public interface IExternalLinkOpener
 {
-    /// <summary>Shows the full URL with its host emphasised; true only when the reader chose to open it.</summary>
-    bool Confirm(Uri uri, string text);
+    /// <summary>Shows the URL that will open (<see cref="Uri.AbsoluteUri"/>) with its host emphasised; true only when the reader chose to open it.</summary>
+    bool Confirm(Uri uri);
 
-    /// <summary>Hands the URI to the system's browser or mail program.</summary>
+    /// <summary>Hands the URI (<see cref="Uri.AbsoluteUri"/>, the string the dialog showed) to the system's browser or mail program.</summary>
     void Open(Uri uri);
 }
 
 /// <summary>The desktop's opener: a confirmation dialog, then the shell.</summary>
 public sealed class ShellLinkOpener : IExternalLinkOpener
 {
-    public bool Confirm(Uri uri, string text)
+    public bool Confirm(Uri uri)
     {
         var owner = Application.Current?.MainWindow;
         if (owner == null) return false;
-        var dialog = new Views.Dialogs.OpenLinkDialog(uri, text) { Owner = owner };
+        var dialog = new Views.Dialogs.OpenLinkDialog(uri) { Owner = owner };
         return dialog.ShowDialog() == true;
     }
 
     public void Open(Uri uri)
     {
         // Checked again here: only an absolute http, https or mailto URI reaches the shell.
-        if (!PdfLinkTargets.TryGetWebUri(uri.OriginalString, out var safe)) return;
-        Process.Start(new ProcessStartInfo(safe.AbsoluteUri) { UseShellExecute = true });
+        string shown = uri.AbsoluteUri;
+        if (!PdfLinkTargets.TryGetWebUri(shown, out var safe) || safe.AbsoluteUri != shown) return;
+        Process.Start(new ProcessStartInfo(shown) { UseShellExecute = true });
     }
 }

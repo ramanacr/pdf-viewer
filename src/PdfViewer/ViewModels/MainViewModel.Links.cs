@@ -54,10 +54,14 @@ public partial class MainViewModel
         return null;
     }
 
-    /// <summary>Follows a link as a click on it does.</summary>
-    public void ActivateLink(PageLink link)
+    /// <summary>
+    /// Follows a link as a click on it does. Every way in (mouse, keyboard, UI Automation Invoke)
+    /// comes here, so a tool in use blocks them all. True when the link was acted on.
+    /// </summary>
+    public bool ActivateLink(PageLink link)
     {
         ArgumentNullException.ThrowIfNull(link);
+        if (!CanFollowLinks) return false;
         var target = link.Target;
         switch (target.Kind)
         {
@@ -91,6 +95,7 @@ public partial class MainViewModel
                 StatusText = target.Description;
                 break;
         }
+        return true;
     }
 
     private void GoToLinkTarget(PageLink link)
@@ -120,7 +125,7 @@ public partial class MainViewModel
             StatusText = $"This link was not opened: {text}";
             return;
         }
-        if (!LinkOpener.Confirm(uri, text.Trim()))
+        if (!LinkOpener.Confirm(uri))
         {
             StatusText = "The link was not opened.";
             return;

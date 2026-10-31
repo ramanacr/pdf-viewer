@@ -552,6 +552,7 @@ public sealed partial class Viewer : IAsyncDisposable
         _linksByPage.Clear();
         _linksLoading.Clear();
         _linkBack.Clear();
+        SyncLinkBack();
         _linksFor = null;
         _thumbsDrawn.Clear();
         _thumbsVisible.Clear();

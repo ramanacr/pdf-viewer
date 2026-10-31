@@ -131,12 +131,39 @@ public class PdfLinkTargetsTests
     [InlineData("relative/path", false)]
     [InlineData("https://", false)]
     [InlineData("", false)]
+    [InlineData("https:\\\\evil.example", false)]
+    [InlineData("https://example.org\\@evil.example/", false)]
+    [InlineData("https://example.org/‮exe.txt", false)] // right-to-left override
+    [InlineData("https://example.org/⁦a⁩", false)] // bidi isolates
+    [InlineData("https://exa​mple.org/", false)]       // zero-width space
+    [InlineData("https://example.org/‏", false)]       // right-to-left mark
+    [InlineData("https://example.org/﻿", false)]       // zero-width no-break space
+    [InlineData("https://example.org/", false)]       // private use
+    [InlineData("https://example.org/͸", false)]       // unassigned
     public void TryGetWebUri_OnlyHttpHttpsAndMailto(string text, bool allowed)
     {
-        Assert.Equal(allowed, PdfLinkTargets.TryGetWebUri(text, out _));
+        Assert.Equal(allowed, PdfLinkTargets.TryGetWebUri(text, out var parsed));
         var target = PdfLinkTargets.Resolve(null, new PdfAction(PdfActionKind.Uri, "URI") { Uri = text }, 1);
         Assert.Equal(allowed ? PdfLinkTargetKind.WebUri : PdfLinkTargetKind.BlockedUri, target.Kind);
-        Assert.Equal(text.Trim(), target.Uri);
+        // A web link is shown as exactly what opens; anything else as the document wrote it.
+        Assert.Equal(allowed ? parsed.AbsoluteUri : text.Trim(), target.Uri);
+        Assert.Equal(target.Uri, target.Description);
+    }
+
+    [Fact]
+    public void TryGetWebUri_RefusesALoneSurrogate()
+    {
+        Assert.False(PdfLinkTargets.TryGetWebUri("https://example.org/" + '\uD83D', out _));
+        Assert.False(PdfLinkTargets.TryGetWebUri("https://example.org/" + '\uDC00' + "x", out _));
+    }
+
+    [Fact]
+    public void Resolve_AWebLinkIsShownNormalized()
+    {
+        var target = PdfLinkTargets.Resolve(null, new PdfAction(PdfActionKind.Uri, "URI") { Uri = "HTTPS://EXAMPLE.org:443/a/../docs" }, 1);
+        Assert.Equal(PdfLinkTargetKind.WebUri, target.Kind);
+        Assert.Equal("https://example.org/docs", target.Uri);
+        Assert.Equal("https://example.org/docs", target.Description);
     }
 
     [Fact]

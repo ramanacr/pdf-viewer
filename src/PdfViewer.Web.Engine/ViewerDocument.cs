@@ -980,36 +980,53 @@ public sealed class ViewerDocument : IAsyncDisposable
 
     /// <summary>
     /// The page's link annotations in /Annots order, with their areas on the shown page and where
-    /// they go (empty for a page without links). Waits for the whole file when it is loading by ranges.
+    /// they go (empty for a page without links). A document loading by ranges is not completed for
+    /// this: only the bytes the page's links need are fetched, as for the page's text.
     /// </summary>
     public async Task<IReadOnlyList<ViewerLink>> GetLinksAsync(int page, CancellationToken cancellationToken = default)
     {
         if (page < 1 || page > PageCount) throw new ArgumentOutOfRangeException(nameof(page));
-        await EnsureCompleteAsync(cancellationToken).ConfigureAwait(false);
+        bool changed = false;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_ranged is { } ranged)
+            {
+                // Each run may be on a fresh parse: its own navigation (named destinations) and geometry.
+                return await ranged.RunAsync(page, (d, ct) => ValueTask.FromResult(ReadLinks(d, page, new PdfEngine.Vector.Services.PdfNavigation(d))),
+                    cancellationToken).ConfigureAwait(false);
+            }
             if (page > _document.PageCount) return [];
             if (_navigation == null || !ReferenceEquals(_navigation.Document, _document))
                 _navigation = new PdfEngine.Vector.Services.PdfNavigation(_document);
-            var geometry = _geometry[page - 1];
-            var links = PdfEngine.Vector.Services.PdfDocumentInfo.ReadLinks(_document, page, _navigation);
-            var result = new List<ViewerLink>(links.Count);
-            foreach (var link in links)
-            {
-                var areas = PdfEngine.Vector.Services.PdfLinkTargets.Areas(link)
-                    .Select(a => geometry.ToShown(new Annotations.ViewerBox(a.X, a.Y, a.Right, a.Bottom)))
-                    .ToList();
-                if (areas.Count == 0) continue;
-                result.Add(new ViewerLink(page, link.Index, areas, PdfEngine.Vector.Services.PdfLinkTargets.Resolve(link, _document.PageCount)) { Source = link });
-            }
-            return result;
+            return ReadLinks(_document, page, _navigation);
         }
         finally
         {
+            // The page is read now: its size and turn are known (as after reading its text).
+            if (_ranged is { } synced && !_disposed) changed = SyncRangedPage(synced, page);
             _gate.Release();
+            if (changed) PagesChanged?.Invoke();
         }
+    }
+
+    private static IReadOnlyList<ViewerLink> ReadLinks(PdfVectorDocument document, int page, PdfEngine.Vector.Services.PdfNavigation navigation)
+    {
+        if (page > document.PageCount) return [];
+        var node = document.PageTree.Pages[page - 1];
+        var geometry = new Annotations.ViewerPageGeometry(node.MediaBox, node.CropBox, node.RotationDegrees);
+        var links = PdfEngine.Vector.Services.PdfDocumentInfo.ReadLinks(document, page, navigation);
+        var result = new List<ViewerLink>(links.Count);
+        foreach (var link in links)
+        {
+            var areas = PdfEngine.Vector.Services.PdfLinkTargets.Areas(link)
+                .Select(a => geometry.ToShown(new Annotations.ViewerBox(a.X, a.Y, a.Right, a.Bottom)))
+                .ToList();
+            if (areas.Count == 0) continue;
+            result.Add(new ViewerLink(page, link.Index, areas, PdfEngine.Vector.Services.PdfLinkTargets.Resolve(link, document.PageCount)) { Source = link });
+        }
+        return result;
     }
 
     /// <summary>Uses other font substitutes from now on (for example fonts the user allowed the page to read).</summary>

@@ -100,8 +100,9 @@ public static class PdfLinkTargets
             case PdfActionKind.Uri:
             {
                 string uri = action.Uri ?? string.Empty;
-                return TryGetWebUri(uri, out _)
-                    ? new PdfLinkTarget(PdfLinkTargetKind.WebUri, uri.Trim()) { Uri = uri.Trim(), ActionType = type }
+                // A web link is shown as exactly what will open: the normalized absolute URI.
+                return TryGetWebUri(uri, out var web)
+                    ? new PdfLinkTarget(PdfLinkTargetKind.WebUri, web.AbsoluteUri) { Uri = web.AbsoluteUri, ActionType = type }
                     : new PdfLinkTarget(PdfLinkTargetKind.BlockedUri, uri.Trim()) { Uri = uri.Trim(), ActionType = type };
             }
             case PdfActionKind.JavaScript:
@@ -143,8 +144,23 @@ public static class PdfLinkTargets
         if (string.IsNullOrWhiteSpace(text)) return false;
         string trimmed = text.Trim();
         if (trimmed.Length > MaxUriLength) return false;
+        // A URI has no spaces or control characters, and none that change how it reads: bidi
+        // overrides and isolates (U+202E, U+2066-2069), zero-width and invisible characters
+        // (U+200B-200F, U+FEFF), private-use, unassigned and lone surrogate code points.
         foreach (char c in trimmed)
-            if (char.IsControl(c) || char.IsWhiteSpace(c)) return false; // a URI has no spaces or control characters
+        {
+            if (char.IsControl(c) || char.IsWhiteSpace(c)) return false;
+            switch (char.GetUnicodeCategory(c))
+            {
+                case System.Globalization.UnicodeCategory.Format:
+                case System.Globalization.UnicodeCategory.PrivateUse:
+                case System.Globalization.UnicodeCategory.OtherNotAssigned:
+                case System.Globalization.UnicodeCategory.Surrogate:
+                    return false;
+            }
+        }
+        // Backslashes are read as slashes by Uri ("https:\\evil.example"): what is shown would not be what opens.
+        if (trimmed.Contains('\\')) return false;
         if (!System.Uri.TryCreate(trimmed, UriKind.Absolute, out var parsed)) return false;
         if (parsed.Scheme == System.Uri.UriSchemeMailto)
         {
@@ -168,7 +184,7 @@ public static class PdfLinkTargets
         if (uri.Scheme == System.Uri.UriSchemeMailto)
         {
             // The addresses before any ?subject=... part, as written.
-            string text = uri.OriginalString;
+            string text = uri.AbsoluteUri;
             string address = text[(text.IndexOf(':') + 1)..];
             int query = address.IndexOf('?');
             if (query >= 0) address = address[..query];

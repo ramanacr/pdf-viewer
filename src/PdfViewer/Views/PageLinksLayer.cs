@@ -95,10 +95,13 @@ public sealed class PageLinksLayer : Canvas
             public override object? GetPattern(PatternInterface patternInterface) =>
                 patternInterface == PatternInterface.Invoke ? this : base.GetPattern(patternInterface);
 
+            // A tool in use (drawing, measuring, ...) disables the links, as it does for the mouse.
+            protected override bool IsEnabledCore() => ((LinkHotspot)Owner).Document.CanFollowLinks;
+
             public void Invoke()
             {
                 var spot = (LinkHotspot)Owner;
-                spot.Document.ActivateLink(spot.Link);
+                if (!spot.Document.ActivateLink(spot.Link)) throw new ElementNotEnabledException();
             }
         }
     }
