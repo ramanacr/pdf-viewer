@@ -577,7 +577,7 @@ internal sealed class PageView : SkiaView
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     _failed.Add(FailKey(job));
-                    Problem?.Invoke($"Page {job.Page} could not be drawn ({ex.GetType().Name}).");
+                    Problem?.Invoke(ViewerRenderFailure.Describe(job.Page, ex));
                     continue;
                 }
                 if (!ReferenceEquals(job.Doc, _doc)) break;

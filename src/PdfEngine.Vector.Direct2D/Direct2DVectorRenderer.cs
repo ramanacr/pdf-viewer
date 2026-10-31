@@ -51,7 +51,7 @@ public sealed partial class Direct2DVectorRenderer : IPdfVectorRenderer
     /// OverflowException in the allocation. Far above any real viewport or export; zoomed-in
     /// views render regions.
     /// </summary>
-    internal const long MaxRenderPixelCount = int.MaxValue / 4;
+    internal const long MaxRenderPixelCount = PdfEngine.Vector.Limits.PdfSecurityLimits.MaxRenderPixelCount;
 
     private readonly D2DResources _res;
     private readonly SemaphoreSlim _gate = new(1, 1);

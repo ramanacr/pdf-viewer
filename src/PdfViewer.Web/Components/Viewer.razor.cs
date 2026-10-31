@@ -691,7 +691,7 @@ public sealed partial class Viewer : IAsyncDisposable
                         {
                             // Diagnostics name the failure type only, never document content.
                             _failed.Add((page, scale, night));
-                            _status = $"Page {page} could not be drawn ({ex.GetType().Name}).";
+                            _status = ViewerRenderFailure.Describe(page, ex);
                             StateHasChanged();
                             continue;
                         }

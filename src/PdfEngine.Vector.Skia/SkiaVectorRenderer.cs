@@ -2,6 +2,8 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using PdfEngine.Geometry;
 using PdfEngine.Rendering;
+using PdfEngine.Vector.Diagnostics;
+using PdfEngine.Vector.Limits;
 using SkiaSharp;
 
 namespace PdfEngine.Vector.Skia;
@@ -36,7 +38,10 @@ public sealed record SkiaRenderResult(
 /// </summary>
 /// <remarks>
 /// Thread-safe: renders on one instance are serialized. Raster output is the output size itself
-/// (no GPU texture limit), so there is no tiling.
+/// (no GPU texture limit), so there is no tiling. One render is at most
+/// <see cref="PdfSecurityLimits.MaxRenderPixelCount"/> pixels, as in the Direct2D and WPF backends:
+/// a larger page or region, or a buffer the process cannot allocate, is refused with a
+/// <see cref="PdfResourceLimitException"/> (<c>LimitName</c> <c>"MaxRenderPixelCount"</c>).
 /// </remarks>
 public sealed class SkiaVectorRenderer : IPdfVectorRenderer
 {
@@ -150,6 +155,11 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
         var r = ClampRegion(region ?? new SkiaPixelRegion(0, 0, geometry.PixelWidth, geometry.PixelHeight), geometry);
         if (r.Width <= 0 || r.Height <= 0)
             throw new ArgumentOutOfRangeException(nameof(region), "Region lies outside the page.");
+        // Before any allocation: a huge MediaBox, UserUnit or resolution is a typed error, not an
+        // OverflowException from the buffer size or an OutOfMemoryException from the allocation.
+        if ((long)r.Width * r.Height > PdfSecurityLimits.MaxRenderPixelCount)
+            throw TooLarge(r.Width, r.Height,
+                $"exceeds the {PdfSecurityLimits.MaxRenderPixelCount:N0}-pixel single-buffer limit; render a region instead.");
 
         // Page-space area of the region, to fetch fallback pixels only where they show.
         Matrix3x2.Invert(geometry.PageUserToPixels(), out var pixelsToPage);
@@ -173,7 +183,18 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
             try
             {
                 var replay = AcquireReplayer(list, ct);
-                var (owner, composited) = await Task.Run(() => DrawPage(replay, list, geometry, overlays, r, invertColors), ct).ConfigureAwait(false);
+                PageBuffer owner;
+                int composited;
+                try
+                {
+                    (owner, composited) = await Task.Run(() => DrawPage(replay, list, geometry, overlays, r, invertColors), ct).ConfigureAwait(false);
+                }
+                catch (OutOfMemoryException ex)
+                {
+                    // Under the pixel ceiling the process can still run out of memory: for the page
+                    // buffer, or for an offscreen bitmap of a group or soft mask while drawing.
+                    throw TooLarge(r.Width, r.Height, $"could not be allocated: {ex.Message}");
+                }
                 var page = new RenderedPage(list.PageNumber, r.Width, r.Height, r.Width * 4, geometry.Dpi, request.Rotation, owner);
                 return new SkiaRenderResult(page, tokens, backendCount, composited, clock.Elapsed);
             }
@@ -186,6 +207,28 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
         {
             foreach (var (_, pixels) in overlays) pixels?.Dispose();
         }
+    }
+
+    /// <summary>The typed error for a render buffer that is too large or cannot be allocated.</summary>
+    internal static PdfResourceLimitException TooLarge(int width, int height, string reason) =>
+        new(nameof(PdfSecurityLimits.MaxRenderPixelCount),
+            $"Requested render of {width} x {height} pixels ({(long)width * height:N0}) {reason}");
+
+    /// <summary>
+    /// A new BGRA bitmap of w x h pixels (contents undefined), or the typed error when it is past
+    /// <see cref="PdfSecurityLimits.MaxRenderPixelCount"/> or Skia cannot allocate it.
+    /// </summary>
+    internal static SKBitmap NewBitmap(int w, int h)
+    {
+        if (w <= 0 || h <= 0 || (long)w * h > PdfSecurityLimits.MaxRenderPixelCount)
+            throw TooLarge(w, h, $"is outside the 1 to {PdfSecurityLimits.MaxRenderPixelCount:N0}-pixel offscreen limit.");
+        var bitmap = new SKBitmap();
+        if (!bitmap.TryAllocPixels(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul)))
+        {
+            bitmap.Dispose();
+            throw TooLarge(w, h, "could not be allocated by Skia.");
+        }
+        return bitmap;
     }
 
     /// <summary>Full-output pixel size of a request (page /Rotate plus viewer rotation).</summary>
@@ -206,7 +249,16 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
     private (PageBuffer Owner, int Composited) DrawPage(SkiaReplayer replay, IPdfDisplayList list, SkiaPageGeometry g,
         List<(PdfFallbackToken Token, RenderedPage? Pixels)> overlays, SkiaPixelRegion r, bool invert)
     {
-        var owner = new PageBuffer(checked(r.Width * 4 * r.Height));
+        PageBuffer owner;
+        try
+        {
+            owner = new PageBuffer(checked(r.Width * 4 * r.Height));
+        }
+        catch (OverflowException)
+        {
+            // RenderAsync checks the pixel count first; this keeps the error typed if that changes.
+            throw TooLarge(r.Width, r.Height, "does not fit one buffer.");
+        }
         var info = new SKImageInfo(r.Width, r.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
         var handle = GCHandle.Alloc(owner.Array, GCHandleType.Pinned);
         int composited;
@@ -215,7 +267,7 @@ public sealed class SkiaVectorRenderer : IPdfVectorRenderer
             // The canvas draws straight into the page buffer: no copy afterwards.
             using var bitmap = new SKBitmap();
             if (!bitmap.InstallPixels(info, handle.AddrOfPinnedObject(), info.RowBytes))
-                throw new InvalidOperationException("Skia could not wrap the page buffer.");
+                throw TooLarge(r.Width, r.Height, "could not be wrapped by Skia.");
             using (var canvas = new SKCanvas(bitmap))
             {
                 canvas.Clear(SKColors.White);
@@ -332,14 +384,21 @@ internal readonly record struct SkiaPageGeometry(double Dpi, int PixelWidth, int
         int total = (((list.RotationDegrees + (int)request.Rotation) % 360) + 360) % 360;
         bool sideways = total is 90 or 270;
         double wPts = sideways ? crop.Height : crop.Width, hPts = sideways ? crop.Width : crop.Height;
-        int pw = request.TargetWidthPixels > 0 ? request.TargetWidthPixels : (int)Math.Max(1, Math.Round(wPts * dpi / 72.0));
-        int ph = request.TargetHeightPixels > 0 ? request.TargetHeightPixels : (int)Math.Max(1, Math.Round(hPts * dpi / 72.0));
+        int pw = request.TargetWidthPixels > 0 ? request.TargetWidthPixels : ToPixels(wPts * dpi / 72.0);
+        int ph = request.TargetHeightPixels > 0 ? request.TargetHeightPixels : ToPixels(hPts * dpi / 72.0);
         // A size in pixels sets the resolution: it is reported, and fallback regions are fetched at it.
         // When the horizontal and vertical resolutions differ, the larger keeps fallback pixels sharp.
         double dpiX = request.TargetWidthPixels > 0 && wPts > 0 ? pw * 72.0 / wPts : dpi;
         double dpiY = request.TargetHeightPixels > 0 && hPts > 0 ? ph * 72.0 / hPts : dpi;
         return new SkiaPageGeometry(Math.Max(dpiX, dpiY), pw, ph, total, crop);
     }
+
+    /// <summary>
+    /// A pixel count from a size in pixels: at least 1, and saturated at int.MaxValue (a huge
+    /// MediaBox or resolution then fails the render's pixel limit, not an integer conversion).
+    /// </summary>
+    private static int ToPixels(double size) =>
+        double.IsNaN(size) ? 1 : (int)Math.Clamp(Math.Round(size), 1, int.MaxValue);
 
     /// <summary>Unrotated top-left page points → output pixels.</summary>
     public Matrix3x2 PagePointsToPixels()
