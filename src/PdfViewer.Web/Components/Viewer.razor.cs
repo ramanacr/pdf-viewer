@@ -165,7 +165,7 @@ public sealed partial class Viewer : IAsyncDisposable
         if (firstRender)
         {
             _self = DotNetObjectReference.Create(this);
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=6");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/viewer.js?v=8");
             await _module.InvokeVoidAsync("init", _self, "pages", !Embedded, IsInline);
             if (Embedded)
             {
@@ -177,7 +177,8 @@ public sealed partial class Viewer : IAsyncDisposable
             else
             {
                 _theme = CanvasInterop.ReadSetting("theme") is "light" or "dark" ? CanvasInterop.ReadSetting("theme")! : "system";
-                _sidebarOpen = CanvasInterop.ReadSetting("sidebar") != "closed";
+                // A phone starts with the drawer closed: it would cover the first page.
+                _sidebarOpen = !CanvasInterop.IsNarrow() && CanvasInterop.ReadSetting("sidebar") != "closed";
                 CanvasInterop.SetTheme(_theme);
                 _status = "Ready";
             }
@@ -187,6 +188,7 @@ public sealed partial class Viewer : IAsyncDisposable
             StateHasChanged();
             return;
         }
+        FocusAfterRender();
         if (_observeThumbs)
         {
             _observeThumbs = false;
@@ -446,7 +448,7 @@ public sealed partial class Viewer : IAsyncDisposable
         try
         {
             await FinishOpenAsync(doc);
-            if (Embedded && _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0)
+            if (Embedded && _config.HasSidePanel && _config.ShowBookmarks && _outline.Count > 0 && !CanvasInterop.IsNarrow())
             {
                 _sidebarOpen = true;
                 _panel = Panel.Outline;
@@ -853,9 +855,78 @@ public sealed partial class Viewer : IAsyncDisposable
     private void ToggleSidebar()
     {
         _sidebarOpen = !_sidebarOpen;
-        if (!Embedded) CanvasInterop.WriteSetting("sidebar", _sidebarOpen ? "open" : "closed");
+        // On a phone the panel is a drawer over the pages: opening it there is not a preference to keep.
+        if (!Embedded && !CanvasInterop.IsNarrow()) CanvasInterop.WriteSetting("sidebar", _sidebarOpen ? "open" : "closed");
         if (_sidebarOpen && _panel == Panel.Thumbnails) ShowThumbnails();
         _refit = true;
+    }
+
+    /// <summary>On a phone, the drawer closes once the reader has picked a place to go, so the page shows.</summary>
+    private void CloseDrawer()
+    {
+        if (_sidebarOpen && CanvasInterop.IsNarrow()) _sidebarOpen = false;
+    }
+
+    private void GoToPageFromPanel(int page)
+    {
+        GoToPage(page);
+        CloseDrawer();
+    }
+
+    // ---------------------------------------------------------------- phone toolbar (app.css, max-width 760px)
+
+    private bool _searchOpen;        // phones: the search field is open in the toolbar row
+    private bool _moreOpen;          // the "More commands" menu (only its button, shown on phones, opens it)
+    private string? _focusAfterRender;
+
+    private void OpenSearch()
+    {
+        _searchOpen = true;
+        _moreOpen = false;
+        _focusAfterRender = "search-input";
+    }
+
+    /// <summary>Closes the phone search field; the search ends with it, as a find bar's does.</summary>
+    private async Task CloseSearchAsync()
+    {
+        _searchOpen = false;
+        _focusAfterRender = "search-toggle";
+        if (_query.Length > 0 || _searchedFor.Length > 0)
+        {
+            _query = "";
+            await RestartSearchAsync();
+        }
+    }
+
+    private void ToggleMoreMenu()
+    {
+        _moreOpen = !_moreOpen;
+        _focusAfterRender = _moreOpen ? "more-menu" : "more-button";
+    }
+
+    private void CloseMoreMenu(bool focusButton = true)
+    {
+        _moreOpen = false;
+        if (focusButton) _focusAfterRender = "more-button";
+    }
+
+    /// <summary>Arrow keys, Home and End move between the menu's items; Tab leaves the menu and closes it.</summary>
+    private void OnMoreMenuKey(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowDown" or "ArrowUp" or "Home" or "End": CanvasInterop.MoveMenuFocus("more-menu", e.Key); break;
+            case "Tab": CloseMoreMenu(focusButton: false); break;
+        }
+    }
+
+    /// <summary>Moves the focus where the last change asked for it, once the element is rendered.</summary>
+    private void FocusAfterRender()
+    {
+        if (_focusAfterRender is not { } id) return;
+        _focusAfterRender = null;
+        if (id == "more-menu") CanvasInterop.MoveMenuFocus(id, "Home");
+        else CanvasInterop.FocusElement(id, select: false);
     }
 
     private void ToggleNight()
@@ -985,7 +1056,9 @@ public sealed partial class Viewer : IAsyncDisposable
             case "select-all": await SelectAllOnPageAsync(); break;
             case "find":
                 if (_doc == null) break;
+                _searchOpen = true;   // phones: the field is behind a button
                 CanvasInterop.FocusElement("search-input", select: true);
+                _focusAfterRender = "search-input";
                 break;
             case "find-next": StepHit(1); break;
             case "find-previous": StepHit(-1); break;
@@ -997,6 +1070,9 @@ public sealed partial class Viewer : IAsyncDisposable
                 if (_dialog == Dialog.Password) CancelPassword();
                 else if (_dialog == Dialog.Link) CancelPendingLink();
                 else if (_dialog != Dialog.None) _dialog = Dialog.None;
+                else if (_moreOpen) CloseMoreMenu();
+                else if (_doc != null && _sidebarOpen && CanvasInterop.IsNarrow()) CloseDrawer();
+                else if (_searchOpen && CanvasInterop.IsNarrow()) await CloseSearchAsync();
                 else if (_editingId != null) CancelEditing();
                 else if (_selectedId != null) Unselect(user: true);
                 else if (_tool != Tool.Select) SetTool(Tool.Select);

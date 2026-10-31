@@ -260,6 +260,23 @@ export function hasLocalFonts() {
     return typeof window.queryLocalFonts === 'function';
 }
 
+/** The width below which app.css shows the side panel as a drawer over the pages. */
+export function isNarrow() {
+    return window.matchMedia('(max-width: 760px)').matches;
+}
+
+/** Keyboard movement in a menu: key is Home, End, ArrowDown or ArrowUp; disabled items are skipped. */
+export function moveMenuFocus(menuId, key) {
+    const items = Array.from(document.getElementById(menuId)?.querySelectorAll('[role^="menuitem"]:not(:disabled)') ?? []);
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement);
+    const next = key === 'Home' ? 0
+        : key === 'End' ? items.length - 1
+        : key === 'ArrowUp' ? (at <= 0 ? items.length - 1 : at - 1)
+        : (at + 1) % items.length;
+    items[next].focus();
+}
+
 /**
  * Hands the engine the device's fonts of the given families (Local Font Access API; the browser
  * asks the user first). The files go to the .NET runtime in this tab and nowhere else. Returns the
@@ -302,7 +319,8 @@ function inField(e) {
 
 /** The focus is in a text field or a list box (zoom, stamp, shape style): it keeps its letters, arrows and Delete. */
 function inFieldOrList(e) {
-    return inField(e) || e.target instanceof HTMLSelectElement;
+    // A menu's Home, End and letter keys are its own, not page shortcuts.
+    return inField(e) || e.target instanceof HTMLSelectElement || !!e.target.closest?.('[role="menu"]');
 }
 
 function onKey(e) {
@@ -536,6 +554,25 @@ function moveAnnotation(dx, dy) {
     m.el.style.transform = `translate(${dx}px, ${dy}px)`;
 }
 
+/**
+ * The link a finger meant: the one under it, else the nearest one within 22 px (half of a 44 px
+ * touch target). Links in a contents list can be 2 px apart at phone zoom, so a link's area is not
+ * simply made bigger: that would cover its neighbour. Taps on fields and annotations are theirs.
+ */
+function linkForTap(e) {
+    const under = e.target.closest?.('.link-hit[data-link]');
+    if (under) return under;
+    const page = e.target.closest?.('.page');
+    if (!page || e.target.closest('.form-field, .annot-hit, .annot-editor')) return null;
+    let nearest = null, distance = 22;
+    for (const el of page.querySelectorAll('.link-hit[data-link]')) {
+        const r = el.getBoundingClientRect();
+        const d = Math.hypot(Math.max(r.left - e.clientX, 0, e.clientX - r.right), Math.max(r.top - e.clientY, 0, e.clientY - r.bottom));
+        if (d < distance) { nearest = el; distance = d; }
+    }
+    return nearest;
+}
+
 /** A mouse or a pen selects text on a page (touch scrolls). The engine finds the characters. */
 function initSelection() {
     scroller.dataset.tool = tool;
@@ -543,7 +580,7 @@ function initSelection() {
     // A tap (touch scrolls, so it does not start a selection) on a link follows it.
     scroller.addEventListener('click', e => {
         if (!touched || tool !== 'select') return;
-        const link = e.target.closest?.('.link-hit[data-link]');
+        const link = linkForTap(e);
         if (link) { e.preventDefault(); followLink(link); }
     });
     scroller.addEventListener('pointerdown', e => {
