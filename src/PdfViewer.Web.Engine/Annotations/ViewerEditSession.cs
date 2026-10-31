@@ -592,6 +592,45 @@ public sealed class ViewerEditSession
     }
 
     /// <summary>
+    /// Most points a selected line, polygon or polyline shows a handle on. A shape with more (a
+    /// file's traced outline) is moved as a whole only: hundreds of handles would cover it.
+    /// </summary>
+    public const int MaxVertexHandles = 100;
+
+    /// <summary>True when the annotation shows a handle on each of its points (a line, polygon or polyline, a measurement too).</summary>
+    public static bool HasVertexHandles(ViewerAnnotation a) =>
+        a.HasVertices && a.Vertices.Count / 2 is >= 2 and <= MaxVertexHandles;
+
+    /// <summary>
+    /// Moves point <paramref name="index"/> (counted from 0) of a line, arrow, polygon or connected
+    /// lines, a measurement too, to a point of the shown page (kept on the page), as one undo step;
+    /// the other points stay, the box is fitted again and a measurement shows its new result
+    /// (<see cref="ViewerAnnotationStore.MoveVertex"/>). False when the point does not move, or when a
+    /// line would become shorter than <see cref="MinShapeSize"/>. Refused for another type, an index
+    /// that is not one of its points, or a point that is not finite.
+    /// </summary>
+    public bool MoveVertex(string id, int index, ViewerPoint to)
+    {
+        CheckCanAnnotate();
+        var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (!a.HasVertices) throw new ViewerAnnotationException("Only a line, a polygon or connected lines have points to move.");
+        if (index < 0 || 2 * index + 1 >= a.Vertices.Count) throw new ViewerAnnotationException("That point is not one of the shape's points.");
+        if (!Finite(to)) throw new ViewerAnnotationException("A point must be on the page.");
+        var g = Geometry(a.Page);
+        var on = OnPage(to, g);
+        var (x, y) = g.ToUser(on.X, on.Y);
+        if (a.Kind == ViewerAnnotationKind.Line)
+        {
+            int other = index == 0 ? 1 : 0;
+            double dx = x - a.Vertices[2 * other], dy = y - a.Vertices[2 * other + 1];
+            if (Math.Sqrt(dx * dx + dy * dy) < MinShapeSize) return false;
+        }
+        if (ReferenceEquals(Store.MoveVertex(id, index, x, y, DateTimeOffset.UtcNow), a)) return false;
+        _edits.Edit();
+        return true;
+    }
+
+    /// <summary>
     /// A text box's place for its text, on the shown page: wrapped at <see cref="FreeTextWidth"/>
     /// (less near the page's right edge) and exactly as tall as its lines, measured with the fonts,
     /// shaping and wrap of the appearance the engine draws (on a turned page the appearance is

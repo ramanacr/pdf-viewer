@@ -216,8 +216,8 @@ public sealed class ViewerAnnotationStore
         if (old.Kind == ViewerAnnotationKind.Reply) annotation = annotation with { Page = old.Page, Box = old.Box };
         // A measurement stays one, and keeps its fill, dash and line endings (values given for them are ignored).
         annotation = old.IsMeasurement
-            ? annotation with { IsMeasurement = true, FillColor = old.FillColor, Dash = old.Dash, StartEnding = old.StartEnding, EndEnding = old.EndEnding }
-            : annotation with { IsMeasurement = false };
+            ? annotation with { IsMeasurement = true, Measure = old.Measure ?? annotation.Measure, FillColor = old.FillColor, Dash = old.Dash, StartEnding = old.StartEnding, EndEnding = old.EndEnding }
+            : annotation with { IsMeasurement = false, Measure = null };
         // Moved to another page, a file's annotation is written as a new one there (and removed from its page).
         var updated = Fit(annotation with { SourceIndex = annotation.Page == old.Page ? old.SourceIndex : -1 });
         Check(updated, old);
@@ -244,6 +244,45 @@ public sealed class ViewerAnnotationStore
         dy = Clamp(dy, media.Top - old.Box.Y1, media.Bottom - old.Box.Y2);
         var moved = old.Moved(dx, dy) with { Modified = now };
         if (old.IsCallout) moved = ViewerCallout.Relaid(moved with { Callout = old.Callout }, _pages[old.Page - 1]);
+        return Update(moved);
+    }
+
+    /// <summary>
+    /// Moves point <paramref name="index"/> (counted from 0) of a line, polygon or polyline to
+    /// (<paramref name="x"/>, <paramref name="y"/>) in user space, kept inside its page's media box;
+    /// the other points stay. The box is fitted to the points again, with the margin of
+    /// <see cref="ShapeMargin(double, string, string)"/>. A measurement is measured again, as the
+    /// desktop viewer does: the result is its /Contents (the label it shows) and the box holds the
+    /// label. Returns the annotation unchanged (no step) when the point does not move. Refused for
+    /// another type, an index that is not one of its points, or a point that is not finite.
+    /// </summary>
+    public ViewerAnnotation MoveVertex(string id, int index, double x, double y, DateTimeOffset now)
+    {
+        var old = Find(id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{id}\".");
+        if (!old.HasVertices) throw new ViewerAnnotationException("Only a line, a polygon or connected lines have points to move.");
+        if (index < 0 || 2 * index + 1 >= old.Vertices.Count) throw new ViewerAnnotationException($"Annotation \"{id}\" has no point {index}.");
+        if (!double.IsFinite(x) || !double.IsFinite(y)) throw new ViewerAnnotationException("A point must be finite numbers.");
+        var media = _pages[old.Page - 1].MediaBox;
+        x = Math.Clamp(x, media.Left, media.Right);
+        y = Math.Clamp(y, media.Top, media.Bottom);
+        if (x == old.Vertices[2 * index] && y == old.Vertices[2 * index + 1]) return old;
+        var v = old.Vertices.ToArray();
+        v[2 * index] = x;
+        v[2 * index + 1] = y;
+        var moved = old with { Vertices = v, Modified = now };
+        var measure = old.IsMeasurement ? old.Measure ?? FromFile.FirstOrDefault(f => f.Id == id)?.Measure : null;
+        if (measure != null && PdfMeasurements.KindOf(ViewerAnnotationPdf.Subtype(old.Kind)) is { } kind)
+        {
+            var points = Enumerable.Range(0, v.Length / 2).Select(i => new PdfEngine.Geometry.PdfPoint(v[2 * i], v[2 * i + 1])).ToList();
+            string label = PdfMeasurements.Label(kind, points, measure);
+            var r = PdfMeasurements.Bounds(kind, points, label, old.StrokeWidth);
+            moved = moved with { Measure = measure, Contents = label, Box = new ViewerBox(r.X, r.Y, r.Right, r.Bottom) };
+        }
+        else
+        {
+            moved = moved with { Box = ViewerBox.Around(v, ShapeMargin(old.StrokeWidth, old.StartEnding, old.EndEnding)) };
+        }
+        // Update cuts the box to the page (Fit) and checks the points.
         return Update(moved);
     }
 

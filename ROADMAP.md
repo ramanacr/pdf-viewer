@@ -18,8 +18,6 @@ What is planned next for PDF Viewer Native. Plans change; dates are not promised
 - Import and export comments as XFDF. **help wanted:** [#140](https://github.com/ramanacr/pdf-viewer/issues/140).
 
 ### Web viewer and embed SDK
-- Drag one point of a line, arrow, polygon or polyline. **help wanted:**
-  [#139](https://github.com/ramanacr/pdf-viewer/issues/139).
 - One editing core for the web viewer and Android (the shared `ViewerEditSession`).
 
 ### Android

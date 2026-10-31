@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 
 // Loaded as a module from its text, as font-base.test.mjs does.
 const moduleText = readFileSync(new URL('../../src/PdfViewer.Web/wwwroot/js/pointer-gesture.js', import.meta.url), 'utf8');
-const { FingerTracker, TapSlop, TouchTarget, endPointNear, isDoubleClick, isTap, ownsEvent, polyTap, pressDecision, takesTouch, tapSuppressed } =
+const { FingerTracker, TapSlop, TouchTarget, endPointNear, isDoubleClick, isDrag, isTap, ownsEvent, polyTap, pressDecision, takesTouch, tapSuppressed, withPointMoved } =
     await import('data:text/javascript,' + encodeURIComponent(moduleText));
 
 test('only the Select tool leaves a finger to the browser', () => {
@@ -132,4 +132,23 @@ test('a tap within 400 ms of a finger ending a shape is dropped', () => {
     assert.equal(tapSuppressed(1000, 1400), false);
     assert.equal(tapSuppressed(1000, 900), false);                 // a time stamp before it: not the second tap
     assert.equal(tapSuppressed(1000, 1100, 50), false);
+});
+
+test('a vertex handle moves only its point, kept on the page, in a copy', () => {
+    const points = [0.1, 0.2, 0.5, 0.5, 0.9, 0.2];
+    assert.deepEqual(withPointMoved(points, 1, 0.6, 0.7), [0.1, 0.2, 0.6, 0.7, 0.9, 0.2]);
+    assert.deepEqual(points, [0.1, 0.2, 0.5, 0.5, 0.9, 0.2]);           // the points given are not changed
+    assert.deepEqual(withPointMoved(points, 0, -0.3, 1.4), [0, 1, 0.5, 0.5, 0.9, 0.2]); // past the page's edge: on it
+    assert.deepEqual(withPointMoved(points, 2, NaN, 0.5), [0.1, 0.2, 0.5, 0.5, 0, 0.5]);
+    // An index that is not one of the points changes nothing.
+    for (const i of [-1, 3, 1.5, undefined]) assert.deepEqual(withPointMoved(points, i, 0.3, 0.3), points, String(i));
+    assert.deepEqual(withPointMoved([], 0, 0.3, 0.3), []);
+});
+
+test('a press that moved more than 3 px on either axis is a drag', () => {
+    assert.equal(isDrag(0, 0), false);
+    assert.equal(isDrag(3, -3), false);
+    assert.equal(isDrag(3.5, 0), true);
+    assert.equal(isDrag(0, -4), true);
+    assert.equal(isDrag(5, 5, 10), false);
 });

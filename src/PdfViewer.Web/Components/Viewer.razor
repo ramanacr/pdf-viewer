@@ -514,6 +514,20 @@
                                 <span class="callout-anchor" data-anchor="@callout.Id" role="img" aria-label="The spot the callout points to"
                                       title="Drag to move the spot the callout points to" style="left:@Pct(ap.X / pv.Width);top:@Pct(ap.Y / pv.Height)"></span>
                             }
+                            @if (CanEditAnnotations && Selected is { } shape && shape.Page == pv.Number && ViewerEditSession.HasVertexHandles(shape))
+                            {
+                                // The selected line's, polygon's or polyline's points: drag one to move only that point.
+                                var sg = _doc.Geometry[pv.Number - 1];
+                                bool closed = shape.Kind == ViewerAnnotationKind.Polygon;
+                                @for (int vi = 0; vi < shape.Vertices.Count / 2; vi++)
+                                {
+                                    var vp = sg.ToShown(shape.Vertices[2 * vi], shape.Vertices[2 * vi + 1]);
+                                    <span class="vertex-handle" data-vertex="@shape.Id" data-index="@vi" data-closed="@(closed ? "true" : null)"
+                                          data-x="@Frac(vp.X / pv.Width)" data-y="@Frac(vp.Y / pv.Height)" role="img"
+                                          aria-label="@($"Point {vi + 1} of {shape.Vertices.Count / 2}")" title="Drag to move this point"
+                                          style="left:@Pct(vp.X / pv.Width);top:@Pct(vp.Y / pv.Height)"></span>
+                                }
+                            }
                         }
                         else if (Selected is { } shown && shown.Page == pv.Number)
                         {

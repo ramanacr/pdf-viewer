@@ -5,7 +5,7 @@
 // pdfviewer-embed.js), it also carries the messages between the host page and the viewer.
 
 import { fontBaseOf, fontFilePath } from './font-base.js?v=10';
-import { FingerTracker, isDoubleClick, isTap, ownsEvent, polyTap as polyTapAction, pressDecision, takesTouch, tapSuppressed } from './pointer-gesture.js?v=11';
+import { FingerTracker, isDoubleClick, isDrag, isTap, ownsEvent, polyTap as polyTapAction, pressDecision, takesTouch, tapSuppressed, withPointMoved } from './pointer-gesture.js?v=12';
 
 let app = null;            // DotNetObjectReference of the viewer component
 let scroller = null;       // the element that scrolls the pages
@@ -461,6 +461,7 @@ let tool = 'select';       // the annotation tool (Viewer.Annotations.cs): selec
 let drawing = null;        // { page, el, points, preview } while a shape or a stroke is drawn
 let moving = null;         // { id, el, x, y, dx, dy } while an annotation is dragged
 let anchorMoving = null;   // { id, el, page, x, y, dx, dy } while a callout's anchor handle is dragged
+let vertexMoving = null;   // { id, index, el, page, points, moved, x, y, dx, dy, preview } while a vertex handle is dragged
 let calloutAnchor = null;  // { el, page, x, y, mark } the spot the callout tool took, until its box is placed
 let fingerTap = null;      // { kind, id, el, x, y } a finger's press that acts when it is lifted as a tap
 const fingers = new FingerTracker();
@@ -641,7 +642,7 @@ function polyFingerTap(el, e) {
 
 /**
  * Drops the action in progress with nothing kept: a stroke, a dragged shape or text box, a move of
- * an annotation or of a callout's anchor, a text selection of the highlight tools. The points of a
+ * an annotation, of one of its points or of a callout's anchor, a text selection of the highlight tools. The points of a
  * polygon placed by earlier taps stay; so does a callout's spot. Called when a second finger comes
  * down (the fingers then scroll or, with the Select tool, pinch), and when a pen or a mouse takes
  * over from a finger (pressDecision).
@@ -651,6 +652,7 @@ function dropAction() {
     fingerTap = null;
     linkPress = null;
     if (anchorMoving) { anchorMoving.el.style.transform = ''; anchorMoving = null; }
+    endVertexMove();
     if (moving) { moving.el.style.transform = ''; moving = null; }
     if (drawing && !polyTools.has(tool)) cancelDrawing();
     if (dragging) {
@@ -658,6 +660,55 @@ function dropAction() {
         moveQueued = null;
         if (tool !== 'select') app.invokeMethodAsync('OnSelectClear');
     }
+}
+
+/**
+ * Starts dragging a vertex handle (Viewer.razor): the shape's points are read from its handles
+ * (fractions of the page), and a preview of the shape with the point moved is drawn over the page.
+ */
+function startVertexMove(handle, e) {
+    const page = handle.closest('.page');
+    const id = handle.dataset.vertex;
+    const handles = Array.from(page.querySelectorAll('.vertex-handle[data-vertex]')).filter(h => h.dataset.vertex === id)
+        .sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index));
+    const points = handles.flatMap(h => [Number(h.dataset.x), Number(h.dataset.y)]);
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'draw-preview vertex-preview');
+    svg.setAttribute('viewBox', '0 0 1 1');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    const preview = document.createElementNS(ns, handle.dataset.closed ? 'polygon' : 'polyline');
+    svg.appendChild(preview);
+    vertexMoving = { id, index: Number(handle.dataset.index), el: handle, page, points, moved: points, x: e.clientX, y: e.clientY, dx: 0, dy: 0, preview };
+}
+
+/** The dragged vertex handle and the preview follow the pointer (kept on the page). */
+function moveVertex(e) {
+    const m = vertexMoving;
+    const r = m.page.getBoundingClientRect();
+    if (!(r.width > 0) || !(r.height > 0)) return;
+    m.dx = e.clientX - m.x;
+    m.dy = e.clientY - m.y;
+    m.moved = withPointMoved(m.points, m.index, m.points[2 * m.index] + m.dx / r.width, m.points[2 * m.index + 1] + m.dy / r.height);
+    const [x, y] = [m.moved[2 * m.index], m.moved[2 * m.index + 1]];
+    m.el.style.left = `${x * 100}%`;
+    m.el.style.top = `${y * 100}%`;
+    let s = '';
+    for (let i = 0; i + 1 < m.moved.length; i += 2) s += `${m.moved[i]},${m.moved[i + 1]} `;
+    m.preview.setAttribute('points', s);
+    if (!m.preview.ownerSVGElement.isConnected) m.page.appendChild(m.preview.ownerSVGElement);
+}
+
+/** Ends a vertex handle's drag: the preview goes and the handle is put back (Blazor draws it at its new place after a change). */
+function endVertexMove() {
+    const m = vertexMoving;
+    if (!m) return null;
+    vertexMoving = null;
+    m.preview.ownerSVGElement?.remove();
+    m.el.style.left = `${m.points[2 * m.index] * 100}%`;
+    m.el.style.top = `${m.points[2 * m.index + 1] * 100}%`;
+    return m;
 }
 
 function moveAnnotation(dx, dy) {
@@ -690,7 +741,7 @@ function linkForTap(e) {
 /**
  * Mouse, pen and touch on the pages (Pointer Events). With the Select tool a mouse or a pen selects
  * text (the engine finds the characters) and a finger scrolls and zooms; a finger taps links and
- * annotations, and drags the selected annotation and a callout's anchor. With any other tool the
+ * annotations, and drags the selected annotation, its points and a callout's anchor. With any other tool the
  * page takes the finger as a mouse button (app.css: touch-action none), one finger at a time: a
  * second finger drops what the first one began (dropAction) and the two scroll the pages.
  */
@@ -724,9 +775,19 @@ function initSelection() {
         // Form fields and the note editor take their own input.
         if (e.target.closest?.('.form-field, .annot-editor')) return;
         // The Select tool leaves a finger to the browser (scroll, zoom, taps), except on the handles.
-        if (touched && !takesTouch(tool) && !e.target.closest?.('.callout-anchor[data-anchor], .annot-hit.selected[data-annot]')) return;
+        if (touched && !takesTouch(tool) && !e.target.closest?.('.vertex-handle[data-vertex], .callout-anchor[data-anchor], .annot-hit.selected[data-annot]')) return;
         fingerTaken = touched;
         const own = () => { owner = { id: e.pointerId, type: e.pointerType }; };
+        // A selected line's, polygon's or polyline's point: dragged to move only that point.
+        const vertexHit = e.target.closest?.('.vertex-handle[data-vertex]');
+        if (vertexHit && tool === 'select') {
+            e.preventDefault();
+            scroller.focus({ preventScroll: true });
+            startVertexMove(vertexHit, e);
+            own();
+            scroller.setPointerCapture(e.pointerId);
+            return;
+        }
         // A selected callout's anchor handle: dragged to move the spot the callout points to.
         const anchorHit = e.target.closest?.('.callout-anchor[data-anchor]');
         if (anchorHit && tool === 'select') {
@@ -807,6 +868,10 @@ function initSelection() {
             if (fingerTap.id === e.pointerId && !isTap(fingerTap, e.clientX, e.clientY)) fingerTap = null; // a drag is not a tap
             return;
         }
+        if (vertexMoving) {
+            moveVertex(e);
+            return;
+        }
         if (anchorMoving) {
             anchorMoving.dx = e.clientX - anchorMoving.x;
             anchorMoving.dy = e.clientY - anchorMoving.y;
@@ -854,6 +919,14 @@ function initSelection() {
                 scroller.focus({ preventScroll: true });
                 if (t.kind === 'callout') setCalloutAnchor(t.el, e);
                 else polyFingerTap(t.el, e);
+            }
+            return;
+        }
+        if (vertexMoving) {
+            // Written on release only; a cancel (the browser took the pointer) keeps nothing.
+            const m = endVertexMove();
+            if (e.type === 'pointerup' && isDrag(m.dx, m.dy)) {
+                app.invokeMethodAsync('OnVertexDrag', m.id, m.index, m.moved[2 * m.index], m.moved[2 * m.index + 1]);
             }
             return;
         }
@@ -905,6 +978,9 @@ function initSelection() {
     scroller.addEventListener('pointerup', end);
     scroller.addEventListener('pointercancel', end);
     scroller.addEventListener('keydown', e => {
+        // Esc while a point, a callout's anchor or an annotation is dragged: it goes back, nothing is
+        // written, and the annotation stays selected (the page's Esc would unselect it).
+        if (e.key === 'Escape' && (vertexMoving || anchorMoving || moving)) { e.preventDefault(); e.stopPropagation(); dropAction(); return; }
         // Esc drops the callout's spot, and its box while it is dragged.
         if (e.key === 'Escape' && calloutAnchor) { e.preventDefault(); cancelDrawing(); clearCalloutAnchor(); return; }
         if (!drawing || !polyTools.has(tool)) return;

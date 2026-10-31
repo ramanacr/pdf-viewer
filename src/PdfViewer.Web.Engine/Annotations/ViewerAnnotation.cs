@@ -144,6 +144,13 @@ public sealed record ViewerAnnotation
     /// <summary>A file's annotation with /Measure: its fill, dash and line endings are not changed.</summary>
     public bool IsMeasurement { get; init; }
 
+    /// <summary>
+    /// A measurement's scale (/Measure as read from the file), so it is measured again when one of
+    /// its points moves. Not in a host page's JSON nor in a kept snapshot (the store then takes it
+    /// from the file's annotation with the same id).
+    /// </summary>
+    public PdfMeasure? Measure { get; init; }
+
     /// <summary>The line width of ink, rectangles, ellipses and the border of free text (0: none).</summary>
     public double StrokeWidth { get; init; } = 1;
 
@@ -381,6 +388,7 @@ public static class ViewerAnnotationPdf
             Opacity = p.Opacity,
             Dash = shape ? DashOf(p) : null,
             IsMeasurement = p.Measure != null,
+            Measure = p.Measure,
             StrokeWidth = p.BorderWidth ?? 1,
             FontSize = fontSize,
             Contents = p.Contents ?? "",
