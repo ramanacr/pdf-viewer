@@ -97,3 +97,35 @@ export class FingerTracker {
         if (this.fingers.size === 0) this.gesture = false;
     }
 }
+
+/**
+ * Which pointer an action belongs to. owner: { id, type } of the pointer that began the action in
+ * progress (a stroke, a dragged shape, a move, a text selection, a finger's tap), or null. Returns
+ * what a new press of pointer type `type` does:
+ * - 'take': nothing is in progress (or it is a further finger, which FingerTracker makes a gesture);
+ * - 'ignore': a finger while a pen or a mouse draws (a palm resting on the screen);
+ * - 'replace': a pen or a mouse while a finger draws (the pen wins), or a new first finger or a
+ *   second mouse or pen press while the owner's release was never seen; what the owner began is dropped.
+ */
+export function pressDecision(owner, type, isPrimary) {
+    if (!owner) return 'take';
+    if (type === 'touch') {
+        if (owner.type !== 'touch') return 'ignore';
+        return isPrimary ? 'replace' : 'take';
+    }
+    return 'replace';
+}
+
+/** A move, release or cancel of pointer id belongs to the action in progress (or there is none). */
+export function ownsEvent(owner, id) {
+    return !owner || owner.id === id;
+}
+
+/**
+ * A finger's tap within ms of a finger ending a polygon or polyline (at finishedAt, event time
+ * stamps) is dropped: it is the second tap of a double-tap whose first tap already ended the shape,
+ * and must not begin a new one.
+ */
+export function tapSuppressed(finishedAt, now, ms = 400) {
+    return typeof finishedAt === 'number' && now >= finishedAt && now - finishedAt < ms;
+}

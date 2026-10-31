@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 
 // Loaded as a module from its text, as font-base.test.mjs does.
 const moduleText = readFileSync(new URL('../../src/PdfViewer.Web/wwwroot/js/pointer-gesture.js', import.meta.url), 'utf8');
-const { FingerTracker, TapSlop, TouchTarget, endPointNear, isDoubleClick, isTap, polyTap, takesTouch } =
+const { FingerTracker, TapSlop, TouchTarget, endPointNear, isDoubleClick, isTap, ownsEvent, polyTap, pressDecision, takesTouch, tapSuppressed } =
     await import('data:text/javascript,' + encodeURIComponent(moduleText));
 
 test('only the Select tool leaves a finger to the browser', () => {
@@ -101,4 +101,35 @@ test('a primary finger starts afresh when a release was never seen', () => {
     f.up(99);                                              // an unknown pointer
     assert.equal(f.count, 1);
     assert.equal(f.move(99, 1, 1), null);
+});
+
+test('one action at a time: a palm is ignored while a pen or a mouse draws; a pen takes over from a finger', () => {
+    assert.equal(pressDecision(null, 'touch', true), 'take');
+    assert.equal(pressDecision(null, 'pen', true), 'take');
+    assert.equal(pressDecision(null, 'mouse', true), 'take');
+    const pen = { id: 2, type: 'pen' }, mouse = { id: 1, type: 'mouse' }, finger = { id: 7, type: 'touch' };
+    assert.equal(pressDecision(pen, 'touch', true), 'ignore');      // the palm under the hand
+    assert.equal(pressDecision(pen, 'touch', false), 'ignore');
+    assert.equal(pressDecision(mouse, 'touch', true), 'ignore');
+    assert.equal(pressDecision(finger, 'pen', true), 'replace');     // the pen wins over a finger
+    assert.equal(pressDecision(finger, 'mouse', true), 'replace');
+    assert.equal(pressDecision(finger, 'touch', false), 'take');     // a second finger: FingerTracker makes it a gesture
+    assert.equal(pressDecision(finger, 'touch', true), 'replace');   // a new first finger: the old release was never seen
+    assert.equal(pressDecision(pen, 'pen', true), 'replace');
+});
+
+test('moves, releases and cancels of another pointer do not touch the action in progress', () => {
+    assert.equal(ownsEvent(null, 5), true);
+    assert.equal(ownsEvent({ id: 5, type: 'touch' }, 5), true);
+    assert.equal(ownsEvent({ id: 5, type: 'touch' }, 1), false);    // a hovering mouse while a finger inks
+    assert.equal(ownsEvent({ id: 2, type: 'pen' }, 9), false);      // a palm while a pen draws
+});
+
+test('a tap within 400 ms of a finger ending a shape is dropped', () => {
+    assert.equal(tapSuppressed(null, 1000), false);
+    assert.equal(tapSuppressed(1000, 1000), true);
+    assert.equal(tapSuppressed(1000, 1399), true);
+    assert.equal(tapSuppressed(1000, 1400), false);
+    assert.equal(tapSuppressed(1000, 900), false);                 // a time stamp before it: not the second tap
+    assert.equal(tapSuppressed(1000, 1100, 50), false);
 });

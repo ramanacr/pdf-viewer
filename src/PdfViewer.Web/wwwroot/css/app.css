@@ -473,6 +473,9 @@ kbd {
    zoom or show its long-press menu on the page; two fingers scroll the pages. With the Select
    tool a finger drags the selected annotation and a callout's anchor. */
 .pages:not([data-tool="select"]) .page { touch-action: none; -webkit-touch-callout: none; }
+/* A pen (data-input: set by viewer.js when a pen hovers or presses) selects text with the Select
+   tool instead of scrolling; a finger scrolls again once the pen has left the pages. */
+.pages[data-input="pen"] .page { touch-action: none; }
 .annot-hit.selected { touch-action: none; }
 /* Links on a page: a pointer and the target as a tooltip; Tab reaches them, Enter follows them. */
 .link-hit { position: absolute; cursor: pointer; border-radius: 2px; }
@@ -500,13 +503,13 @@ kbd {
     background: var(--surface, #fff); border: 2px solid var(--accent); pointer-events: none;
 }
 /* A finger: each annotation and a callout's anchor is a target of at least 44 x 44 CSS pixels; they
-   look the same. .touch-input: the last press was a finger (viewer.js), also on a screen whose main
-   pointer is a mouse. */
-.pages.touch-input .annot-hit::after {
+   look the same. data-input="touch": the last press was a finger (viewer.js), also on a screen whose
+   main pointer is a mouse. An attribute, not a class: Blazor rewrites the pages' class. */
+.pages[data-input="touch"] .annot-hit::after {
     content: ""; position: absolute; left: 50%; top: 50%;
     width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
 }
-.pages.touch-input .callout-anchor::after { inset: -15px; }
+.pages[data-input="touch"] .callout-anchor::after { inset: -15px; }
 .draw-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .draw-preview * { fill: none; stroke: var(--accent); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
 .draw-preview polyline { stroke-dasharray: none; stroke-linecap: round; stroke-linejoin: round; }
@@ -583,7 +586,7 @@ textarea.form-field { resize: none; overflow: hidden; }
     .swatch { position: relative; width: 24px; height: 24px; }
     .swatch::after { content: ""; position: absolute; inset: -12px; border-radius: 50%; }
     .dialog-actions .button, .annot-editor-actions .button { min-width: 44px; }
-    /* As .pages.touch-input above: annotations and a callout's anchor are 44 px targets. */
+    /* As .pages[data-input="touch"] above: annotations and a callout's anchor are 44 px targets. */
     .annot-hit::after {
         content: ""; position: absolute; left: 50%; top: 50%;
         width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);

@@ -5,7 +5,7 @@
 // pdfviewer-embed.js), it also carries the messages between the host page and the viewer.
 
 import { fontBaseOf, fontFilePath } from './font-base.js?v=10';
-import { FingerTracker, isDoubleClick, isTap, polyTap as polyTapAction, takesTouch } from './pointer-gesture.js?v=11';
+import { FingerTracker, isDoubleClick, isTap, ownsEvent, polyTap as polyTapAction, pressDecision, takesTouch, tapSuppressed } from './pointer-gesture.js?v=11';
 
 let app = null;            // DotNetObjectReference of the viewer component
 let scroller = null;       // the element that scrolls the pages
@@ -464,6 +464,8 @@ let anchorMoving = null;   // { id, el, page, x, y, dx, dy } while a callout's a
 let calloutAnchor = null;  // { el, page, x, y, mark } the spot the callout tool took, until its box is placed
 let fingerTap = null;      // { kind, id, el, x, y } a finger's press that acts when it is lifted as a tap
 const fingers = new FingerTracker();
+let owner = null;          // { id, type } the pointer whose press began the action in progress (pressDecision)
+let fingerFinishedAt = null; // event time a finger's tap ended a polygon or polyline (tapSuppressed)
 const markupTools = new Set(['select', 'highlight', 'underline', 'strikeout']);
 const clickTools = new Set(['note', 'stamp']);       // a click places them
 const polyTools = new Set(['polygon', 'polyline']);  // a click a point, a double-click (or Enter) ends
@@ -474,6 +476,7 @@ export function setTool(name) {
     tool = String(name);
     if (scroller) scroller.dataset.tool = tool;
     fingerTap = null;
+    owner = null;
     cancelDrawing();
     clearCalloutAnchor();
 }
@@ -521,6 +524,7 @@ function markEnds(d) {
 }
 
 function startDrawing(el, e) {
+    cancelDrawing();   // never two previews: what was being drawn is dropped
     const [x, y] = pointOn(el, e);
     drawing = { page: Number(el.dataset.page), el, points: [x, y], hover: [x, y], preview: null };
     if (clickTools.has(tool)) return;
@@ -612,6 +616,7 @@ function polyClick(el, e) {
  */
 function polyFingerTap(el, e) {
     lastPolyClick = null;
+    if (tapSuppressed(fingerFinishedAt, e.timeStamp)) return;   // the second tap of a double-tap that ended the shape
     if (drawing && drawing.el !== el) cancelDrawing();
     if (!drawing) {
         startDrawing(el, e);
@@ -624,6 +629,7 @@ function polyFingerTap(el, e) {
     const [x, y] = pointOn(el, e);
     const action = polyTapAction(tool, drawing.points, r.width, r.height, x, y);
     if (action === 'finish') {
+        fingerFinishedAt = e.timeStamp;
         finishDrawing();
         return;
     }
@@ -634,12 +640,14 @@ function polyFingerTap(el, e) {
 }
 
 /**
- * A second finger came down: the fingers scroll (or, with the Select tool, pinch), so what the first
- * finger began is dropped with nothing kept: a stroke, a dragged shape or text box, a move of an
- * annotation or of a callout's anchor, a text selection of the highlight tools. The points of a
- * polygon placed by earlier taps stay; so does a callout's spot.
+ * Drops the action in progress with nothing kept: a stroke, a dragged shape or text box, a move of
+ * an annotation or of a callout's anchor, a text selection of the highlight tools. The points of a
+ * polygon placed by earlier taps stay; so does a callout's spot. Called when a second finger comes
+ * down (the fingers then scroll or, with the Select tool, pinch), and when a pen or a mouse takes
+ * over from a finger (pressDecision).
  */
-function abortForGesture() {
+function dropAction() {
+    owner = null;
     fingerTap = null;
     linkPress = null;
     if (anchorMoving) { anchorMoving.el.style.transform = ''; anchorMoving = null; }
@@ -684,7 +692,7 @@ function linkForTap(e) {
  * text (the engine finds the characters) and a finger scrolls and zooms; a finger taps links and
  * annotations, and drags the selected annotation and a callout's anchor. With any other tool the
  * page takes the finger as a mouse button (app.css: touch-action none), one finger at a time: a
- * second finger drops what the first one began (abortForGesture) and the two scroll the pages.
+ * second finger drops what the first one began (dropAction) and the two scroll the pages.
  */
 function initSelection() {
     scroller.dataset.tool = tool;
@@ -701,10 +709,14 @@ function initSelection() {
     scroller.addEventListener('pointerdown', e => {
         touched = e.pointerType === 'touch';
         fingerTaken = false;
-        // Larger targets for the handles while a finger is in use (app.css), also on a screen whose main pointer is fine.
-        if (e.pointerType !== 'pen') scroller.classList.toggle('touch-input', touched);
+        // One action at a time: a palm on the screen while a pen draws is ignored; a pen or a mouse takes over from a finger.
+        const decision = pressDecision(owner, e.pointerType, e.isPrimary);
+        if (decision === 'ignore') return;
+        if (decision === 'replace') dropAction();
+        // The kind of pointer in use (app.css): larger targets for a finger, no scrolling for a pen.
+        scroller.dataset.input = e.pointerType;
         if (fingers.down(e.pointerId, e.pointerType, e.clientX, e.clientY, e.isPrimary) === 'gesture') {
-            abortForGesture();
+            dropAction();
             if (takesTouch(tool)) e.preventDefault();
             return;
         }
@@ -714,12 +726,14 @@ function initSelection() {
         // The Select tool leaves a finger to the browser (scroll, zoom, taps), except on the handles.
         if (touched && !takesTouch(tool) && !e.target.closest?.('.callout-anchor[data-anchor], .annot-hit.selected[data-annot]')) return;
         fingerTaken = touched;
+        const own = () => { owner = { id: e.pointerId, type: e.pointerType }; };
         // A selected callout's anchor handle: dragged to move the spot the callout points to.
         const anchorHit = e.target.closest?.('.callout-anchor[data-anchor]');
         if (anchorHit && tool === 'select') {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
             anchorMoving = { id: anchorHit.dataset.anchor, el: anchorHit, page: anchorHit.closest('.page'), x: e.clientX, y: e.clientY, dx: 0, dy: 0 };
+            own();
             scroller.setPointerCapture(e.pointerId);
             return;
         }
@@ -727,9 +741,12 @@ function initSelection() {
         if (hit && tool === 'select') {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
-            moving = { id: hit.dataset.annot, el: hit, x: e.clientX, y: e.clientY, dx: 0, dy: 0, page: hit.closest('.page') };
+            // A finger's press on the selected annotation: a tap is a click (a note or text box opens
+            // for editing), decided on release, so a drag only moves it. A mouse or a pen clicks at once.
+            moving = { id: hit.dataset.annot, el: hit, x: e.clientX, y: e.clientY, dx: 0, dy: 0, page: hit.closest('.page'), tap: touched };
+            own();
             scroller.setPointerCapture(e.pointerId);
-            app.invokeMethodAsync('OnAnnotationPointer', moving.id);
+            if (!touched) app.invokeMethodAsync('OnAnnotationPointer', moving.id);
             return;
         }
         const el = e.target.closest?.('.page');
@@ -746,6 +763,7 @@ function initSelection() {
             // A finger's point is taken when it is lifted as a tap, so a second finger (to scroll) adds none.
             e.preventDefault();
             scroller.setPointerCapture(e.pointerId);
+            own();
             fingerTap = { kind: calloutSpot ? 'callout' : 'poly', id: e.pointerId, el, x: e.clientX, y: e.clientY };
             return;
         }
@@ -765,12 +783,14 @@ function initSelection() {
             e.preventDefault();
             scroller.focus({ preventScroll: true });
             scroller.setPointerCapture(e.pointerId);
+            own();
             startDrawing(el, e);
             return;
         }
         e.preventDefault();               // no native selection or drag of the canvas
         scroller.focus({ preventScroll: true });
         dragging = { page: Number(el.dataset.page), el };
+        own();
         scroller.setPointerCapture(e.pointerId);
         const [x, y] = pointOn(el, e);
         app.invokeMethodAsync('OnSelectStart', dragging.page, x, y, e.detail || 1);
@@ -782,6 +802,7 @@ function initSelection() {
             if (pan && takesTouch(tool)) scroller.scrollBy(-pan[0], -pan[1]);
             return;
         }
+        if (!ownsEvent(owner, e.pointerId)) return;   // another pointer (a hovering pen or mouse, a palm) while one draws
         if (fingerTap) {
             if (fingerTap.id === e.pointerId && !isTap(fingerTap, e.clientX, e.clientY)) fingerTap = null; // a drag is not a tap
             return;
@@ -824,6 +845,8 @@ function initSelection() {
         const inGesture = fingers.gesture && e.pointerType === 'touch';
         fingers.up(e.pointerId);
         if (inGesture) return;   // what the first finger began was dropped when the second came down
+        if (!ownsEvent(owner, e.pointerId)) return;   // not the pointer that began the action
+        owner = null;
         if (fingerTap) {
             const t = fingerTap;
             fingerTap = null;
@@ -849,6 +872,10 @@ function initSelection() {
             moving = null;
             const r = m.page?.getBoundingClientRect();
             m.el.style.transform = '';
+            if (m.tap && e.type === 'pointerup' && isTap(m, e.clientX, e.clientY)) {
+                app.invokeMethodAsync('OnAnnotationPointer', m.id);
+                return;
+            }
             if (r && r.width > 0 && (Math.abs(m.dx) > 3 || Math.abs(m.dy) > 3) && e.type === 'pointerup') {
                 app.invokeMethodAsync('OnAnnotationDrag', m.id, m.dx / r.width, m.dy / r.height);
             }
@@ -871,6 +898,10 @@ function initSelection() {
         }
         if (wasSelecting && tool !== 'select') app.invokeMethodAsync(e.type === 'pointerup' ? 'OnSelectEnd' : 'OnSelectClear');
     };
+    // A pen announces itself by hovering: the pages then do not scroll under it (app.css), so a pen
+    // drag selects text with the Select tool. A finger scrolls again once the pen has left.
+    scroller.addEventListener('pointerover', e => { if (e.pointerType === 'pen') scroller.dataset.input = 'pen'; });
+    scroller.addEventListener('pointerleave', e => { if (e.pointerType === 'pen' && !owner) delete scroller.dataset.input; });
     scroller.addEventListener('pointerup', end);
     scroller.addEventListener('pointercancel', end);
     scroller.addEventListener('keydown', e => {
