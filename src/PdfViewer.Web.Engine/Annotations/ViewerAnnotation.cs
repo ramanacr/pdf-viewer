@@ -90,6 +90,19 @@ public sealed record ViewerAnnotation
     /// <summary>A reply: the id of the annotation it answers. Empty for every other kind.</summary>
     public string InReplyTo { get; init; } = "";
 
+    /// <summary>
+    /// A status reply's /State and /StateModel ("Accepted" in the "Review" model), as Acrobat writes
+    /// a review status: a hidden reply. Empty for an ordinary reply and for every other kind.
+    /// </summary>
+    public string State { get; init; } = "";
+    public string StateModel { get; init; } = "";
+
+    /// <summary>
+    /// A reply that sets a status on the annotation it answers (it has a state model) rather than
+    /// saying something. Read from a file only when it is hidden (/F with the Hidden bit, as Acrobat writes it).
+    /// </summary>
+    public bool IsStatus => Kind == ViewerAnnotationKind.Reply && StateModel.Length > 0;
+
     /// <summary>The line (or text, for free text) colour.</summary>
     public string Color { get; init; } = "#FFD400";
 
@@ -273,17 +286,23 @@ public static class ViewerAnnotationPdf
     /// The viewer's model of an annotation read from a file, or null for a type it does not
     /// manage or a hidden annotation. <paramref name="id"/> is used when it has no usable /NM. A
     /// reply (/IRT) is managed when <paramref name="parentId"/> gives the id of the annotation
-    /// it answers and it is a note; any other reply, and a group member (/RT /Group), is not.
+    /// it answers and it is a note; any other reply, and a group member (/RT /Group), is not. A
+    /// status (a reply with /State and /StateModel) is managed though hidden, as Acrobat hides it.
     /// </summary>
     public static ViewerAnnotation? FromPdf(PdfAnnotation p, string id, string? parentId = null)
     {
-        if (!Kinds.TryGetValue(p.Subtype, out var kind) || (p.Flags & (2 | 32)) != 0) return null;
+        if (!Kinds.TryGetValue(p.Subtype, out var kind) || (p.Flags & 32) != 0) return null;
+        bool status = false;
         if (p.InReplyTo > 0 || !string.IsNullOrEmpty(p.InReplyToName))
         {
             if (kind != ViewerAnnotationKind.Note || p.ReplyType is not (null or "R") || string.IsNullOrEmpty(parentId)) return null;
             kind = ViewerAnnotationKind.Reply;
+            // A status is hidden, as Acrobat writes it (/F 30); a visible reply with /State is an ordinary reply.
+            status = (p.Flags & 2) != 0 && IsStateName(p.State) && IsStateName(p.StateModel);
         }
-        if (!double.IsFinite(p.Rect.X) || !double.IsFinite(p.Rect.Y) || p.Rect.Width < 0 || p.Rect.Height < 0) return null;
+        if ((p.Flags & 2) != 0 && !status) return null;
+        if (!double.IsFinite(p.Rect.X) || !double.IsFinite(p.Rect.Y) || !double.IsFinite(p.Rect.Width) || !double.IsFinite(p.Rect.Height)
+            || !double.IsFinite(p.Rect.Right) || !double.IsFinite(p.Rect.Bottom) || p.Rect.Width < 0 || p.Rect.Height < 0) return null;
         // A shape needs its points: a line its /L, a polygon at least three and a polyline two vertices, all finite.
         double[] vertices = kind switch
         {
@@ -322,6 +341,8 @@ public static class ViewerAnnotationPdf
             EndEnding = endings ? Ending(1) : "None",
             StampName = kind == ViewerAnnotationKind.Stamp ? StampNameOf(p.Icon) : "",
             InReplyTo = kind == ViewerAnnotationKind.Reply ? parentId! : "",
+            State = status ? p.State! : "",
+            StateModel = status ? p.StateModel! : "",
             Color = color,
             FillColor = fill,
             Opacity = p.Opacity,
@@ -370,6 +391,18 @@ public static class ViewerAnnotationPdf
     public static bool IsStampName(string? name) => name is { Length: > 0 and <= 64 } && name.All(char.IsAsciiLetterOrDigit);
 
     private static string StampNameOf(string? icon) => IsStampName(icon) ? icon! : "Draft";
+
+    /// <summary>Longest /State or /StateModel the viewer keeps.</summary>
+    public const int MaxStateLength = PdfAnnotationXfdf.MaxStateLength;
+
+    /// <summary>A /State or /StateModel the viewer keeps: 1 to 64 characters, no control characters.</summary>
+    public static bool IsStateName(string? name) => name is { Length: > 0 and <= MaxStateLength } && !name.Any(char.IsControl);
+
+    /// <summary>/F of a reply made here: Print, NoZoom and NoRotate, as Acrobat writes replies (the desktop and web viewers too).</summary>
+    public const int ReplyFlags = 4 | 8 | 16;
+
+    /// <summary>/F of a status made here: hidden as well, as Acrobat writes them; the comment lists show them.</summary>
+    public const int StatusFlags = 2 | ReplyFlags;
 
     /// <summary>
     /// The annotation for the engine's editor. <paramref name="basis"/> is the annotation as read
@@ -446,10 +479,13 @@ public static class ViewerAnnotationPdf
             case ViewerAnnotationKind.Reply:
                 p.Color = Rgb(a.Color);
                 p.Icon ??= "Comment";
-                p.ReplyType = null;
+                // /RT /R, as the desktop viewer and Acrobat write a reply (ISO 32000-2 12.5.6.4).
+                p.ReplyType = "R";
                 // The parent's object number is known for a parent from the file; Write sets it, else /NM finds it.
                 p.InReplyToName = a.InReplyTo;
-                p.Flags = basis?.Flags ?? (4 | 8 | 16); // Print, NoZoom, NoRotate, as Acrobat writes replies
+                p.Flags = basis?.Flags ?? (a.IsStatus ? StatusFlags : ReplyFlags);
+                p.State = a.IsStatus ? a.State : null;
+                p.StateModel = a.IsStatus ? a.StateModel : null;
                 break;
             default:
                 p.Color = Rgb(a.Color);

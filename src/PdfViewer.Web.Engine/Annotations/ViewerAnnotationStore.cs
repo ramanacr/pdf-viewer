@@ -175,6 +175,13 @@ public sealed class ViewerAnnotationStore
         return reply with { Page = parent.Page, Box = parent.Box };
     }
 
+    /// <summary>What deleting annotation <paramref name="id"/> also deletes: its replies and statuses, and theirs, in list order.</summary>
+    public IReadOnlyList<ViewerAnnotation> DeletedWith(string id)
+    {
+        var ids = Descendants(Current, [id]);
+        return Current.Where(a => ids.Contains(a.Id)).ToList();
+    }
+
     /// <summary>The replies to the annotation, and the replies to them, and so on.</summary>
     private static HashSet<string> Descendants(IReadOnlyList<ViewerAnnotation> list, IEnumerable<string> ids)
     {
@@ -200,6 +207,8 @@ public sealed class ViewerAnnotationStore
         var old = Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
         if (old.Kind != annotation.Kind) throw new ViewerAnnotationException("An annotation's subtype cannot change.");
         if (old.InReplyTo != annotation.InReplyTo) throw new ViewerAnnotationException("What a reply answers cannot change.");
+        // A status is written hidden: it stays a status (its state may change), and a reply stays a reply.
+        if (old.IsStatus != annotation.IsStatus) throw new ViewerAnnotationException("A review status cannot become a reply, nor a reply a status.");
         if (old.Kind == ViewerAnnotationKind.Reply) annotation = annotation with { Page = old.Page, Box = old.Box };
         // A measurement stays one, and keeps its fill, dash and line endings (values given for them are ignored).
         annotation = old.IsMeasurement
@@ -347,6 +356,65 @@ public sealed class ViewerAnnotationStore
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp has a second line, one line of at most {MaxStampSubtitleLength} characters.");
         if (a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo.Length is 0 or > MaxIdLength || a.InReplyTo == a.Id : a.InReplyTo.Length > 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a reply (and only a reply) answers another annotation.");
+        bool status = a.State.Length > 0 || a.StateModel.Length > 0;
+        if (status && (a.Kind != ViewerAnnotationKind.Reply || !ViewerAnnotationPdf.IsStateName(a.State) || !ViewerAnnotationPdf.IsStateName(a.StateModel)))
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a reply has a status, with a state and a state model of 1 to {ViewerAnnotationPdf.MaxStateLength} characters.");
+    }
+
+    /// <summary>
+    /// True when <see cref="Add"/> would take the annotation on its own: on a page of the document,
+    /// inside its media box (a shape's box cut to the page first), within the limits. A reply is
+    /// placed with the annotation it answers, so only its own values are checked here.
+    /// </summary>
+    public bool Accepts(ViewerAnnotation a)
+    {
+        try
+        {
+            if (a.Kind == ViewerAnnotationKind.Reply)
+            {
+                var m = _pages[0].MediaBox;
+                Check(a with { Page = 1, Box = new ViewerBox(m.Left, m.Top, m.Left, m.Top) });
+            }
+            else
+            {
+                Check(Fit(a));
+            }
+            return true;
+        }
+        catch (ViewerAnnotationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Replaces the current annotations with <paramref name="annotations"/> as one change (undo
+    /// goes back to the list before): a reader's edits kept while Android ended the app, given
+    /// back. Every annotation not taken by reference from <see cref="FromFile"/> is checked as
+    /// <see cref="Add"/> checks it; ids must differ, and each reply must answer one of the list
+    /// within the depth limit. All or nothing.
+    /// </summary>
+    public void Restore(IReadOnlyList<ViewerAnnotation> annotations)
+    {
+        ArgumentNullException.ThrowIfNull(annotations);
+        if (annotations.Count > MaxAnnotations) throw new ViewerAnnotationException($"A document can have at most {MaxAnnotations} annotations here.");
+        var fileSet = new HashSet<ViewerAnnotation>(FromFile, ReferenceEqualityComparer.Instance);
+        var byId = new Dictionary<string, ViewerAnnotation>(StringComparer.Ordinal);
+        foreach (var a in annotations)
+        {
+            if (!byId.TryAdd(a.Id, a)) throw new ViewerAnnotationException($"An annotation with the id \"{a.Id}\" exists already.");
+            if (!fileSet.Contains(a)) Check(a);
+        }
+        foreach (var a in annotations)
+        {
+            if (a.Kind != ViewerAnnotationKind.Reply || fileSet.Contains(a)) continue;
+            if (!byId.TryGetValue(a.InReplyTo, out var parent))
+                throw new ViewerAnnotationException($"Reply \"{a.Id}\": no annotation has the id \"{a.InReplyTo}\" (target).");
+            if (ViewerAnnotationPdf.Depth(parent, byId) + 1 > MaxReplyDepth)
+                throw new ViewerAnnotationException($"Reply \"{a.Id}\": a thread can have at most {MaxReplyDepth} levels of replies.");
+        }
+        CheckPoints(Points(annotations.Where(a => !fileSet.Contains(a))));
+        Commit(Ordered(annotations));
     }
 
     private static string Format(PdfEngine.Geometry.PdfRect r) =>

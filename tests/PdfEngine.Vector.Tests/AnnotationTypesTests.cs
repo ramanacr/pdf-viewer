@@ -338,6 +338,37 @@ public class AnnotationTypesTests
     }
 
     [Fact]
+    public void Xfdf_KeepsAReviewStatus_AndReadsOnlyAWellFormedOne()
+    {
+        var parent = new PdfAnnotation { PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), Name = "p1", ObjectNumber = 12 };
+        var status = new PdfAnnotation
+        {
+            PageNumber = 1, Subtype = "Text", Rect = new PdfRect(5, 5, 20, 20), Name = "s1", InReplyTo = 12, ReplyType = "R",
+            State = "Accepted", StateModel = "Review", Flags = 30, Contents = "Accepted set by Ada",
+        };
+        string xfdf = PdfAnnotationXfdf.Export([parent, status]);
+        Assert.Contains("state=\"Accepted\"", xfdf);
+        Assert.Contains("statemodel=\"Review\"", xfdf);
+        Assert.Contains("flags=\"hidden,print,nozoom,norotate\"", xfdf);
+
+        var back = PdfAnnotationXfdf.Import(xfdf).Single(a => a.Name == "s1");
+        Assert.Equal(("Accepted", "Review", 30), (back.State, back.StateModel, back.Flags));
+        Assert.Equal("p1", back.InReplyToName);
+
+        // Only a reply has a status, and only with both names.
+        var odd = PdfAnnotationXfdf.Import("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"q\" state=\"Accepted\" statemodel=\"Review\"/>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"a\" inreplyto=\"q\" state=\"Accepted\"/></annots></xfdf>");
+        Assert.All(odd, a => Assert.Null(a.StateModel));
+
+        // A status name past the limit is not cut to fit: the reply is skipped.
+        var tooLong = PdfAnnotationXfdf.ImportWithReport("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"q\"/>" +
+            $"<text page=\"0\" rect=\"10,10,30,30\" name=\"a\" inreplyto=\"q\" state=\"{new string('x', PdfAnnotationXfdf.MaxStateLength + 1)}\" statemodel=\"Review\"/></annots></xfdf>");
+        Assert.Equal((1, 1), (tooLong.Annotations.Count, tooLong.Skipped));
+    }
+
+    [Fact]
     public async Task XfdfReplies_AreLinkedWhenAdded()
     {
         var imported = PdfAnnotationXfdf.Import("<xfdf xmlns=\"http://ns.adobe.com/xfdf/\"><annots>" +

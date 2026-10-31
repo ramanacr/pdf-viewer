@@ -552,6 +552,17 @@ A reply can answer a reply, up to 64 levels. What a reply answers cannot change 
 and resolves with them too. A reply is written with an empty appearance, so other readers list
 it in their comments and do not draw a second note on the page.
 
+A **review status** is a reply with a `status` object. Acrobat, the desktop app and the Android app write a status as a hidden reply with `/State` and `/StateModel` (Accepted, Rejected, Cancelled, Completed or None in the `Review` model):
+
+```js
+{ id: 's1', type: 'Annotation', motivation: 'replying', bodyValue: 'Accepted set by Bo',
+  target: 'b1c3…', status: { state: 'Accepted', stateModel: 'Review' }, creator, created, modified }
+```
+
+`getAnnotations` returns statuses with their `status` object. Keep them out of the replies that your page shows. The latest status by `created` is the comment's status, and `None` clears it. Give the `status` object back unchanged with `addAnnotations` or `updateAnnotation`. `state` and `stateModel` are each 1 to 64 characters. A status stays a status: `updateAnnotation` refuses to turn a status into a plain reply, or a reply into a status.
+
+*Changed in this version:* before, statuses in a file were not read. They now come with their `status` object.
+
 Every value is checked: types, string lengths, colours (`#RRGGBB`), finite numbers, and the
 geometry: on a page of the document and inside its media box (2 points of tolerance plus the
 line width). Limits: 1000 annotations per call, 10 000 per document, 1000 quadrilaterals per

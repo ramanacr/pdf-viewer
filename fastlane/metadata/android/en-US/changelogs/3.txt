@@ -1,0 +1,5 @@
+Preview 0.3.
+• Comment threads: reply to a comment, edit or delete your own replies, and set a review status (Accepted, Rejected, Cancelled, Completed). Acrobat and the desktop app read them.
+• Import and export comments as XFDF files.
+• Unsaved changes are kept when Android closes the app in the background.
+• Larger buttons for easier tapping.

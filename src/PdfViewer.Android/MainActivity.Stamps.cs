@@ -86,19 +86,24 @@ public sealed partial class MainActivity
         return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
     }
 
-    /// <summary>Asks for the name dynamic stamps show and keeps it on this device; <paramref name="then"/> runs when one is given.</summary>
-    private void AskSigner(Action? then)
+    /// <summary>
+    /// Asks for the reader's name (on dynamic stamps, and the author of new annotations, replies and
+    /// statuses) and keeps it on this device; <paramref name="then"/> runs when one is given.
+    /// <paramref name="needed"/> says why a name is needed when none is given.
+    /// </summary>
+    private void AskSigner(Action? then, string needed = "A stamp with a name and date needs your name.")
     {
-        AskText("Your name on stamps (kept on this device)", Signer() ?? "", ViewerEditSession.MaxStampSignerLength, multiline: false, password: false, text =>
+        AskText("Your name on stamps and comments (kept on this device)", Signer() ?? "", ViewerEditSession.MaxStampSignerLength, multiline: false, password: false, text =>
         {
             string name = text.Trim();
             var editor = GetSharedPreferences(StampPreferences, FileCreationMode.Private)?.Edit();
             if (name.Length == 0) editor?.Remove(SignerKey);
             else editor?.PutString(SignerKey, name);
             editor?.Apply();
+            if (_session != null) _session.Author = name;
             if (name.Length == 0)
             {
-                Toast.MakeText(this, "A stamp with a name and date needs your name.", ToastLength.Short)?.Show();
+                Toast.MakeText(this, needed, ToastLength.Short)?.Show();
                 return;
             }
             then?.Invoke();
