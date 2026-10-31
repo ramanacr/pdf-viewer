@@ -146,8 +146,15 @@
     var status = demo.querySelector('[data-live-demo-status]');
     function load(src) {
       return new Promise(function (resolve, reject) {
+        // Only scripts from this site's own origin are loaded.
+        var url;
+        try { url = new URL(src, window.location.href); } catch (e) { url = null; }
+        if (!url || url.origin !== window.location.origin) {
+          reject(new Error('Refused to load a script from another site'));
+          return;
+        }
         var s = document.createElement('script');
-        s.src = src;
+        s.src = url.href;
         s.onload = resolve;
         s.onerror = function () { reject(new Error('Could not load ' + src)); };
         document.body.appendChild(s);
