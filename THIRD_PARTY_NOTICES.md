@@ -218,11 +218,13 @@ License: SIL Open Font License 1.1. Published with the web demo in `fonts/noto`,
 | Noto Sans Gujarati 2.106 | https://github.com/notofonts/gujarati/releases/tag/NotoSansGujarati-v2.106 | `unhinted/ttf/NotoSansGujarati-Regular.ttf` |
 | Noto Sans Gurmukhi 2.004 | https://github.com/notofonts/gurmukhi/releases/tag/NotoSansGurmukhi-v2.004 | `unhinted/ttf/NotoSansGurmukhi-Regular.ttf` |
 | Noto Sans Oriya 2.007 | https://github.com/notofonts/oriya/releases/tag/NotoSansOriya-v2.007 | `unhinted/ttf/NotoSansOriya-Regular.ttf` |
+| Noto Sans Sinhala 3.000 | https://github.com/notofonts/sinhala/releases/tag/NotoSansSinhala-v3.000 | `unhinted/ttf/NotoSansSinhala-Regular.ttf` |
+| Noto Sans Thai 2.002 | https://github.com/notofonts/thai/releases/tag/NotoSansThai-v2.002 | `unhinted/ttf/NotoSansThai-Regular.ttf` |
 | Noto Sans Math 3.000 | https://github.com/notofonts/math/releases/tag/NotoSansMath-v3.000 | `unhinted/ttf/NotoSansMath-Regular.ttf` |
 | Noto Sans Symbols 2 2.008 | https://github.com/notofonts/symbols/releases/tag/NotoSansSymbols2-v2.008 | `unhinted/ttf/NotoSansSymbols2-Regular.ttf` |
 | Noto Sans SC, TC, JP, KR 2.004 | https://github.com/notofonts/noto-cjk/releases/tag/Sans2.004 (`18_NotoSansSC.zip`, `19_NotoSansTC.zip`, `16_NotoSansJP.zip`, `17_NotoSansKR.zip`) | `NotoSansSC-Regular.otf` and the others, sliced |
 
-The SHA-256 of every archive and file is in `eng/webdemo/noto-fonts.json`. Copyright lines, as in the licence files and the name tables (ID 0):
+The size and SHA-256 of every archive, and the SHA-256 of every file taken from it, are in `eng/webdemo/noto-fonts.json`. The published `fonts/noto/index.json` gives the size and SHA-256 of every file as shipped, and the app refuses a fetched file that does not match. Copyright lines, as in the licence files and the name tables (ID 0):
 
 ```text
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/<script repository>)
