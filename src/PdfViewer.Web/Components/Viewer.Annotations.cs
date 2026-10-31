@@ -146,6 +146,7 @@ public sealed partial class Viewer
         if (_doc != doc) return;
         if (session.Problem is { } problem) _status = problem;
         session.Written += () => OnEditsWritten(session);
+        session.Reported += result => OnEditsReported(session, result);
         _session = session;
         _formWidgets = session.Widgets;
         _formWidgetsByPage = _formWidgets.ToLookup(w => w.Page);
@@ -182,12 +183,19 @@ public sealed partial class Viewer
         if (_session is not { } session) return;
         await PrepareFontsAsync(session);
         if (_session != session) return;
-        var result = await session.ApplyAsync();
+        // A refusal or failure comes through Reported, whoever ran the write.
+        await session.ApplyAsync();
+        if (_session != session) return;
+        StateHasChanged();
+    }
+
+    /// <summary>A write of the edits refused a value (it went back to what it was) or failed: the reader is told.</summary>
+    private void OnEditsReported(ViewerEditSession session, ViewerApplyResult result)
+    {
         if (_session != session) return;
         if (result.Refused is { } refused)
         {
-            // The field's own rule refused the value: it went back to what it was.
-            _status = refused;
+            _status = "That value is not accepted.";
             _error = refused;
         }
         if (result.Failed is { } failed)
@@ -618,7 +626,8 @@ public sealed partial class Viewer
         var session = _session;
         await EnsureAppearanceFontsAsync();
         if (_session != session || session?.Store.Find(id) == null) return;
-        if (!Change(s => s.SetContents(id, text)))
+        // The reader may have moved on to another annotation meanwhile: then the editor stays closed.
+        if (!Change(s => s.SetContents(id, text)) && (_selectedId == null || _selectedId == id) && _editingId == null)
         {
             // Refused (a character without a font, or no text): the reader can correct it.
             _selectedId = id;
@@ -742,7 +751,15 @@ public sealed partial class Viewer
                 case EmbedMethod.ImportXfdf:
                 {
                     // Names in use get new ids; replies are linked to their parents, or added on their own.
-                    var import = session.ImportXfdf(call.Xfdf!);
+                    ViewerXfdfImport import;
+                    try
+                    {
+                        import = session.ImportXfdf(call.Xfdf!);
+                    }
+                    catch (ViewerAnnotationException ex)
+                    {
+                        return EmbedProtocol.Error(id, EmbedErrors.InvalidArgument, "importXfdf: " + ex.Message);
+                    }
                     if (import.Skipped > 0)
                     {
                         _status = $"{import.Skipped} XFDF {(import.Skipped == 1 ? "annotation was" : "annotations were")} skipped (unreadable, off the document's pages, or larger than the limits).";

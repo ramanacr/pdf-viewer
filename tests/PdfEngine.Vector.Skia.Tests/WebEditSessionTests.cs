@@ -258,4 +258,203 @@ public class WebEditSessionTests
         Assert.False(session.IsSaving || session.IsDirty);
         Assert.Equal(0, session.PendingSave);
     }
+
+    // ------------------------------------------------------------------ review changes
+
+    private static Task<ViewerEditSession> ReadOnlySession(ViewerDocument doc) =>
+        ViewerEditSession.StartAsync(doc, new ViewerEditOptions { ReadOnlyReason = "Read-only here." });
+
+    [Fact]
+    public async Task Move_ClampsEachAxis_FollowsARotatedPage_AndRefusesWhatCannotMove()
+    {
+        await using var doc = await ViewerDocument.OpenAsync(Commented());
+        var session = await ViewerEditSession.StartAsync(doc, "Ada");
+        var g = doc.Geometry[1];
+        // At the left edge: the move left is stopped, the move down is not.
+        var square = session.AddShape(ViewerAnnotationKind.Square, 2, P(0, 100), P(50, 150))!;
+        Assert.True(session.Move(square.Id, -30, 20));
+        var moved = g.ToShown(session.Store.Find(square.Id)!.Box);
+        var was = g.ToShown(square.Box);
+        Assert.Equal((was.X, was.Y + 20), (moved.X, moved.Y));
+
+        // A reply moves with its parent only; NaN and infinite moves are no moves.
+        Assert.False(session.Move("a", 10, 10));
+        Assert.False(session.Move(square.Id, double.NaN, 10));
+        Assert.False(session.Move(square.Id, 10, double.PositiveInfinity));
+        Assert.Throws<ViewerAnnotationException>(() => session.Move("nobody", 1, 1));
+
+        Assert.True(session.Move("q", 5, 5));
+
+        await using var ro = await ViewerDocument.OpenAsync(Commented());
+        var readOnly = await ReadOnlySession(ro);
+        Assert.Throws<ViewerAnnotationException>(() => readOnly.Move("q", 5, 5));
+    }
+
+    [Fact]
+    public async Task Move_OnATurnedPage_GoesTheWayTheReaderDragged()
+    {
+        var b = new VectorPdfBuilder();
+        b.AddPage("", mediaBox: "[0 0 612 792]", extra: "/Rotate 90");
+        await using var doc = await ViewerDocument.OpenAsync(b.Build());
+        var session = await ViewerEditSession.StartAsync(doc, "Ada");
+        var g = doc.Geometry[0];
+        Assert.Equal(90, g.Rotation);
+        var square = session.AddShape(ViewerAnnotationKind.Square, 1, P(200, 200), P(260, 240))!;
+        var before = g.ToShown(square.Box);
+        Assert.True(session.Move(square.Id, 15, -10));
+        var after = g.ToShown(session.Store.Find(square.Id)!.Box);
+        Assert.Equal(before.X + 15, after.X, 6);
+        Assert.Equal(before.Y - 10, after.Y, 6);
+        Assert.Equal((before.Width, before.Height), (after.Width, after.Height));
+    }
+
+    [Fact]
+    public async Task AFailedWrite_IsReported_AndNeitherWriteAllNorASaveClaimsTheBytes()
+    {
+        await using var doc = await ViewerDocument.OpenAsync(Blank());
+        var session = await ViewerEditSession.StartAsync(doc, "Ada");
+        var reports = new List<ViewerApplyResult>();
+        session.Reported += reports.Add;
+        session.BeforeWrite = _ => throw new IOException("disk");
+        session.AddNote(1, P(50, 50), "One");
+
+        Assert.False(await session.WriteAllAsync());
+        Assert.Single(reports);
+        Assert.NotNull(reports[0].Failed);
+        Assert.DoesNotContain("disk", reports[0].Failed); // type names only, never the exception's text
+        Assert.Null(await session.BeginSaveAsync());
+        Assert.False(session.IsSaving);
+        Assert.True(session.IsDirty);
+
+        // The next change is written once writing works again.
+        session.BeforeWrite = null;
+        session.AddNote(1, P(80, 80), "Two");
+        Assert.True(await session.WriteAllAsync());
+    }
+
+    [Fact]
+    public async Task ARunningWrite_IsWaitedFor_HoweverLongItTakes()
+    {
+        await using var doc = await ViewerDocument.OpenAsync(Blank());
+        var session = await ViewerEditSession.StartAsync(doc, "Ada");
+        // Longer than the 4 s the waits once shared with the write attempts.
+        session.BeforeWrite = ct => Task.Delay(TimeSpan.FromSeconds(4.5), ct);
+        session.AddNote(1, P(50, 50), "Slow");
+        var running = session.ApplyAsync();
+        Assert.Equal(default, await session.ApplyAsync()); // one write at a time
+        Assert.True(await session.WriteAllAsync());
+        Assert.True((await running).Written);
+
+        session.AddNote(1, P(80, 80), "Slow too");
+        running = session.ApplyAsync();
+        var save = await session.BeginSaveAsync();
+        Assert.NotNull(save);
+        await running;
+        Assert.True(session.EndSave(save, saved: true));
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public async Task ASaveId_IsUniqueAcrossSessions_SoALateAnswerForAnotherDocumentIsRefused()
+    {
+        await using var first = await ViewerDocument.OpenAsync(Blank());
+        var a = await ViewerEditSession.StartAsync(first, "Ada");
+        a.AddNote(1, P(50, 50), "A");
+        var saveA = (await a.BeginSaveAsync())!;
+
+        await using var second = await ViewerDocument.OpenAsync(Blank());
+        var b = await ViewerEditSession.StartAsync(second, "Ada");
+        b.AddNote(1, P(50, 50), "B");
+        var saveB = (await b.BeginSaveAsync())!;
+        Assert.NotEqual(saveA.Id, saveB.Id);
+
+        // The host page answers the first document's save after the second one opened.
+        Assert.False(b.EndSave(saveA.Id, saved: true));
+        Assert.True(b.IsSaving && b.IsDirty);
+        Assert.True(b.EndSave(saveB.Id, saved: true));
+        Assert.False(b.IsDirty);
+    }
+
+    private const string Ns = "http://ns.adobe.com/xfdf/";
+
+    [Fact]
+    public async Task XfdfImport_SkipsInvalidAnnotationsWithTheirReplies_AndRefusesTooMany()
+    {
+        await using var doc = await ViewerDocument.OpenAsync(Blank());
+        var session = await ViewerEditSession.StartAsync(doc, "Ada");
+
+        // A square outside the media box is skipped, and its reply with it.
+        var outside = session.ImportXfdf($"<xfdf xmlns=\"{Ns}\"><annots>" +
+            "<square page=\"0\" rect=\"1000,1000,1100,1100\" name=\"far\"/>" +
+            "<text page=\"0\" rect=\"10,10,30,30\" name=\"r\" inreplyto=\"far\" replyType=\"reply\"/>" +
+            "<square page=\"0\" rect=\"10,10,30,30\" name=\"ok\"/></annots></xfdf>");
+        Assert.Equal((1, 2), (outside.Added, outside.Skipped));
+        Assert.Equal(["ok"], session.Store.Current.Select(a => a.Id));
+
+        // A thread deeper than the limit: the replies past it are skipped, the rest are added.
+        int extra = 2;
+        var chain = new System.Text.StringBuilder($"<xfdf xmlns=\"{Ns}\"><annots><text page=\"0\" rect=\"10,10,30,30\" name=\"t0\"/>");
+        for (int i = 1; i <= ViewerAnnotationStore.MaxReplyDepth + extra; i++)
+            chain.Append($"<text page=\"0\" rect=\"10,10,30,30\" name=\"t{i}\" inreplyto=\"t{i - 1}\" replyType=\"reply\"/>");
+        chain.Append("</annots></xfdf>");
+        var deep = session.ImportXfdf(chain.ToString());
+        Assert.Equal((1 + ViewerAnnotationStore.MaxReplyDepth, extra), (deep.Added, deep.Skipped));
+        Assert.Null(session.Store.Find($"t{ViewerAnnotationStore.MaxReplyDepth + 1}"));
+
+        // More than the store takes in one call: the whole import is refused, nothing added.
+        int count = session.Store.Current.Count;
+        var many = new System.Text.StringBuilder($"<xfdf xmlns=\"{Ns}\"><annots>");
+        for (int i = 0; i <= ViewerAnnotationStore.MaxPerCall; i++) many.Append($"<square page=\"0\" rect=\"10,10,30,30\" name=\"m{i}\"/>");
+        many.Append("</annots></xfdf>");
+        var ex = Assert.Throws<ViewerAnnotationException>(() => session.ImportXfdf(many.ToString()));
+        Assert.Contains($"at most {ViewerAnnotationStore.MaxPerCall}", ex.Message);
+        Assert.Equal(count, session.Store.Current.Count);
+    }
+
+    [Fact]
+    public async Task TheHostPagesValues_AreChecked_AndAnUpdateKeepsTheAuthorAsItWas()
+    {
+        await using var doc = await ViewerDocument.OpenAsync(Commented());
+        var session = await ViewerEditSession.StartAsync(doc, "Ada");
+        ViewerAnnotation Square(string id) => new()
+        {
+            Id = id, Page = 1, Kind = ViewerAnnotationKind.Square, Box = new ViewerBox(100, 100, 200, 200), Color = "#FF0000",
+        };
+        Assert.Throws<ViewerAnnotationException>(() => session.AddAnnotations([Square("nan") with { Box = new ViewerBox(double.NaN, 100, 200, 200) }]));
+        Assert.Throws<ViewerAnnotationException>(() => session.AddAnnotations([Square("inf") with { Box = new ViewerBox(100, 100, double.PositiveInfinity, 200) }]));
+        Assert.Throws<ViewerAnnotationException>(() => session.AddAnnotations([Square("wide") with { StrokeWidth = 1000 }]));
+        Assert.Throws<ViewerAnnotationException>(() => session.AddAnnotations([Square("long") with { Contents = new string('x', ViewerAnnotationStore.MaxContentsLength + 1) }]));
+        Assert.Throws<ViewerAnnotationException>(() => session.AddAnnotations(Enumerable.Range(0, ViewerAnnotationStore.MaxPerCall + 1).Select(i => Square($"s{i}")).ToList()));
+        Assert.Equal(2, session.Store.Current.Count);
+        Assert.False(session.IsDirty);
+
+        // An update without an author keeps the annotation's own (Bob's, not the reader's).
+        var q = session.Store.Find("q")!;
+        Assert.Equal("Bob", session.UpdateAnnotation(q with { Author = "", Contents = "Edited" }).Author);
+        Assert.Throws<ViewerAnnotationException>(() => session.UpdateAnnotation(q with { Box = new ViewerBox(100, 600, double.NaN, 620) }));
+        Assert.Equal("Edited", session.Store.Find("q")!.Contents);
+
+        // An annotation without an author stays without one: the reader's name is not written in.
+        var anonymous = session.AddAnnotations([Square("anon")])[0];
+        Assert.Equal("Ada", anonymous.Author); // a new one takes the reader's name
+        var noName = session.UpdateAnnotation(anonymous with { Author = "" });
+        Assert.Equal("Ada", noName.Author);
+        session.Author = "";
+        var blank = session.AddAnnotations([Square("blank")])[0];
+        session.Author = "Cy";
+        Assert.Equal("", session.UpdateAnnotation(blank with { Contents = "x" }).Author);
+    }
+
+    [Fact]
+    public async Task AReadOnlySession_RefusesColourStyleAndTextBoxes()
+    {
+        await using var doc = await ViewerDocument.OpenAsync(Commented());
+        var session = await ReadOnlySession(doc);
+        Assert.Throws<ViewerAnnotationException>(() => session.SetColor("q", "#000000"));
+        Assert.Throws<ViewerAnnotationException>(() => session.SetShapeStyle("q", ViewerShapeStyle.Plain));
+        Assert.Throws<ViewerAnnotationException>(() => session.AddTextBox(1, P(10, 10), P(200, 100)));
+        Assert.Throws<ViewerAnnotationException>(() => session.AddAnnotations([]));
+        Assert.Throws<ViewerAnnotationException>(() => session.UpdateAnnotation(session.Store.Find("q")!));
+        Assert.False(session.IsDirty);
+    }
 }

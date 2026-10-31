@@ -119,6 +119,13 @@ public sealed partial class MainActivity
         _session = session;
         // New annotations, replies and statuses carry the reader's name (asked once, kept on this device).
         if (session != null) session.Author = Signer() ?? "";
+        // Every write redraws the pages, also one a save ran (the save writes what is left first).
+        if (session != null) session.Written += () => RunOnUiThread(() =>
+        {
+            if (!ReferenceEquals(session, _session)) return;
+            _pages.Refresh();
+            _thumbnails.Release();
+        });
         _noticeShown = false;
         _pages.Session = session;
         ShowAnnotateBar(false);
@@ -225,15 +232,8 @@ public sealed partial class MainActivity
         }
         var result = await session.ApplyAsync();
         if (!ReferenceEquals(session, _session)) return;
-        if (result.Written)
-        {
-            _pages.Refresh();
-            _thumbnails.Release();
-        }
-        else if (result.Failed != null)
-        {
-            _pages.DropPendingInk();
-        }
+        // The pages were drawn again on Written; a failed write drops the stroke drawn ahead of it.
+        if (!result.Written && result.Failed != null) _pages.DropPendingInk();
         if ((result.Refused ?? result.Failed) is { } message) Toast.MakeText(this, message, ToastLength.Long)?.Show();
         UpdateEditButtons();
     }

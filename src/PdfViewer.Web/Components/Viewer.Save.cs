@@ -57,14 +57,38 @@ public sealed partial class Viewer
             // Another document was opened (or this one closed), or another save began, meanwhile.
             if (_session != session || session.IsSaving) return false;
             // The session writes what is left, then hands out the bytes with every edit (or none).
-            var save = await session.BeginSaveAsync();
-            if (_session != session) return false;
+            ViewerSave? save;
+            try
+            {
+                save = await session.BeginSaveAsync();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // The session ended the save itself. Type names only, never document content.
+                if (_session == session) NotPosted(ex);
+                return false;
+            }
+            if (_session != session)
+            {
+                if (save != null) session.EndSave(save, saved: false);
+                return false;
+            }
             if (save == null)
             {
                 NotSaved();
                 return false;
             }
-            CanvasInterop.EmbedPostBytes(EmbedProtocol.SaveRequest(save.Id, DownloadName, _fileId, reason), save.Bytes);
+            try
+            {
+                CanvasInterop.EmbedPostBytes(EmbedProtocol.SaveRequest(save.Id, DownloadName, _fileId, reason), save.Bytes);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Nothing reached the host page: the save ends, or the session would stay saving.
+                session.EndSave(save, saved: false);
+                NotPosted(ex);
+                return false;
+            }
             _ = SaveSlowAsync(session, save.Id);
             return true;
         }
@@ -72,6 +96,13 @@ public sealed partial class Viewer
         {
             StateHasChanged();
         }
+    }
+
+    /// <summary>The document could not be handed to the host page: nothing was saved, and the reader is told.</summary>
+    private void NotPosted(Exception ex)
+    {
+        _status = "Not saved";
+        _error = $"The file was not saved: it could not be sent to the page ({ex.GetType().Name}).";
     }
 
     /// <summary>The latest edits are not in the document's bytes: nothing is posted, and the reader is told.</summary>

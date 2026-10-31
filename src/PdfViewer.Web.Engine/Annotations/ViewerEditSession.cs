@@ -667,7 +667,8 @@ public sealed class ViewerEditSession
 
     /// <summary>
     /// Moves an annotation by (<paramref name="dx"/>, <paramref name="dy"/>) points of the shown
-    /// page, kept on its page; its replies go with it. False when it did not move.
+    /// page, kept on its page. False when it did not move (stopped by the page edge, a reply, or a
+    /// move that is not a finite number).
     /// </summary>
     public bool Move(string id, double dx, double dy)
     {
@@ -728,7 +729,8 @@ public sealed class ViewerEditSession
         var old = Store.Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
         var updated = Store.Update(annotation with
         {
-            Author = annotation.Author.Length > 0 ? annotation.Author : old.Author.Length > 0 ? old.Author : Author,
+            // Authorship is not rewritten: without an author given, the annotation keeps its own (empty stays empty).
+            Author = annotation.Author.Length > 0 ? annotation.Author : old.Author,
             Created = annotation.Created != default ? annotation.Created : old.Created,
             Modified = DateTimeOffset.UtcNow,
             Dash = keepDash ? old.Dash : annotation.Dash,
@@ -976,7 +978,8 @@ public sealed class ViewerEditSession
         var ids = Store.Current.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
         var now = DateTimeOffset.UtcNow;
         var taken = new List<ViewerAnnotation>();
-        var known = new HashSet<string>(ids, StringComparer.Ordinal);
+        // The document's annotations and the ones taken so far, by id: a reply's thread depth is counted through them.
+        var known = Store.Current.ToDictionary(a => a.Id, StringComparer.Ordinal);
         // Parents come before their replies: a reply whose parent was left out is left out too.
         foreach (var read in ViewerAnnotationPdf.FromXfdf(onPages, ids))
         {
@@ -986,16 +989,25 @@ public sealed class ViewerEditSession
                 Created = read.Created != default ? read.Created : now,
                 Modified = read.Modified != default ? read.Modified : now,
             };
-            if (!Store.Accepts(a) || a.Kind == ViewerAnnotationKind.Reply && !known.Contains(a.InReplyTo))
+            bool reply = a.Kind == ViewerAnnotationKind.Reply;
+            if (!Store.Accepts(a)
+                || reply && !known.ContainsKey(a.InReplyTo)
+                // A reply deeper than the thread limit is left out (with its own replies).
+                || reply && ViewerAnnotationPdf.Depth(known[a.InReplyTo], known) + 1 > ViewerAnnotationStore.MaxReplyDepth)
             {
                 skipped++;
                 continue;
             }
-            known.Add(a.Id);
+            known[a.Id] = a;
             taken.Add(a);
         }
+        // The limits of the whole document refuse the whole import: leaving out an arbitrary part would mislead.
         if (taken.Count > ViewerAnnotationStore.MaxPerCall)
             throw new ViewerAnnotationException($"An XFDF file can add at most {ViewerAnnotationStore.MaxPerCall} annotations at once; this one has {taken.Count}.");
+        if (Store.Current.Count + taken.Count > ViewerAnnotationStore.MaxAnnotations)
+            throw new ViewerAnnotationException($"This XFDF file would give the document more than {ViewerAnnotationStore.MaxAnnotations} annotations ({Store.Current.Count} now, {taken.Count} to add); nothing was added.");
+        if (ViewerAnnotationStore.Points(Store.Current) + ViewerAnnotationStore.Points(taken) > ViewerAnnotationStore.MaxPoints)
+            throw new ViewerAnnotationException($"This XFDF file would give the document's annotations more than {ViewerAnnotationStore.MaxPoints} ink, quadPoints and vertices points together; nothing was added.");
         IReadOnlyList<ViewerAnnotation> added = [];
         if (taken.Count > 0)
         {
@@ -1104,6 +1116,7 @@ public sealed class ViewerEditSession
                 var values = _values.Select(p => (p.Key, p.Value)).ToList();
                 try
                 {
+                    if (BeforeWrite is { } before) await before(cancellationToken);
                     // The engine writes on a worker thread where there are threads (not in a browser).
                     if (OperatingSystem.IsBrowser())
                         await Document.ApplyEditsAsync(fromFile, current, values, cancellationToken);
@@ -1112,17 +1125,19 @@ public sealed class ViewerEditSession
                 }
                 catch (PdfFieldValidationException ex)
                 {
-                    // The field's own rule refused the value: it goes back to what it was.
+                    // The field's own rule refused the value: it goes back to what it was. The
+                    // engine's validation message says what the rule wants; the field is named.
                     _values.Remove(ex.FieldName);
                     if (_lastField != null) _values.Remove(_lastField);
-                    refused = ex.Message;
+                    refused = $"{ex.FieldName}: {ex.Message}";
                     continue;
                 }
                 catch (Exception ex) when (ex is KeyNotFoundException or ArgumentException or InvalidOperationException && _lastField != null && _values.ContainsKey(_lastField))
                 {
-                    // The engine's message names the field and the rule (an option, a length), never other content.
-                    _values.Remove(_lastField!);
-                    refused = ex is ArgumentException ? ex.Message : "That value is not accepted.";
+                    // Not the exception's own text: the field is named, with what went wrong.
+                    string field = _lastField!;
+                    _values.Remove(field);
+                    refused = $"{field}: that value is not accepted ({ex.GetType().Name}).";
                     continue;
                 }
                 catch (ObjectDisposedException)
@@ -1162,8 +1177,21 @@ public sealed class ViewerEditSession
         {
             _applying = false;
         }
-        return new ViewerApplyResult(written, refused, failed);
+        var result = new ViewerApplyResult(written, refused, failed);
+        // Whoever started the write (the viewer after a change, or a save), the viewer hears of a refusal or failure.
+        if (refused != null || failed != null) Reported?.Invoke(result);
+        return result;
     }
+
+    /// <summary>
+    /// A write refused a value or failed (<see cref="ViewerApplyResult.Refused"/>,
+    /// <see cref="ViewerApplyResult.Failed"/>), whoever started it: the viewer tells the reader.
+    /// Raised on the thread that called <see cref="ApplyAsync"/>.
+    /// </summary>
+    public event Action<ViewerApplyResult>? Reported;
+
+    /// <summary>For tests: runs before each write of the edits (a slow or failing write).</summary>
+    internal Func<CancellationToken, Task>? BeforeWrite { get; set; }
 
     /// <summary>
     /// Starts a save: the document's bytes with every edit (written first when needed), or null
@@ -1187,7 +1215,17 @@ public sealed class ViewerEditSession
             return null;
         }
         int id = _edits.Post();
-        return id == 0 ? null : new ViewerSave(id, Document.Bytes);
+        if (id == 0) return null;
+        try
+        {
+            return new ViewerSave(id, Document.Bytes);
+        }
+        catch
+        {
+            // No bytes to hand out (the document was closed): the save ends here.
+            _edits.EndSave();
+            throw;
+        }
     }
 
     /// <summary>
@@ -1202,11 +1240,18 @@ public sealed class ViewerEditSession
 
     private async Task WriteOutAsync(CancellationToken cancellationToken)
     {
-        // A write under way always ends; new writes are tried a few times.
-        for (int tries = 0; (_applying || _edits.NeedsApply) && tries < 200; tries++)
+        // A write under way always ends: it is waited for however long it takes (a large
+        // document), until the token cancels. Only new writes count against the limit.
+        int writes = 0;
+        while (_applying || _edits.NeedsApply)
         {
-            if (_applying) await Task.Delay(20, cancellationToken);
-            else await ApplyAsync(cancellationToken);
+            if (_applying)
+            {
+                await Task.Delay(20, cancellationToken);
+                continue;
+            }
+            if (writes++ >= 200) break;
+            await ApplyAsync(cancellationToken);
         }
     }
 

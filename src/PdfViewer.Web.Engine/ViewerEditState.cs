@@ -29,7 +29,9 @@ public sealed class ViewerEditState
     /// <summary>The id of the save in flight, 0 when the bytes are not yet posted.</summary>
     public int PendingSave { get; private set; }
 
-    private int _saveId;
+    // Save ids are unique in the process, not per document: a late answer to another document's
+    // save (the host page answered after the viewer opened a new one) never matches this one's.
+    private static int s_lastSaveId;
 
     /// <summary>A save is under way: waiting for the edits to be written, or for the host page's answer.</summary>
     public bool Saving { get; private set; }
@@ -85,7 +87,14 @@ public sealed class ViewerEditState
             return 0;
         }
         PostedVersion = AppliedVersion;
-        PendingSave = ++_saveId;
+        int id = Interlocked.Increment(ref s_lastSaveId);
+        if (id <= 0)
+        {
+            // After int.MaxValue saves the count starts again at 1 (0 means none).
+            Interlocked.CompareExchange(ref s_lastSaveId, 0, id);
+            id = Interlocked.Increment(ref s_lastSaveId);
+        }
+        PendingSave = id;
         return PendingSave;
     }
 
