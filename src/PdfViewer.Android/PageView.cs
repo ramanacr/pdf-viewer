@@ -22,9 +22,11 @@ internal sealed class PageView : SkiaView
 {
     /// <summary>
     /// What one finger does on a page: browse (scroll, tap, long press), draw (ink, rectangle,
-    /// ellipse, line, arrow: a drag), or place a note, a text box or a stamp (a tap).
+    /// ellipse, line, arrow: a drag), or place a note, a text box, a stamp or a callout (a tap; a
+    /// callout takes two: the spot it points to, then its text box), or a tap that says where the
+    /// chosen annotation goes (Place: moving it).
     /// </summary>
-    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text, Stamp }
+    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text, Stamp, Callout, Place }
 
     /// <summary>A tool that draws with a drag of one finger (the page does not scroll under it).</summary>
     public static bool Drags(PageTool tool) => tool is PageTool.Ink or PageTool.Rectangle or PageTool.Ellipse or PageTool.Line or PageTool.Arrow;
@@ -190,6 +192,25 @@ internal sealed class PageView : SkiaView
     /// <summary>The stamp tool was tapped on a page: the page and the point the stamp is centred on.</summary>
     public event Action<int, ViewerPoint>? StampRequested;
 
+    /// <summary>The callout tool was tapped on a page: the spot it points to, then where its text box goes.</summary>
+    public event Action<int, ViewerPoint>? CalloutRequested;
+
+    /// <summary>The place tool was tapped on a page: where the chosen annotation (or its anchor) goes.</summary>
+    public event Action<int, ViewerPoint>? PlaceRequested;
+
+    private (int Page, ViewerPoint Point)? _calloutMark;
+
+    /// <summary>The spot a callout being placed points to, marked on the page until its box is placed; null for none.</summary>
+    public (int Page, ViewerPoint Point)? CalloutMark
+    {
+        get => _calloutMark;
+        set
+        {
+            _calloutMark = value;
+            Invalidate();
+        }
+    }
+
     /// <summary>
     /// A shape tool was dragged: the tool, the page, where the drag started and ended (shown-page
     /// points), and the outline drawn over the page until it is drawn with the shape (drop it with
@@ -206,6 +227,7 @@ internal sealed class PageView : SkiaView
         {
             _tool = value;
             _stroke = null;
+            if (value != PageTool.Callout) _calloutMark = null;
             if (value != PageTool.Browse) ClearSelection();
             Invalidate();
         }
@@ -286,6 +308,7 @@ internal sealed class PageView : SkiaView
         _pendingInk.Clear();
         _stroke = null;
         _pickedAnnotation = null;
+        _calloutMark = null;
         _tool = PageTool.Browse;
         ClearSelection();
         _doc = document;
@@ -442,7 +465,14 @@ internal sealed class PageView : SkiaView
             float grow = 3 * Density;
             _picked.StrokeWidth = 2 * Density;
             canvas.DrawRect(new SKRect(r.Left - grow, r.Top - grow, r.Right + grow, r.Bottom + grow), _picked);
+            // A callout's anchor: the spot it points to.
+            if (a.IsCallout)
+            {
+                var (ax, ay) = session.Document.Geometry[a.Page - 1].ToShown(a.Callout[0], a.Callout[1]);
+                DrawMark(canvas, a.Page, new ViewerPoint(ax, ay));
+            }
         }
+        if (_calloutMark is var (markPage, markPoint) && visible.Contains(markPage)) DrawMark(canvas, markPage, markPoint);
         _ink.Color = SKColor.Parse(ViewerAnnotationPdf.DefaultColor(ViewerAnnotationKind.Ink));
         _ink.StrokeWidth = (float)(ViewerEditSession.InkWidth * _layout.PixelsPerPoint);
         foreach (var (page, _, points) in _pendingInk)
@@ -479,6 +509,17 @@ internal sealed class PageView : SkiaView
             default:
                 return [a, b];
         }
+    }
+
+    /// <summary>A ring at a point of a page: a callout's anchor.</summary>
+    private void DrawMark(SKCanvas canvas, int page, ViewerPoint point)
+    {
+        var r = _layout!.PageRectInView(page);
+        double s = _layout.PixelsPerPoint;
+        float x = (float)(r.X + point.X * s), y = (float)(r.Y + point.Y * s);
+        _picked.StrokeWidth = 2 * Density;
+        canvas.DrawCircle(x, y, 7 * Density, _picked);
+        canvas.DrawCircle(x, y, 2.5f * Density, _handle);
     }
 
     private void DrawStroke(SKCanvas canvas, int page, IReadOnlyList<ViewerPoint> points)
@@ -715,9 +756,16 @@ internal sealed class PageView : SkiaView
     private void Tap(float x, float y)
     {
         if (_layout?.PageAt(x, y) is not var (page, point)) return;
-        if (_tool is PageTool.Note or PageTool.Text or PageTool.Stamp)
+        if (_tool is PageTool.Note or PageTool.Text or PageTool.Stamp or PageTool.Callout or PageTool.Place)
         {
-            (_tool switch { PageTool.Note => NoteRequested, PageTool.Text => TextRequested, _ => StampRequested })?.Invoke(page, point);
+            (_tool switch
+            {
+                PageTool.Note => NoteRequested,
+                PageTool.Text => TextRequested,
+                PageTool.Callout => CalloutRequested,
+                PageTool.Place => PlaceRequested,
+                _ => StampRequested,
+            })?.Invoke(page, point);
             return;
         }
         var session = Session;

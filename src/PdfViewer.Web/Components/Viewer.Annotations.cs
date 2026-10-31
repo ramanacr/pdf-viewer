@@ -12,7 +12,8 @@ namespace PdfViewer.Web.Components;
 
 /// <summary>
 /// Annotations: the annotation toolbar (highlight, underline and strike-out on a text selection,
-/// note, free text, ink, rectangle, ellipse, lines, polygons, stamps; select, move, delete; undo
+/// note, free text, callouts, ink, rectangle, ellipse, lines, polygons, stamps; select, move (a
+/// callout's box, and its anchor by its handle), delete; undo
 /// and redo), the comments panel with replies and review statuses, and the host page's annotation
 /// manager. The edits live in a <see cref="ViewerEditSession"/>, the editing core the Android app
 /// shares, so both follow one set of rules; after every change the engine writes them into the
@@ -21,9 +22,9 @@ namespace PdfViewer.Web.Components;
 /// </summary>
 public sealed partial class Viewer
 {
-    private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Ink, Square, Circle, Line, Arrow, Polygon, PolyLine, Stamp }
+    private enum Tool { Select, Highlight, Underline, StrikeOut, Note, FreeText, Callout, Ink, Square, Circle, Line, Arrow, Polygon, PolyLine, Stamp }
 
-    private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "ink", "square", "circle", "line", "arrow", "polygon", "polyline", "stamp"];
+    private static readonly string[] ToolNames = ["select", "highlight", "underline", "strikeout", "note", "freetext", "callout", "ink", "square", "circle", "line", "arrow", "polygon", "polyline", "stamp"];
 
     /// <summary>What the host page is told when it opened the file with hasReadOnlyAccess and tries a change.</summary>
     private const string ReadOnlyReason = "The file was opened with hasReadOnlyAccess.";
@@ -80,7 +81,7 @@ public sealed partial class Viewer
         Tool.Underline => ViewerAnnotationKind.Underline,
         Tool.StrikeOut => ViewerAnnotationKind.StrikeOut,
         Tool.Note => ViewerAnnotationKind.Note,
-        Tool.FreeText => ViewerAnnotationKind.FreeText,
+        Tool.FreeText or Tool.Callout => ViewerAnnotationKind.FreeText,
         Tool.Ink => ViewerAnnotationKind.Ink,
         Tool.Square => ViewerAnnotationKind.Square,
         Tool.Circle => ViewerAnnotationKind.Circle,
@@ -101,6 +102,7 @@ public sealed partial class Viewer
         (Tool.StrikeOut, "strike", "Strike through text"),
         (Tool.Note, "note", "Add a note"),
         (Tool.FreeText, "text", "Add a text box"),
+        (Tool.Callout, "callout", "Add a callout (click the spot it points to, then click or drag where its text goes)"),
         (Tool.Ink, "pen", "Draw"),
         (Tool.Square, "square", "Draw a rectangle"),
         (Tool.Circle, "circle", "Draw an ellipse"),
@@ -343,7 +345,7 @@ public sealed partial class Viewer
         _tool = _tool == tool && tool != Tool.Select ? Tool.Select : tool;
         if (_tool != Tool.Select) Unselect(user: true);
         // A text box or stamp needs the appearance fonts: they are read while the reader places it.
-        if (_tool is Tool.FreeText or Tool.Stamp) _ = EnsureAppearanceFontsAsync();
+        if (_tool is Tool.FreeText or Tool.Callout or Tool.Stamp) _ = EnsureAppearanceFontsAsync();
         CanvasInterop.SetTool(ToolNames[(int)_tool]);
         _status = _tool switch
         {
@@ -351,6 +353,7 @@ public sealed partial class Viewer
             Tool.Highlight or Tool.Underline or Tool.StrikeOut => "Drag over the text to mark it.",
             Tool.Note => "Click where the note goes.",
             Tool.FreeText => "Click or drag where the text goes.",
+            Tool.Callout => "Click the spot the callout points to, then click or drag where its text goes. Esc starts again.",
             Tool.Ink => "Draw on the page.",
             Tool.Line or Tool.Arrow => "Drag from where the line starts to where it ends.",
             Tool.Polygon or Tool.PolyLine => "Click each point; double-click or press Enter to end, Esc to cancel.",
@@ -496,6 +499,25 @@ public sealed partial class Viewer
         string color = ToolColor(_tool);
         var style = ToolStyle(_tool);
 
+        if (_tool == Tool.Callout)
+        {
+            // The spot it points to, then the text box's two corners (the same point for a click).
+            if (shown.Count < 3) return;
+            var (c1, c2) = (shown[1], shown[^1]);
+            var box = new ViewerRect(Math.Min(c1.X, c2.X), Math.Min(c1.Y, c2.Y), Math.Abs(c2.X - c1.X), Math.Abs(c2.Y - c1.Y));
+            ViewerAnnotation? callout = null;
+            if (Change(s => callout = s.AddCallout(page, first, box, "", color)) && callout != null)
+            {
+                // Type its text at once, as for a text box; an empty one is not kept.
+                _tool = Tool.Select;
+                CanvasInterop.SetTool(ToolNames[0]);
+                Select(callout.Id, user: true);
+                StartEditing(callout, isNew: true);
+            }
+            StateHasChanged();
+            return;
+        }
+
         ViewerAnnotation? a = null;
         bool changed = Change(s => a = kind switch
         {
@@ -554,6 +576,16 @@ public sealed partial class Viewer
     {
         if (!CanEditAnnotations || _session?.Store.Find(id) is not { } a || !double.IsFinite(dx) || !double.IsFinite(dy) || PageFrame(a.Page) is not (_, var width, var height)) return;
         Change(s => s.Move(id, Math.Clamp(dx, -1, 1) * width, Math.Clamp(dy, -1, 1) * height));
+        StateHasChanged();
+    }
+
+    /// <summary>The reader dragged a callout's anchor handle to (x, y), fractions of the shown page: one undo step.</summary>
+    [JSInvokable]
+    public void OnCalloutAnchorDrag(string id, double x, double y)
+    {
+        if (!CanEditAnnotations || _session?.Store.Find(id) is not { IsCallout: true } a || !double.IsFinite(x) || !double.IsFinite(y)
+            || PageFrame(a.Page) is not (_, var width, var height)) return;
+        Change(s => s.MoveCalloutAnchor(id, new ViewerPoint(Math.Clamp(x, 0, 1) * width, Math.Clamp(y, 0, 1) * height)));
         StateHasChanged();
     }
 

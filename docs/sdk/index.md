@@ -403,10 +403,11 @@ With `showAnnotationTools` (full window and light box), a second toolbar shows t
 
 | Tool | How |
 | --- | --- |
-| Select | Select text (drag), or click an annotation to select it; drag it to move it; `Delete` deletes it. Click a selected note or text box to edit its text. |
+| Select | Select text (drag), or click an annotation to select it; drag it to move it; `Delete` deletes it. Click a selected note, text box or callout to edit its text. A selected callout shows a round handle at the spot it points to: drag it to move that spot. |
 | Highlight, underline, strike-through | Drag over text. With text already selected, the button marks it at once. |
 | Note | Click where the note goes, then type the comment. |
 | Text box (free text) | Click, or drag a box, then type. An empty new text box is not kept. |
+| Callout | Click the spot the callout points to, then click or drag where its text box goes, then type. `Esc` drops the first click. The line has an open arrow at that spot and a knee next to the box, as Acrobat draws one. Drag the box to move it: the spot stays, and the line meets the box again. An empty new callout is not kept. |
 | Pen (ink) | Draw with the mouse or a pen. Each stroke is one annotation. |
 | Rectangle, ellipse | Drag the shape. |
 | Line, arrow | Drag from the start to the end. The arrow has an open arrowhead at its end. |
@@ -488,11 +489,13 @@ Close to the Adobe PDF Embed API's format (W3C Web Annotation style):
       node: { index: 0 },            // the page, counted from 0
       subtype: 'highlight',          // highlight, underline, strikeout, note, freetext, ink, square, circle,
                                      // line, polygon, polyline, stamp
-      boundingBox: [x1, y1, x2, y2], // the annotation's /Rect
+      boundingBox: [x1, y1, x2, y2], // the annotation's /Rect (a callout's: its text box)
       quadPoints: [x1, y1, x2, y2, x3, y3, x4, y4, …],  // text markup: 8 numbers per line
       inkList: [[x, y, x, y, …], …], // ink: one array per stroke
       vertices: [x1, y1, x2, y2, …], // line: its two points (/L); polygon (3 or more), polyline (2 or more): /Vertices
       lineEndings: ['None', 'OpenArrow'],  // line and polyline: the start and end (/LE, see below)
+      callout: [x1, y1, x2, y2, x3, y3],   // freetext: a callout's line (/CL), the spot it points to first (see below)
+      calloutEnding: 'OpenArrow',    // freetext with callout: the ending at that spot (/LE); default OpenArrow
       stampName: 'Approved',         // stamp: its /Name (see below)
       strokeColor: '#FFD400',        // the line colour; the text colour of free text
       fillColor: '#CCE5FF',          // inside of square, circle and polygon; closed line endings; free text background (optional)
@@ -538,6 +541,31 @@ numbers as they are (not rounded).
 - A measurement (`/Measure`) keeps its fill, dash and line endings: values given for them are
   ignored, and no error is returned.
 - A polygon has no line endings: `lineEndings` given for one are ignored.
+
+A **callout** is a `freetext` annotation with `callout` (ISO 32000-2 12.5.6.6: `/IT /FreeTextCallout`,
+`/CL`, `/LE` and `/RD`):
+
+```js
+{ type: 'Annotation', motivation: 'commenting', bodyValue: 'Check this total',
+  target: { selector: { node: { index: 0 }, subtype: 'freetext',
+    boundingBox: [300, 600, 450, 640],  // the text box
+    callout: [120, 700],                // the spot it points to: the viewer adds the knee and the end
+    calloutEnding: 'OpenArrow', strokeColor: '#E5484D', fontSize: 12 } } }
+```
+
+- `boundingBox` is the **text box**. The viewer writes the `/Rect` around the box and the line,
+  and `/RD` for the box inside it, as Acrobat does.
+- `callout` is the line: `[x, y]` (only the spot it points to: the viewer lays out a knee and
+  the end on the middle of the box's side that faces the spot), or the line's points
+  `[x1, y1, x2, y2]` or `[x1, y1, x2, y2, x3, y3]` (the spot first, the point on the box last).
+  `getAnnotations` always gives the full line. Every point must be on the page.
+- `calloutEnding` is one of the `lineEndings` names (default `OpenArrow`). `strokeColor` is
+  the text, border and line colour; `strokeWidth` (above 0) the border and line width.
+- `updateAnnotation` replaces the whole annotation: give `callout` again (as `getAnnotations`
+  gives it), or the callout becomes a plain text box. When you move `boundingBox` and give the
+  line back unchanged, the spot it points to stays and the viewer lays out the knee and end again.
+- `exportXfdf` and `importXfdf` keep callouts as Acrobat writes them: `<freetext>` with
+  `callout`, `head`, `intent="FreeTextCallout"` and `fringe`.
 
 A **reply** answers another annotation (a note with `/IRT`, ISO 32000-2 12.5.6.4). It has no
 selector: its `target` is the `id` of the annotation it answers, and it takes that one's page:
@@ -813,7 +841,7 @@ Firefox and Safari are not tested yet.
 | Pages | Drawn one at a time on the main thread, in strips; a heavy page's interpretation still blocks the viewer for a moment (see [responsiveness](#responsiveness)). |
 | Loading | By ranges when the server allows it (see [large files](#large-files)); otherwise the whole file is read before the first page shows. While a ranged file loads, calls that need all of it wait. |
 | Selection | One page at a time; dragging does not scroll. |
-| Annotations | The types above and replies; no callouts, carets, file attachments, custom stamps or reply states (/State) yet, and a line or polygon is moved as a whole (its points have no handles yet). Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
+| Annotations | The types above (callouts too) and replies; no carets, file attachments, custom stamps or reply states (/State) yet, and a line or polygon is moved as a whole (its points have no handles yet). Each change writes the document again from the file as opened: on a very large file a change takes a moment. Undo: 100 steps, annotations only (form fields have the browser's own undo while typing). |
 | Forms | AcroForm only (no XFA); no document JavaScript, so custom scripts do nothing; free text and stamps embed the bundled Liberation Sans. No API to set form values from the host page yet. Simplified field notation nested deeper than 64 levels is not calculated. |
 | Language | The viewer is in English. |
 
@@ -877,4 +905,4 @@ const view = new PdfViewer.View({ divId: 'viewer', renderInWorker: true });
 ## Planned
 
 - Rendering in a worker by default, once it is checked in Safari and on phones.
-- Later: handles for the points of lines and polygons, reply states (accepted, rejected), callouts and custom stamps.
+- Later: handles for the points of lines and polygons, reply states (accepted, rejected) and custom stamps.

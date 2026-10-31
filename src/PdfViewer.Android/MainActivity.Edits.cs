@@ -15,7 +15,8 @@ namespace PdfViewer.Android;
 /// <summary>
 /// Edits: form filling (a tap on a field; text with the soft keyboard, check boxes, radio buttons,
 /// choices), highlight, underline and strike-out on a text selection, freehand ink, rectangles,
-/// ellipses, lines and arrows (a drag), sticky notes, text boxes and stamps (a tap), delete, undo and
+/// ellipses, lines and arrows (a drag), sticky notes, text boxes and stamps (a tap), callouts (two taps;
+/// MainActivity.Callouts.cs), move, delete, undo and
 /// redo, the annotation list, "Save" and "Save a copy". The rules and the writing are the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
 /// fields, /MaxLen and signed or certified documents); after each change the engine writes the
 /// edits into the document as an incremental update and the pages are drawn again from it. "Save"
@@ -37,12 +38,12 @@ public sealed partial class MainActivity
     private bool _noticeShown;
 
     private IEnumerable<TextView> EditButtons =>
-        _toolButtons.Select(t => t.Button).Concat([_undoButton, _redoButton, _replyButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
+        _toolButtons.Select(t => t.Button).Concat([_undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
 
     private bool CanAnnotate => _session?.CanAnnotate == true;
 
     /// <summary>
-    /// The annotate bar: the tools, then undo, redo, reply, delete and close, in one strip that
+    /// The annotate bar: the tools, then undo, redo, reply, move, delete and close, in one strip that
     /// scrolls sideways (at 360 dp a phone is too narrow for all of them at 48 dp each).
     /// </summary>
     private View BuildAnnotateBar()
@@ -54,6 +55,7 @@ public sealed partial class MainActivity
             (ToolButton("Draw", "Draw with one finger (two fingers zoom)", (_, _) => SetTool(PageView.PageTool.Ink)), PageView.PageTool.Ink),
             (ToolButton("Note", "Tap where a note goes", (_, _) => SetTool(PageView.PageTool.Note)), PageView.PageTool.Note),
             (ToolButton("Text", "Text box: tap where the text goes", (_, _) => SetTool(PageView.PageTool.Text)), PageView.PageTool.Text),
+            (CalloutToolButton(), PageView.PageTool.Callout),
             (ToolButton("Rectangle", "Rectangle: drag from one corner to the other", (_, _) => SetTool(PageView.PageTool.Rectangle)), PageView.PageTool.Rectangle),
             (ToolButton("Ellipse", "Ellipse: drag across it from corner to corner", (_, _) => SetTool(PageView.PageTool.Ellipse)), PageView.PageTool.Ellipse),
             (ToolButton("Line", "Line: drag from one end to the other", (_, _) => SetTool(PageView.PageTool.Line)), PageView.PageTool.Line),
@@ -64,10 +66,11 @@ public sealed partial class MainActivity
         _redoButton = ToolButton("↷", "Redo", (_, _) => Change(s => s.Redo()));
         _deleteButton = ToolButton("Delete", "Delete the chosen annotation", (_, _) => DeletePicked());
         BuildReplyButton();
+        BuildMoveButton();
         _closeAnnotateButton = ToolButton("✕", "Stop annotating", (_, _) => ShowAnnotateBar(false));
         var tools = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
         foreach (var (button, _) in _toolButtons) tools.AddView(button);
-        foreach (var button in new[] { _undoButton, _redoButton, _replyButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
+        foreach (var button in new[] { _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
         // TalkBack reads the strip in order and scrolls it to the focused button.
         var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = true, FillViewport = true };
         strip.AddView(tools);
@@ -103,6 +106,7 @@ public sealed partial class MainActivity
                 text => Change(s => s.AddFreeText(page, point, text) is { } a && Picked(a.Id)));
         };
         _pages.StampRequested += PlaceStamp;
+        ConnectCallouts();
         // A drag shorter than ViewerEditSession.MinShapeSize adds nothing: its outline goes.
         _pages.ShapeDrawn += (tool, page, from, to, outline) => Change(s => tool switch
         {
@@ -152,7 +156,9 @@ public sealed partial class MainActivity
     {
         _pages.Tool = _pages.Tool == tool ? PageView.PageTool.Browse : tool;
         Pick(null);
+        _placing = null;
         if (PageView.Drags(_pages.Tool)) Toast.MakeText(this, "Draw with one finger; two fingers zoom.", ToastLength.Short)?.Show();
+        else if (_pages.Tool == PageView.PageTool.Callout) Toast.MakeText(this, "Tap the spot the callout points to.", ToastLength.Short)?.Show();
         UpdateEditButtons();
     }
 
@@ -167,6 +173,8 @@ public sealed partial class MainActivity
         Enable(_undoButton, _session?.CanUndo == true);
         Enable(_redoButton, _session?.CanRedo == true);
         Enable(_deleteButton, annotate && _pages.PickedAnnotation != null);
+        // Move: the chosen annotation (not a reply, which stays with what it answers).
+        Enable(_moveButton, annotate && _pages.PickedAnnotation is { } chosen && _session?.Store.Find(chosen) is { Kind: not ViewerAnnotationKind.Reply });
         Enable(_replyButton, _pages.PickedAnnotation != null);
         // The chosen tool is underlined.
         foreach (var (b, tool) in _toolButtons)
