@@ -307,26 +307,57 @@ public sealed class ViewerEditSession
 
     // ------------------------------------------------------------------ annotations
 
-    /// <summary>The topmost annotation (not a reply) within <paramref name="slack"/> points of a point of the shown page; the smallest when several cover it.</summary>
-    public ViewerAnnotation? AnnotationAt(int page, ViewerPoint point, double slack)
+    /// <summary>
+    /// The topmost annotation (not a reply) within <paramref name="slack"/> points of a point of the
+    /// shown page; the smallest when several cover it. With <paramref name="minNoteSize"/>, a sticky
+    /// note's tap target is grown around its centre to at least that many points square (then the
+    /// slack is added), for a touch screen; its box in the PDF does not change. Among notes found
+    /// only through that larger target the nearest one wins (the topmost when two are as near); it
+    /// wins over an annotation under the finger only when it is the smaller (by its own box) and that
+    /// annotation is not a note itself, so a small neighbour keeps its taps and a tap on one note's
+    /// icon is never taken by the next note.
+    /// </summary>
+    public ViewerAnnotation? AnnotationAt(int page, ViewerPoint point, double slack, double minNoteSize = 0)
     {
         if (page < 1 || page > Document.Geometry.Count) return null;
         var g = Document.Geometry[page - 1];
-        ViewerAnnotation? best = null;
-        double bestArea = double.MaxValue;
+        ViewerAnnotation? best = null, nearNote = null;
+        double bestArea = double.MaxValue, nearDistance = double.MaxValue, nearArea = 0;
         foreach (var a in Store.Current)
         {
             if (a.Page != page || a.Kind == ViewerAnnotationKind.Reply) continue;
             var r = g.ToShown(a.Box);
-            if (!Contains(r, point, slack)) continue;
-            double area = r.Width * r.Height;
-            if (area <= bestArea)
+            if (Contains(r, point, slack))
             {
-                best = a;
-                bestArea = area;
+                double area = r.Width * r.Height;
+                if (area <= bestArea)
+                {
+                    best = a;
+                    bestArea = area;
+                }
+            }
+            else if (a.Kind == ViewerAnnotationKind.Note && minNoteSize > 0 && Contains(GrowTo(r, minNoteSize), point, slack))
+            {
+                double dx = Math.Max(0, Math.Max(r.X - point.X, point.X - (r.X + r.Width)));
+                double dy = Math.Max(0, Math.Max(r.Y - point.Y, point.Y - (r.Y + r.Height)));
+                double distance = dx * dx + dy * dy;
+                if (distance <= nearDistance)
+                {
+                    nearNote = a;
+                    nearDistance = distance;
+                    nearArea = r.Width * r.Height;
+                }
             }
         }
-        return best;
+        if (nearNote == null || best is { Kind: ViewerAnnotationKind.Note }) return best;
+        return best == null || nearArea < bestArea ? nearNote : best;
+    }
+
+    /// <summary>A rectangle grown around its centre to at least <paramref name="size"/> wide and high (a smaller one is unchanged).</summary>
+    private static ViewerRect GrowTo(ViewerRect r, double size)
+    {
+        double w = Math.Max(r.Width, size), h = Math.Max(r.Height, size);
+        return new ViewerRect(r.X - (w - r.Width) / 2, r.Y - (h - r.Height) / 2, w, h);
     }
 
     private ViewerAnnotation New(ViewerAnnotationKind kind, int page, ViewerBox box, string? color)
@@ -357,12 +388,12 @@ public sealed class ViewerEditSession
     private ViewerPageGeometry Geometry(int page) =>
         page >= 1 && page <= Document.Geometry.Count ? Document.Geometry[page - 1] : throw new ViewerAnnotationException($"There is no page {page}.");
 
-    /// <summary>A sticky note at a point of the shown page (its icon kept on the page), with its text.</summary>
-    public ViewerAnnotation AddNote(int page, ViewerPoint at, string text)
+    /// <summary>A sticky note at a point of the shown page (its icon kept on the page), with its text; without a colour, the default one.</summary>
+    public ViewerAnnotation AddNote(int page, ViewerPoint at, string text, string? color = null)
     {
         var g = Geometry(page);
         double x = Math.Clamp(at.X, 0, Math.Max(0, g.ShownWidth - NoteSize)), y = Math.Clamp(at.Y, 0, Math.Max(0, g.ShownHeight - NoteSize));
-        var a = New(ViewerAnnotationKind.Note, page, ClampBox(g.ToUser(new ViewerRect(x, y, NoteSize, NoteSize)), g), null) with { Contents = Clip(text) };
+        var a = New(ViewerAnnotationKind.Note, page, ClampBox(g.ToUser(new ViewerRect(x, y, NoteSize, NoteSize)), g), color) with { Contents = Clip(text) };
         return Add(a);
     }
 
