@@ -27,7 +27,7 @@ test('documentation-only changes skip the Windows job', () => {
     ['docs/features.md', 'docs/index.html', 'docs/sdk/examples/large-pdf.js'],
     ['.github/ISSUE_TEMPLATE/bug.yml', '.github/pull_request_template.md'],
     ['store/listing.md', 'store-screenshots/1.png', 'fastlane/metadata/android/en-US/title.txt'],
-    ['packages/pdfviewer-embed/package.json', 'tests/sdk/embed.test.mjs'],
+    ['packages/pdfviewer-embed/package.json', 'tests/sdk/embed-range.test.mjs'],
     ['.github/workflows/web-demo.yml', '.github/workflows/npm.yml', '.github/workflows/android.yml'],
     ['eng/ci/ci-changes.test.mjs'],
   ];
@@ -39,6 +39,8 @@ test('code, packed files and CI changes run everything', () => {
     ['src/PdfViewer/MainWindow.xaml.cs'],
     ['src/PdfViewer.Android/MainActivity.cs'],
     ['tests/PdfViewer.Tests/SomeTests.cs'],
+    ['tests/sdk/font-base-cases.json'],
+    ['tests/sdk/sub/helper.mjs'],
     ['THIRD_PARTY_NOTICES.md'],
     ['LICENSE'],
     ['src/PdfEngine.Vector/PACKAGE_README.md'],

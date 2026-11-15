@@ -101,9 +101,9 @@ export const RULES = [
   },
   {
     name: 'embed SDK package',
-    test: /^(packages\/pdfviewer-embed|tests\/sdk)\//,
+    test: /^(packages\/pdfviewer-embed\/|tests\/sdk\/[^/]+\.mjs$)/,
     needs: NONE,
-    why: 'the npm package; the Embed SDK Package workflow checks it',
+    why: 'the npm package and its JS tests; the Embed SDK Package and web demo workflows run them',
   },
   // --- Everything else ---------------------------------------------------------------------
   {
@@ -164,7 +164,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   });
   let labels;
   try {
-    labels = JSON.parse(values.labels);
+    // On an event that is not a pull request, toJSON of the missing labels gives `null`.
+    labels = JSON.parse(values.labels) ?? [];
     if (!Array.isArray(labels)) throw new Error('not an array');
   } catch {
     console.error('::error::ci-changes: --labels is not a JSON array.');

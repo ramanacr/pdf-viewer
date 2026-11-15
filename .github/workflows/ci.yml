@@ -27,6 +27,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the older run of that pull request (label changes start
+# runs too). Pushes to main, the nightly run and manual runs are never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # The full history is fetched, so that the merge base of the pull request and its base branch
   # is known: the diff is `base.sha...head.sha` (three dots). `-z` and `--no-renames`: paths with
