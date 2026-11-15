@@ -85,6 +85,13 @@ reference renderer in the existing differential tests, with a stated tolerance.
 - CI must pass. The `main` branch is protected: every change comes through a pull request, and
   the `build-and-test` check must pass before it can be merged. A maintainer reviews every pull
   request before it is merged.
+- CI runs only what a pull request needs. The first job, `changes`, reads the changed files
+  (rules in `eng/ci/ci-changes.mjs`). A pull request that changes only documents, the docs site,
+  store listings, other workflows or the npm package skips the long Windows build and test job;
+  every other change runs everything. `build-and-test` is a gate: it passes only when every
+  needed job succeeded (`eng/ci/ci-gate.mjs`). Add the label `ci:full` to force a full run. When
+  you add a new kind of file that CI never reads, add a rule and a test in `eng/ci/` (run
+  `node --test eng/ci/*.test.mjs`); an unknown path always runs everything.
 - By opening a pull request, you agree that your contribution is released under the MIT licence.
 
 ## Reporting a security problem

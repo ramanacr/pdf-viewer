@@ -13,6 +13,21 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+    # A pull request that changes only these files does not need this workflow
+    # (eng/ci/ci-changes.mjs has the same kind of list for ci.yml). A push to main runs it always.
+    paths-ignore:
+      - "README.md"
+      - "ROADMAP.md"
+      - "CONTRIBUTING.md"
+      - "CODE_OF_CONDUCT.md"
+      - "SECURITY.md"
+      - "CODE_SIGNING_POLICY.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - "store/**"
+      - "store-screenshots/**"
+      - "fastlane/**"
+      - "eng/ci/**"
   workflow_dispatch:
 
 permissions:
