@@ -34,18 +34,31 @@ public class MemoryBaselineTests : IDisposable
         try { Directory.Delete(_dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
-    private static long PrivateBytes()
+    /// <summary>
+    /// The memory the process really holds: private bytes minus the GC heap's free space. The test
+    /// process already holds gigabytes when these tests run, and the GC keeps freed segments
+    /// committed and decommits them later on its own schedule, so raw private bytes moved by tens
+    /// of MB between samples with no leak at all. An aggressive collection compacts every
+    /// generation (the large object heap too) and decommits what it can; what the GC still keeps
+    /// committed but unused is then subtracted. Native allocations and live managed objects, which
+    /// are what a leak keeps, are all still counted.
+    /// </summary>
+    private static (long Footprint, long Private) Sample()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 2; i++)
         {
-            GC.Collect();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
             GC.WaitForPendingFinalizers();
         }
-        GC.Collect();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        var info = GC.GetGCMemoryInfo(GCKind.Any);
+        long gcSlack = Math.Max(0, info.TotalCommittedBytes - info.HeapSizeBytes);
         using var p = Process.GetCurrentProcess();
         p.Refresh();
-        return p.PrivateMemorySize64;
+        return (p.PrivateMemorySize64 - gcSlack, p.PrivateMemorySize64);
     }
+
+    private static long Footprint() => Sample().Footprint;
 
     private static double Mb(long bytes) => bytes / (1024.0 * 1024.0);
 
@@ -77,13 +90,13 @@ public class MemoryBaselineTests : IDisposable
     {
         string path = LongDocument(150);
         using var service = new HybridVectorDocumentService(PdfViewer.Core.Security.PdfSecurityPolicy.DefaultStrict);
-        long start = PrivateBytes();
+        long start = Footprint();
         var watch = Stopwatch.StartNew();
         await service.OpenDocumentAsync(path);
-        long opened = PrivateBytes();
+        long opened = Footprint();
         double openMs = watch.Elapsed.TotalMilliseconds;
 
-        long[] afterPass = new long[3];
+        long[] afterPass = new long[4];
         double firstPageMs = 0;
         for (int pass = 0; pass < afterPass.Length; pass++)
         {
@@ -97,19 +110,21 @@ public class MemoryBaselineTests : IDisposable
                     Assert.NotNull(bitmap);
                 }
             });
-            afterPass[pass] = PrivateBytes();
+            afterPass[pass] = Footprint();
         }
         service.CloseDocument();
-        long closed = PrivateBytes();
+        long closed = Footprint();
 
         _output.WriteLine($"open {openMs:F0} ms, first page {firstPageMs:F0} ms at 150 dpi");
-        _output.WriteLine($"private MB: start {Mb(start):F0}, opened {Mb(opened):F0}, after passes {string.Join(" / ", Array.ConvertAll(afterPass, v => Mb(v).ToString("F0")))}, closed {Mb(closed):F0}");
+        _output.WriteLine($"footprint MB (private minus GC free space): start {Mb(start):F0}, opened {Mb(opened):F0}, after passes {string.Join(" / ", Array.ConvertAll(afterPass, v => Mb(v).ToString("F0")))}, closed {Mb(closed):F0}; raw private MB at the end {Mb(Sample().Private):F0}");
 
         // A leak grows memory on every pass: 0.3 MB per page would add 45 MB each time 150 pages are
-        // rendered again. One pass alone can grow by as much while other tests in the same process
-        // allocate, so the plateau is judged by the smaller of the two later passes' growth.
-        long growth = Math.Min(afterPass[1] - afterPass[0], afterPass[2] - afterPass[1]);
-        Assert.True(growth < 24L * 1024 * 1024, $"memory kept growing across render passes: +{Mb(afterPass[1] - afterPass[0]):F0} MB, then +{Mb(afterPass[2] - afterPass[1]):F0} MB");
+        // rendered again. One pass alone can still grow (a native heap or a cache growing once), so
+        // the plateau is judged by the smallest growth of the three passes after the first: a leak
+        // grows in all three.
+        long[] growths = { afterPass[1] - afterPass[0], afterPass[2] - afterPass[1], afterPass[3] - afterPass[2] };
+        long growth = Math.Min(growths[0], Math.Min(growths[1], growths[2]));
+        Assert.True(growth < 24L * 1024 * 1024, $"memory kept growing across render passes: {string.Join(", then ", Array.ConvertAll(growths, g => $"{Mb(g):+0;-0} MB"))}");
         Assert.True(Mb(afterPass[0] - start) < 600, $"rendering 150 pages held {Mb(afterPass[0] - start):F0} MB");
     }
 
@@ -131,12 +146,12 @@ public class MemoryBaselineTests : IDisposable
         }
 
         await Cycle(15); // warm up: caches, JIT, first allocations
-        long warm = PrivateBytes();
+        long warm = Footprint();
         await Cycle(60);
-        long first = PrivateBytes();
+        long first = Footprint();
         await Cycle(60);
-        long second = PrivateBytes();
-        _output.WriteLine($"private MB after 15 open/close cycles {Mb(warm):F0}, after 60 more {Mb(first):F0}, after 60 more {Mb(second):F0}");
+        long second = Footprint();
+        _output.WriteLine($"footprint MB (private minus GC free space) after 15 open/close cycles {Mb(warm):F0}, after 60 more {Mb(first):F0}, after 60 more {Mb(second):F0}");
 
         // A leak keeps memory in every round of 60 cycles. One round alone can grow by tens of MB
         // while other tests in the same process allocate, so the smaller round's growth is the signal.
