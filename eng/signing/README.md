@@ -5,7 +5,7 @@ signed before it is packed into the installer's payload, so the installed copy c
 signature too; then the installer itself is signed. `scripts/sign_files.ps1` signs and then
 verifies each file: the signature must be intact and made by the expected certificate.
 
-## Today: a self-signed certificate
+## Development builds and CI: a self-signed certificate
 
 ```powershell
 ./scripts/new_signing_certificate.ps1        # once per machine
@@ -29,41 +29,58 @@ verifies each file: the signature must be intact and made by the expected certif
 CI creates a throwaway certificate on every run (`Create a throwaway signing certificate` in
 `.github/workflows/ci.yml`), so the signing and verification path is tested on every build.
 
-## GitHub releases
+## GitHub releases: the Certum certificate
 
-`.github/workflows/release.yml` builds, signs and publishes a release when a version tag is pushed
-(`git tag v3.5.0; git push origin v3.5.0`), or on demand for an existing tag (Actions > Release >
-Run workflow). It signs with the project's release certificate, which lives only in two
-repository secrets, `PDFVIEWER_RELEASE_PFX` (base64 of the PFX) and `PDFVIEWER_RELEASE_PFX_PASSWORD`.
-Without them the workflow stops: a release is never published unsigned.
+Releases after v4.3.0 are signed with the project's Certum code signing certificate
+(`CN=Open Source Developer Ramana Reddy Chamakura`, thumbprint
+`68572404AE99971D76B907D9452001DCEE7766F1`, valid to 2027-11-25; see `CODE_SIGNING_POLICY.md`).
+Its key stays in Certum's cloud (SimplySign) and is never exported, so CI cannot sign with it:
+each signing session needs the maintainer's sign-in with a one-time token from the SimplySign phone
+app. Releases are therefore built and signed on the maintainer's PC.
 
-Set them up once with:
+One-time setup on the PC:
+
+1. Install SimplySign Desktop (Certum's "Software and libraries" page) and the SimplySign phone
+   app, and activate the phone app with Certum's activation e-mail.
+2. Install the Windows SDK signing tools (`signtool.exe`) and the GitHub CLI (`gh auth login`).
+
+For each release:
 
 ```powershell
-./scripts/set_release_signing_secret.ps1
+git tag v4.4.0; git push origin v4.4.0     # the tag starts the Store package (msix.yml), not a release
+git checkout v4.4.0
+# Connect SimplySign Desktop: tray icon > Connect, e-mail + token from the phone app.
+./scripts/release_signed.ps1 -Tag v4.4.0
 ```
 
-It creates a self-signed release certificate (three years), keeps it in
-`%LOCALAPPDATA%\PdfViewer\release-signing` with its password DPAPI-encrypted for your Windows user,
-and stores it as the two secrets with the GitHub CLI. Keep that folder backed up: the secrets
-cannot be read back, and a new certificate gives releases a new thumbprint.
+`release_signed.ps1` checks that HEAD is the pushed tag with no local changes, that the certificate
+is available, then runs `build_publish.ps1` with `PDFVIEWER_SIGN_THUMBPRINT`. `sign_files.ps1` then
+signs with `signtool sign /sha1 <thumbprint> /s My /fd SHA256 /tr http://time.certum.pl /td SHA256`.
+With a store certificate every signature is **timestamped** (Certum's RFC 3161 service unless
+`PDFVIEWER_SIGN_TIMESTAMP_URL` names another), so it stays valid after the certificate expires; a
+signature without a timestamp, or one that Windows does not report as `Valid`, stops the build.
+The script checks both executables again, attaches `PdfViewer-codesign.cer` (the public part), and
+creates the release as a **draft**. It never changes a published release. Check the draft on
+GitHub, then publish it there.
 
-Every release carries `PdfViewer-codesign.cer` (the public part) and its notes state the signer's
-thumbprint, so a download can be checked with
-`(Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint`. To timestamp release
-signatures, set the repository variable `PDFVIEWER_SIGN_TIMESTAMP_URL`.
+Nothing here handles the SimplySign password or token: SimplySign Desktop asks for them itself.
 
-## Moving to a trusted certificate
+## Fallback: the self-signed release workflow
 
-Nothing in the build has to change except where the key comes from:
+`.github/workflows/release.yml` no longer runs on tags. It can still be started by hand (Actions >
+Release > Run workflow) for an existing tag; it signs with the old self-signed release certificate,
+which lives only in two repository secrets, `PDFVIEWER_RELEASE_PFX` (base64 of the PFX) and
+`PDFVIEWER_RELEASE_PFX_PASSWORD`, and publishes the release. Without them it stops: a release is
+never published unsigned. `./scripts/set_release_signing_secret.ps1` created those secrets; it keeps
+the certificate in `%LOCALAPPDATA%\PdfViewer\release-signing` with its password DPAPI-encrypted for
+your Windows user. Use this only when the Certum certificate cannot be used.
 
-- **A PFX from a CA** (OV or EV code signing): set `PDFVIEWER_SIGN_PFX` to its path and
-  `PDFVIEWER_SIGN_PASSWORD` to its password (in CI, from repository secrets; never commit either).
-- **Timestamping**: set `PDFVIEWER_SIGN_TIMESTAMP_URL` (e.g. the CA's RFC 3161 service), so
-  signatures stay valid after the certificate expires. It contacts that server, so it is off
-  unless set.
-- A hardware token or a cloud signing service (for example Azure Trusted Signing) needs
-  `sign_files.ps1` to call signtool with `/sha1 <thumbprint>` or the service's dlib instead of
-  `/f`; the verification step stays as it is.
+## Other certificates
+
+- **A PFX from a CA**: set `PDFVIEWER_SIGN_PFX` to its path and `PDFVIEWER_SIGN_PASSWORD` to its
+  password (never commit either). Set `PDFVIEWER_SIGN_TIMESTAMP_URL` to timestamp; with a PFX it is
+  off unless set, because it contacts that server.
+- **Any certificate in the Windows store** (a hardware token, another cloud signing service with a
+  smart-card driver): set `PDFVIEWER_SIGN_THUMBPRINT`, or pass `-Thumbprint` to `sign_files.ps1`.
 
 `-NoSign` on `build_publish.ps1` builds unsigned.

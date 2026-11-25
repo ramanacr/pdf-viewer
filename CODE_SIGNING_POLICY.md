@@ -2,8 +2,9 @@
 
 `PdfViewerSetup.exe` and `PdfViewer.exe` in this project's
 [GitHub releases](https://github.com/ramanacr/pdf-viewer/releases) are Authenticode-signed
-(SHA-256). Only binaries built by this repository's release workflow
-(`.github/workflows/release.yml`), from the tagged source in this repository, are signed.
+(SHA-256) and timestamped. Only binaries built from the tagged source in this repository, by
+`scripts/release_signed.ps1` (the maintainer's release script) or the fallback release workflow
+(`.github/workflows/release.yml`), are signed.
 Bundled third-party components (for example the Vortice.Windows assemblies) are included as their
 projects publish them and are not signed with this project's certificate.
 
@@ -22,19 +23,32 @@ Other distributions:
 
 ## Certificate
 
-GitHub release binaries are signed today with the project's own **self-signed** release certificate, so Windows
-shows the publisher as unknown. Each release states the certificate's thumbprint and attaches its
-public part (`PdfViewer-codesign.cer`) so a download can be checked:
+GitHub release binaries after v4.3.0 are signed with a code signing certificate issued by
+**Certum** (Asseco Data Systems S.A.), a public certification authority, under its Open Source Code
+Signing programme:
+
+- Subject: `CN=Open Source Developer Ramana Reddy Chamakura, O=Open Source Developer, L=Hyderabad, S=Telangana, C=IN`
+- Issuer: `Certum Code Signing 2021 CA`
+- Thumbprint (SHA-1): `68572404AE99971D76B907D9452001DCEE7766F1`
+- Valid from 2026-11-25 to 2027-11-25. Every signature is timestamped by Certum's timestamp
+  service, so signatures stay valid after the certificate expires.
+
+The private key is kept in Certum's cloud (SimplySign) and is never exported. Each signing session
+needs the maintainer's sign-in with a one-time token from the SimplySign phone app, so releases are
+signed on the maintainer's PC, not in CI. Each release states the thumbprint and attaches the
+certificate's public part (`PdfViewer-codesign.cer`). To check a download:
 
 ```powershell
-(Get-AuthenticodeSignature .\PdfViewerSetup.exe).SignerCertificate.Thumbprint
+Get-AuthenticodeSignature .\PdfViewerSetup.exe | Format-List Status, @{n='Thumbprint';e={$_.SignerCertificate.Thumbprint}}
 ```
 
-The certificate is self-signed, so Windows reports the publisher as unknown and SmartScreen can
-show a warning. To avoid the warning, install the app from the
-[Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62), where Microsoft signs the
-package. A certificate from a public certification authority will replace the self-signed one
-later; this policy will name that authority when it does.
+`Status` must be `Valid` and the thumbprint must match. A new certificate builds its SmartScreen
+reputation over time, so SmartScreen can still show a warning at first.
+
+v4.3.0 and earlier were signed with the project's own **self-signed** certificate, so Windows shows
+their publisher as unknown; each of those releases states its thumbprint. To avoid any warning,
+install the app from the [Microsoft Store](https://apps.microsoft.com/detail/9N6QDM774R62), where
+Microsoft signs the package.
 
 ## Team roles
 

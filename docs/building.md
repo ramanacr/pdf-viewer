@@ -236,7 +236,7 @@ tests/
 | `android.yml` | Changes to the Android app or the code it uses | Builds the APK, checks that it asks for no permission, and uploads it as an artifact. |
 | `packages.yml` | Every pull request and push to `main`; `engine-v*` tags | Packs the three engine packages. An `engine-v*` tag publishes them to nuget.org through Trusted Publishing (no stored API key). |
 | `npm.yml` | Pull requests that change the SDK, pushes to `main`; `sdk-v*` tags | Packs the embed SDK as the npm package `pdfviewer-embed`. An `sdk-v*` tag publishes it to npmjs.com through Trusted Publishing, with provenance. |
-| `release.yml` | `v*` tags | Builds, signs and publishes a GitHub release of the Windows app. |
+| `release.yml` | Manual only (fallback) | Builds, signs with the old self-signed certificate and publishes a GitHub release. Releases are normally made with `scripts/release_signed.ps1` on the maintainer's PC (Certum certificate, see `eng/signing/README.md`). |
 | `msix.yml` | `v*` tags | Builds the Microsoft Store package and uploads it as an artifact. It publishes nothing. |
 
 The `main` branch is protected: every change comes through a pull request, and the
