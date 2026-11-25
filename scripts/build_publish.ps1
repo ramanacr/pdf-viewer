@@ -94,13 +94,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Authenticode: the app is signed before it goes into the installer's payload, and the installer
-# after it is built (eng/signing/README.md). The certificate is PDFVIEWER_SIGN_PFX, or the
-# self-signed one scripts/new_signing_certificate.ps1 creates for this user.
-if ([string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_PFX)) {
+# after it is built (eng/signing/README.md). The certificate is the store certificate named by
+# PDFVIEWER_SIGN_THUMBPRINT (the Certum release certificate, through SimplySign), else
+# PDFVIEWER_SIGN_PFX, else the self-signed one scripts/new_signing_certificate.ps1 creates for this user.
+if ([string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_THUMBPRINT) -and [string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_PFX)) {
     $DefaultPfx = Join-Path $env:LOCALAPPDATA "PdfViewer\signing\codesign.pfx"
     if (Test-Path $DefaultPfx) { $env:PDFVIEWER_SIGN_PFX = $DefaultPfx }
 }
-$Sign = -not $NoSign -and -not [string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_PFX)
+$Sign = -not $NoSign -and (-not [string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_THUMBPRINT) -or -not [string]::IsNullOrEmpty($env:PDFVIEWER_SIGN_PFX))
 if ($Sign) {
     Write-Host "`n>> Signing PdfViewer.exe..." -ForegroundColor Yellow
     & "$ScriptDir\sign_files.ps1" -Files "$AppStagingDir\PdfViewer.exe" -Description "PDF Viewer"

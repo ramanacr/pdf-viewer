@@ -1,12 +1,11 @@
 name: Release
 
-# Builds, signs and publishes a GitHub release when a version tag (v1.2.3) is pushed, or on demand
-# for an existing tag. The app and installer are Authenticode-signed with the project's release
-# certificate (self-signed for now; eng/signing/README.md), whose public part is attached to the
-# release so users can check the signer's thumbprint.
+# FALLBACK ONLY. Releases are built and signed on the maintainer's PC with the Certum certificate
+# (scripts/release_signed.ps1, eng/signing/README.md), because its key is in Certum's cloud and
+# needs the maintainer's SimplySign sign-in, which CI cannot do. A pushed tag no longer starts this
+# workflow. It stays as a manual fallback that builds, signs with the old self-signed certificate
+# (repository secrets) and publishes a release for an existing tag.
 on:
-  push:
-    tags: [ "v*" ]
   workflow_dispatch:
     inputs:
       tag:

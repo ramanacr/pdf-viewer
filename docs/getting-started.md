@@ -16,8 +16,11 @@ open-source PDF engine. This page tells you where to get each part.
 | [Microsoft Store]({{ site.links.store }}) | Recommended. Install it from the Store. Microsoft signs the package, and the Store updates it. |
 | [GitHub releases]({{ site.links.releases }}) | For a machine without the Store: `PdfViewer.exe` (portable app) or `PdfViewerSetup.exe` (installer). Windows 10 version 2004 or later, or Windows 11, x64. Needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). |
 
-GitHub release binaries are Authenticode-signed with the project's own self-signed certificate,
-so Windows can show "unknown publisher" and SmartScreen can show a warning. Each release states the certificate thumbprint. See the
+GitHub release binaries after v4.3.0 are Authenticode-signed and timestamped with a code signing
+certificate from Certum, issued to "Open Source Developer Ramana Reddy Chamakura". v4.3.0 and earlier
+used the project's own self-signed certificate, so Windows showed "unknown publisher". A new
+certificate still builds its SmartScreen reputation over time, so SmartScreen can show a warning at
+first. Each release states the certificate thumbprint. See the
 [code signing policy]({{ site.links.repo }}/blob/main/CODE_SIGNING_POLICY.md).
 
 Then read the [features and user guide](features.md).

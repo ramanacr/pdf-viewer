@@ -26,8 +26,10 @@ The published app contains no PDFium.
 | **NuGet packages** | Preview (`0.2.0-preview.1`) | `dotnet add package PdfEngine.Vector.Skia --prerelease`. See [Use the engine as a library](docs/developers.md). The source on `main` also targets `net10.0` and renames some API before 1.0: see [Changes in 1.0](docs/developers.md#changes-in-10). |
 | **Web embed SDK** | Preview (npm [`pdfviewer-embed`](https://www.npmjs.com/package/pdfviewer-embed)) | `npm install pdfviewer-embed`. An API like the Adobe PDF Embed API. See [Web embed SDK](https://ramanacr.github.io/pdf-viewer/sdk/). |
 
-Release binaries are Authenticode-signed with the project's own self-signed certificate, so
-Windows can show "unknown publisher". Each release states the certificate thumbprint. See the
+Release binaries after v4.3.0 are Authenticode-signed and timestamped with a code signing
+certificate from Certum (Asseco Data Systems S.A.), issued to "Open Source Developer Ramana Reddy
+Chamakura". v4.3.0 and earlier were signed with the project's own self-signed certificate, so
+Windows showed "unknown publisher". Each release states the certificate thumbprint. See the
 [code signing policy](CODE_SIGNING_POLICY.md).
 
 ## Privacy and safety
