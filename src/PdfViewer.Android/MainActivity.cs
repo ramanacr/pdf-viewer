@@ -771,6 +771,8 @@ public sealed partial class MainActivity : Activity
         if (session?.Problem is { } problem) Toast.MakeText(this, problem, ToastLength.Short)?.Show();
 
         var previous = _doc;
+        // Read aloud reads the document that was open (MainActivity.ReadingAloud.cs).
+        StopReadingAloud(null);
         _search?.Cancel();
         _hits = new List<ViewerSearchHit>();
         _hitIndex = -1;
@@ -1005,6 +1007,7 @@ public sealed partial class MainActivity : Activity
     protected override void OnDestroy()
     {
         _search?.Cancel();
+        ShutDownVoice();
         if (IsFinishing) ForgetOurKeptEdits();
         var doc = _doc;
         _doc = null;

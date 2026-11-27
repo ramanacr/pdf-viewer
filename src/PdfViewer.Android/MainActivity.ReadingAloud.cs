@@ -24,7 +24,6 @@ public sealed partial class MainActivity
     private TextToSpeech? _tts;
     private bool _ttsReady;
     private Action<bool>? _ttsPending;
-    private ReadAloudLifecycle? _ttsLifecycle;
     private ReadAloudSession? _reading;
     private LinearLayout? _readBar;
     private TextView? _readBarLabel, _readPauseButton;
@@ -116,11 +115,6 @@ public sealed partial class MainActivity
         }
         _ttsPending = ready;
         if (_tts != null) return; // starting: the pending callback runs when it is ready
-        if (_ttsLifecycle == null)
-        {
-            _ttsLifecycle = new ReadAloudLifecycle(this);
-            Application?.RegisterActivityLifecycleCallbacks(_ttsLifecycle);
-        }
         _tts = new TextToSpeech(this, new VoiceInit(status => RunOnUiThread(() =>
         {
             if (_tts == null) return;
@@ -273,11 +267,6 @@ public sealed partial class MainActivity
         _tts?.Shutdown();
         _tts = null;
         _ttsReady = false;
-        if (_ttsLifecycle != null)
-        {
-            Application?.UnregisterActivityLifecycleCallbacks(_ttsLifecycle);
-            _ttsLifecycle = null;
-        }
     }
 
     /// <summary>The read aloud bar at the bottom of the pages: what is read, Pause or Resume, and Stop.</summary>
@@ -304,18 +293,6 @@ public sealed partial class MainActivity
         _readBar = bar;
         _readBarLabel = label;
         _readPauseButton = pause;
-        WatchReadingDocument(session, bar);
-    }
-
-    /// <summary>Checks every second that the document being read is still the open one (another opened, or closed: reading stops).</summary>
-    private void WatchReadingDocument(ReadAloudSession session, View bar)
-    {
-        bar.PostDelayed(() =>
-        {
-            if (_reading != session) return;
-            if (!ReferenceEquals(session.Doc, _doc)) StopReadingAloud(null);
-            else WatchReadingDocument(session, bar);
-        }, 1000);
     }
 
     private void UpdateReadBar(ReadAloudSession session)
@@ -390,38 +367,5 @@ public sealed partial class MainActivity
 
         public override void OnError(string? utteranceId, [global::Android.Runtime.GeneratedEnum] TextToSpeechError errorCode) =>
             activity.RunOnUiThread(() => activity.SpokenChunk(utteranceId, true));
-    }
-
-    /// <summary>Releases the voice when this activity is destroyed (MainActivity.cs's lifecycle methods stay as they are).</summary>
-    private sealed class ReadAloudLifecycle(MainActivity activity) : Java.Lang.Object, Application.IActivityLifecycleCallbacks
-    {
-        public void OnActivityDestroyed(Activity destroyed)
-        {
-            if (activity.Equals(destroyed)) activity.ShutDownVoice();
-        }
-
-        public void OnActivityCreated(Activity created, Bundle? savedInstanceState)
-        {
-        }
-
-        public void OnActivityPaused(Activity paused)
-        {
-        }
-
-        public void OnActivityResumed(Activity resumed)
-        {
-        }
-
-        public void OnActivitySaveInstanceState(Activity saving, Bundle outState)
-        {
-        }
-
-        public void OnActivityStarted(Activity started)
-        {
-        }
-
-        public void OnActivityStopped(Activity stopped)
-        {
-        }
     }
 }
