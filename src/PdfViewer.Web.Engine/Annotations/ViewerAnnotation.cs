@@ -516,6 +516,25 @@ public static class ViewerAnnotationPdf
                     : Enumerable.Range(0, v.Count / 2).Select(i => new PdfPoint(v[2 * i], v[2 * i + 1])).ToList();
                 bool keepEndings = basis?.Measure != null || was != null && a.StartEnding == was.StartEnding && a.EndEnding == was.EndEnding;
                 if (!keepEndings) p.LineEndings = a.HasEndings && (a.StartEnding != "None" || a.EndEnding != "None") ? [a.StartEnding, a.EndEnding] : null;
+                if (basis == null && a.Measure is { } measure && PdfMeasurements.KindOf(p.Subtype) is { } measured)
+                {
+                    // A new measurement, written as PdfMeasurements.Create writes one (the desktop's and Acrobat's):
+                    // /Measure, /IT (which draws its label), /Subj and, for a distance, the caption.
+                    p.Measure = measure;
+                    p.Intent = measured switch
+                    {
+                        PdfMeasurementKind.Distance => PdfMeasurements.DistanceIntent,
+                        PdfMeasurementKind.Perimeter => PdfMeasurements.PerimeterIntent,
+                        _ => PdfMeasurements.AreaIntent,
+                    };
+                    p.Subject = measured switch
+                    {
+                        PdfMeasurementKind.Distance => "Distance Measurement",
+                        PdfMeasurementKind.Perimeter => "Perimeter Measurement",
+                        _ => "Area Measurement",
+                    };
+                    p.Caption = measured == PdfMeasurementKind.Distance;
+                }
                 break;
             case ViewerAnnotationKind.Stamp:
                 // A stamp is drawn in the colour of its kind (green for Approved, red for Confidential);

@@ -17,9 +17,8 @@ namespace PdfViewer.Android;
 /// the finger aims. The scale is the page's own where a viewport (/VP with /Measure) covers the
 /// first point, otherwise the reader's ("1 in = 10 ft"), kept in app-private preferences
 /// (<c>measure-scale</c>; the document is not named). The results are the engine's
-/// (<see cref="PdfMeasure"/>, <see cref="PdfMeasurements.Label"/>). The shared edit session writes no
-/// measurement annotations (/Measure and /IT) for new annotations, so a result can be added to the
-/// page as a line, connected lines or a polygon with the result as its comment, one undo step.
+/// (<see cref="PdfMeasure"/>, <see cref="PdfMeasurements.Label"/>). Add to page writes a measurement
+/// annotation through the shared session (<see cref="ViewerEditSession.AddMeasurement"/>), one undo step.
 /// </summary>
 public sealed partial class MainActivity
 {
@@ -284,47 +283,15 @@ public sealed partial class MainActivity
                 if (clipboard != null) clipboard.PrimaryClip = ClipData.NewPlainText(name, result);
             })!;
         if (CanAnnotate)
-            builder.SetPositiveButton("Add to page", (_, _) => AddMeasurement(kind, page, points, $"{name}: {result} ({scale})"));
+            builder.SetPositiveButton("Add to page", (_, _) => AddMeasurement(kind, page, points, measure));
         builder.Show();
     }
 
     /// <summary>
-    /// The measurement as an annotation, one undo step: a line with arrows at both ends for a
-    /// distance, connected lines for a perimeter, a polygon for an area, drawn 1 point wide in the
-    /// measurement blue, with the result as its comment.
+    /// The measurement as a measurement annotation, one undo step: a Line with arrows at both ends
+    /// (distance), a PolyLine (perimeter) or a Polygon (area) with /Measure and /IT, 1 point wide in
+    /// the measurement blue, with the result as its label and comment; moving a point measures again.
     /// </summary>
-    private void AddMeasurement(PdfMeasurementKind kind, int page, IReadOnlyList<ViewerPoint> points, string label)
-    {
-        Change(s =>
-        {
-            var g = s.Document.Geometry[page - 1];
-            var flat = new List<double>(points.Count * 2);
-            foreach (var p in points)
-            {
-                var (x, y) = g.ToUser(Math.Clamp(p.X, 0, g.ShownWidth), Math.Clamp(p.Y, 0, g.ShownHeight));
-                flat.Add(x);
-                flat.Add(y);
-            }
-            bool distance = kind == PdfMeasurementKind.Distance;
-            if (distance) flat = [flat[0], flat[1], flat[^2], flat[^1]];
-            // Room for the arrowheads (nine line widths), kept on the page.
-            var box = ViewerBox.Around(flat, distance ? 10 : 2);
-            var m = g.MediaBox;
-            box = new ViewerBox(Math.Max(box.X1, m.Left), Math.Max(box.Y1, m.Top), Math.Min(box.X2, m.Right), Math.Min(box.Y2, m.Bottom));
-            var a = new ViewerAnnotation
-            {
-                Id = "",
-                Page = page,
-                Kind = distance ? ViewerAnnotationKind.Line : kind == PdfMeasurementKind.Perimeter ? ViewerAnnotationKind.PolyLine : ViewerAnnotationKind.Polygon,
-                Box = box,
-                Vertices = flat,
-                Color = MeasureColour,
-                StrokeWidth = 1,
-                StartEnding = distance ? "OpenArrow" : "None",
-                EndEnding = distance ? "OpenArrow" : "None",
-                Contents = label,
-            };
-            return s.AddAnnotations([a]).Count > 0;
-        });
-    }
+    private void AddMeasurement(PdfMeasurementKind kind, int page, IReadOnlyList<ViewerPoint> points, PdfMeasure measure) =>
+        Change(s => s.AddMeasurement(kind, page, points, measure, MeasureColour) is { } a && Picked(a.Id));
 }

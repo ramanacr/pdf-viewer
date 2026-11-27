@@ -506,6 +506,55 @@ public sealed class ViewerEditSession
     }
 
     /// <summary>
+    /// A measurement through <paramref name="points"/> (shown-page points, kept on the page), as the
+    /// desktop viewer and Acrobat write one: a Line (two points, open arrows at both ends, the result
+    /// as its caption), a PolyLine (perimeter) or a Polygon (area) with <paramref name="measure"/> as
+    /// its /Measure, its /IT, and the result as its comment; drawn in <paramref name="color"/>
+    /// (measurement blue by default), 1 point wide. Moving one of its points measures it again.
+    /// Null with too few points (two, or three for an area).
+    /// </summary>
+    public ViewerAnnotation? AddMeasurement(PdfMeasurementKind kind, int page, IReadOnlyList<ViewerPoint> points, PdfMeasure measure, string? color = null)
+    {
+        ArgumentNullException.ThrowIfNull(points);
+        ArgumentNullException.ThrowIfNull(measure);
+        var g = Geometry(page);
+        var user = new List<PdfEngine.Geometry.PdfPoint>();
+        foreach (var p in points)
+        {
+            if (!Finite(p)) continue;
+            if (user.Count >= ViewerAnnotationStore.MaxVertices) break;
+            var (ux, uy) = g.ToUser(OnPage(p, g).X, OnPage(p, g).Y);
+            if (user.Count > 0 && Math.Abs(ux - user[^1].X) + Math.Abs(uy - user[^1].Y) < 0.5) continue;
+            user.Add(new PdfEngine.Geometry.PdfPoint(ux, uy));
+        }
+        if (kind == PdfMeasurementKind.Distance && user.Count >= 2) user = [user[0], user[^1]];
+        if (user.Count < (kind == PdfMeasurementKind.Area ? 3 : 2)) return null;
+        string label = PdfMeasurements.Label(kind, user, measure);
+        var r = PdfMeasurements.Bounds(kind, user, label, 1);
+        var shapeKind = kind switch
+        {
+            PdfMeasurementKind.Distance => ViewerAnnotationKind.Line,
+            PdfMeasurementKind.Perimeter => ViewerAnnotationKind.PolyLine,
+            _ => ViewerAnnotationKind.Polygon,
+        };
+        bool distance = kind == PdfMeasurementKind.Distance;
+        var shape = New(shapeKind, page, default, color ?? MeasurementColor) with
+        {
+            Vertices = user.SelectMany(p => new[] { p.X, p.Y }).ToArray(),
+            StrokeWidth = 1,
+            StartEnding = distance ? "OpenArrow" : "None",
+            EndEnding = distance ? "OpenArrow" : "None",
+            Contents = label,
+            IsMeasurement = true,
+            Measure = measure,
+        };
+        return Add(shape with { Box = ClampBox(new ViewerBox(r.X, r.Y, r.Right, r.Bottom), g) });
+    }
+
+    /// <summary>The colour of a new measurement: the blue Acrobat and the desktop viewer use.</summary>
+    public const string MeasurementColor = "#0033CC";
+
+    /// <summary>
     /// A text box with its top-left corner at a point of the shown page: black <see cref="FreeTextSize"/>
     /// point text, at most <see cref="FreeTextWidth"/> wide and as tall as its text, kept on the page.
     /// Null when the text is empty or only spaces.
