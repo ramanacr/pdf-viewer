@@ -666,7 +666,9 @@ internal sealed class PageView : SkiaView
                 }
                 catch (ObjectDisposedException)
                 {
-                    break; // another document was opened meanwhile
+                    // Another document was opened meanwhile: go on with its pages (NextJob reads the current one).
+                    if (ReferenceEquals(job.Doc, _doc)) break;
+                    continue;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -674,7 +676,9 @@ internal sealed class PageView : SkiaView
                     Problem?.Invoke(ViewerRenderFailure.Describe(job.Page, ex));
                     continue;
                 }
-                if (!ReferenceEquals(job.Doc, _doc)) break;
+                // Drawn for a document that was replaced: dropped, and the loop goes on with the new one
+                // (its RequestRender returned early while this loop ran).
+                if (!ReferenceEquals(job.Doc, _doc)) continue;
                 if (job.Generation != _generation) continue; // drawn before the latest edit
                 if (bitmap.TextRegionsWithoutFont > 0 && !_toldMissingFonts)
                 {

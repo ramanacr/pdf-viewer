@@ -68,6 +68,7 @@ public sealed partial class MainActivity : Activity
         base.OnCreate(savedInstanceState);
         _recent = new RecentDocuments(System.IO.Path.Combine(FilesDir!.AbsolutePath, "recent.json"));
         SetContentView(BuildLayout());
+        RegisterBackCallback();
         ApplyTheme();
         ShowDocumentState();
 
@@ -963,45 +964,75 @@ public sealed partial class MainActivity : Activity
         return base.OnKeyDown(keyCode, e);
     }
 
+    /// <summary>Back on Android 13 to 15 (and on Android 16 for apps that opt out of predictive back).</summary>
     public override void OnBackPressed()
     {
+        if (HandleBack()) return;
+#pragma warning disable CA1422 // the platform's own back handling, still the behaviour on every supported version
+        base.OnBackPressed();
+#pragma warning restore CA1422
+    }
+
+    /// <summary>
+    /// Back on Android 16: an app that targets API 36 gets no OnBackPressed and no KEYCODE_BACK, only
+    /// the callbacks registered here. Android 13 to 15 ignore the callback (the manifest does not opt in)
+    /// and call OnBackPressed; both run <see cref="HandleBack"/>.
+    /// </summary>
+    private void RegisterBackCallback()
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33)) return;
+        OnBackInvokedDispatcher.RegisterOnBackInvokedCallback(0 /* PRIORITY_DEFAULT */, new BackCallback(() =>
+        {
+            if (HandleBack()) return;
+            // What the platform does for a launcher's root activity since Android 12: the task goes to the background.
+            if (IsTaskRoot) MoveTaskToBack(true);
+            else Finish();
+        }));
+    }
+
+    private sealed class BackCallback(Action back) : Java.Lang.Object, global::Android.Window.IOnBackInvokedCallback
+    {
+        public void OnBackInvoked() => back();
+    }
+
+    /// <summary>What Back does in the app; false when it leaves the app.</summary>
+    private bool HandleBack()
+    {
         // The overlays of the tools (read mode, page organizer, redaction) close first.
-        if (CloseToolOverlay()) return;
+        if (CloseToolOverlay()) return true;
         if (_fullScreen)
         {
             SetFullScreen(false);
-            return;
+            return true;
         }
         if (_thumbnails.Visibility == ViewStates.Visible)
         {
             ShowThumbnails(false);
-            return;
+            return true;
         }
         if (_pages.HasSelection)
         {
             _pages.ClearSelection();
-            return;
+            return true;
         }
         if (_searchBar.Visibility == ViewStates.Visible)
         {
             ShowSearch(false);
-            return;
+            return true;
         }
         if (_annotateBar.Visibility == ViewStates.Visible)
         {
             ShowAnnotateBar(false);
-            return;
+            return true;
         }
         // Back to where a link was followed from, before leaving the document.
-        if (GoBackByLink()) return;
+        if (GoBackByLink()) return true;
         if (_session?.IsDirty == true)
         {
             AfterDiscard(Finish);
-            return;
+            return true;
         }
-#pragma warning disable CA1422 // the platform's own back handling, still the behaviour on every supported version
-        base.OnBackPressed();
-#pragma warning restore CA1422
+        return false;
     }
 
     protected override void OnDestroy()

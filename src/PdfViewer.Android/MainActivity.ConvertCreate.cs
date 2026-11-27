@@ -417,12 +417,21 @@ public sealed partial class MainActivity
             // No readable EXIF: shown as stored.
         }
         int w = bitmap.Width, h = bitmap.Height;
-        var pixels = new byte[w * h * 4];
-        using (var buffer = Java.Nio.ByteBuffer.Wrap(pixels))
-            bitmap.CopyPixelsToBuffer(buffer);
+        // GetPixels gives unpremultiplied 0xAARRGGBB ints. (A ByteBuffer wrapping a managed array would not
+        // do: .NET for Android copies the array into Java once, so the pixels would never come back.)
+        var argb = new int[w * h];
+        bitmap.GetPixels(argb, 0, w, 0, 0, w, h);
         bitmap.Recycle();
-        // Android's ARGB_8888 is R, G, B, A in memory, premultiplied.
-        return FromRgba(pixels, w, h, w * 4, orientation, lossless: false, premultiplied: true);
+        var pixels = new byte[w * h * 4];
+        for (int i = 0, o = 0; i < argb.Length; i++, o += 4)
+        {
+            int c = argb[i];
+            pixels[o] = (byte)(c >> 16);
+            pixels[o + 1] = (byte)(c >> 8);
+            pixels[o + 2] = (byte)c;
+            pixels[o + 3] = (byte)(c >>> 24);
+        }
+        return FromRgba(pixels, w, h, w * 4, orientation, lossless: false, premultiplied: false);
     }
 
     /// <summary>

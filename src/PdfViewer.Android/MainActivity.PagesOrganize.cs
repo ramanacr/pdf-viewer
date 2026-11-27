@@ -442,7 +442,8 @@ public sealed partial class MainActivity
             if (!_failed.Contains(page.Source))
             {
                 _wanted.Push(page.Source);
-                RequestRender();
+                // After layout: the grid asks for a cell before it attaches it, and the loop skips pages not in view.
+                _grid.Post(RequestRender);
             }
             return null;
         }
