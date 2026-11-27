@@ -88,8 +88,11 @@ shortcuts are in [docs/features.md](docs/features.md).
 - **Android app** (`src/PdfViewer.Android`, preview): .NET for Android with the same engine and
   Skia renderer. It reads and fills forms. It annotates with highlight, underline, strike-through,
   ink, notes, rectangles, ellipses, lines, arrows, text boxes (Chinese, Japanese and Korean too)
-  and standard and dynamic stamps. It saves into the opened file or saves a copy. It asks for no
-  permission. See [its README](src/PdfViewer.Android/README.md).
+  and standard and dynamic stamps, polygons, connected lines and measuring. Its Tools organize,
+  merge and split pages, add headers, footers and watermarks, protect, sign, verify and redact,
+  export to Word, Excel, PowerPoint, text and images, convert to PDF/A, make PDFs from pictures,
+  and include read mode, read aloud, accessibility checks and print. It saves into the opened file
+  or saves a copy. It asks for no permission. See [its README](src/PdfViewer.Android/README.md).
 
 All three use the same engine. See [Architecture](docs/architecture.md).
 
