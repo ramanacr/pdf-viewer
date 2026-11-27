@@ -16,7 +16,8 @@ namespace PdfViewer.Android;
 /// Edits: form filling (a tap on a field; text with the soft keyboard, check boxes, radio buttons,
 /// choices), highlight, underline and strike-out on a text selection, freehand ink, rectangles,
 /// ellipses, lines and arrows (a drag), sticky notes, text boxes and stamps (a tap), callouts (two taps;
-/// MainActivity.Callouts.cs), move, delete, undo and
+/// MainActivity.Callouts.cs), polygons, connected lines, shape style, resizing and dragging
+/// (MainActivity.Markup.cs), measuring (MainActivity.Measure.cs), move, delete, undo and
 /// redo, the annotation list, "Save" and "Save a copy". The rules and the writing are the shared <see cref="ViewerEditSession"/>'s (the web viewer's rules for permissions, read-only
 /// fields, /MaxLen and signed or certified documents); after each change the engine writes the
 /// edits into the document as an incremental update and the pages are drawn again from it. "Save"
@@ -38,7 +39,8 @@ public sealed partial class MainActivity
     private bool _noticeShown;
 
     private IEnumerable<TextView> EditButtons =>
-        _toolButtons.Select(t => t.Button).Concat([_colourButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton, _highlightButton, _underlineButton, _strikeButton]);
+        _toolButtons.Select(t => t.Button).Concat([_colourButton, _styleButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton,
+            _highlightButton, _underlineButton, _strikeButton, _redactSelectionButton, .. PathButtons]);
 
     private bool CanAnnotate => _session?.CanAnnotate == true;
 
@@ -60,9 +62,13 @@ public sealed partial class MainActivity
             (ToolButton("Ellipse", "Ellipse: drag across it from corner to corner", (_, _) => SetTool(PageView.PageTool.Ellipse)), PageView.PageTool.Ellipse),
             (ToolButton("Line", "Line: drag from one end to the other", (_, _) => SetTool(PageView.PageTool.Line)), PageView.PageTool.Line),
             (ToolButton("Arrow", "Arrow: drag from its tail to its point", (_, _) => SetTool(PageView.PageTool.Arrow)), PageView.PageTool.Arrow),
+            (ToolButton("Polygon", "Polygon: tap each corner, then Done or a double tap", (_, _) => SetTool(PageView.PageTool.Polygon)), PageView.PageTool.Polygon),
+            (ToolButton("Lines", "Connected lines: tap each point, then Done or a double tap", (_, _) => SetTool(PageView.PageTool.PolyLine)), PageView.PageTool.PolyLine),
+            (MeasureToolButton(), PageView.PageTool.Measure),
             (ToolButton("Stamp", "Stamp: choose one, then tap where it goes", (_, _) => StampTool()), PageView.PageTool.Stamp),
         ];
         BuildColourButton();
+        BuildStyleButton();
         _undoButton = ToolButton("↶", "Undo", (_, _) => Change(s => s.Undo()));
         _redoButton = ToolButton("↷", "Redo", (_, _) => Change(s => s.Redo()));
         _deleteButton = ToolButton("Delete", "Delete the chosen annotation", (_, _) => DeletePicked());
@@ -71,7 +77,7 @@ public sealed partial class MainActivity
         _closeAnnotateButton = ToolButton("✕", "Stop annotating", (_, _) => ShowAnnotateBar(false));
         var tools = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
         foreach (var (button, _) in _toolButtons) tools.AddView(button);
-        foreach (var button in new[] { _colourButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
+        foreach (var button in new[] { _colourButton, _styleButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton, _closeAnnotateButton }) tools.AddView(button);
         // TalkBack reads the strip in order and scrolls it to the focused button.
         var strip = new HorizontalScrollView(this) { HorizontalScrollBarEnabled = true, FillViewport = true };
         strip.AddView(tools);
@@ -79,6 +85,8 @@ public sealed partial class MainActivity
         _annotateBar.AddView(strip, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         // While Move waits for a tap: what to tap, and Cancel, in place of the strip.
         _annotateBar.AddView(BuildPlaceHint(), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        // While points are placed (polygon, connected lines, measuring): the count or result, undo point, Done and Cancel.
+        _annotateBar.AddView(BuildPathBar(), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         return _annotateBar;
     }
 
@@ -89,6 +97,10 @@ public sealed partial class MainActivity
         _underlineButton = ToolButton("Underline", "Underline the selected text", (_, _) => MarkSelection(ViewerAnnotationKind.Underline));
         _strikeButton = ToolButton("Strike", "Strike through the selected text", (_, _) => MarkSelection(ViewerAnnotationKind.StrikeOut));
         foreach (var b in new[] { _highlightButton, _underlineButton, _strikeButton }) bar.AddView(b);
+        // While redaction marks are made (MainActivity.Redaction.cs): mark the selection.
+        _redactSelectionButton = ToolButton("Redact", "Mark the selected text for redaction", (_, _) => MarkSelectionForRedaction());
+        _redactSelectionButton.Visibility = ViewStates.Gone;
+        bar.AddView(_redactSelectionButton);
     }
 
     private void ConnectEdits()
@@ -120,6 +132,8 @@ public sealed partial class MainActivity
             PageView.PageTool.Line => s.AddLine(page, from, to, arrow: false, KeptColour(ViewerAnnotationKind.Line)),
             _ => s.AddLine(page, from, to, arrow: true, KeptColour(ViewerAnnotationKind.Line)),
         } != null, unchanged: () => _pages.DropPendingInk(outline));
+        ConnectMarkup();
+        ConnectRedaction();
     }
 
     /// <summary>A new document (or none): its edit session, nothing chosen, the browse tool.</summary>
@@ -137,6 +151,8 @@ public sealed partial class MainActivity
         });
         _noticeShown = false;
         _pages.Session = session;
+        // Another document (or none): redaction marks were the last one's.
+        EndRedaction();
         ShowAnnotateBar(false);
         UpdateEditButtons();
     }
@@ -148,9 +164,16 @@ public sealed partial class MainActivity
             Toast.MakeText(this, _doc?.EditRestriction ?? "This document does not allow annotations.", ToastLength.Long)?.Show();
             return;
         }
+        if (show && _redacting)
+        {
+            // One mode at a time: redaction ends first (asking when it has marks).
+            LeaveRedaction(() => ShowAnnotateBar(true));
+            return;
+        }
         _annotateBar.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         if (!show)
         {
+            ClearPath();
             StopPlacing();
             _pages.Tool = PageView.PageTool.Browse;
             Pick(null);
@@ -163,7 +186,9 @@ public sealed partial class MainActivity
         _pages.Tool = _pages.Tool == tool ? PageView.PageTool.Browse : tool;
         Pick(null);
         StopPlacing(keepTool: true);
-        if (PageView.Drags(_pages.Tool)) Toast.MakeText(this, "Draw with one finger; two fingers zoom.", ToastLength.Short)?.Show();
+        ClearPath();
+        if (PageView.TakesPoints(_pages.Tool)) Toast.MakeText(this, PathHint(), ToastLength.Short)?.Show();
+        else if (PageView.Drags(_pages.Tool)) Toast.MakeText(this, "Draw with one finger; two fingers zoom.", ToastLength.Short)?.Show();
         else if (_pages.Tool == PageView.PageTool.Callout) Toast.MakeText(this, "Tap the spot the callout points to.", ToastLength.Short)?.Show();
         UpdateEditButtons();
     }
@@ -183,6 +208,9 @@ public sealed partial class MainActivity
         Enable(_moveButton, annotate && _pages.PickedAnnotation is { } chosen && _session?.Store.Find(chosen) is { Kind: not ViewerAnnotationKind.Reply });
         Enable(_replyButton, _pages.PickedAnnotation != null);
         Enable(_colourButton, annotate);
+        // Style: the chosen shape's fill, line style and endings (not a measurement's, which keeps its own).
+        Enable(_styleButton, annotate && _pages.PickedAnnotation is { } shape && _session?.Store.Find(shape) is { HasShapeStyle: true });
+        _redactSelectionButton.Visibility = _redacting ? ViewStates.Visible : ViewStates.Gone;
         // The chosen tool is underlined.
         foreach (var (b, tool) in _toolButtons)
         {
@@ -286,6 +314,8 @@ public sealed partial class MainActivity
 
     private void OnAnnotationTapped(ViewerAnnotation a)
     {
+        // While redaction marks are made, a tap is for the marks only.
+        if (_redacting) return;
         Pick(a.Id);
         if (CanAnnotate && _annotateBar.Visibility != ViewStates.Visible) ShowAnnotateBar(true);
         // A note, or an annotation with text or replies, opens its thread (MainActivity.Comments.cs);
@@ -298,7 +328,7 @@ public sealed partial class MainActivity
 
     private void OnFieldTapped(ViewerFormWidget w)
     {
-        if (_session is not { } session) return;
+        if (_session is not { } session || _redacting) return;
         if (w.ReadOnly)
         {
             Toast.MakeText(this, "This field is read-only.", ToastLength.Short)?.Show();
