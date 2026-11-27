@@ -27,6 +27,7 @@ public sealed partial class MainActivity
     [
         ViewerAnnotationKind.Highlight, ViewerAnnotationKind.Underline, ViewerAnnotationKind.StrikeOut, ViewerAnnotationKind.Ink,
         ViewerAnnotationKind.Note, ViewerAnnotationKind.FreeText, ViewerAnnotationKind.Square, ViewerAnnotationKind.Circle, ViewerAnnotationKind.Line,
+        ViewerAnnotationKind.Polygon, ViewerAnnotationKind.PolyLine,
     ];
 
     private void BuildColourButton() =>
@@ -41,6 +42,8 @@ public sealed partial class MainActivity
         PageView.PageTool.Rectangle => ViewerAnnotationKind.Square,
         PageView.PageTool.Ellipse => ViewerAnnotationKind.Circle,
         PageView.PageTool.Line or PageView.PageTool.Arrow => ViewerAnnotationKind.Line,
+        PageView.PageTool.Polygon => ViewerAnnotationKind.Polygon,
+        PageView.PageTool.PolyLine => ViewerAnnotationKind.PolyLine,
         _ => null,
     };
 
@@ -56,6 +59,8 @@ public sealed partial class MainActivity
         ViewerAnnotationKind.Square => "rectangles",
         ViewerAnnotationKind.Circle => "ellipses",
         ViewerAnnotationKind.Line => "lines and arrows",
+        ViewerAnnotationKind.Polygon => "polygons",
+        ViewerAnnotationKind.PolyLine => "connected lines",
         _ => ViewerEditSession.Label(kind).ToLowerInvariant(),
     };
 
@@ -190,6 +195,10 @@ public sealed partial class MainActivity
             shown = ColourOf(kind);
             said = $"Colour of new {Plural(kind)}: {ViewerToolColors.NameOf(shown)}";
             _pages.StrokeColor = shown;
+        }
+        else if (_pages.Tool == PageView.PageTool.Measure)
+        {
+            _pages.StrokeColor = MeasureColour;
         }
         _colourButton.ContentDescription = said ?? "Colour of new annotations";
         SetSwatch(_colourButton, shown);
