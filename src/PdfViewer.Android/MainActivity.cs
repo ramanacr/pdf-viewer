@@ -154,7 +154,7 @@ public sealed partial class MainActivity : Activity
         _pageIndicator = ToolButton("", "Go to page", (_, _) => AskPage());
         _searchButton = ToolButton("Search", "Search the document", (_, _) => ShowSearch(true));
         _annotateButton = ToolButton("✎", "Annotate: draw, shapes, notes, text boxes, undo and redo", (_, _) => ShowAnnotateBar(_annotateBar.Visibility != ViewStates.Visible));
-        _menuButton = ToolButton("⋮", "More: outline, pages, annotations, save, save a copy, share, night pages, recent files", (_, _) => ShowMenu());
+        _menuButton = ToolButton("⋮", "More: save, share, print, view, comments, tools and recent files", (_, _) => ShowMenu());
         _toolbar.AddView(_openButton);
         _toolbar.AddView(_title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _toolbar.AddView(_pageIndicator);
@@ -199,7 +199,7 @@ public sealed partial class MainActivity : Activity
         AddMarkupButtons(_selectionBar);
         _selectionBar.AddView(_closeSelectionButton);
 
-        var frame = new FrameLayout(this);
+        var frame = _frame = new FrameLayout(this);
         _pages = new PageView(this);
         _pages.PageChanged += (page, count) => _pageIndicator.Text = count > 0 ? $"{page} / {count}" : "";
         _pages.Problem += message => Toast.MakeText(this, message, ToastLength.Short)?.Show();
@@ -226,6 +226,7 @@ public sealed partial class MainActivity : Activity
         };
         _emptyText.Click += (_, _) => PickDocument();
         _empty.AddView(_emptyText);
+        _empty.AddView(BuildStartActions(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         _recentList = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         _recentList.SetPadding(0, (int)Dp(24), 0, 0);
         var scroll = new ScrollView(this);
@@ -348,29 +349,44 @@ public sealed partial class MainActivity : Activity
 
     // ------------------------------------------------------------------ menu
 
+    /// <summary>
+    /// The ⋮ menu: what is done to the file first (save, share, print), then View, Comments and
+    /// Tools, which open their own lists, so the menu stays short on a phone.
+    /// </summary>
     private void ShowMenu()
     {
         var menu = new PopupMenu(this, _menuButton);
         bool open = _doc != null;
         var items = menu.Menu!;
-        items.Add(0, 1, 1, "Outline")!.SetEnabled(open);
-        items.Add(0, 2, 2, "Pages")!.SetEnabled(open);
+        // Save writes the opened file (it offers a copy when the file is read-only); enabled with unsaved edits.
+        var save = items.Add(0, 8, 1, "Save")!;
+        save.SetEnabled(open && _session?.IsDirty == true);
+        var copy = items.Add(0, 7, 2, "Save a copy")!;
+        copy.SetEnabled(open);
         items.Add(0, 3, 3, "Share")!.SetEnabled(open && _uri != null);
-        var night = items.Add(0, 4, 4, "Night pages")!;
+        items.Add(0, 11, 4, "Print")!.SetEnabled(open);
+
+        var view = items.AddSubMenu(0, 20, 5, "View")!;
+        view.Add(0, 1, 1, "Outline")!.SetEnabled(open);
+        view.Add(0, 2, 2, "Pages")!.SetEnabled(open);
+        view.Add(0, 12, 3, "Read mode")!.SetEnabled(open);
+        var night = view.Add(0, 4, 4, "Night pages")!;
         night.SetCheckable(true);
         night.SetChecked(_pages.NightPages);
         night.SetEnabled(open);
-        items.Add(0, 5, 5, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
-        items.Add(0, 6, 3, "Annotations")!.SetEnabled(open && _session != null);
-        // Save writes the opened file (it offers a copy when the file is read-only); enabled with unsaved edits.
-        var save = items.Add(0, 8, 3, "Save")!;
-        save.SetEnabled(open && _session?.IsDirty == true);
-        var copy = items.Add(0, 7, 3, "Save a copy")!;
-        copy.SetEnabled(open);
-        var export = items.Add(0, 9, 3, "Export comments (XFDF)")!;
+        view.Add(0, 13, 5, "Full screen")!.SetEnabled(open);
+        view.Add(0, 14, 6, IsReadingAloud ? "Stop reading aloud" : "Read aloud")!.SetEnabled(open);
+
+        var comments = items.AddSubMenu(0, 21, 6, "Comments")!;
+        comments.Add(0, 6, 1, "Annotation list")!.SetEnabled(open && _session != null);
+        var export = comments.Add(0, 9, 2, "Export comments (XFDF)")!;
         export.SetEnabled(open && _session != null);
-        var import = items.Add(0, 10, 3, "Import comments (XFDF)")!;
+        var import = comments.Add(0, 10, 3, "Import comments (XFDF)")!;
         import.SetEnabled(open && CanAnnotate);
+
+        items.Add(0, 15, 7, "Tools…");
+        items.Add(0, 16, 8, "Document properties")!.SetEnabled(open);
+        items.Add(0, 5, 9, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
         {
             save.SetContentDescription("Save the changes into the opened file");
@@ -392,6 +408,12 @@ public sealed partial class MainActivity : Activity
                 case 8: Save(); break;
                 case 9: PickXfdfExport(); break;
                 case 10: PickXfdfImport(); break;
+                case 11: Print(); break;
+                case 12: ShowReadMode(); break;
+                case 13: SetFullScreen(true); break;
+                case 14: ToggleReadAloud(); break;
+                case 15: ShowTools(); break;
+                case 16: ShowProperties(); break;
             }
         };
         menu.Show();
@@ -533,6 +555,8 @@ public sealed partial class MainActivity : Activity
     protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
     {
         base.OnActivityResult(requestCode, resultCode, data);
+        // The tools' pickers and save dialogs (MainActivity.Tools.cs).
+        if (AnswerRequest(requestCode, resultCode, data)) return;
         if (requestCode == SaveCopyRequest)
         {
             SaveDialogAnswered(resultCode == Result.Ok ? data?.Data : null);
@@ -739,6 +763,7 @@ public sealed partial class MainActivity : Activity
         ShowSearch(false);
         _thumbnails.Release();
         _doc = opened;
+        _password = password;
         _fileName = name;
         _uri = uri;
         // To tell, at a save, whether another app changed the file since; and what to write back if a save fails part-way.
@@ -902,6 +927,13 @@ public sealed partial class MainActivity : Activity
 
     public override void OnBackPressed()
     {
+        // The overlays of the tools (read mode, page organizer, redaction) close first.
+        if (CloseToolOverlay()) return;
+        if (_fullScreen)
+        {
+            SetFullScreen(false);
+            return;
+        }
         if (_thumbnails.Visibility == ViewStates.Visible)
         {
             ShowThumbnails(false);
