@@ -48,6 +48,18 @@ public sealed partial class MainActivity
         _ => "Tap each corner of the area; Done or a double tap finishes.",
     };
 
+    /// <summary>
+    /// Tools → Measure: the annotate bar with Measure, then what to measure. A document that does not
+    /// allow annotations can still be measured; only Add to page needs that permission.
+    /// </summary>
+    private void MeasureFromTools()
+    {
+        if (!NeedDocument()) return;
+        if (_annotateBar.Visibility != ViewStates.Visible) ShowAnnotateBar(true, measureOnly: !CanAnnotate);
+        if (_annotateBar.Visibility != ViewStates.Visible) return;
+        if (_pages.Tool != PageView.PageTool.Measure) ChooseMeasure();
+    }
+
     /// <summary>The Measure button: what to measure (or the scale); again with measuring on, it stops.</summary>
     private void ChooseMeasure()
     {

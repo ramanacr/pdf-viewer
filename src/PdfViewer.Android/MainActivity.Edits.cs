@@ -157,9 +157,16 @@ public sealed partial class MainActivity
         UpdateEditButtons();
     }
 
-    private void ShowAnnotateBar(bool show)
+    /// <summary>
+    /// The annotate bar with only Measure (and close), for a document that does not allow annotations:
+    /// measuring reads the page and adds nothing to it (Tools → Measure).
+    /// </summary>
+    private bool _measureOnly;
+
+    private void ShowAnnotateBar(bool show, bool measureOnly = false)
     {
-        if (show && !CanAnnotate)
+        _measureOnly = show && measureOnly && !CanAnnotate;
+        if (show && !CanAnnotate && !_measureOnly)
         {
             Toast.MakeText(this, _doc?.EditRestriction ?? "This document does not allow annotations.", ToastLength.Long)?.Show();
             return;
@@ -167,7 +174,7 @@ public sealed partial class MainActivity
         if (show && _redacting)
         {
             // One mode at a time: redaction ends first (asking when it has marks).
-            LeaveRedaction(() => ShowAnnotateBar(true));
+            LeaveRedaction(() => ShowAnnotateBar(true, measureOnly));
             return;
         }
         _annotateBar.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
@@ -221,6 +228,12 @@ public sealed partial class MainActivity
             b.Visibility = annotate ? ViewStates.Visible : ViewStates.Gone;
         // The selection bar is short of room on a phone when it has the markup buttons.
         _selectionLabel.Visibility = annotate ? ViewStates.Gone : ViewStates.Visible;
+        // Measure only: the other tools and the edit buttons are not in the strip.
+        var hidden = _measureOnly ? ViewStates.Gone : ViewStates.Visible;
+        foreach (var (b, tool) in _toolButtons)
+            if (tool != PageView.PageTool.Measure) b.Visibility = hidden;
+        foreach (var b in new[] { _colourButton, _styleButton, _undoButton, _redoButton, _replyButton, _moveButton, _deleteButton })
+            b.Visibility = hidden;
         UpdateColours();
     }
 

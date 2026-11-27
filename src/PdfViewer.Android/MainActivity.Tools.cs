@@ -533,6 +533,7 @@ public sealed partial class MainActivity
         ]),
         new("Inspect",
         [
+            new("Measure", "Distance, perimeter and area at the page's scale or yours", MeasureFromTools),
             new("Document properties", "Title, author, version, security and more", ShowProperties),
             new("Document safety", "Scripts, actions and embedded files found in the document", ShowDocumentSafety),
             new("Save clean copy", "A copy without scripts, launch actions and embedded files", SaveCleanCopy),
