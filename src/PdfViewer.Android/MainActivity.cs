@@ -31,6 +31,8 @@ namespace PdfViewer.Android;
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.ScreenLayout
                            | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode | ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden)]
 [IntentFilter([Intent.ActionView], Categories = [Intent.CategoryDefault], DataScheme = "content", DataMimeType = "application/pdf")]
+// Another app's share sheet: a PDF shared to this app opens like "Open with".
+[IntentFilter([Intent.ActionSend], Categories = [Intent.CategoryDefault], DataMimeType = "application/pdf")]
 public sealed partial class MainActivity : Activity
 {
     private const int OpenDocumentRequest = 1;
@@ -78,7 +80,7 @@ public sealed partial class MainActivity : Activity
             // With the unsaved edits kept for it (MainActivity.KeptEdits.cs), read on a worker thread.
             _ = ReopenAfterProcessDeathAsync(savedUri, saved, view);
         }
-        else if (Intent is { Action: Intent.ActionView, Data: { } uri })
+        else if (Incoming(Intent) is { } uri)
         {
             // A new start keeps edits an earlier process kept: they are offered when their document opens.
             _ = OpenUriAsync(uri, null);
@@ -88,8 +90,18 @@ public sealed partial class MainActivity : Activity
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);
-        if (intent is { Action: Intent.ActionView, Data: { } uri }) AfterDiscard(() => _ = OpenUriAsync(uri, null));
+        if (Incoming(intent) is { } uri) AfterDiscard(() => _ = OpenUriAsync(uri, null));
     }
+
+    /// <summary>The document another app hands over: "Open with" (ACTION_VIEW) or its share sheet (ACTION_SEND).</summary>
+    private static Uri? Incoming(Intent? intent) => intent?.Action switch
+    {
+        Intent.ActionView => intent.Data,
+#pragma warning disable CA1422 // the typed overload needs Android 13; this one works on every version
+        Intent.ActionSend => intent.GetParcelableExtra(Intent.ExtraStream) as Uri ?? intent.ClipData?.GetItemAt(0)?.Uri,
+#pragma warning restore CA1422
+        _ => null,
+    };
 
     public override void OnConfigurationChanged(Configuration newConfig)
     {
@@ -211,7 +223,7 @@ public sealed partial class MainActivity : Activity
         _thumbnails.PageChosen += page =>
         {
             ShowThumbnails(false);
-            _pages.GoToPage(page);
+            JumpToPage(page);
         };
         frame.AddView(_thumbnails, Fill());
 
@@ -449,7 +461,7 @@ public sealed partial class MainActivity : Activity
             .SetTitle("Outline")!
             .SetItems(items, (_, e) =>
             {
-                if (lines[e.Which].Page is { } page) _pages.GoToPage(page);
+                if (lines[e.Which].Page is { } page) JumpToPage(page);
                 else Toast.MakeText(this, "This entry does not go to a page of this document.", ToastLength.Short)?.Show();
             })!
             .SetNegativeButton("Close", (_, _) => { })!
@@ -824,10 +836,20 @@ public sealed partial class MainActivity : Activity
             .SetView(input)!
             .SetPositiveButton("Go", (_, _) =>
             {
-                if (int.TryParse(input.Text, out int page)) _pages.GoToPage(Math.Clamp(page, 1, _doc.PageCount));
+                if (int.TryParse(input.Text, out int page)) JumpToPage(Math.Clamp(page, 1, _doc.PageCount));
             })!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
+    }
+
+    /// <summary>
+    /// A jump the reader asked for (outline, page grid, go to page): the view it leaves is kept, so
+    /// Back returns there, as links do. Ordinary scrolling is not kept, so Back never undoes reading.
+    /// </summary>
+    private void JumpToPage(int page)
+    {
+        if (_pages.SavedView is { } view && page != _pages.CurrentPage) _linkBack.Push(view);
+        _pages.GoToPage(page);
     }
 
     /// <summary>The soft keyboard (input_method) service; a Java object, so JavaCast gives its managed wrapper.</summary>
