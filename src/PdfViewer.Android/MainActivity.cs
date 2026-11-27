@@ -175,8 +175,10 @@ public sealed partial class MainActivity : Activity
         _toolbar.AddView(_menuButton);
         root.AddView(_toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
-        _searchBar = Bar();
+        // Two rows: the query with previous, next and close; then the count, match case, whole word and the results list.
+        _searchBar = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         _searchBar.Visibility = ViewStates.Gone;
+        var searchRow = Bar();
         _searchText = new EditText(this) { Hint = "Find in document", ImeOptions = ImeAction.Search };
         _searchText.SetSingleLine(true);
         _searchText.InputType = InputTypes.ClassText | InputTypes.TextFlagNoSuggestions;
@@ -190,11 +192,12 @@ public sealed partial class MainActivity : Activity
         _prevButton = ToolButton("‹", "Previous match", (_, _) => StepHit(-1));
         _nextButton = ToolButton("›", "Next match", (_, _) => StepHit(1));
         _closeSearchButton = ToolButton("✕", "Close search", (_, _) => ShowSearch(false));
-        _searchBar.AddView(_searchText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
-        _searchBar.AddView(_searchCount);
-        _searchBar.AddView(_prevButton);
-        _searchBar.AddView(_nextButton);
-        _searchBar.AddView(_closeSearchButton);
+        searchRow.AddView(_searchText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        searchRow.AddView(_prevButton);
+        searchRow.AddView(_nextButton);
+        searchRow.AddView(_closeSearchButton);
+        _searchBar.AddView(searchRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
+        _searchBar.AddView(BuildSearchOptions(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         root.AddView(_searchBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         root.AddView(BuildAnnotateBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
@@ -863,6 +866,7 @@ public sealed partial class MainActivity : Activity
         if (show)
         {
             ShowThumbnails(false);
+            ShowSearchOptions();
             _searchText.RequestFocus();
             _searchText.SelectAll(); // typing replaces the last query
             keyboard?.ShowSoftInput(_searchText, ShowFlags.Implicit);
@@ -875,6 +879,7 @@ public sealed partial class MainActivity : Activity
             _hitIndex = -1;
             _searchCount.Text = "";
             _pages.SetSearchHits(_hits, -1);
+            ShowSearchOptions();
         }
     }
 
@@ -886,7 +891,13 @@ public sealed partial class MainActivity : Activity
         var cts = _search = new CancellationTokenSource();
         var keyboard = Keyboard();
         keyboard?.HideSoftInputFromWindow(_searchText.WindowToken, HideSoftInputFlags.None);
-        _searchCount.Text = "…";
+        _searchCount.Text = "Searching…";
+        bool matchCase = _matchCase, wholeWord = _wholeWord;
+        // Progress on the UI thread (created here): the page reached, while a long document is searched.
+        var progress = new Progress<int>(page =>
+        {
+            if (!cts.IsCancellationRequested) _searchCount.Text = $"Searching… page {page} of {doc.PageCount}";
+        });
         List<ViewerSearchHit> hits;
         try
         {
@@ -894,7 +905,7 @@ public sealed partial class MainActivity : Activity
             hits = await Task.Run(async () =>
             {
                 var found = new List<ViewerSearchHit>();
-                await foreach (var hit in doc.SearchAsync(query, cancellationToken: cts.Token)) found.Add(hit);
+                await foreach (var hit in doc.SearchAsync(query, matchCase, wholeWord, progress, cts.Token)) found.Add(hit);
                 return found;
             }, cts.Token);
         }
@@ -922,8 +933,11 @@ public sealed partial class MainActivity : Activity
 
     private void ShowHit()
     {
-        _searchCount.Text = _hits.Count == 0 ? "No matches" : $"{_hitIndex + 1} / {_hits.Count}";
+        _searchCount.Text = _hits.Count == 0 ? "No matches"
+            : $"Match {_hitIndex + 1} of {_hits.Count} (page {_hits[_hitIndex].Page})";
+        _searchCount.ContentDescription = _searchCount.Text;
         _pages.SetSearchHits(_hits, _hitIndex);
+        ShowSearchOptions();
     }
 
     /// <summary>A hardware keyboard (or a Chromebook): + and − zoom by steps, 0 goes back to fit width.</summary>
