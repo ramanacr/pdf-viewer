@@ -260,7 +260,7 @@ adb install -r src/PdfViewer.Android/bin/Release/net10.0-android/io.github.raman
 The Release APK holds two ABIs, `arm64-v8a` (phones) and `x86_64` (emulators): **24.7 MB**
 (23.5 MiB; 24.1 MB for the proof of concept). The largest parts, per ABI, as measured for the
 proof of concept: `libSkiaSharp.so` about 9 MB, the .NET assemblies about 5.2 MB, the Mono runtime about 3.2 MB, ahead-of-time code for
-`System.Private.CoreLib` 1.7 MB. An arm64-only APK would be about half that size.
+`System.Private.CoreLib` 1.7 MB. An arm64-only APK would be about half that size. OCR adds Tesseract's native libraries (about 7.5 MB per ABI: Tesseract, Leptonica, libjpeg, libpng) and the 4 MB English model; the sizes above were measured before it. Google Play delivers one ABI per device from the app bundle.
 
 ## What is verified
 
