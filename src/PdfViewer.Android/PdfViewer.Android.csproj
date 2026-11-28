@@ -80,6 +80,24 @@
   </ItemGroup>
 
   <!--
+    jitpack.io builds Tesseract4Android from its tag, so the AAR it serves is checked against a SHA-256
+    kept here, as the model is: one that does not match fails the build.
+  -->
+  <PropertyGroup>
+    <Tesseract4AndroidSha256>5bcff63c12baf46bfad9776292c93df62421cec3fe52eb62f03202f49bda8c34</Tesseract4AndroidSha256>
+  </PropertyGroup>
+  <Target Name="VerifyTesseract4Android" AfterTargets="_MavenRestore">
+    <ItemGroup>
+      <_TesseractAar Include="@(_ResolvedAndroidMavenLibraries)" Condition="'%(Extension)' == '.aar' And $([System.String]::Copy('%(Filename)').StartsWith('tesseract4android'))" />
+    </ItemGroup>
+    <Error Condition="'@(_TesseractAar)' == ''" Text="The Tesseract4Android AAR was not resolved, so its SHA-256 could not be checked." />
+    <GetFileHash Files="@(_TesseractAar)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_TesseractAarHash" />
+    </GetFileHash>
+    <Error Condition="'$(_TesseractAarHash.ToLowerInvariant())' != '$(Tesseract4AndroidSha256)'" Text="tesseract4android-4.8.0.aar does not match its pinned SHA-256 ($(_TesseractAarHash))." />
+  </Target>
+
+  <!--
     The English model (tessdata_fast 4.1.0, Apache 2.0), downloaded at build time and checked
     against a SHA-256 kept here; a file that does not match fails the build. It ships as an asset.
   -->

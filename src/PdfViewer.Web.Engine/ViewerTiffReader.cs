@@ -45,8 +45,9 @@ public sealed record ViewerTiffResult(int PageCount, IReadOnlyList<ViewerTiffPag
 public sealed class ViewerTiffReader
 {
     public const int MaxPages = 500;
-    public const long MaxPagePixels = 50_000_000;
-    public const long MaxDecodedBytes = 512L * 1024 * 1024;
+    public const long MaxPagePixels = 30_000_000;
+    /// <summary>Everything decoded from one file, kept within what a phone's app heap holds.</summary>
+    public const long MaxDecodedBytes = 256L * 1024 * 1024;
 
     /// <summary>The resolution assumed when a file gives none (TIFF's customary 72 dpi).</summary>
     public const double DefaultDpi = 72;
@@ -158,7 +159,7 @@ public sealed class ViewerTiffReader
         int compression = (int)Value(ifd, 259, 1);
         int spp = (int)Value(ifd, 277, 1);
         if (spp is < 1 or > 16) throw Damaged("its samples per pixel are impossible");
-        var bitsArray = Values(ifd, 258);
+        var bitsArray = Values(ifd, 258, 16);
         int bps = bitsArray is { Length: > 0 } ? (int)bitsArray[0] : 1;
         if (bitsArray != null && bitsArray.Any(b => b != bps))
             throw new ViewerTiffException("Its colour channels have different bit depths, which this app does not read.");
@@ -200,7 +201,7 @@ public sealed class ViewerTiffReader
             throw new ViewerTiffException("It uses a floating-point predictor, which this app does not read.");
         if (predictor == 2 && bps is not (8 or 16))
             throw new ViewerTiffException("It uses the horizontal predictor on samples smaller than a byte, which this app does not read.");
-        var extra = Values(ifd, 338) ?? [];
+        var extra = Values(ifd, 338, 16) ?? [];
 
         // What the samples are, checked before anything is decoded.
         int colors;
@@ -243,25 +244,30 @@ public sealed class ViewerTiffReader
         if (tiled)
         {
             long tw = Value(ifd, 322, 0), th = Value(ifd, 323, 0);
-            if (tw <= 0 || th <= 0 || tw > 1 << 16 || th > 1 << 16) throw Damaged("its tile size is impossible");
+            // Tiles are multiples of 16 pixels; one larger than the picture rounded up to that is not a real tile.
+            if (tw <= 0 || th <= 0 || tw > RoundUp16(width) || th > RoundUp16(height)) throw Damaged("its tile size is impossible");
             blockW = (int)tw;
             blockH = (int)th;
-            offsets = Values(ifd, 324) ?? throw Damaged("its tiles cannot be found");
-            counts = Values(ifd, 325) ?? throw Damaged("its tile sizes are missing");
+            long tiles = ((width + tw - 1) / tw) * ((height + th - 1) / th) * spp;
+            offsets = Values(ifd, 324, tiles) ?? throw Damaged("its tiles cannot be found");
+            counts = Values(ifd, 325, tiles) ?? throw Damaged("its tile sizes are missing");
         }
         else
         {
             blockW = width;
             long rps = Value(ifd, 278, height);
             blockH = (int)Math.Clamp(rps <= 0 ? height : rps, 1, height);
-            offsets = Values(ifd, 273) ?? throw Damaged("its strips cannot be found");
-            counts = Values(ifd, 279)
+            long strips = ((height + blockH - 1) / blockH) * (long)spp;
+            offsets = Values(ifd, 273, strips) ?? throw Damaged("its strips cannot be found");
+            counts = Values(ifd, 279, strips)
                      ?? (compression == 1 && offsets.Length == 1 ? [Math.Max(0, _file.Length - offsets[0])] : throw Damaged("its strip sizes are missing"));
         }
         int across = (width + blockW - 1) / blockW, down = (height + blockH - 1) / blockH;
         long blockRowBytes = ((long)blockW * spp * bps + 7) / 8;
         long blockBytes = blockRowBytes * blockH;
         if (blockBytes > MaxBlockBytes) throw Damaged("its strips or tiles are impossibly large");
+        // A strip is part of the picture (already counted); a tile can reach past it, so it is counted too.
+        if (tiled) Budget(blockBytes);
         var block = new byte[blockBytes];
         int fillOrder = (int)Value(ifd, 266, 1);
         int t4 = (int)Value(ifd, 292, 0);
@@ -329,11 +335,13 @@ public sealed class ViewerTiffReader
 
         if (photometric == 3)
         {
-            var map = Values(ifd, 320);
             int entries = 1 << bps;
+            var map = Values(ifd, 320, 3L * entries);
             if (map == null || map.Length < 3 * entries) throw Damaged("its palette is missing");
-            // 16-bit colour map values; some writers store 8-bit values in them, which are then all below 256.
-            bool eightBit = map.Take(3 * entries).All(v => v < 256);
+            // TIFF 6.0 colour maps are 16-bit. A few writers store 8-bit values in them: taken as such only when
+            // the map also uses the top of that range (a genuine 16-bit map of dark colours stays dark).
+            var used = map.Take(3 * entries).ToArray();
+            bool eightBit = used.All(v => v < 256) && used.Max() >= 128;
             var palette = new byte[3 * entries];
             for (int i = 0; i < entries; i++)
                 for (int c = 0; c < 3; c++)
@@ -421,8 +429,8 @@ public sealed class ViewerTiffReader
     /// </summary>
     private PdfCreateImage Jpeg(Ifd ifd, int width, int height, int photometric)
     {
-        var offsets = Values(ifd, 324) ?? Values(ifd, 273);
-        var counts = Values(ifd, 325) ?? Values(ifd, 279);
+        var offsets = Values(ifd, 324, 1 << 16) ?? Values(ifd, 273, 1 << 16);
+        var counts = Values(ifd, 325, 1 << 16) ?? Values(ifd, 279, 1 << 16);
         if (offsets == null || counts == null || offsets.Length == 0 || counts.Length == 0) throw Damaged("its picture data cannot be found");
         if (offsets.Length > 1)
             throw new ViewerTiffException("Its JPEG picture is stored in several parts, which this app cannot carry into a PDF.");
@@ -627,31 +635,44 @@ public sealed class ViewerTiffReader
         return at < 0 || at + size > _file.Length ? -1 : at;
     }
 
-    /// <summary>A tag's integer values (BYTE, SHORT, LONG and their signed forms), or null.</summary>
-    private long[]? Values(Ifd ifd, int tag)
+    /// <summary>
+    /// A tag's integer values (BYTE, SHORT, LONG and their signed forms), or null. The count comes from
+    /// the file, so it is held to <paramref name="max"/>, what the tag can sensibly have for this picture.
+    /// </summary>
+    private long[]? Values(Ifd ifd, int tag, long max)
     {
         if (!ifd.Entries.TryGetValue(tag, out var e) || e.Type is not (1 or 3 or 4 or 6 or 8 or 9 or 13)) return null;
         long at = ValuesAt(e);
         if (at < 0) return null;
+        if (e.Count > max) throw Damaged($"one of its tags holds {e.Count} values, more than its picture can use");
         var values = new long[e.Count];
-        int size = TypeSize(e.Type);
-        for (long i = 0; i < e.Count; i++)
-        {
-            int p = (int)(at + i * size);
-            values[i] = e.Type switch
-            {
-                1 => _file[p],
-                6 => (sbyte)_file[p],
-                3 => U16(_file, p, _little),
-                8 => (short)U16(_file, p, _little),
-                9 => (int)U32(_file, p, _little),
-                _ => U32(_file, p, _little),
-            };
-        }
+        for (long i = 0; i < e.Count; i++) values[i] = Read(e.Type, at, i);
         return values;
     }
 
-    private long Value(Ifd ifd, int tag, long fallback) => Values(ifd, tag) is { Length: > 0 } v ? v[0] : fallback;
+    /// <summary>A tag's first value, read without the rest.</summary>
+    private long Value(Ifd ifd, int tag, long fallback)
+    {
+        if (!ifd.Entries.TryGetValue(tag, out var e) || e.Type is not (1 or 3 or 4 or 6 or 8 or 9 or 13)) return fallback;
+        long at = ValuesAt(e);
+        return at < 0 ? fallback : Read(e.Type, at, 0);
+    }
+
+    private long Read(int type, long at, long index)
+    {
+        int p = (int)(at + index * TypeSize(type));
+        return type switch
+        {
+            1 => _file[p],
+            6 => (sbyte)_file[p],
+            3 => U16(_file, p, _little),
+            8 => (short)U16(_file, p, _little),
+            9 => (int)U32(_file, p, _little),
+            _ => U32(_file, p, _little),
+        };
+    }
+
+    private static long RoundUp16(long n) => (n + 15) / 16 * 16;
 
     private byte[]? Bytes(Ifd ifd, int tag)
     {

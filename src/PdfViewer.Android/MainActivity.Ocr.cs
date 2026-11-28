@@ -19,6 +19,16 @@ public sealed partial class MainActivity
     /// <summary>The resolution scanned pages are read at: Tesseract's best range for printed text.</summary>
     private const int OcrDpi = 300;
 
+    /// <summary>
+    /// The most pixels a page is drawn with for recognition (about A3 at 300 dpi); a larger page is drawn
+    /// at less than <see cref="OcrDpi"/> so it fits in a phone's memory (an A0 page at 300 dpi is ~140 MP).
+    /// </summary>
+    private const double OcrMaxPixels = 30_000_000;
+
+    /// <summary>SHA-256 of the English model shipped in the assets (PdfViewer.Android.csproj, DownloadTessdata).</summary>
+    private const string TessdataSha256 = "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2";
+    private static readonly object TessdataLock = new();
+
     private void MakeSearchable()
     {
         if (!NeedDocument()) return;
@@ -85,52 +95,91 @@ public sealed partial class MainActivity
     /// </summary>
     private static List<PdfRecognizedWord> RecognizePage(TessBaseAPI tess, ViewerDocument doc, int page, CancellationToken ct)
     {
-        var bitmap = doc.RenderPageAsync(page, OcrDpi / 72.0, false, ct).GetAwaiter().GetResult();
+        var size = doc.Pages[page - 1];
+        double scale = OcrDpi / 72.0;
+        double pixels = size.Width * scale * size.Height * scale;
+        if (pixels > OcrMaxPixels) scale *= Math.Sqrt(OcrMaxPixels / pixels);
+        var bitmap = doc.RenderPageAsync(page, scale, false, ct).GetAwaiter().GetResult();
         int w = bitmap.Width, h = bitmap.Height;
         var bgra = bitmap.Pixels.AsSpan();
         var grey = new byte[w * h];
         for (int i = 0, o = 0; i < grey.Length; i++, o += 4)
             grey[i] = (byte)((bgra[o] * 29 + bgra[o + 1] * 150 + bgra[o + 2] * 77) >> 8);
-        tess.SetImage(grey, w, h, 1, w);
         var words = new List<PdfRecognizedWord>();
-        // Recognition runs when the text is first asked for; until then the result iterator is empty.
-        if (string.IsNullOrWhiteSpace(tess.UTF8Text)) return words;
-        using var it = tess.ResultIterator;
-        if (it == null) return words;
-        const int level = TessBaseAPI.PageIteratorLevel.RilWord;
-        it.Begin();
-        do
+        tess.SetImage(grey, w, h, 1, w);
+        // The native image and results are let go on every way out: a cancel, an empty page, an error.
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            string? text = it.GetUTF8Text(level);
-            if (string.IsNullOrWhiteSpace(text) || it.GetBoundingBox(level) is not { Length: 4 } box) continue;
-            // Words Tesseract is unsure of are mostly specks and lines read as text.
-            if (it.Confidence(level) < 30) continue;
-            int left = box[0], top = box[1], right = box[2], bottom = box[3];
-            if (right <= left || bottom <= top) continue;
-            words.Add(new PdfRecognizedWord(text.Trim(), (double)left / w, (double)top / h, (double)(right - left) / w, (double)(bottom - top) / h));
+            // Recognition runs when the text is first asked for; until then the result iterator is empty.
+            if (string.IsNullOrWhiteSpace(tess.UTF8Text)) return words;
+            using var it = tess.ResultIterator;
+            if (it == null) return words;
+            try
+            {
+                const int level = TessBaseAPI.PageIteratorLevel.RilWord;
+                it.Begin();
+                do
+                {
+                    ct.ThrowIfCancellationRequested();
+                    string? text = it.GetUTF8Text(level);
+                    if (string.IsNullOrWhiteSpace(text) || it.GetBoundingBox(level) is not { Length: 4 } box) continue;
+                    // Words Tesseract is unsure of are mostly specks and lines read as text.
+                    if (it.Confidence(level) < 30) continue;
+                    int left = box[0], top = box[1], right = box[2], bottom = box[3];
+                    if (right <= left || bottom <= top) continue;
+                    words.Add(new PdfRecognizedWord(text.Trim(), (double)left / w, (double)top / h, (double)(right - left) / w, (double)(bottom - top) / h));
+                }
+                while (it.Next(level));
+            }
+            finally
+            {
+                it.Delete();
+            }
+            return words;
         }
-        while (it.Next(level));
-        it.Delete();
-        tess.Clear();
-        return words;
+        finally
+        {
+            tess.Clear();
+        }
     }
 
     /// <summary>
-    /// The English model, copied once from the app's assets to its private files
+    /// The English model, copied from the app's assets to its private files
     /// (<c>files/tessdata/eng.traineddata</c>), where Tesseract reads it; the folder above it is returned.
+    /// The copy is kept only while its SHA-256 is the pinned one, so an app update with a new model
+    /// replaces it and a damaged copy is made again. Windows of the app share the files: one copies at a
+    /// time, to a temporary file of its own that is then moved into place.
     /// </summary>
     private string EnsureTessdata()
     {
         string root = FilesDir!.AbsolutePath;
         string dir = System.IO.Path.Combine(root, "tessdata");
         string file = System.IO.Path.Combine(dir, "eng.traineddata");
-        using var asset = Assets!.Open("tessdata/eng.traineddata");
-        if (File.Exists(file) && new FileInfo(file).Length > 0) return root;
-        Directory.CreateDirectory(dir);
-        string part = file + ".part";
-        using (var output = File.Create(part)) asset.CopyTo(output);
-        File.Move(part, file, overwrite: true);
-        return root;
+        lock (TessdataLock)
+        {
+            if (File.Exists(file) && HashOf(file) == TessdataSha256) return root;
+            Directory.CreateDirectory(dir);
+            string part = System.IO.Path.Combine(dir, $"eng.{Guid.NewGuid():N}.part");
+            try
+            {
+                using (var asset = Assets!.Open("tessdata/eng.traineddata"))
+                using (var output = File.Create(part))
+                    asset.CopyTo(output);
+                if (HashOf(part) != TessdataSha256)
+                    throw new UserMessageException("The text recognizer's language data in this app is damaged. Reinstalling the app restores it.");
+                File.Move(part, file, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(part)) File.Delete(part);
+            }
+            return root;
+        }
+
+        static string HashOf(string path)
+        {
+            using var stream = File.OpenRead(path);
+            return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+        }
     }
 }

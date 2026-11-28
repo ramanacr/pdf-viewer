@@ -507,6 +507,39 @@ public class ViewerTiffReaderTests
     }
 
     [Fact]
+    public void TileFarLargerThanThePicture_IsRefused_NotAllocated()
+    {
+        // A 1 × 1 picture claiming 16384 × 16384 tiles would make the reader set aside 256 MB.
+        var page = new Page { Tiled = true }.Size(1, 1).Tag(258, Short, 8).Tag(259, Short, 1).Tag(262, Short, 1).Tag(322, Long, 16384).Tag(323, Long, 16384);
+        page.Blocks.Add([7]);
+        var result = ViewerTiffReader.ReadAll(Build(true, [page, Gray8(1, 1, [1])]));
+        Assert.Single(result.Pages);
+        Assert.Contains("tile size", Assert.Single(result.Refused).Reason);
+    }
+
+    [Fact]
+    public void TagWithFarMoreValuesThanThePictureUses_IsRefused()
+    {
+        // A 1 × 1 picture whose BitsPerSample lists 100 000 values: refused before an array of that size is made.
+        var page = Gray8(1, 1, [9]).Tag(258, Short, Enumerable.Repeat(8L, 100_000).ToArray());
+        var result = ViewerTiffReader.ReadAll(Build(true, [page, Gray8(1, 1, [1])]));
+        Assert.Single(result.Pages);
+        Assert.Contains("values", Assert.Single(result.Refused).Reason);
+    }
+
+    [Fact]
+    public void DarkSixteenBitPalette_StaysDark()
+    {
+        // Every entry below 256 of 65535: near black. Read as 16-bit, as TIFF 6.0 has it, not as bright 8-bit values.
+        var map = new long[3 * 16];
+        for (int i = 0; i < map.Length; i++) map[i] = i % 16 * 4;
+        var page = new Page().Size(2, 1).Tag(258, Short, 4).Tag(259, Short, 1).Tag(262, Short, 3).Tag(320, Short, map);
+        page.Blocks.Add([0xF0]);
+        var image = ViewerTiffReader.ReadAll(Build(true, [page])).Pages[0].Image;
+        Assert.All(image.Palette!, b => Assert.Equal(0, b));
+    }
+
+    [Fact]
     public void TooManyPixels_RefusesThatPageOnly()
     {
         var huge = new Page().Size(10_000, 6_000).Tag(258, Short, 1).Tag(259, Short, 4).Tag(262, Short, 0);
@@ -514,16 +547,16 @@ public class ViewerTiffReaderTests
         var result = ViewerTiffReader.ReadAll(Build(true, [huge, Gray8(1, 1, [1])]));
         Assert.Equal(2, result.PageCount);
         Assert.Single(result.Pages);
-        Assert.Contains("50 million", Assert.Single(result.Refused).Reason);
+        Assert.Contains("30 million", Assert.Single(result.Refused).Reason);
     }
 
     [Fact]
     public void DecodedTotal_IsBounded()
     {
-        // Each page claims 7000 × 7000 grey pixels (49 MB, 98 MB counted with its output): five fit, the sixth does not.
+        // Each page claims 5000 × 5000 grey pixels (25 MB, 50 MB counted with its output): five fit in 256 MB, the sixth does not.
         var pages = Enumerable.Range(0, 8).Select(_ =>
         {
-            var p = new Page().Size(7000, 7000).Tag(258, Short, 8).Tag(259, Short, 32773).Tag(262, Short, 1);
+            var p = new Page().Size(5000, 5000).Tag(258, Short, 8).Tag(259, Short, 32773).Tag(262, Short, 1);
             p.Blocks.Add([unchecked((byte)-127), 0]);
             return p;
         }).ToList();
@@ -533,7 +566,7 @@ public class ViewerTiffReaderTests
             for (int i = 0; i < reader.PageCount; i++) reader.ReadPage(i);
         });
         Assert.True(ex.WholeFile);
-        Assert.Contains("512 MB", ex.Message);
+        Assert.Contains("256 MB", ex.Message);
     }
 
     [Fact]
