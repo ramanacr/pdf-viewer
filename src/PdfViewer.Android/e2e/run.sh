@@ -35,6 +35,8 @@ for flow in "$HERE"/flows/*.yaml; do
   name=$(basename "$flow" .yaml)
   [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]] && continue
   doc=$(sed -n 's/^# doc: *//p' "$flow"); glob=$(sed -n 's/^# expect-file: *//p' "$flow"); grepre=$(sed -n 's/^# expect-grep: *//p' "$flow")
+  # The device shell reads the glob: names have spaces and parentheses ("… (protected).pdf").
+  glob=$(printf '%s' "$glob" | sed 's/[() ]/\\&/g')
   # A clean start on the flow's document; files a flow is to make must not be there before it.
   "$ADB" shell am force-stop $APP; "$ADB" logcat -c
   [ -n "$glob" ] && "$ADB" shell "rm -f /sdcard/Download/$glob" 2>/dev/null
