@@ -16,12 +16,17 @@ public readonly record struct PageAnchor(int Page, double U, double V);
 /// lengths are view pixels; the content scrolls under a view of <see cref="ViewWidth"/> ×
 /// <see cref="ViewHeight"/>. Free of any UI toolkit, so that the Android viewer and the tests share it.
 /// </summary>
-/// <remarks>Not thread-safe: one viewer uses it from its UI thread.</remarks>
+/// <remarks>
+/// Not thread-safe: one viewer uses it from its UI thread. <see cref="Rotation"/> turns every page
+/// in the view (the desktop's Rotate View) without changing the document: pages keep their shown-page
+/// points (search, selection, annotations), and <see cref="ToView(int, ViewerRect)"/>,
+/// <see cref="ToViewPoint"/> and <see cref="ToPagePoint"/> turn them.
+/// </remarks>
 public sealed class ContinuousPageLayout
 {
     private readonly IReadOnlyList<ViewerPage> _pages;
     private readonly double[] _tops;
-    private readonly double _maxWidthPoints;
+    private double _maxWidthPoints;
 
     public ContinuousPageLayout(IReadOnlyList<ViewerPage> pages, double gap = 16, double margin = 8)
     {
@@ -38,6 +43,29 @@ public sealed class ContinuousPageLayout
     }
 
     public const double MinZoom = 0.5, MaxZoom = 8;
+
+    /// <summary>How far the view turns every page clockwise: 0, 90, 180 or 270 degrees.</summary>
+    public int Rotation { get; private set; }
+
+    /// <summary>
+    /// Turns the view to <paramref name="degrees"/> clockwise (any multiple of 90; others are
+    /// rounded to one); the page in view stays in view, from its top.
+    /// </summary>
+    public void SetRotation(int degrees)
+    {
+        int turn = ((int)Math.Round(degrees / 90.0) * 90 % 360 + 360) % 360;
+        if (turn == Rotation) return;
+        int page = CurrentPage;
+        Rotation = turn;
+        _maxWidthPoints = Enumerable.Range(0, _pages.Count).Max(WidthOf);
+        Relayout();
+        GoTo(page);
+    }
+
+    /// <summary>A page's width and height in the view, in points: its shown size, turned by <see cref="Rotation"/>.</summary>
+    private double WidthOf(int index) => Rotation is 90 or 270 ? _pages[index].Height : _pages[index].Width;
+
+    private double HeightOf(int index) => Rotation is 90 or 270 ? _pages[index].Width : _pages[index].Height;
 
     public double Gap { get; }
     public double Margin { get; }
@@ -112,8 +140,7 @@ public sealed class ContinuousPageLayout
     /// <summary>Page <paramref name="page"/> (1-based) in content pixels.</summary>
     public LayoutRect PageRect(int page)
     {
-        var p = _pages[page - 1];
-        double w = p.Width * PixelsPerPoint, h = p.Height * PixelsPerPoint;
+        double w = WidthOf(page - 1) * PixelsPerPoint, h = HeightOf(page - 1) * PixelsPerPoint;
         return new LayoutRect((ContentWidth - w) / 2, _tops[page - 1], w, h);
     }
 
@@ -127,8 +154,29 @@ public sealed class ContinuousPageLayout
     /// <summary>A rectangle on a page (points from the shown page's top-left corner, as search returns) in view pixels.</summary>
     public LayoutRect ToView(int page, ViewerRect rect)
     {
+        if (Rotation == 0)
+        {
+            var r = PageRectInView(page);
+            return new LayoutRect(r.X + rect.X * PixelsPerPoint, r.Y + rect.Y * PixelsPerPoint, rect.Width * PixelsPerPoint, rect.Height * PixelsPerPoint);
+        }
+        var (x1, y1) = ToViewPoint(page, new ViewerPoint(rect.X, rect.Y));
+        var (x2, y2) = ToViewPoint(page, new ViewerPoint(rect.X + rect.Width, rect.Y + rect.Height));
+        return new LayoutRect(Math.Min(x1, x2), Math.Min(y1, y2), Math.Abs(x2 - x1), Math.Abs(y2 - y1));
+    }
+
+    /// <summary>A point on a page (points from the shown page's top-left corner) in view pixels, turned by <see cref="Rotation"/>.</summary>
+    public (double X, double Y) ToViewPoint(int page, ViewerPoint point)
+    {
         var r = PageRectInView(page);
-        return new LayoutRect(r.X + rect.X * PixelsPerPoint, r.Y + rect.Y * PixelsPerPoint, rect.Width * PixelsPerPoint, rect.Height * PixelsPerPoint);
+        double s = PixelsPerPoint, x = point.X * s, y = point.Y * s;
+        double w = _pages[page - 1].Width * s, h = _pages[page - 1].Height * s;
+        return Rotation switch
+        {
+            90 => (r.X + h - y, r.Y + x),
+            180 => (r.X + w - x, r.Y + h - y),
+            270 => (r.X + y, r.Y + w - x),
+            _ => (r.X + x, r.Y + y),
+        };
     }
 
     /// <summary>The pages that the view, grown by <paramref name="extra"/> pixels above and below, shows; in page order.</summary>
@@ -136,7 +184,7 @@ public sealed class ContinuousPageLayout
     {
         double top = ScrollY - extra, bottom = ScrollY + ViewHeight + extra;
         for (int i = IndexAt(top); i < _pages.Count && _tops[i] < bottom; i++)
-            if (_tops[i] + _pages[i].Height * PixelsPerPoint > top)
+            if (_tops[i] + HeightOf(i) * PixelsPerPoint > top)
                 yield return i + 1;
     }
 
@@ -148,8 +196,8 @@ public sealed class ContinuousPageLayout
             double middle = ScrollY + ViewHeight / 2;
             int i = Math.Min(IndexAt(middle), _pages.Count - 1);
             // In the gap after page i: the nearer of i and i + 1.
-            if (i + 1 < _pages.Count && middle > _tops[i] + _pages[i].Height * PixelsPerPoint)
-                return middle - (_tops[i] + _pages[i].Height * PixelsPerPoint) < _tops[i + 1] - middle ? i + 1 : i + 2;
+            if (i + 1 < _pages.Count && middle > _tops[i] + HeightOf(i) * PixelsPerPoint)
+                return middle - (_tops[i] + HeightOf(i) * PixelsPerPoint) < _tops[i + 1] - middle ? i + 1 : i + 2;
             return i + 1;
         }
     }
@@ -158,7 +206,15 @@ public sealed class ContinuousPageLayout
     public void GoTo(int page, double y = 0)
     {
         page = Math.Clamp(page, 1, _pages.Count);
-        ScrollTo(ScrollX, PageRect(page).Y + y * PixelsPerPoint - (y > 0 ? ViewHeight / 3 : Gap / 2));
+        // A point down the shown page is down the view when the view is upright or upside down; turned
+        // a quarter, the page is shown from its top.
+        double down = Rotation switch
+        {
+            0 => y,
+            180 => y > 0 ? _pages[page - 1].Height - y : 0,
+            _ => 0,
+        };
+        ScrollTo(ScrollX, PageRect(page).Y + down * PixelsPerPoint - (down > 0 ? ViewHeight / 3 : Gap / 2));
     }
 
     /// <summary>The page point under a view point (the nearest page, clamped to it, when the point is in a gap or margin).</summary>
@@ -176,7 +232,16 @@ public sealed class ContinuousPageLayout
     public ViewerPoint ToPagePoint(int page, double viewX, double viewY)
     {
         var r = PageRectInView(page);
-        return new ViewerPoint((viewX - r.X) / PixelsPerPoint, (viewY - r.Y) / PixelsPerPoint);
+        double s = PixelsPerPoint, dx = viewX - r.X, dy = viewY - r.Y;
+        double w = _pages[page - 1].Width * s, h = _pages[page - 1].Height * s;
+        var (x, y) = Rotation switch
+        {
+            90 => (dy, h - dx),
+            180 => (w - dx, h - dy),
+            270 => (w - dy, dx),
+            _ => (dx, dy),
+        };
+        return new ViewerPoint(x / s, y / s);
     }
 
     /// <summary>The page under a view point and the point on it, or null in a gap or margin (a touch there is on no page).</summary>
@@ -203,7 +268,7 @@ public sealed class ContinuousPageLayout
         for (int i = 0; i < _pages.Count; i++)
         {
             _tops[i] = y;
-            y += _pages[i].Height * PixelsPerPoint + (i + 1 < _pages.Count ? Gap : 0);
+            y += HeightOf(i) * PixelsPerPoint + (i + 1 < _pages.Count ? Gap : 0);
         }
         ContentHeight = y + Margin;
         ScrollTo(ScrollX, ScrollY);

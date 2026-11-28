@@ -46,7 +46,7 @@ public sealed partial class MainActivity : Activity
     };
 
     // Saved-state keys: the document's location and the view, never its text or a password.
-    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night";
+    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night", StateRotation = "view.rotation";
 
     private PageView _pages = null!;
     private ThumbnailView _thumbnails = null!;
@@ -79,6 +79,7 @@ public sealed partial class MainActivity : Activity
             var view = (new PageAnchor(savedInstanceState.GetInt(StatePage, 1), savedInstanceState.GetDouble(StateU), savedInstanceState.GetDouble(StateV)),
                 savedInstanceState.GetDouble(StateZoom, 1));
             // With the unsaved edits kept for it (MainActivity.KeptEdits.cs), read on a worker thread.
+            _pendingRotation = savedInstanceState.GetInt(StateRotation);
             _ = ReopenAfterProcessDeathAsync(savedUri, saved, view);
         }
         else if (Incoming(Intent) is { } uri)
@@ -118,6 +119,7 @@ public sealed partial class MainActivity : Activity
         KeepEdits();
         outState.PutString(StateUri, _uri.ToString());
         outState.PutBoolean(StateNight, _pages.NightPages);
+        outState.PutInt(StateRotation, _pages.ViewRotation);
         if (_pages.SavedView is { } view)
         {
             outState.PutInt(StatePage, view.TopLeft.Page);
@@ -391,6 +393,8 @@ public sealed partial class MainActivity : Activity
         night.SetChecked(_pages.NightPages);
         night.SetEnabled(open);
         view.Add(0, 13, 5, "Full screen")!.SetEnabled(open);
+        view.Add(0, 17, 7, "Rotate view right")!.SetEnabled(open);
+        view.Add(0, 18, 8, "Rotate view left")!.SetEnabled(open);
         view.Add(0, 14, 6, IsReadingAloud ? "Stop reading aloud" : "Read aloud")!.SetEnabled(open);
 
         var comments = items.AddSubMenu(0, 21, 6, "Comments")!;
@@ -430,6 +434,8 @@ public sealed partial class MainActivity : Activity
                 case 14: ToggleReadAloud(); break;
                 case 15: ShowTools(); break;
                 case 16: ShowProperties(); break;
+                case 17: RotateView(90); break;
+                case 18: RotateView(-90); break;
             }
         };
         menu.Show();
@@ -797,6 +803,18 @@ public sealed partial class MainActivity : Activity
         _keptVersion = -1;
         StartEdits(session);
         if (restore != null && session != null && !opened.IsEncrypted) RestoreKeptEdits(session, restore);
+        // A view saved turned (after Android ended the app) is turned again before its place is restored.
+        if (_pendingRotation != 0)
+        {
+            int turn = _pendingRotation;
+            _pendingRotation = 0;
+            _pages.Post(() =>
+            {
+                if (!ReferenceEquals(opened, _doc)) return;
+                _pages.ViewRotation = turn;
+                if (view is { } turned) _pages.RestoreView(turned.TopLeft, turned.Zoom);
+            });
+        }
         if (view is { } v) _pages.RestoreView(v.TopLeft, v.Zoom);
         // Files the app may open again (a persisted grant) go to the top of the recent list.
         if (HasPersistedPermission(uri))
@@ -846,6 +864,17 @@ public sealed partial class MainActivity : Activity
             })!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
+    }
+
+    /// <summary>A turn of the view without changing the document (Windows' Rotate View); the page in view stays.</summary>
+    private int _pendingRotation;
+
+    private void RotateView(int by)
+    {
+        if (_doc == null) return;
+        _pages.ViewRotation = ((_pages.ViewRotation + by) % 360 + 360) % 360;
+        string said = _pages.ViewRotation == 0 ? "View upright" : $"View turned {_pages.ViewRotation}°";
+        Toast.MakeText(this, said, ToastLength.Short)?.Show();
     }
 
     /// <summary>
@@ -958,6 +987,10 @@ public sealed partial class MainActivity : Activity
                     return true;
                 case Keycode.Num0 or Keycode.Numpad0:
                     _pages.ZoomTo(1);
+                    return true;
+                // Ctrl+R turns the view clockwise, Ctrl+Shift+R back, as on Windows.
+                case Keycode.R when e?.IsCtrlPressed == true:
+                    RotateView(e.IsShiftPressed ? -90 : 90);
                     return true;
             }
         }

@@ -380,6 +380,26 @@ internal sealed class PageView : SkiaView
         RequestRender();
     }
 
+    /// <summary>
+    /// How far the view turns every page clockwise (0, 90, 180 or 270), as the desktop's Rotate View:
+    /// only the view turns, the document does not change. A new document starts upright.
+    /// </summary>
+    public int ViewRotation
+    {
+        get => _layout?.Rotation ?? 0;
+        set
+        {
+            if (_layout == null || Width <= 0 || value == _layout.Rotation) return;
+            _scroller.ForceFinished(true);
+            _flinging = false;
+            _layout.SetRotation(value);
+            // Tiles are cut from the upright page and stay valid; the view moved, so the ones it needs are asked for.
+            ReportPage();
+            Invalidate();
+            RequestRender();
+        }
+    }
+
     /// <summary>The engine's night mode: pages inverted after drawing.</summary>
     public bool NightPages
     {
@@ -471,14 +491,19 @@ internal sealed class PageView : SkiaView
         {
             var r = _layout.PageRectInView(page);
             var dest = new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom);
+            // The page and its tiles are drawn upright in the page's frame, which the view's rotation turns.
+            var frame = Frame(page);
+            canvas.Save();
+            canvas.Concat(PageMatrix(page));
             if (_images.TryGet(page, _night, out var image, out _))
-                canvas.DrawImage(image, dest, _sampling);
+                canvas.DrawImage(image, Sk(frame), _sampling);
             else
-                canvas.DrawRect(dest, _paper);
+                canvas.DrawRect(Sk(frame), _paper);
             // Tiles over the whole-page bitmap: those of the current scale, or (while a pinch runs)
             // the last scale's, stretched until the new ones are drawn.
             if (_tileScale > 0 && PageTiles.NeedsTiles(BaseScale(page, scale), scale))
-                DrawTiles(canvas, page, r, sharp: PageImageCache<SKImage>.SameScale(_tileScale, scale));
+                DrawTiles(canvas, page, sharp: PageImageCache<SKImage>.SameScale(_tileScale, scale));
+            canvas.Restore();
             canvas.DrawRect(dest, _edge);
         }
         for (int i = 0; i < _hits.Count; i++)
@@ -567,9 +592,7 @@ internal sealed class PageView : SkiaView
     /// <summary>A ring at a point of a page: a callout's anchor.</summary>
     private void DrawMark(SKCanvas canvas, int page, ViewerPoint point)
     {
-        var r = _layout!.PageRectInView(page);
-        double s = _layout.PixelsPerPoint;
-        float x = (float)(r.X + point.X * s), y = (float)(r.Y + point.Y * s);
+        var (x, y) = V(page, point);
         _picked.StrokeWidth = 2 * Density;
         canvas.DrawCircle(x, y, 7 * Density, _picked);
         canvas.DrawCircle(x, y, 2.5f * Density, _handle);
@@ -578,24 +601,75 @@ internal sealed class PageView : SkiaView
     private void DrawStroke(SKCanvas canvas, int page, IReadOnlyList<ViewerPoint> points)
     {
         if (points.Count == 0) return;
-        var r = _layout!.PageRectInView(page);
-        double s = _layout.PixelsPerPoint;
         using var path = new SKPath();
-        path.MoveTo((float)(r.X + points[0].X * s), (float)(r.Y + points[0].Y * s));
-        for (int i = 1; i < points.Count; i++) path.LineTo((float)(r.X + points[i].X * s), (float)(r.Y + points[i].Y * s));
-        if (points.Count == 1) path.LineTo((float)(r.X + points[0].X * s) + 0.1f, (float)(r.Y + points[0].Y * s));
+        var (x0, y0) = V(page, points[0]);
+        path.MoveTo(x0, y0);
+        for (int i = 1; i < points.Count; i++)
+        {
+            var (x, y) = V(page, points[i]);
+            path.LineTo(x, y);
+        }
+        if (points.Count == 1) path.LineTo(x0 + 0.1f, y0);
         canvas.DrawPath(path, _ink);
+    }
+
+    /// <summary>A point of a page (shown-page points) in view pixels, turned by the view's rotation.</summary>
+    private (float X, float Y) V(int page, ViewerPoint point)
+    {
+        var (x, y) = _layout!.ToViewPoint(page, point);
+        return ((float)x, (float)y);
     }
 
     private static SKRect Sk(LayoutRect r) => new((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom);
 
-    private void DrawTiles(SKCanvas canvas, int page, LayoutRect pageInView, bool sharp)
+    /// <summary>
+    /// A page's frame: its shown page, upright, in view pixels at the layout's scale, from its
+    /// top-left corner. <see cref="PageMatrix"/> places it in the view.
+    /// </summary>
+    private LayoutRect Frame(int page)
     {
         var info = _doc!.Pages[page - 1];
-        foreach (var tile in PageTiles.Visible(info, _tileScale, pageInView, Width, Height))
+        double s = _layout!.PixelsPerPoint;
+        return new LayoutRect(0, 0, info.Width * s, info.Height * s);
+    }
+
+    /// <summary>The matrix from a page's <see cref="Frame"/> to the view: a move, turned by the view's rotation.</summary>
+    private SKMatrix PageMatrix(int page)
+    {
+        var (ox, oy) = _layout!.ToViewPoint(page, new ViewerPoint(0, 0));
+        float x = (float)ox, y = (float)oy;
+        return _layout.Rotation switch
+        {
+            90 => new SKMatrix(0, -1, x, 1, 0, y, 0, 0, 1),
+            180 => new SKMatrix(-1, 0, x, 0, -1, y, 0, 0, 1),
+            270 => new SKMatrix(0, 1, x, -1, 0, y, 0, 0, 1),
+            _ => SKMatrix.CreateTranslation(x, y),
+        };
+    }
+
+    /// <summary>
+    /// The tiles at <paramref name="scale"/> that the view shows of a page, each with its rectangle
+    /// in the page's frame: the view is turned back into the frame, so a turned page tiles as an upright one.
+    /// </summary>
+    private IEnumerable<(PageTile Tile, LayoutRect InFrame)> VisibleTiles(int page, double scale)
+    {
+        var info = _doc!.Pages[page - 1];
+        var frame = Frame(page);
+        if (!PageMatrix(page).TryInvert(out var inverse)) yield break;
+        var a = inverse.MapPoint(0, 0);
+        var b = inverse.MapPoint(Width, Height);
+        float x0 = Math.Min(a.X, b.X), y0 = Math.Min(a.Y, b.Y), x1 = Math.Max(a.X, b.X), y1 = Math.Max(a.Y, b.Y);
+        // The view, in the frame, is the visible window; the page sits at -window corner.
+        var pageInWindow = new LayoutRect(-x0, -y0, frame.Width, frame.Height);
+        foreach (var tile in PageTiles.Visible(info, scale, pageInWindow, x1 - x0, y1 - y0))
+            yield return (tile, PageTiles.InView(tile, info, scale, frame));
+    }
+
+    private void DrawTiles(SKCanvas canvas, int page, bool sharp)
+    {
+        foreach (var (tile, v) in VisibleTiles(page, _tileScale))
         {
             if (!_tiles.TryGet(page, _night, _tileScale, tile.Column, tile.Row, out var image)) continue;
-            var v = PageTiles.InView(tile, info, _tileScale, pageInView);
             // At the tiles' own scale each tile pixel is one view pixel: whole pixels keep it sharp.
             var dest = sharp
                 ? SKRect.Create((float)Math.Round(v.X), (float)Math.Round(v.Y), image.Width, image.Height)
@@ -633,9 +707,7 @@ internal sealed class PageView : SkiaView
     private ((double X, double Y) Start, (double X, double Y) End)? HandlesInView()
     {
         if (_selection?.HandlePositions() is not { } p || _layout == null) return null;
-        var page = _layout.PageRectInView(_selection.Page);
-        double s = _layout.PixelsPerPoint;
-        return ((page.X + p.Start.X * s, page.Y + p.Start.Y * s), (page.X + p.End.X * s, page.Y + p.End.Y * s));
+        return (_layout.ToViewPoint(_selection.Page, new ViewerPoint(p.Start.X, p.Start.Y)), _layout.ToViewPoint(_selection.Page, new ViewerPoint(p.End.X, p.End.Y)));
     }
 
     // ------------------------------------------------------------------ rendering
@@ -748,10 +820,14 @@ internal sealed class PageView : SkiaView
         foreach (int page in visible)
         {
             if (!PageTiles.NeedsTiles(BaseScale(page, scale), scale)) continue;
-            var info = doc.Pages[page - 1];
-            var rect = _layout.PageRectInView(page);
-            var tiles = PageTiles.Visible(info, scale, rect, Width, Height)
-                .OrderBy(t => DistanceSquared(PageTiles.InView(t, info, scale, rect), cx, cy));
+            var matrix = PageMatrix(page);
+            var tiles = VisibleTiles(page, scale)
+                .OrderBy(t =>
+                {
+                    var centre = matrix.MapPoint((float)(t.InFrame.X + t.InFrame.Width / 2), (float)(t.InFrame.Y + t.InFrame.Height / 2));
+                    return (centre.X - cx) * (centre.X - cx) + (centre.Y - cy) * (centre.Y - cy);
+                })
+                .Select(t => t.Tile);
             foreach (var tile in tiles)
             {
                 if (_tiles.Has(page, _night, scale, tile.Column, tile.Row)) continue;
@@ -771,12 +847,6 @@ internal sealed class PageView : SkiaView
             var job = new Job(doc, page, bs, _night, null, _generation);
             return _failed.Contains(FailKey(job)) ? null : job;
         }
-    }
-
-    private static double DistanceSquared(LayoutRect r, double x, double y)
-    {
-        double dx = r.X + r.Width / 2 - x, dy = r.Y + r.Height / 2 - y;
-        return dx * dx + dy * dy;
     }
 
     // ------------------------------------------------------------------ text selection
@@ -1226,10 +1296,11 @@ internal sealed class PageView : SkiaView
         _ink.Color = _strokeColor;
         _ink.StrokeWidth = (float)Math.Max(ViewerEditSession.ShapeWidth * _layout.PixelsPerPoint, 2 * Density);
         if (points.Count >= 2) DrawStroke(canvas, page, closed && points.Count >= 3 && _aim == null ? [.. points, points[0]] : points);
-        var r = _layout.PageRectInView(page);
-        double s = _layout.PixelsPerPoint;
         foreach (var point in points)
-            canvas.DrawCircle((float)(r.X + point.X * s), (float)(r.Y + point.Y * s), 4 * Density, _handle);
+        {
+            var (px, py) = V(page, point);
+            canvas.DrawCircle(px, py, 4 * Density, _handle);
+        }
         if (_aim is not { } aim) return;
         // The rubber band: dashed, from the last point to the finger (and back to the first for a closed shape).
         using var dash = SKPathEffect.CreateDash([6 * Density, 4 * Density], 0);
@@ -1242,7 +1313,8 @@ internal sealed class PageView : SkiaView
         }
         _ink.PathEffect = null;
         _picked.StrokeWidth = 2 * Density;
-        canvas.DrawCircle((float)(r.X + aim.X * s), (float)(r.Y + aim.Y * s), 9 * Density, _picked);
+        var (ax, ay) = V(page, aim);
+        canvas.DrawCircle(ax, ay, 9 * Density, _picked);
     }
 
     // ------------------------------------------------------------------ dragging the chosen annotation
@@ -1309,13 +1381,13 @@ internal sealed class PageView : SkiaView
                 if (Session is not { } session || _pickedAnnotation == null || session.Store.Find(_pickedAnnotation) is not { } a || !CanEdit(a)) return false;
                 if (_layout == null || a.Page < 1 || a.Page > session.Document.Geometry.Count) return false;
                 float x = e.GetX(), y = e.GetY();
-                var page = _layout.PageRectInView(a.Page);
-                double s = _layout.PixelsPerPoint, best = HandleGrabDp * Density;
+                double best = HandleGrabDp * Density;
                 var handles = HandlesOf(session, a);
                 int found = -1;
                 for (int i = 0; i < handles.Count; i++)
                 {
-                    double d = Math.Sqrt(Math.Pow(page.X + handles[i].X * s - x, 2) + Math.Pow(page.Y + handles[i].Y * s - y, 2));
+                    var (hx, hy) = V(a.Page, handles[i]);
+                    double d = Math.Sqrt(Math.Pow(hx - x, 2) + Math.Pow(hy - y, 2));
                     if (d <= best)
                     {
                         best = d;
@@ -1336,7 +1408,7 @@ internal sealed class PageView : SkiaView
                     return true;
                 }
                 var box = session.Document.Geometry[a.Page - 1].ToShown(a.Box);
-                double slack = TapSlackDp * Density / s;
+                double slack = TapSlackDp * Density / _layout.PixelsPerPoint;
                 if (_grabStart.X >= box.X - slack && _grabStart.X <= box.X + box.Width + slack && _grabStart.Y >= box.Y - slack && _grabStart.Y <= box.Y + box.Height + slack)
                     _grab = Grab.Pending;
                 return false;
@@ -1417,8 +1489,6 @@ internal sealed class PageView : SkiaView
     /// <summary>The handles of the chosen annotation (filled dots with a white ring), and the drag's outline while one runs.</summary>
     private void DrawHandles(SKCanvas canvas, ViewerEditSession session, ViewerAnnotation a)
     {
-        var page = _layout!.PageRectInView(a.Page);
-        double s = _layout.PixelsPerPoint;
         var handles = HandlesOf(session, a);
         if (_grab is Grab.Body or Grab.Corner or Grab.Vertex && _grabId == a.Id)
         {
@@ -1437,8 +1507,13 @@ internal sealed class PageView : SkiaView
                 handles = _grab == Grab.Body ? handles.Select(h => new ViewerPoint(h.X + dx, h.Y + dy)).ToList() : outline.Take(4).ToList();
             }
             using var path = new SKPath();
-            path.MoveTo((float)(page.X + outline[0].X * s), (float)(page.Y + outline[0].Y * s));
-            foreach (var p in outline.Skip(1)) path.LineTo((float)(page.X + p.X * s), (float)(page.Y + p.Y * s));
+            var (ox, oy) = V(a.Page, outline[0]);
+            path.MoveTo(ox, oy);
+            foreach (var p in outline.Skip(1))
+            {
+                var (px, py) = V(a.Page, p);
+                path.LineTo(px, py);
+            }
             using var dash = SKPathEffect.CreateDash([6 * Density, 4 * Density], 0);
             _picked.PathEffect = dash;
             _picked.StrokeWidth = 2 * Density;
@@ -1448,7 +1523,7 @@ internal sealed class PageView : SkiaView
         _handleRing.StrokeWidth = 2 * Density;
         foreach (var h in handles)
         {
-            float x = (float)(page.X + h.X * s), y = (float)(page.Y + h.Y * s);
+            var (x, y) = V(a.Page, h);
             canvas.DrawCircle(x, y, 6 * Density, _handle);
             canvas.DrawCircle(x, y, 6 * Density, _handleRing);
         }
