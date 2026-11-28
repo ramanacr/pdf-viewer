@@ -25,9 +25,11 @@ namespace PdfViewer.Android;
 /// that file when Android grants write access to it, or as a copy the reader picks with the system's
 /// save dialog. The activity is kept across rotation and
 /// dark-mode switches; when Android ends the process in the background, the saved state reopens
-/// the document at the same place, with its unsaved edits (MainActivity.KeptEdits.cs).
+/// the document at the same place, with its unsaved edits (MainActivity.KeptEdits.cs). Each
+/// document can have a window (a task) of its own (MainActivity.Windows.cs); every window is a
+/// full viewer, resizable for split screen and free-form windows.
 /// </summary>
-[Activity(Label = "PDF Viewer (preview)", MainLauncher = true, Exported = true, LaunchMode = LaunchMode.SingleTop,
+[Activity(Label = "PDF Viewer (preview)", MainLauncher = true, Exported = true, LaunchMode = LaunchMode.SingleTop, ResizeableActivity = true,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.ScreenLayout
                            | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode | ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden)]
 [IntentFilter([Intent.ActionView], Categories = [Intent.CategoryDefault], DataScheme = "content", DataMimeType = "application/pdf")]
@@ -66,7 +68,8 @@ public sealed partial class MainActivity : Activity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
-        _recent = new RecentDocuments(System.IO.Path.Combine(FilesDir!.AbsolutePath, "recent.json"));
+        // The recent list shared by every window; the window joins the app's list (MainActivity.Windows.cs).
+        JoinWindows();
         SetContentView(BuildLayout());
         RegisterBackCallback();
         ApplyTheme();
@@ -85,14 +88,15 @@ public sealed partial class MainActivity : Activity
         else if (Incoming(Intent) is { } uri)
         {
             // A new start keeps edits an earlier process kept: they are offered when their document opens.
-            _ = OpenUriAsync(uri, null);
+            // A document another window shows brings that window forward instead.
+            OpenIncoming(uri, Intent);
         }
     }
 
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);
-        if (Incoming(intent) is { } uri) AfterDiscard(() => _ = OpenUriAsync(uri, null));
+        if (Incoming(intent) is { } uri && !SwitchToWindowShowing(uri)) AfterDiscard(() => _ = OpenUriAsync(uri, null));
     }
 
     /// <summary>The document another app hands over: "Open with" (ACTION_VIEW) or its share sheet (ACTION_SEND).</summary>
@@ -407,6 +411,9 @@ public sealed partial class MainActivity : Activity
         items.Add(0, 15, 7, "Tools…");
         items.Add(0, 16, 8, "Document properties")!.SetEnabled(open);
         items.Add(0, 5, 9, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
+        // Each document in a window of its own (MainActivity.Windows.cs).
+        items.Add(0, 40, 10, "Open in new window…");
+        items.Add(0, 41, 11, "Documents");
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
         {
             save.SetContentDescription("Save the changes into the opened file");
@@ -436,6 +443,8 @@ public sealed partial class MainActivity : Activity
                 case 16: ShowProperties(); break;
                 case 17: RotateView(90); break;
                 case 18: RotateView(-90); break;
+                case 40: OpenInNewWindow(); break;
+                case 41: ShowDocuments(); break;
             }
         };
         menu.Show();
@@ -561,7 +570,8 @@ public sealed partial class MainActivity : Activity
 
     // ------------------------------------------------------------------ opening
 
-    private void PickDocument() => AfterDiscard(PickDocumentNow);
+    /// <summary>The picker first; the question about unsaved edits comes once a file is chosen (and not when another window shows it).</summary>
+    private void PickDocument() => PickDocumentNow();
 
     private void PickDocumentNow()
     {
@@ -601,27 +611,17 @@ public sealed partial class MainActivity : Activity
         }
         if (requestCode == OpenDocumentRequest && resultCode == Result.Ok && data?.Data is { } uri)
         {
-            RememberPosition();
             // Keep access across restarts (the picker offers a persistable grant), so the recent
             // list and a restore after Android ended the process can open the file again. Write access
             // too, when the picker granted it, so Save works on a file reopened from the recent list.
-            var granted = data.Flags & (ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantWriteUriPermission);
-            try
+            KeepGrant(uri, data);
+            // Shown in another window: that window comes forward, this one keeps its document.
+            if (SwitchToWindowShowing(uri)) return;
+            AfterDiscard(() =>
             {
-                ContentResolver?.TakePersistableUriPermission(uri, granted | ActivityFlags.GrantReadUriPermission);
-            }
-            catch (Java.Lang.SecurityException)
-            {
-                try
-                {
-                    ContentResolver?.TakePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
-                }
-                catch (Java.Lang.SecurityException)
-                {
-                    // Not persistable: the file opens now, but is not kept in the recent list.
-                }
-            }
-            _ = OpenUriAsync(uri, null);
+                RememberPosition();
+                _ = OpenUriAsync(uri, null);
+            });
         }
     }
 
@@ -630,6 +630,8 @@ public sealed partial class MainActivity : Activity
 
     private void ReleasePermission(string location)
     {
+        // Another window still reads and saves this file.
+        if (IsOpenInAnotherWindow(location)) return;
         try
         {
             if (Uri.Parse(location) is not { } uri) return;
@@ -651,6 +653,11 @@ public sealed partial class MainActivity : Activity
     /// </summary>
     private async Task OpenUriAsync(Uri uri, (PageAnchor TopLeft, double Zoom)? view, bool fromRecent = false, ViewerEditSnapshot? restore = null)
     {
+        // One window per document (MainActivity.Windows.cs): the window that shows it comes forward.
+        if (restore == null && SwitchToWindowShowing(uri)) return;
+        string location = uri.ToString()!;
+        // Kept edits of documents other windows show are theirs.
+        var shownElsewhere = ShownElsewhereKeys();
         byte[] bytes;
         ViewerFileStamp stamp;
         byte[]? original = null;
@@ -663,14 +670,14 @@ public sealed partial class MainActivity : Activity
             (bytes, stamp, kept, original) = await Task.Run(() =>
             {
                 var file = ReadAll(uri);
-                var found = restore ?? ReadKeptEditsNow();
+                var found = restore ?? FindKeptEditsNow(location, file, shownElsewhere);
                 return (file, Stamp(uri), found, found?.OriginalOf(file));
             });
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // The kept edits were for this file, which cannot be read any more (a revoked grant, a deleted file).
-            if (afterDeath) ForgetKeptEdits();
+            if (afterDeath) ForgetKeptEdits(location);
             bool gone = ex is Java.Lang.SecurityException or Java.IO.FileNotFoundException or FileNotFoundException;
             if (gone && _recent.Find(uri.ToString()!) != null)
             {
@@ -684,7 +691,7 @@ public sealed partial class MainActivity : Activity
         string? name = fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri);
         if (afterDeath && original == null)
         {
-            ForgetKeptEdits();
+            ForgetKeptEdits(location);
             Toast.MakeText(this, "The file changed while the app was closed, so your unsaved changes could not be restored.", ToastLength.Long)?.Show();
             await OpenBytesAsync(bytes, uri, name, password: null, view, stamp);
             return;
@@ -754,7 +761,7 @@ public sealed partial class MainActivity : Activity
         catch (ViewerOpenException ex)
         {
             // The message is written for users and never quotes the document. Kept edits for it cannot be given back.
-            if (restore != null) ForgetKeptEdits();
+            if (restore != null) ForgetKeptEdits(restore.Location);
             Toast.MakeText(this, ex.Message, ToastLength.Long)?.Show();
             return;
         }
@@ -821,6 +828,8 @@ public sealed partial class MainActivity : Activity
             _recent.Opened(uri.ToString()!, name ?? "Document", DateTimeOffset.Now);
         ReleaseUnlistedPermissions();
         ShowDocumentState();
+        // Recents and the Documents list show this window's document (MainActivity.Windows.cs).
+        DocumentShown();
         if (previous != null) await previous.DisposeAsync();
     }
 
@@ -832,7 +841,7 @@ public sealed partial class MainActivity : Activity
         foreach (var p in permissions.ToList())
         {
             string? location = p.Uri?.ToString();
-            if (location != null && _recent.Find(location) == null && p.Uri?.Equals(_uri) != true)
+            if (location != null && _recent.Find(location) == null && p.Uri?.Equals(_uri) != true && !IsOpenInAnotherWindow(location))
                 ReleasePermission(location);
         }
     }
@@ -1073,6 +1082,7 @@ public sealed partial class MainActivity : Activity
         _search?.Cancel();
         ShutDownVoice();
         if (IsFinishing) ForgetOurKeptEdits();
+        LeaveWindows();
         var doc = _doc;
         _doc = null;
         _pages.SetDocument(null);
