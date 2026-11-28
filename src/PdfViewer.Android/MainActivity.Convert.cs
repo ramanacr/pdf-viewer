@@ -132,7 +132,7 @@ public sealed partial class MainActivity
         var column = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         column.SetPadding((int)Dp(24), (int)Dp(8), (int)Dp(24), 0);
 
-        var format = Choices(column, "Format", 0, "PNG (sharp, larger)", "JPEG (smaller, for photos)");
+        var format = Choices(column, "Format", 0, "PNG (sharp, larger)", "JPEG (smaller, for photos)", "TIFF (lossless, for print)", "BMP");
         var qualityLabel = Label("JPEG quality");
         var quality = Choices(column: null, null, 1, "High (90)", "Medium (75)", "Low (60)");
         column.AddView(qualityLabel);
@@ -146,7 +146,7 @@ public sealed partial class MainActivity
         format.CheckedChange += (_, _) => ShowQuality();
         ShowQuality();
 
-        var resolution = Choices(column, "Resolution", 1, "72 dpi (screen)", "150 dpi (standard)", "300 dpi (print)");
+        var resolution = Choices(column, "Resolution", 1, "72 dpi (screen)", "150 dpi (standard)", "300 dpi (print)", "600 dpi (fine print)");
         var which = Choices(column, "Pages", 0, $"All {doc.PageCount} pages", $"This page ({current})", "Pages…");
         var range = new EditText(this) { Hint = "For example 1-3, 5", InputType = global::Android.Text.InputTypes.ClassText, Visibility = ViewStates.Gone };
         range.SetSingleLine(true);
@@ -187,18 +187,27 @@ public sealed partial class MainActivity
                 return;
             }
             pages = pages.Distinct().ToList();
-            bool jpeg = Index(format) == 1;
+            var kind = (PageImageFormat)Index(format);
             int q = Index(quality) switch { 0 => 90, 1 => 75, _ => 60 };
-            int dpi = Index(resolution) switch { 0 => 72, 1 => 150, _ => 300 };
+            int dpi = Index(resolution) switch { 0 => 72, 1 => 150, 2 => 300, _ => 600 };
             dialog.Dismiss();
-            WritePageImages(doc, pages, jpeg, q, dpi);
+            WritePageImages(doc, pages, kind, q, dpi);
         };
     }
 
     /// <summary>Renders and writes the chosen pages: one through the save dialog, several into a picked folder.</summary>
-    private void WritePageImages(ViewerDocument doc, IReadOnlyList<int> pages, bool jpeg, int quality, int dpi)
+    /// <summary>The picture formats of Export pages as images, as Windows offers them.</summary>
+    private enum PageImageFormat { Png, Jpeg, Tiff, Bmp }
+
+    private void WritePageImages(ViewerDocument doc, IReadOnlyList<int> pages, PageImageFormat kind, int quality, int dpi)
     {
-        string mime = jpeg ? "image/jpeg" : "image/png", extension = jpeg ? ".jpg" : ".png";
+        var (mime, extension, formatName) = kind switch
+        {
+            PageImageFormat.Jpeg => ("image/jpeg", ".jpg", "JPEG"),
+            PageImageFormat.Tiff => ("image/tiff", ".tif", "TIFF"),
+            PageImageFormat.Bmp => ("image/bmp", ".bmp", "BMP"),
+            _ => ("image/png", ".png", "PNG"),
+        };
         string baseName = BaseName;
         int digits = Math.Max(4, doc.PageCount.ToString(System.Globalization.CultureInfo.InvariantCulture).Length);
         string NameOf(int page) => $"{baseName}_page_{page.ToString("D" + digits, System.Globalization.CultureInfo.InvariantCulture)}{extension}";
@@ -209,7 +218,7 @@ public sealed partial class MainActivity
         {
             SaveNewFileWithProgress(mime, NameOf(pages[0]), "Drawing the page…", (ct, _) =>
             {
-                var (bytes, smaller) = PageImage(doc, pages[0], dpi, jpeg, quality, ct);
+                var (bytes, smaller) = PageImage(doc, pages[0], dpi, kind, quality, ct);
                 reduced = smaller;
                 return bytes;
             }, target => OfferViewOrShare(target, mime, "Image saved", $"Page {pages[0]} was saved at {dpi} dpi.{ReducedNote()}"));
@@ -225,7 +234,7 @@ public sealed partial class MainActivity
                 {
                     ct.ThrowIfCancellationRequested();
                     report($"Exporting page {pages[i]} ({i + 1} of {pages.Count})…");
-                    var (bytes, smaller) = PageImage(doc, pages[i], dpi, jpeg, quality, ct);
+                    var (bytes, smaller) = PageImage(doc, pages[i], dpi, kind, quality, ct);
                     reduced |= smaller;
                     ct.ThrowIfCancellationRequested();
                     var file = CreateInFolder(tree, NameOf(pages[i]), mime)
@@ -247,7 +256,7 @@ public sealed partial class MainActivity
             });
             if (ok)
                 new AlertDialog.Builder(this).SetTitle("Images saved")!
-                    .SetMessage($"{written} pages were saved as {(jpeg ? "JPEG" : "PNG")} pictures at {dpi} dpi in the folder you chose.{ReducedNote()}")!
+                    .SetMessage($"{written} pages were saved as {formatName} pictures at {dpi} dpi in the folder you chose.{ReducedNote()}")!
                     .SetPositiveButton("OK", (_, _) => { })!.Show();
             else if (written > 0)
                 Toast.MakeText(this, $"{written} picture(s) were saved before it stopped.", ToastLength.Long)?.Show();
@@ -258,11 +267,20 @@ public sealed partial class MainActivity
     /// One page drawn at <paramref name="dpi"/> and encoded (with Skia, in native memory). The page is
     /// drawn within the viewer's bitmap limit; <c>Smaller</c> says it had to be drawn at less.
     /// </summary>
-    private static (byte[] Bytes, bool Smaller) PageImage(ViewerDocument doc, int page, int dpi, bool jpeg, int quality, CancellationToken ct)
+    private static (byte[] Bytes, bool Smaller) PageImage(ViewerDocument doc, int page, int dpi, PageImageFormat kind, int quality, CancellationToken ct)
     {
         double scale = dpi / 72.0;
         var bitmap = doc.RenderPageAsync(page, scale, false, ct).GetAwaiter().GetResult();
         bool smaller = bitmap.Scale < scale * 0.99;
+        // Skia on Android writes no TIFF or BMP: the engine layer's encoders do, with the resolution the page was drawn at.
+        if (kind is PageImageFormat.Tiff or PageImageFormat.Bmp)
+        {
+            int drawnDpi = Math.Max(1, (int)Math.Round(bitmap.Scale * 72));
+            var pixels = bitmap.Pixels.AsSpan();
+            return (kind == PageImageFormat.Tiff ? ViewerImageEncoders.Tiff(pixels, bitmap.Width, bitmap.Height, drawnDpi)
+                : ViewerImageEncoders.Bmp(pixels, bitmap.Width, bitmap.Height, drawnDpi), smaller);
+        }
+        bool jpeg = kind == PageImageFormat.Jpeg;
         var info = new SKImageInfo(bitmap.Width, bitmap.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
         var segment = bitmap.Pixels;
         var handle = GCHandle.Alloc(segment.Array!, GCHandleType.Pinned);
