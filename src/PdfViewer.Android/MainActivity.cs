@@ -407,6 +407,7 @@ public sealed partial class MainActivity : Activity
         items.Add(0, 15, 7, "Tools…");
         items.Add(0, 16, 8, "Document properties")!.SetEnabled(open);
         items.Add(0, 5, 9, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
+        items.Add(0, 19, 10, "Close document")!.SetEnabled(open);
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
         {
             save.SetContentDescription("Save the changes into the opened file");
@@ -435,6 +436,7 @@ public sealed partial class MainActivity : Activity
                 case 15: ShowTools(); break;
                 case 16: ShowProperties(); break;
                 case 17: RotateView(90); break;
+                case 19: CloseDocument(); break;
                 case 18: RotateView(-90); break;
             }
         };
@@ -798,6 +800,7 @@ public sealed partial class MainActivity : Activity
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
         _linkBack.Clear();
+        _jumpForward.Clear();
         // Kept edits on storage are this document's only once restored; another document's stay until replaced.
         _keptOurs = false;
         _keptVersion = -1;
@@ -881,9 +884,13 @@ public sealed partial class MainActivity : Activity
     /// A jump the reader asked for (outline, page grid, go to page): the view it leaves is kept, so
     /// Back returns there, as links do. Ordinary scrolling is not kept, so Back never undoes reading.
     /// </summary>
-    private void JumpToPage(int page)
+    private void JumpToPage(int page, bool record = true)
     {
-        if (_pages.SavedView is { } view && page != _pages.CurrentPage) _linkBack.Push(view);
+        if (record && _pages.SavedView is { } view && page != _pages.CurrentPage)
+        {
+            _linkBack.Push(view);
+            _jumpForward.Clear();
+        }
         _pages.GoToPage(page);
     }
 
@@ -975,6 +982,8 @@ public sealed partial class MainActivity : Activity
     /// <summary>A hardware keyboard (or a Chromebook): + and − zoom by steps, 0 goes back to fit width.</summary>
     public override bool OnKeyDown([GeneratedEnum] Keycode keyCode, KeyEvent? e)
     {
+        // The Windows app's shortcuts (MainActivity.Keys.cs).
+        if (HandleShortcut(keyCode, e)) return true;
         if (_doc != null && _thumbnails.Visibility != ViewStates.Visible && !_searchText.HasFocus)
         {
             switch (keyCode)

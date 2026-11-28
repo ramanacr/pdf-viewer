@@ -40,7 +40,11 @@ public sealed partial class MainActivity
             default:
                 if (target.IsInternal && ViewerLinks.Destination(target, _pages.CurrentPage, doc.Geometry) is { } location)
                 {
-                    if (_pages.SavedView is { } view) _linkBack.Push(view);
+                    if (_pages.SavedView is { } view)
+                    {
+                        _linkBack.Push(view);
+                        _jumpForward.Clear();
+                    }
                     _pages.GoToLocation(location);
                     _pages.AnnounceForAccessibility(target.Kind == PdfLinkTargetKind.Page ? target.Description : $"Page {location.Page}");
                 }
@@ -56,6 +60,8 @@ public sealed partial class MainActivity
     private bool GoBackByLink()
     {
         if (_doc == null || !_linkBack.TryPop(out var view)) return false;
+        // Alt+Right comes back here (MainActivity.Keys.cs).
+        if (_pages.SavedView is { } here) _jumpForward.Push(here);
         _pages.RestoreView(view.TopLeft, view.Zoom);
         return true;
     }
