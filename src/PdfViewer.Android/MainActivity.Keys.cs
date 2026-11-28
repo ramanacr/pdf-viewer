@@ -58,6 +58,9 @@ public sealed partial class MainActivity
             case Keycode.D when ctrl && open:
                 ShowProperties();
                 return true;
+            case Keycode.E when ctrl && open:
+                EditTextAndImages();
+                return true;
             case Keycode.Num1 when ctrl && open:
                 _pages.ZoomTo(1);
                 return true;
