@@ -11,6 +11,6 @@ appId: io.github.ramanacr.pdfviewer
 - runFlow: { file: ../common/tool.yaml, env: { TOOL: "Preflight" } }
 - tapOn: "(?i)digital printing.*"
 - tapOn: "(?i)^check$"
-- extendedWaitUntil: { visible: "Preflight", timeout: 240000 }
-- assertVisible: "Save as JSON"
+# Preflight draws every page to check ink coverage: minutes on a software-rendered emulator.
+- extendedWaitUntil: { visible: "Save as JSON", timeout: 900000 }
 - tapOn: "(?i)close"
