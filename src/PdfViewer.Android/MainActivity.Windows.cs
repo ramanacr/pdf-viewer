@@ -392,7 +392,8 @@ public sealed partial class MainActivity
         intent.SetAction(Intent.ActionView);
         intent.SetDataAndType(uri, "application/pdf");
         if (fromRecent) intent.PutExtra(ExtraFromRecent, true);
-        var flags = ActivityFlags.NewDocument | ActivityFlags.MultipleTask;
+        // NEW_TASK too: without it some launchers and Android versions put the activity in this task.
+        var flags = ActivityFlags.NewTask | ActivityFlags.NewDocument | ActivityFlags.MultipleTask;
         if (CheckCallingOrSelfUriPermission(uri, ActivityFlags.GrantReadUriPermission) == Permission.Granted) flags |= ActivityFlags.GrantReadUriPermission;
         if (CheckCallingOrSelfUriPermission(uri, ActivityFlags.GrantWriteUriPermission) == Permission.Granted) flags |= ActivityFlags.GrantWriteUriPermission;
         // In split screen the new window takes the other half.
