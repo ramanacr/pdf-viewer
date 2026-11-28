@@ -540,6 +540,7 @@ public sealed partial class MainActivity
             new("Embedded files", "List the attachments and save one", ShowEmbeddedFiles),
             new("Compare with another PDF", "Text that was added, deleted or changed", CompareDocuments),
             new("Preflight", "Check fonts, images, colours and inks for printing", RunPreflight),
+            new("Output preview", "The page's printing plates, overprint and total ink", ShowOutputPreview),
         ]),
     ];
 

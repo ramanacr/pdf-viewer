@@ -46,33 +46,65 @@ public sealed partial class MainActivity
     // ------------------------------------------------------------------ PDF from pictures
 
     /// <summary>
-    /// PDF from pictures: pick pictures (several at once, and more after), put them in order, choose
-    /// the page size (A4 or Letter with the page turned to the picture, or the picture's own size),
-    /// then save. Each picture is a page.
+    /// PDF from pictures: pick pictures (several at once, and more after) or take photos with the
+    /// camera app (MainActivity.Camera.cs), put them in order, choose the page size (A4 or Letter with
+    /// the page turned to the picture, or the picture's own size), then save. Each picture is a page.
+    /// Photos taken are deleted once the PDF is made or the reader stops.
     /// </summary>
     private void CreateFromImages()
     {
-        PickFiles(["image/*"], true, uris =>
-            ArrangeFiles("PDF from pictures", ToPicked(uris), ["image/*"], "Next", files =>
+        new AlertDialog.Builder(this)
+            .SetTitle("PDF from pictures")!
+            .SetItems(["Choose pictures", "Take photos"], (_, e) =>
             {
-                string[] sizes = [LetterPaper ? "Letter" : "A4", LetterPaper ? "A4" : "Letter", "Same size as each picture"];
-                int selected = 0;
-                new AlertDialog.Builder(this)
-                    .SetTitle("Page size")!
-                    .SetSingleChoiceItems(sizes, selected, (_, e) => selected = e.Which)!
-                    .SetPositiveButton("Make PDF", (_, _) =>
+                if (e.Which == 0) PickFiles(["image/*"], true, uris => ArrangePictures(ToPicked(uris)));
+                else StartPhotos();
+            })!
+            .SetNegativeButton("Cancel", (_, _) => { })!
+            .Show();
+    }
+
+    /// <summary>Photos with the camera app, one after another, then the same ordering as picked pictures.</summary>
+    private void StartPhotos()
+    {
+        DeleteCameraPhotos(); // what an earlier run left (the app was closed meanwhile)
+        TakePhotos([], photos =>
+        {
+            if (photos.Count > 0) ArrangePictures(photos);
+            else DeleteCameraPhotos();
+        });
+    }
+
+    /// <summary>The pictures in order (more can be picked or taken), then the page size, then the PDF.</summary>
+    private void ArrangePictures(List<PickedFile> pictures)
+    {
+        ArrangeFiles("PDF from pictures", pictures, ["image/*"], "Next", files =>
+        {
+            string[] sizes = [LetterPaper ? "Letter" : "A4", LetterPaper ? "A4" : "Letter", "Same size as each picture"];
+            int selected = 0;
+            new AlertDialog.Builder(this)
+                .SetTitle("Page size")!
+                .SetSingleChoiceItems(sizes, selected, (_, e) => selected = e.Which)!
+                .SetPositiveButton("Make PDF", (_, _) =>
+                {
+                    var page = sizes[selected] switch
                     {
-                        var page = sizes[selected] switch
-                        {
-                            "A4" => Paper(PdfImagePageOptions.A4),
-                            "Letter" => Paper(PdfImagePageOptions.Letter),
-                            _ => new PdfImagePageOptions { Size = PdfImagePageSize.FitImage },
-                        };
-                        WritePicturesPdf(files, page);
-                    })!
-                    .SetNegativeButton("Cancel", (_, _) => { })!
-                    .Show();
-            }));
+                        "A4" => Paper(PdfImagePageOptions.A4),
+                        "Letter" => Paper(PdfImagePageOptions.Letter),
+                        _ => new PdfImagePageOptions { Size = PdfImagePageSize.FitImage },
+                    };
+                    WritePicturesPdf(files, page);
+                })!
+                .SetNegativeButton("Cancel", (_, _) => DeleteCameraPhotos())!
+                .SetOnCancelListener(new CancelListener(DeleteCameraPhotos))!
+                .Show();
+        }, camera: true, cancelled: DeleteCameraPhotos);
+    }
+
+    /// <summary>A dialog closed with Back or a tap outside it.</summary>
+    private sealed class CancelListener(Action cancelled) : Java.Lang.Object, IDialogInterfaceOnCancelListener
+    {
+        public void OnCancel(IDialogInterface? dialog) => cancelled();
     }
 
     /// <summary>A paper size with half-inch margins, turned to landscape for a landscape picture.</summary>
@@ -87,21 +119,46 @@ public sealed partial class MainActivity
     private void WritePicturesPdf(IReadOnlyList<PickedFile> files, PdfImagePageOptions page)
     {
         string name = files.Count == 1 ? System.IO.Path.GetFileNameWithoutExtension(files[0].Name) : "Pictures";
-        SaveNewFileWithProgress("application/pdf", name + ".pdf", "Making the PDF…", (ct, report) =>
+        var intent = new Intent(Intent.ActionCreateDocument);
+        intent.AddCategory(Intent.CategoryOpenable);
+        intent.SetType("application/pdf");
+        intent.PutExtra(Intent.ExtraTitle, SafeFileName(name + ".pdf"));
+        // As SaveNewFileWithProgress, and afterwards (saved, failed, cancelled) the photos taken are deleted.
+        StartForResult(intent, async (result, data) =>
         {
-            using var output = new MemoryStream();
-            using (var writer = new PdfDocumentWriter(output))
+            try
             {
-                for (int i = 0; i < files.Count; i++)
+                if (result != Result.Ok || data?.Data is not { } target) return;
+                bool ok = await RunProgressAsync("Making the PDF…", (ct, report) =>
                 {
+                    byte[] bytes = MakePicturesPdf(files, page, name, ct, report);
                     ct.ThrowIfCancellationRequested();
-                    report($"Adding picture {i + 1} of {files.Count}…");
-                    writer.AddImagePage(ReadPicture(files[i]), page);
-                }
-                writer.Finish(CreateInfo(name));
-                return output.ToArray();
+                    report("Writing the file…");
+                    WriteUri(target, bytes);
+                    return true;
+                }, onFailure: () => DeleteTarget(target));
+                if (ok) OfferOpen(target, files.Count == 1 ? "The PDF was made." : $"The PDF was made, with {files.Count} pages.");
             }
-        }, target => OfferOpen(target, files.Count == 1 ? "The PDF was made." : $"The PDF was made, with {files.Count} pages."));
+            finally
+            {
+                DeleteCameraPhotos();
+            }
+        });
+    }
+
+    /// <summary>The PDF of the pictures, a page each (on a worker thread).</summary>
+    private byte[] MakePicturesPdf(IReadOnlyList<PickedFile> files, PdfImagePageOptions page, string name, CancellationToken ct, Action<string> report)
+    {
+        using var output = new MemoryStream();
+        using var writer = new PdfDocumentWriter(output);
+        for (int i = 0; i < files.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            report($"Adding picture {i + 1} of {files.Count}…");
+            writer.AddImagePage(ReadPicture(files[i]), page);
+        }
+        writer.Finish(CreateInfo(name));
+        return output.ToArray();
     }
 
     private static PdfCreateInfo CreateInfo(string? title) => new() { Title = title, Creator = "PDF Viewer (Android)", Producer = "PDF Viewer Native" };
@@ -262,10 +319,12 @@ public sealed partial class MainActivity
     }).ToList();
 
     /// <summary>
-    /// The files picked, in order, in a dialog: move one up or down, remove one, add more, then
-    /// <paramref name="next"/> with the list. Buttons are 48 dp, each with what it does for TalkBack.
+    /// The files picked, in order, in a dialog: move one up or down, remove one, add more (with
+    /// <paramref name="camera"/>, also by taking photos), then <paramref name="next"/> with the list.
+    /// <paramref name="cancelled"/> runs when the reader gives up. Buttons are 48 dp, each with what it does for TalkBack.
     /// </summary>
-    private void ArrangeFiles(string title, List<PickedFile> files, string[] mimeTypes, string nextText, Action<IReadOnlyList<PickedFile>> next)
+    private void ArrangeFiles(string title, List<PickedFile> files, string[] mimeTypes, string nextText, Action<IReadOnlyList<PickedFile>> next,
+        bool camera = false, Action? cancelled = null)
     {
         var list = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         list.SetPadding((int)Dp(16), (int)Dp(8), (int)Dp(8), (int)Dp(8));
@@ -323,17 +382,38 @@ public sealed partial class MainActivity
             .SetView(scroll)!
             .SetPositiveButton(nextText, (_, _) => next(files.ToList()))!
             .SetNeutralButton("Add more…", (_, _) => { })!
-            .SetNegativeButton("Cancel", (_, _) => { })!
+            .SetNegativeButton("Cancel", (_, _) => cancelled?.Invoke())!
             .Create()!;
+        if (cancelled != null) dialog.SetOnCancelListener(new CancelListener(cancelled));
         dialog.Show();
         if (dialog.GetButton((int)DialogButtonType.Positive) is { } next0) next0.Enabled = files.Count > 0;
-        // Set after Show, so the dialog stays open while more files are picked.
+        void PickMore() => PickFiles(mimeTypes, true, more =>
+        {
+            files.AddRange(ToPicked(more));
+            Fill();
+        });
+        // Set after Show, so the dialog stays open while more files are picked or photos taken.
         dialog.GetButton((int)DialogButtonType.Neutral)!.Click += (_, _) =>
-            PickFiles(mimeTypes, true, more =>
+        {
+            if (!camera)
             {
-                files.AddRange(ToPicked(more));
-                Fill();
-            });
+                PickMore();
+                return;
+            }
+            new AlertDialog.Builder(this)
+                .SetTitle("Add more")!
+                .SetItems(["Choose pictures", "Take photos"], (_, e) =>
+                {
+                    if (e.Which == 0) PickMore();
+                    else TakePhotos([], photos =>
+                    {
+                        files.AddRange(photos);
+                        Fill();
+                    });
+                })!
+                .SetNegativeButton("Cancel", (_, _) => { })!
+                .Show();
+        };
     }
 
     // ------------------------------------------------------------------ pictures

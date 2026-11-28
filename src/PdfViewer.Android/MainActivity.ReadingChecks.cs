@@ -224,7 +224,10 @@ public sealed partial class MainActivity
 
     // ------------------------------------------------------------------ preflight
 
-    /// <summary>Preflight: choose a built-in profile, then the engine checks fonts, images, colours, inks and page boxes; the report can be saved as text.</summary>
+    /// <summary>
+    /// Preflight: choose a built-in profile, then the engine checks fonts, images, colours, inks and page boxes;
+    /// total ink is measured on the page's plates drawn by <see cref="SkiaDisplayListRasterizer"/>. The report can be saved as text.
+    /// </summary>
     private void RunPreflight()
     {
         if (!NeedDocument()) return;
@@ -276,16 +279,15 @@ public sealed partial class MainActivity
         var report = await RunBusyAsync($"Checking for {profile.Name}…", token =>
         {
             using var engine = OpenForTool(bytes);
-            // No plate rasterizer on Android: total ink is measured per painted colour.
-            return PdfPreflight.RunAsync(engine, profile, new PdfPreflightOptions(), token).GetAwaiter().GetResult();
+            // Total ink is measured on rendered plates (overprint simulated), as on Windows.
+            using var rasterizer = new SkiaDisplayListRasterizer();
+            return PdfPreflight.RunAsync(engine, profile, new PdfPreflightOptions { Rasterizer = rasterizer }, token).GetAwaiter().GetResult();
         });
         if (report == null || !ReferenceEquals(doc, _doc)) return;
         var sb = new StringBuilder();
         sb.AppendLine(report.Passed
             ? $"{profile.Name}: no errors{(report.Warnings > 0 ? $", {report.Warnings} warning(s)" : "")} on {report.PagesChecked} page(s)."
             : $"{profile.Name}: {report.Errors} error(s), {report.Warnings} warning(s) on {report.PagesChecked} page(s).");
-        if (profile.InkLimitPercent != null)
-            sb.AppendLine("Total ink is measured per painted colour on this device: images and objects printed over each other are not added up.");
         sb.AppendLine();
         sb.Append(report.ToText());
         ShowReport("Preflight", sb.ToString().TrimEnd(), BaseName + "_preflight");
