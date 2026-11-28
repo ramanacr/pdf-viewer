@@ -6,7 +6,9 @@ using Android.Content;
 using Android.Text;
 using Android.Widget;
 using PdfEngine.Geometry;
+using Android.Views;
 using PdfEngine.Vector.Document;
+using PdfEngine.Vector.Editing;
 using PdfEngine.Vector.Signatures;
 using PdfViewer.Web.Engine;
 using Uri = Android.Net.Uri;
@@ -131,7 +133,42 @@ public sealed partial class MainActivity
         page.ContentDescription = "Page the signature shows on";
         column.AddView(DialogNote("On page:"));
         column.AddView(page);
-        placement.CheckedChange += (_, e) => page.Enabled = e.CheckedId != 1000 + places.Length - 1;
+        // A picture beside the details (a drawn or scanned handwritten signature, a seal), as on Windows.
+        PdfImageContent? picture = null;
+        var pictureNote = DialogNote("Picture: none (the signature shows its details only).");
+        var pictureRow = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Horizontal };
+        Button PictureButton(string text, string description, Action run)
+        {
+            var b = new Button(this) { Text = text, ContentDescription = description };
+            b.SetAllCaps(false);
+            b.SetMinHeight((int)Dp(48));
+            b.Click += (_, _) => run();
+            pictureRow.AddView(b);
+            return b;
+        }
+        Button? removePicture = null;
+        void SetPicture(PdfImageContent? chosen, string what)
+        {
+            picture = chosen;
+            pictureNote.Text = chosen == null ? "Picture: none (the signature shows its details only)." : $"Picture: {what}, shown left of the details.";
+            if (removePicture != null) removePicture.Enabled = chosen != null;
+        }
+        PictureButton("Draw…", "Draw your signature with your finger", () => DrawSignature(drawn => SetPicture(drawn, "drawn here")));
+        PictureButton("Picture…", "Use a picture of your signature or a seal", () => PickFiles(["image/*"], false, async uris =>
+        {
+            var chosen = await RunBusyAsync("Reading the picture…", _ => ReadContentPicture(uris[0]));
+            if (chosen != null) SetPicture(chosen, "from the device");
+        }));
+        removePicture = PictureButton("Remove", "Use no picture", () => SetPicture(null, ""));
+        removePicture.Enabled = false;
+        column.AddView(pictureNote);
+        column.AddView(pictureRow);
+        placement.CheckedChange += (_, e) =>
+        {
+            bool shown = e.CheckedId != 1000 + places.Length - 1;
+            page.Enabled = shown;
+            pictureNote.Visibility = pictureRow.Visibility = shown ? ViewStates.Visible : ViewStates.Gone;
+        };
         column.AddView(DialogNote("No timestamp is added: this app has no internet access, so the time is this device's clock."));
         column.AddView(DialogNote("The signed copy is a new file. Keep it unchanged: any later change shows when its signature is checked."));
 
@@ -168,6 +205,9 @@ public sealed partial class MainActivity
                 Location = (location.Text ?? "").Trim() is { Length: > 0 } l ? l : null,
                 PageNumber = pageNumber,
                 SigningTime = DateTimeOffset.Now,
+                Appearance = visible && picture != null
+                    ? new PdfSignatureAppearance { Layout = PdfSignatureLayout.ImageAndText, Image = picture, Fonts = PdfEngine.Vector.Fonts.SystemFontCatalog.Installed }
+                    : null,
             };
             byte[] bytes = CurrentBytes()!;
             // The certificate goes with the signature (if the save dialog is cancelled, the collector takes it).
@@ -186,6 +226,28 @@ public sealed partial class MainActivity
                     }
                 });
         };
+    }
+
+    /// <summary>The signature pad: sign with a finger, then Use (or Clear, or Cancel).</summary>
+    private void DrawSignature(Action<PdfImageContent> drawn)
+    {
+        var pad = new SignaturePadView(this);
+        var frame = new FrameLayout(this);
+        frame.SetPadding((int)Dp(16), (int)Dp(8), (int)Dp(16), 0);
+        frame.AddView(pad, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, (int)Dp(200)));
+        var dialog = new AlertDialog.Builder(this)
+            .SetTitle("Sign here")!
+            .SetView(frame)!
+            .SetPositiveButton("Use", (_, _) => { if (pad.ToPicture() is { } picture) drawn(picture); })!
+            .SetNeutralButton("Clear", (_, _) => { })!
+            .SetNegativeButton("Cancel", (_, _) => { })!
+            .Create()!;
+        dialog.Show();
+        var use = dialog.GetButton((int)DialogButtonType.Positive)!;
+        use.Enabled = false;
+        pad.Changed += () => use.Enabled = pad.HasInk;
+        // Clear keeps the pad open.
+        dialog.GetButton((int)DialogButtonType.Neutral)!.Click += (_, _) => pad.Clear();
     }
 
     /// <summary>Signs; when the signature outgrows the space reserved for it (a long chain), reserves more and signs again.</summary>

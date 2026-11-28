@@ -5,6 +5,8 @@ using Android.Views;
 using Android.Widget;
 using PdfEngine.Vector.Accessibility;
 using PdfEngine.Vector.PrintProduction;
+using PdfViewer.Web.Engine;
+using PdfViewer.Web.Engine.Annotations;
 
 namespace PdfViewer.Android;
 
@@ -31,7 +33,44 @@ public sealed partial class MainActivity
             return PdfUaValidator.Validate(engine, bytes);
         });
         if (report == null || !ReferenceEquals(doc, _doc)) return;
-        ShowReport("Accessibility check", AccessibilityReportText(report), BaseName + "_accessibility");
+        var located = report.Issues.Where(i => i.Page is >= 1 && i.Page <= doc.PageCount).ToList();
+        ShowReport("Accessibility check", AccessibilityReportText(report), BaseName + "_accessibility",
+            located.Count == 0 ? null : ($"Show the {located.Count} issue(s) on their pages", () => ShowIssuesOnPages(doc, located)));
+    }
+
+    /// <summary>
+    /// The issues that are on a page, listed by page; a tap goes to the page and marks where the
+    /// issue is (its element's bounds, as the desktop's check shows them), until Back.
+    /// </summary>
+    private void ShowIssuesOnPages(ViewerDocument doc, List<PdfUaIssue> issues)
+    {
+        if (!ReferenceEquals(doc, _doc)) return;
+        var ordered = issues.OrderBy(i => i.Page).ThenBy(i => i.Checkpoint, StringComparer.Ordinal).ToList();
+        var rows = ordered.Select(i => $"Page {i.Page} · {i.Checkpoint}: {i.Message}" + (i.Bounds == null ? " (no place on the page)" : "")).ToArray();
+        new AlertDialog.Builder(this)
+            .SetTitle("Accessibility issues by page")!
+            .SetItems(rows, (_, e) =>
+            {
+                if (!ReferenceEquals(doc, _doc)) return;
+                var issue = ordered[e.Which];
+                int page = issue.Page!.Value;
+                JumpToPage(page);
+                if (issue.Bounds is not { } b) return;
+                var shown = doc.Geometry[page - 1].ToShown(new ViewerBox(b.X, b.Y, b.X + b.Width, b.Y + b.Height));
+                _pages.SetSearchHits([new ViewerSearchHit(page, 0, [shown], "", "", "")], 0);
+                // Back takes the mark away (it is not a search, so the search bar does not hold it).
+                Func<bool>? clear = null;
+                clear = () =>
+                {
+                    _backHandlers.Remove(clear!);
+                    if (_searchBar.Visibility != ViewStates.Visible) _pages.SetSearchHits([], -1);
+                    return true;
+                };
+                _backHandlers.Add(clear);
+                Toast.MakeText(this, "The issue's place is marked. Back takes the mark away.", ToastLength.Short)?.Show();
+            })!
+            .SetNegativeButton("Close", (_, _) => { })!
+            .Show();
     }
 
     internal static string AccessibilityReportText(PdfUaReport report)
@@ -290,6 +329,9 @@ public sealed partial class MainActivity
             : $"{profile.Name}: {report.Errors} error(s), {report.Warnings} warning(s) on {report.PagesChecked} page(s).");
         sb.AppendLine();
         sb.Append(report.ToText());
-        ShowReport("Preflight", sb.ToString().TrimEnd(), BaseName + "_preflight");
+        string json = report.ToJson();
+        ShowReport("Preflight", sb.ToString().TrimEnd(), BaseName + "_preflight",
+            ("Save as JSON", () => SaveNewFile("application/json", BaseName + "_preflight.json", "Saving…", _ => Encoding.UTF8.GetBytes(json),
+                _ => Toast.MakeText(this, "Report saved.", ToastLength.Short)?.Show())));
     }
 }

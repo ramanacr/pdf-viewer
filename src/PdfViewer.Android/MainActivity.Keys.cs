@@ -98,6 +98,44 @@ public sealed partial class MainActivity
             case Keycode.ForwardDel when open && !typing && _pages.PickedAnnotation != null && CanAnnotate:
                 DeletePicked();
                 return true;
+            // The chosen annotation, as on Windows: arrows nudge it 1 point (Shift: 10), Enter opens its
+            // comment, Esc lets go of it; Tab and Shift+Tab choose the next and previous annotation.
+            case Keycode.DpadLeft or Keycode.DpadRight or Keycode.DpadUp or Keycode.DpadDown
+                when open && !typing && !alt && CanAnnotate && _pages.PickedAnnotation is { } nudged:
+            {
+                double step = shift ? 10 : 1;
+                double dx = key == Keycode.DpadLeft ? -step : key == Keycode.DpadRight ? step : 0;
+                double dy = key == Keycode.DpadUp ? -step : key == Keycode.DpadDown ? step : 0;
+                // The arrows go the way the screen shows; the view may be turned.
+                var (px, py) = _pages.ViewRotation switch
+                {
+                    90 => (dy, -dx),
+                    180 => (-dx, -dy),
+                    270 => (-dy, dx),
+                    _ => (dx, dy),
+                };
+                Change(sess => sess.Move(nudged, px, py));
+                return true;
+            }
+            case Keycode.Tab when open && !typing && _session is { } tabbing:
+            {
+                var list = tabbing.Store.Current.Where(x => x.Kind != Web.Engine.Annotations.ViewerAnnotationKind.Reply && !x.IsStatus)
+                    .Select((x, i) => (Annotation: x, Index: i)).OrderBy(x => x.Annotation.Page).ThenBy(x => x.Index).Select(x => x.Annotation).ToList();
+                if (list.Count == 0) return false;
+                int at = list.FindIndex(x => x.Id == _pages.PickedAnnotation);
+                int next = at < 0 ? (shift ? list.Count - 1 : 0) : (at + (shift ? -1 : 1) + list.Count) % list.Count;
+                var chosen = list[next];
+                if (CanAnnotate && _annotateBar.Visibility != ViewStates.Visible) ShowAnnotateBar(true);
+                Pick(chosen.Id);
+                _pages.GoToAnnotation(chosen);
+                return true;
+            }
+            case Keycode.Enter or Keycode.NumpadEnter when open && !typing && _pages.PickedAnnotation is { } opened:
+                ShowThread(opened);
+                return true;
+            case Keycode.Escape when _pages.PickedAnnotation != null && _annotateBar.Visibility == ViewStates.Visible:
+                Pick(null);
+                return true;
             case Keycode.Escape:
                 // Esc does what Back does inside the app (selection, search, a tool, full screen), but never leaves it.
                 return HandleBack(inAppOnly: true);

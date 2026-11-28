@@ -439,14 +439,33 @@ public sealed partial class MainActivity
     /// A long text (a check's report) in a scrolling dialog, with Copy and, when <paramref name="exportName"/>
     /// is given, Save as a text file.
     /// </summary>
-    private void ShowReport(string title, string text, string? exportName = null)
+    private void ShowReport(string title, string text, string? exportName = null, (string Label, Action Run)? extra = null)
     {
         var body = new TextView(this) { Text = text };
         body.SetTextIsSelectable(true);
         body.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 14);
         body.SetPadding((int)Dp(24), (int)Dp(12), (int)Dp(24), (int)Dp(12));
         var scroll = new ScrollView(this);
-        scroll.AddView(body);
+        AlertDialog? shown = null;
+        if (extra is { } more)
+        {
+            // A report's own action (show on the page, save as JSON) above its text.
+            var column = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
+            var action = new Button(this) { Text = more.Label };
+            action.SetAllCaps(false);
+            action.Click += (_, _) =>
+            {
+                shown?.Dismiss();
+                more.Run();
+            };
+            column.AddView(action, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, ViewGroup.LayoutParams.WrapContent) { LeftMargin = (int)Dp(20), TopMargin = (int)Dp(8) });
+            column.AddView(body);
+            scroll.AddView(column);
+        }
+        else
+        {
+            scroll.AddView(body);
+        }
         var builder = new AlertDialog.Builder(this)
             .SetTitle(title)!
             .SetView(scroll)!
@@ -460,7 +479,7 @@ public sealed partial class MainActivity
             builder.SetNegativeButton("Save as text", (_, _) =>
                 SaveNewFile("text/plain", exportName + ".txt", "Saving…", _ => System.Text.Encoding.UTF8.GetBytes(text),
                     _ => Toast.MakeText(this, "Report saved.", ToastLength.Short)?.Show()));
-        builder.Show();
+        shown = builder.Show();
     }
 
     /// <summary>A dialog with one line of text input; <paramref name="done"/> gets the text when the reader confirms.</summary>
