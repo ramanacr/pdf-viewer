@@ -10,10 +10,10 @@ appId: io.github.ramanacr.pdfviewer
 - tapOn: "(?i)^ok$"
 - tapOn: "Rectangle"
 - swipe: { start: "30%, 60%", end: "60%, 70%", duration: 800 }
-# Undo and Redo are at the end of the annotate bar: scroll it first.
+# Undo and Redo are at the end of the annotate bar: scroll until Redo, the last of them, shows.
 - repeat:
     times: 6
-    while: { notVisible: "↶" }
+    while: { notVisible: "↷" }
     commands:
       - swipe: { start: "90%, 15%", end: "10%, 15%", duration: 1500 }
 - tapOn: "↶"
