@@ -1,0 +1,8 @@
+# doc: sample
+# expect-file: *.txt
+# expect-grep: Keyboard shortcuts
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Export text" } }
+- runFlow: ../common/save.yaml

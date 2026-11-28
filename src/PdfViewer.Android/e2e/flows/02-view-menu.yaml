@@ -1,0 +1,32 @@
+# doc: sample
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- tapOn: "⋮"
+- tapOn: "View"
+- tapOn: "Outline"
+- extendedWaitUntil: { visible: "Outline", timeout: 30000 }
+- pressKey: back
+- tapOn: "⋮"
+- tapOn: "View"
+- tapOn: "Read mode"
+- extendedWaitUntil: { visible: "A\\+", timeout: 60000 }
+- tapOn: "A\\+"
+- pressKey: back
+- tapOn: "⋮"
+- tapOn: "View"
+- tapOn: "Page layout…"
+- tapOn: "Single page.*"
+- extendedWaitUntil: { visible: "1 / 7", timeout: 30000 }
+- swipe: { start: "85%, 50%", end: "15%, 50%" }
+- extendedWaitUntil: { visible: "2 / 7", timeout: 30000 }
+- tapOn: "⋮"
+- tapOn: "View"
+- tapOn: "Page layout…"
+- tapOn: "Continuous.*"
+- tapOn: "⋮"
+- tapOn: "View"
+- tapOn: "Rotate view right"
+- tapOn: "⋮"
+- tapOn: "View"
+- tapOn: "Rotate view left"

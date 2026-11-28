@@ -1,0 +1,6 @@
+# Android's save dialog: SAVE, then the app's "Saved" message (left with "Stay here" or OK).
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "(?i)save", timeout: 60000 }
+- tapOn: "(?i)^save$"
+- extendedWaitUntil: { visible: "(?i)saved|.*saved.*", timeout: 240000 }

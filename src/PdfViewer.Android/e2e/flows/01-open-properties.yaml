@@ -1,0 +1,9 @@
+# doc: sample
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- tapOn: "⋮"
+- tapOn: "Document properties"
+- extendedWaitUntil: { visible: ".*PDF version.*", timeout: 30000 }
+- assertVisible: ".*Pages: 7.*"
+- tapOn: "(?i)close"

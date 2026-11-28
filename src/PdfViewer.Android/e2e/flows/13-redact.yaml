@@ -1,0 +1,11 @@
+# doc: sample
+# expect-file: *(redacted).pdf
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Redact" } }
+- tapOn: "Area"
+- swipe: { start: "30%, 40%", end: "70%, 45%", duration: 800 }
+- tapOn: "Apply"
+- tapOn: "(?i)save redacted copy"
+- runFlow: ../common/save.yaml

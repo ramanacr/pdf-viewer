@@ -1,0 +1,9 @@
+# doc: scan
+# expect-file: *(searchable).pdf
+# expect-grep: /ToUnicode
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 1", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Make scanned pages searchable" } }
+- runFlow: ../common/save.yaml
+- assertVisible: ".*word\\(s\\) were recognized.*"
