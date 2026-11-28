@@ -16,7 +16,10 @@ namespace PdfViewer.Android;
 /// more) or an area (three or more), placed with taps as a polygon is, the result shown live while
 /// the finger aims. The scale is the page's own where a viewport (/VP with /Measure) covers the
 /// first point, otherwise the reader's ("1 in = 10 ft"), kept in app-private preferences
-/// (<c>measure-scale</c>; the document is not named). The results are the engine's
+/// (<c>measure-scale</c>; the document is not named). Points snap to the ends, middles and lines of
+/// the page's drawing within 12 dp, with a marker where they snap (<see cref="ViewerMeasureSnap"/>,
+/// the desktop's snapping); "Snap to drawing" in the Measure list turns it off, as Shift does on the
+/// desktop, and the choice is kept with the scale. The results are the engine's
 /// (<see cref="PdfMeasure"/>, <see cref="PdfMeasurements.Label"/>). Add to page writes a measurement
 /// annotation through the shared session (<see cref="ViewerEditSession.AddMeasurement"/>), one undo step.
 /// </summary>
@@ -67,7 +70,7 @@ public sealed partial class MainActivity
             SetTool(PageView.PageTool.Measure);
             return;
         }
-        string[] items = ["Distance", "Perimeter", "Area", $"Scale: {UserScaleText()}…"];
+        string[] items = ["Distance", "Perimeter", "Area", $"Scale: {UserScaleText()}…", $"Snap to drawing: {(SnapToDrawing ? "On" : "Off")}"];
         new AlertDialog.Builder(this)
             .SetTitle("Measure")!
             .SetItems(items, (_, e) =>
@@ -77,9 +80,17 @@ public sealed partial class MainActivity
                     AskScale(ChooseMeasure);
                     return;
                 }
+                if (e.Which == 4)
+                {
+                    SetSnapToDrawing(!SnapToDrawing);
+                    ChooseMeasure();
+                    return;
+                }
                 _measureKind = e.Which switch { 0 => PdfMeasurementKind.Distance, 1 => PdfMeasurementKind.Perimeter, _ => PdfMeasurementKind.Area };
                 LoadViewports();
                 SetTool(PageView.PageTool.Measure);
+                // The drawing of the page in view is read now, so that the first point can snap.
+                if (SnapToDrawing) SnapIndex(_pages.CurrentPage);
             })!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
@@ -181,6 +192,75 @@ public sealed partial class MainActivity
             })!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
+    }
+
+    // ------------------------------------------------------------------ snapping to the drawing
+
+    private const string SnapKey = "snap-to-drawing";
+
+    /// <summary>
+    /// Measuring points snap to the ends, middles and lines of the page's drawing (the desktop's
+    /// default, where Shift places a point freely); on unless turned off, kept with the scale.
+    /// </summary>
+    private bool SnapToDrawing => MeasureStore?.GetBoolean(SnapKey, true) ?? true;
+
+    private void SetSnapToDrawing(bool on)
+    {
+        MeasureStore?.Edit()?.PutBoolean(SnapKey, on)?.Apply();
+        ConnectMeasureSnap();
+        Toast.MakeText(this, on ? "Points snap to the page's drawing." : "Points go exactly where you tap.", ToastLength.Short)?.Show();
+    }
+
+    /// <summary>Gives the pages the snapping (or none when it is off).</summary>
+    private void ConnectMeasureSnap() => _pages.MeasureSnap = SnapToDrawing ? SnapMeasurePoint : null;
+
+    // The pages' drawings as snap indexes (a few pages kept), read on a worker thread, per document.
+    private ViewerDocument? _snapsFor;
+    private readonly Dictionary<int, PdfSnapIndex?> _snaps = new();
+    private readonly HashSet<int> _snapsLoading = new();
+
+    /// <summary>
+    /// Where a measuring point snaps on <paramref name="page"/> (<see cref="ViewerMeasureSnap"/>);
+    /// the point as it is while the page's drawing is still being read, or when it cannot be.
+    /// </summary>
+    private (ViewerPoint Point, PdfSnapKind Kind) SnapMeasurePoint(int page, ViewerPoint point, double tolerance) =>
+        SnapIndex(page) is { } index && _doc is { } doc
+            ? ViewerMeasureSnap.Find(index, doc.Geometry[page - 1], point, tolerance)
+            : (point, PdfSnapKind.None);
+
+    /// <summary>The page's snap index when it has been read; otherwise null, and it is read (once) on a worker thread.</summary>
+    private PdfSnapIndex? SnapIndex(int page)
+    {
+        if (_doc is not { IsComplete: true } doc || page < 1 || page > doc.PageCount) return null;
+        if (!ReferenceEquals(_snapsFor, doc))
+        {
+            _snapsFor = doc;
+            _snaps.Clear();
+            _snapsLoading.Clear();
+        }
+        if (_snaps.TryGetValue(page, out var index)) return index;
+        if (!_snapsLoading.Add(page)) return null;
+        byte[] bytes = doc.Bytes;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var engine = OpenForTool(bytes);
+                return await ViewerMeasureSnap.BuildAsync(engine, page);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return null; // a page that cannot be read is measured without snapping
+            }
+        }).ContinueWith(t => RunOnUiThread(() =>
+        {
+            if (!ReferenceEquals(_snapsFor, doc)) return;
+            _snapsLoading.Remove(page);
+            // A few pages' drawings are kept: a large map's index holds many segments.
+            if (_snaps.Count >= 6) _snaps.Clear();
+            _snaps[page] = t.IsCompletedSuccessfully ? t.Result : null;
+        }), TaskScheduler.Default);
+        return null;
     }
 
     // ------------------------------------------------------------------ the page's scale
