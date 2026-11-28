@@ -25,6 +25,12 @@ python3 "$HERE/make_scan.py" "$OUT/scan.pdf" || exit 1
 push() { "$ADB" push "$1" "$FIX/$2" >/dev/null && "$ADB" shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://$FIX/$2" >/dev/null; }
 push "$ROOT/samples/SampleDocument.pdf" SampleDocument.pdf
 push "$OUT/scan.pdf" scan.pdf
+# Form data to import (flow 20): fills the sample's "name" field.
+cat > "$OUT/form.xfdf" <<'XF'
+<?xml version="1.0" encoding="UTF-8"?>
+<xfdf xmlns="http://ns.adobe.com/xfdf/" xml:space="preserve"><f href="SampleDocument.pdf"/><fields><field name="name"><value>E2E Tester</value></field></fields></xfdf>
+XF
+"$ADB" push "$OUT/form.xfdf" "$FIX/form.xfdf" >/dev/null
 sleep 3
 media_id() { "$ADB" shell content query --uri content://media/external/file --projection _id --where "\"_data LIKE '%/pdfviewer-e2e/$1'\"" | sed -n 's/.*_id=\([0-9]*\).*/\1/p' | head -1 | tr -d '\r'; }
 ID_sample=$(media_id SampleDocument.pdf); ID_scan=$(media_id scan.pdf)

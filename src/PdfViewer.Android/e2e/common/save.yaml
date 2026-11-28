@@ -8,4 +8,10 @@ appId: io.github.ramanacr.pdfviewer
 - tapOn: "Downloads"
 - extendedWaitUntil: { visible: "(?i)^save$", timeout: 60000 }
 - tapOn: "(?i)^save$"
+# A tap while the folder is still loading can be lost: tap again while the dialog is still there.
+- repeat:
+    while: { visible: "(?i)^save$" }
+    times: 6
+    commands:
+      - tapOn: "(?i)^save$"
 - extendedWaitUntil: { visible: "(?i).*(saved|exported|written).*", timeout: 240000 }

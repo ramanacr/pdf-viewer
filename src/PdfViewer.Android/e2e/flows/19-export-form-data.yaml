@@ -1,0 +1,10 @@
+# doc: sample
+# expect-file: *.xfdf
+# expect-grep: <xfdf
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Export form data" } }
+- extendedWaitUntil: { visible: "Export form data as", timeout: 60000 }
+- tapOn: "XFDF.*"
+- runFlow: ../common/save.yaml
