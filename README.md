@@ -91,9 +91,9 @@ shortcuts are in [docs/features.md](docs/features.md).
   every annotation tool with shape styles, handles and measurements; editing page text and
   pictures; organizing, merging and splitting pages, headers, footers and watermarks; password
   protection, signing, signature checks and redaction; export to Word, Excel, PowerPoint, text and
-  images; PDF/A, preflight and output preview; PDFs from pictures or the camera; print. It asks for
-  no permission. Not on Android: OCR and signature timestamps (they would need a recognition
-  engine or the network). See [its README](src/PdfViewer.Android/README.md).
+  images; OCR of scanned pages on the device (Tesseract); PDF/A, preflight and output preview;
+  PDFs from pictures or the camera; print. It asks for no permission. Not on Android: signature
+  timestamps, which need the network. See [its README](src/PdfViewer.Android/README.md).
 
 All three use the same engine. See [Architecture](docs/architecture.md).
 

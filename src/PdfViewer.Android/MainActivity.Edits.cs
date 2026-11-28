@@ -880,6 +880,8 @@ public sealed partial class MainActivity
     /// </summary>
     private void AfterDiscard(Action then)
     {
+        // Tool screens belong to the open document: they close first (the edit screen asks about its own edits).
+        if (ToolScreensHold(() => AfterDiscard(then))) return;
         if (_savingBack)
         {
             Toast.MakeText(this, "Saving…", ToastLength.Short)?.Show();

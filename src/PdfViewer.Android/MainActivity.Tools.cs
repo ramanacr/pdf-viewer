@@ -111,6 +111,38 @@ public sealed partial class MainActivity
         return false;
     }
 
+    /// <summary>
+    /// Before the open document is closed or replaced: the tool screens, which belong to it, close.
+    /// The edit screen with unsaved edits asks first (Discard goes on with <paramref name="then"/>,
+    /// Keep editing stops); true when it asked, and <paramref name="then"/> runs later or not at all.
+    /// </summary>
+    private bool ToolScreensHold(Action then)
+    {
+        if (_contentEditor is { Unsaved: true } editor && ReferenceEquals(editor.Doc, _doc))
+        {
+            new AlertDialog.Builder(this)
+                .SetTitle("Leave without saving?")!
+                .SetMessage("Your edits to the text and images are not saved. Keep editing and use Save to write them to a new PDF, or discard them.")!
+                .SetPositiveButton("Keep editing", (_, _) => { })!
+                .SetNegativeButton("Discard", (_, _) =>
+                {
+                    CloseContentEditorNow(editor);
+                    then();
+                })!
+                .Show();
+            return true;
+        }
+        CloseAllToolScreens();
+        return false;
+    }
+
+    /// <summary>Closes the tool screens without asking (their document goes): the edit screen releases its engine documents.</summary>
+    private void CloseAllToolScreens()
+    {
+        if (_contentEditor is { } editor) CloseContentEditorNow(editor);
+        for (int guard = 0; _toolOverlay != null && guard < 8; guard++) CloseToolOverlay();
+    }
+
     /// <summary>A bar at the top of a tool screen: Back, a title, and the tool's own buttons.</summary>
     private LinearLayout ToolScreenBar(string title, out TextView titleView, params TextView[] actions)
     {

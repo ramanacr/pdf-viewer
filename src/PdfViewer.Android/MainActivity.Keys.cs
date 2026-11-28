@@ -100,7 +100,7 @@ public sealed partial class MainActivity
                 return true;
             case Keycode.Escape:
                 // Esc does what Back does inside the app (selection, search, a tool, full screen), but never leaves it.
-                return HandleBack();
+                return HandleBack(inAppOnly: true);
         }
         return false;
     }

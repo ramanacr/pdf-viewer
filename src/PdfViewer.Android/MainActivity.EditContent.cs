@@ -114,6 +114,8 @@ public sealed partial class MainActivity
     private void EditTextAndImages()
     {
         if (!NeedDocument()) return;
+        // Already open (Ctrl+E or the Tools sheet again): the screen and its unsaved edits stay as they are.
+        if (_contentEditor != null) return;
         var doc = _doc!;
         if (doc.CertificationLevel is 1 or 2)
         {

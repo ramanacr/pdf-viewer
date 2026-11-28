@@ -213,10 +213,12 @@ internal sealed class PageView : SkiaView
         }
         else
         {
-            var info = _doc.Pages[page - 1];
-            double u = info.Width > 0 && location.X is { } x ? Math.Clamp(x / info.Width, 0, 1) : _layout.AnchorAt(0, 0).U;
-            double v = info.Height > 0 ? Math.Clamp((location.Y ?? 0) / info.Height, 0, 1) : 0;
-            _layout.Restore(new PageAnchor(page, location.X == null ? 0 : u, v), _layout.Zoom);
+            // The anchor is a fraction of the page as laid out (turned by the view's rotation): the point is turned first.
+            var (vx, vy) = _layout.ToViewPoint(page, new ViewerPoint(location.X ?? 0, location.Y ?? 0));
+            var r = _layout.PageRectInView(page);
+            double u = r.Width > 0 ? Math.Clamp((vx - r.X) / r.Width, 0, 1) : 0;
+            double v = r.Height > 0 ? Math.Clamp((vy - r.Y) / r.Height, 0, 1) : 0;
+            _layout.Restore(new PageAnchor(page, u, v), _layout.Zoom);
         }
         ReportPage();
         Invalidate();
@@ -1222,6 +1224,8 @@ internal sealed class PageView : SkiaView
             var before = l.PageRectInView(target);
             if (l.Turn(step, vertical))
             {
+                // A selection is on the page that went.
+                ClearSelection();
                 // The new page starts where it was, beside the old one, and slides into place.
                 var after = l.PageRectInView(target);
                 l.SetSlide(vertical ? 0 : before.X - after.X, vertical ? before.Y - after.Y : 0);

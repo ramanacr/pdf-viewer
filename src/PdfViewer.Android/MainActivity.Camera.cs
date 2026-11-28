@@ -91,10 +91,16 @@ public sealed partial class MainActivity
     /// <summary>Deletes the photos taken for a PDF (made, or given up); they stay in the app's cache only while needed.</summary>
     private void DeleteCameraPhotos()
     {
+        // The folder is shared by the app's windows: only this window's photos go, and others' only
+        // when they are old enough to be left over from an app that was closed (a window takes photos for minutes, not hours).
+        string mine = $"photo-{_cameraRun}-";
+        long staleBefore = Java.Lang.JavaSystem.CurrentTimeMillis() - 6L * 60 * 60 * 1000;
         try
         {
             if (new Java.IO.File(CacheDir, CameraPhotoProvider.Folder).ListFiles() is { } files)
-                foreach (var file in files) file.Delete();
+                foreach (var file in files)
+                    if (file.Name.StartsWith(mine, StringComparison.Ordinal) || file.LastModified() < staleBefore)
+                        file.Delete();
         }
         catch (Java.Lang.Exception)
         {

@@ -795,6 +795,8 @@ public sealed partial class MainActivity : Activity
         if (session?.Problem is { } problem) Toast.MakeText(this, problem, ToastLength.Short)?.Show();
 
         var previous = _doc;
+        // Tool screens of the document that was open go with it (a restore or an incoming document can come without AfterDiscard).
+        CloseAllToolScreens();
         // Read aloud reads the document that was open (MainActivity.ReadingAloud.cs).
         StopReadingAloud(null);
         _search?.Cancel();
@@ -1055,7 +1057,7 @@ public sealed partial class MainActivity : Activity
     }
 
     /// <summary>What Back does in the app; false when it leaves the app.</summary>
-    private bool HandleBack()
+    private bool HandleBack(bool inAppOnly = false)
     {
         // The overlays of the tools (read mode, page organizer, redaction) close first.
         if (CloseToolOverlay()) return true;
@@ -1086,6 +1088,7 @@ public sealed partial class MainActivity : Activity
         }
         // Back to where a link was followed from, before leaving the document.
         if (GoBackByLink()) return true;
+        if (inAppOnly) return false;
         if (_session?.IsDirty == true)
         {
             AfterDiscard(Finish);

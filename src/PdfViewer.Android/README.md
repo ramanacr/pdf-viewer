@@ -106,6 +106,7 @@ emulator or a phone yet. It has not been run on a physical phone yet.
 | Embedded files | Attachments of the document and of its pages, with size and page. Tap one to save it through the save dialog; it is never opened. Program and script files get a warning. |
 | Form data | **Tools → Import form data** (XFDF or FDF) puts the values into matching fields as unsaved edits and reports how many were filled, unchanged, unknown, read-only or refused (never naming fields). **Export form data** writes XFDF or FDF with the current values. **Reset form** (after asking) puts every field that is not read-only back to its default value. |
 | Flatten | **Tools → Flatten** saves a copy with form fields and comments, form fields only, or comments only drawn into the pages. |
+| Make scanned pages searchable | **Tools → Make scanned pages searchable**, as the desktop's OCR: the pages without text are drawn at 300 dpi and read on the device by Tesseract (English, `tessdata_fast` 4.1.0; Tesseract4Android 4.8.0, bound from its AAR), word by word, words read with little confidence left out. The words are added over the pages as invisible text (`PdfTextLayerWriter`, the desktop's), so search, selection, copy and read aloud work while the pages look as they did; pages that already have text are left alone. The result is a new PDF. Offline, no permission; the model ships in the app (about 4 MB, its SHA-256 checked at build time) and is copied to `files/tessdata` the first time. Refused when the permissions do not allow changes. |
 | Export to Word, Excel, PowerPoint | **Tools → Export to Word / Excel / PowerPoint**: the engine's `DocxExporter`, `XlsxExporter` and `PptxExporter` (the desktop app's), from the document with its edits, on a worker thread, with "page n of N" and Cancel. The file goes through the save dialog; then **Open** or **Share**. A document that does not allow copying is not exported, as on Windows. |
 | Export text | Each page's text in reading order under a "--- Page n ---" line (the desktop format), as a UTF-8 `.txt` file. A document with no text is probably scanned, and the app says so. |
 | Export pages as images | PNG, JPEG (quality 90, 75 or 60), TIFF (Deflate-compressed RGB) or BMP, as on Windows, at 72, 150, 300 or 600 dpi, all pages, this page or a list such as `1-3, 5`. Each page is drawn with its edits within 9 megapixels (a larger page at less, and the app says so). One page goes through the save dialog; several into a folder you pick, as "*name*_page_0001.png" and so on. |
@@ -119,8 +120,7 @@ emulator or a phone yet. It has not been run on a physical phone yet.
 
 What the Windows app has and this app does not, and why:
 
-- **OCR (searchable scans).** Windows has an OCR engine built in; Android has none without Google Play services or a downloaded model, and this app has no internet permission.
-- **Signature timestamps and long-term validation (PAdES-B-LT, B-LTA).** They need a timestamp server and revocation data from the network. Signatures are made without a timestamp and checked offline.
+- **Signature timestamps and long-term validation (PAdES-B-LT, B-LTA).** They need a timestamp server and revocation data from the network, and this app keeps asking for no permission, internet included. Signatures are made without a timestamp and checked offline.
 - **Office files** as a source for Create PDF (there is no Microsoft Office on a phone). A scanner's place is taken by the camera (**Take photos**).
 
 ## Architecture
