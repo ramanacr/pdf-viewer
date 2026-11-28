@@ -8,8 +8,10 @@ using SkiaSharp;
 namespace PdfViewer.Android;
 
 /// <summary>
-/// The pages of one document in a vertical column: scrolling and flinging, pinch and double-tap
-/// zoom, search highlights and text selection. Pages are rendered by the engine's Skia backend on
+/// The pages of one document in a vertical column, two side by side (facing) or one at a time
+/// (<see cref="SetLayout"/>): scrolling and flinging, pinch and double-tap zoom, search highlights
+/// and text selection. One page at a time turns with a swipe: the page follows the finger past its
+/// edge with its neighbour coming in, and settles on the next or previous page (<see cref="SlidePages"/>). Pages are rendered by the engine's Skia backend on
 /// a worker thread, one job at a time, nearest the current page first. Each page has one bitmap of
 /// at most <see cref="BaseMaxPixels"/> pixels; at a deeper zoom the view's part of the page is
 /// drawn over it in tiles at the zoom's own scale (<see cref="PageTiles"/>), so 8× stays sharp.
@@ -60,6 +62,11 @@ internal sealed class PageView : SkiaView
     private readonly GestureDetector _gestures;
     private readonly ScaleGestureDetector _pinch;
     private readonly OverScroller _scroller;
+    // Single page mode: settles a page slid aside, back or onto its neighbour; how fast a fling turns a page.
+    private readonly OverScroller _slider;
+    private readonly int _minTurnVelocity;
+    private PageLayoutMode _mode;
+    private bool _coverAlone;
     private readonly int _touchSlop;
     private readonly SKPaint _paper = new() { Color = SKColors.White };
     private readonly SKPaint _edge = new() { Color = new SKColor(0, 0, 0, 40), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
@@ -114,6 +121,9 @@ internal sealed class PageView : SkiaView
     public PageView(Context context) : base(context)
     {
         _scroller = new OverScroller(context);
+        _slider = new OverScroller(context);
+        // A deliberate flick, not the end of a slow drag: a few times the system's least fling.
+        _minTurnVelocity = 4 * (ViewConfiguration.Get(context)?.ScaledMinimumFlingVelocity ?? 50);
         _gestures = new GestureDetector(context, new Gestures(this));
         _gestures.IsLongpressEnabled = true;
         _pinch = new ScaleGestureDetector(context, new Pinch(this));
@@ -329,6 +339,7 @@ internal sealed class PageView : SkiaView
     public void SetDocument(ViewerDocument? document)
     {
         _scroller.ForceFinished(true);
+        _slider.ForceFinished(true);
         _images.Clear();
         _tiles.Clear();
         _tileScale = 0;
@@ -353,11 +364,52 @@ internal sealed class PageView : SkiaView
         ClearSelection();
         _doc = document;
         _layout = document == null ? null : new ContinuousPageLayout(document.Pages, gap: 12 * Density, margin: 8 * Density);
+        _layout?.SetMode(_mode, _coverAlone);
         if (Width > 0) _layout?.Resize(Width, Height);
         _lastReportedPage = 0;
         ReportPage();
         Invalidate();
         RequestRender();
+    }
+
+    /// <summary>How the pages are arranged (continuous, single page or facing); the next documents keep it.</summary>
+    public PageLayoutMode LayoutMode => _mode;
+
+    /// <summary>Facing mode: page 1 alone (a book's cover), then spreads.</summary>
+    public bool CoverAlone => _coverAlone;
+
+    /// <summary>
+    /// Arranges the pages as <paramref name="mode"/> (<paramref name="coverAlone"/> in facing mode),
+    /// for this document and the next ones; the page in view stays in view, at zoom 1.
+    /// </summary>
+    public void SetLayout(PageLayoutMode mode, bool coverAlone)
+    {
+        coverAlone &= mode == PageLayoutMode.Facing;
+        if (mode == _mode && coverAlone == _coverAlone) return;
+        _mode = mode;
+        _coverAlone = coverAlone;
+        if (_layout == null) return;
+        StopMotion();
+        if (Width <= 0)
+        {
+            // Before the view has its size, a saved place still applies: its page, at zoom 1.
+            if (_pendingView is { } view) _pendingView = (view.TopLeft, 1);
+            _layout.SetMode(mode, coverAlone);
+            return;
+        }
+        _layout.SetMode(mode, coverAlone);
+        ReportPage();
+        Invalidate();
+        RequestRender();
+    }
+
+    /// <summary>Ends a fling or a page settling (the layout ends a slide when it moves the view).</summary>
+    private void StopMotion()
+    {
+        _scroller.ForceFinished(true);
+        _slider.ForceFinished(true);
+        _flinging = false;
+        _settling = false;
     }
 
     /// <summary>The view to save: the page point at the top-left corner and the zoom.</summary>
@@ -373,7 +425,7 @@ internal sealed class PageView : SkiaView
             _pendingView = (topLeft, zoom); // applied once the view has its size
             return;
         }
-        _scroller.ForceFinished(true);
+        StopMotion();
         _layout.Restore(topLeft, zoom);
         ReportPage();
         Invalidate();
@@ -390,8 +442,7 @@ internal sealed class PageView : SkiaView
         set
         {
             if (_layout == null || Width <= 0 || value == _layout.Rotation) return;
-            _scroller.ForceFinished(true);
-            _flinging = false;
+            StopMotion();
             _layout.SetRotation(value);
             // Tiles are cut from the upright page and stay valid; the view moved, so the ones it needs are asked for.
             ReportPage();
@@ -442,7 +493,7 @@ internal sealed class PageView : SkiaView
     public void GoToPage(int page)
     {
         if (_layout == null) return;
-        _scroller.ForceFinished(true);
+        StopMotion();
         _layout.GoTo(page);
         ReportPage();
         Invalidate();
@@ -1071,6 +1122,9 @@ internal sealed class PageView : SkiaView
         if (drags && (Session != null || NeedsNoSession(_tool)) && !_pinch.IsInProgress && e.PointerCount == 1 && DrawInk(e)) return true;
         if (drags && e.ActionMasked is MotionEventActions.PointerDown) DrawInk(e);
         if (!_pinch.IsInProgress && !drags) _gestures.OnTouchEvent(e);
+        // A page slid aside and let go without a fling (which settles it itself) settles by how far it went.
+        if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel && IsSlid && !_settling)
+            SettleSlide(0, 0);
         if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel && !_flinging)
             RequestRender();
         return true;
@@ -1080,6 +1134,21 @@ internal sealed class PageView : SkiaView
     {
         base.ComputeScroll();
         if (_layout == null) return;
+        if (_settling)
+        {
+            if (_slider.ComputeScrollOffset() && !_slider.IsFinished)
+            {
+                _layout.SetSlide(_slider.CurrX, _slider.CurrY);
+                PostInvalidateOnAnimation();
+            }
+            else
+            {
+                _settling = false;
+                _layout.SetSlide(0, 0);
+                RequestRender();
+            }
+            Invalidate();
+        }
         if (_scroller.ComputeScrollOffset())
         {
             _layout.ScrollTo(_scroller.CurrX, _scroller.CurrY);
@@ -1096,14 +1165,95 @@ internal sealed class PageView : SkiaView
 
     private void ScrollPages(float dx, float dy)
     {
-        _layout!.ScrollBy(dx, dy);
+        if (_layout!.Mode == PageLayoutMode.SinglePage) SlidePages(dx, dy);
+        else _layout.ScrollBy(dx, dy);
         ReportPage();
         Invalidate();
     }
 
+    private bool IsSlid => _layout is { } l && (l.SlideX != 0 || l.SlideY != 0);
+
+    // A page is settling (sliding back, or onto its neighbour) under _slider.
+    private bool _settling;
+
+    /// <summary>
+    /// Single page mode: a drag scrolls the page (zoomed in) and, where the page can scroll no further,
+    /// slides it aside so that its neighbour comes in, along the drag's longer axis. A swipe sideways
+    /// turns pages as in a book or a photo gallery, which is what people expect of one page at a time
+    /// on a phone; a swipe up or down past the page's end turns them too, for people used to scrolling.
+    /// A page slid aside follows the finger back before it scrolls again.
+    /// </summary>
+    private void SlidePages(double dx, double dy)
+    {
+        var l = _layout!;
+        double sx = l.SlideX, sy = l.SlideY;
+        (dx, sx) = Unslide(dx, sx);
+        (dy, sy) = Unslide(dy, sy);
+        double x0 = l.ScrollX, y0 = l.ScrollY;
+        l.ScrollBy(dx, dy);
+        double restX = dx - (l.ScrollX - x0), restY = dy - (l.ScrollY - y0);
+        if (sx != 0 || (sy == 0 && Math.Abs(restX) >= Math.Abs(restY))) sx -= restX;
+        else sy -= restY;
+        l.SetSlide(sx, sy);
+
+        // A finger move of d (as GestureDetector gives it: the content moves by -d) first takes the slide back towards 0.
+        static (double Left, double Slide) Unslide(double d, double slide)
+        {
+            if (slide == 0 || d == 0) return (d, slide);
+            double moved = slide - d;
+            return Math.Sign(moved) == Math.Sign(slide) ? (0, moved) : (-moved, 0);
+        }
+    }
+
+    /// <summary>
+    /// Single page mode: a page slid aside goes on to its neighbour after a fling that way, or when let
+    /// go more than a quarter of the view out; otherwise (or after a fling back) it goes back.
+    /// </summary>
+    private void SettleSlide(float vx, float vy)
+    {
+        var l = _layout!;
+        bool vertical = l.SlideY != 0;
+        double slide = vertical ? l.SlideY : l.SlideX, v = vertical ? vy : vx, size = vertical ? Height : Width;
+        bool turn = Math.Abs(v) >= _minTurnVelocity ? Math.Sign(v) == Math.Sign(slide) : Math.Abs(slide) > size / 4;
+        if (turn)
+        {
+            // Moved right or down: the previous page comes in.
+            int step = slide > 0 ? -1 : 1, target = l.CurrentPage + step;
+            var before = l.PageRectInView(target);
+            if (l.Turn(step, vertical))
+            {
+                // The new page starts where it was, beside the old one, and slides into place.
+                var after = l.PageRectInView(target);
+                l.SetSlide(vertical ? 0 : before.X - after.X, vertical ? before.Y - after.Y : 0);
+                ReportPage();
+            }
+        }
+        int fromX = (int)Math.Round(l.SlideX), fromY = (int)Math.Round(l.SlideY);
+        _slider.ForceFinished(true);
+        l.SetSlide(fromX, fromY);
+        Invalidate();
+        if (fromX == 0 && fromY == 0)
+        {
+            _settling = false;
+            RequestRender();
+            return;
+        }
+        _settling = true;
+        _slider.StartScroll(fromX, fromY, -fromX, -fromY, SettleMillis);
+        PostInvalidateOnAnimation();
+    }
+
+    /// <summary>How long (ms) a page takes to settle after a swipe.</summary>
+    private const int SettleMillis = 250;
+
     private void Fling(float vx, float vy)
     {
         var l = _layout!;
+        if (IsSlid)
+        {
+            SettleSlide(vx, vy);
+            return;
+        }
         _scroller.ForceFinished(true);
         _scroller.Fling((int)l.ScrollX, (int)l.ScrollY, (int)-vx, (int)-vy, 0, (int)l.MaxScrollX, 0, (int)l.MaxScrollY);
         _flinging = true;
@@ -1538,6 +1688,12 @@ internal sealed class PageView : SkiaView
                 view._scroller.ForceFinished(true);
                 view._flinging = false;
             }
+            // A finger on a page that is settling holds it where it is; the drag goes on from there.
+            if (view._settling)
+            {
+                view._slider.ForceFinished(true);
+                view._settling = false;
+            }
             return true;
         }
 
@@ -1564,7 +1720,7 @@ internal sealed class PageView : SkiaView
         /// <summary>Long press: select the word under the finger.</summary>
         public override void OnLongPress(MotionEvent e) => _ = view.SelectAtAsync(e.GetX(), e.GetY());
 
-        /// <summary>Double tap: zoom in to 2.5× at the finger, or back to fit width.</summary>
+        /// <summary>Double tap: zoom in to 2.5× at the finger, or back to zoom 1 (fit width; fit page one page at a time).</summary>
         public override bool OnDoubleTap(MotionEvent e)
         {
             var l = view._layout!;
@@ -1578,6 +1734,10 @@ internal sealed class PageView : SkiaView
     {
         public override bool OnScaleBegin(ScaleGestureDetector detector)
         {
+            // A pinch zooms the page in place: a page slid aside goes back at once.
+            view._slider.ForceFinished(true);
+            view._settling = false;
+            view._layout?.SetSlide(0, 0);
             view._pinching = true;
             return true;
         }

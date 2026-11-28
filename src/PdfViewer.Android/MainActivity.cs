@@ -46,7 +46,7 @@ public sealed partial class MainActivity : Activity
     };
 
     // Saved-state keys: the document's location and the view, never its text or a password.
-    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night", StateRotation = "view.rotation";
+    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night", StateRotation = "view.rotation", StateLayout = "view.layout";
 
     private PageView _pages = null!;
     private ThumbnailView _thumbnails = null!;
@@ -71,6 +71,9 @@ public sealed partial class MainActivity : Activity
         RegisterBackCallback();
         ApplyTheme();
         ShowDocumentState();
+        // The page layout kept in the preferences (MainActivity.PageLayout.cs); a saved state's own wins.
+        ApplyStoredPageLayout();
+        ApplyPageLayout(savedInstanceState?.GetString(StateLayout));
 
         // After Android ended the process: the document saved in the state, at the saved place.
         if (savedInstanceState?.GetString(StateUri) is { } saved && Uri.Parse(saved) is { } savedUri)
@@ -114,6 +117,7 @@ public sealed partial class MainActivity : Activity
     protected override void OnSaveInstanceState(Bundle outState)
     {
         base.OnSaveInstanceState(outState);
+        outState.PutString(StateLayout, PageLayoutValue);
         // During a save into the file, a new instance must not read it half-written: no document is kept.
         if (_uri == null || _doc == null || _savingBack) return;
         KeepEdits();
@@ -387,6 +391,8 @@ public sealed partial class MainActivity : Activity
         var view = items.AddSubMenu(0, 20, 5, "View")!;
         view.Add(0, 1, 1, "Outline")!.SetEnabled(open);
         view.Add(0, 2, 2, "Pages")!.SetEnabled(open);
+        // Kept for the next documents too, so it can be chosen with no document open.
+        var layout = view.Add(0, 19, 2, "Page layout…")!;
         view.Add(0, 12, 3, "Read mode")!.SetEnabled(open);
         var night = view.Add(0, 4, 4, "Night pages")!;
         night.SetCheckable(true);
@@ -413,6 +419,7 @@ public sealed partial class MainActivity : Activity
             copy.SetContentDescription("Save the document with the changes as a new file");
             export.SetContentDescription("Export the annotations and replies as an XFDF file");
             import.SetContentDescription("Add the annotations of an XFDF file to this document");
+            layout.SetContentDescription("Page layout: continuous, single page, or two pages side by side");
         }
         menu.MenuItemClick += (_, e) =>
         {
@@ -436,6 +443,7 @@ public sealed partial class MainActivity : Activity
                 case 16: ShowProperties(); break;
                 case 17: RotateView(90); break;
                 case 18: RotateView(-90); break;
+                case 19: AskPageLayout(); break;
             }
         };
         menu.Show();
