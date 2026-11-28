@@ -28,7 +28,7 @@ A filter runs some flows only: `run.sh ocr`. A Debug build for this must embed i
 (`-p:EmbedAssembliesIntoApk=true`), since Fast Deployment needs Visual Studio or `dotnet run`.
 
 The test documents are `samples/SampleDocument.pdf` and the generated scan; they are pushed to
-`/sdcard/Download` and opened through the media store, as another app's "Open with" would. Waits are
+`/sdcard/Documents/pdfviewer-e2e` (out of reach of the `expect-file` clean-up in `/sdcard/Download`) and opened through the media store, as another app's "Open with" would. Waits are
 long (minutes for Output preview and OCR) so the flows also pass on an emulator without hardware
 acceleration.
 

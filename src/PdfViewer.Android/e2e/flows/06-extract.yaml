@@ -1,5 +1,5 @@
 # doc: sample
-# expect-file: *.pdf
+# expect-file: * page*.pdf
 appId: io.github.ramanacr.pdfviewer
 ---
 - extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }

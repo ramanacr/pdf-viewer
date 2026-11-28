@@ -17,13 +17,16 @@ FILTER="${1:-}"
 "$ADB" get-state >/dev/null 2>&1 || { echo "no device"; exit 1; }
 "$ADB" shell settings put global hide_error_dialogs 1 >/dev/null 2>&1
 
-# Fixtures: the repository's sample, and an image-only scan made here (for OCR).
+# Fixtures: the repository's sample, and an image-only scan made here (for OCR). They live outside
+# /sdcard/Download, where the tools save and expect-file globs delete, so no glob can remove them.
+FIX=/sdcard/Documents/pdfviewer-e2e
+"$ADB" shell mkdir -p "$FIX"
 python3 "$HERE/make_scan.py" "$OUT/scan.pdf" || exit 1
-push() { "$ADB" push "$1" "/sdcard/Download/$2" >/dev/null && "$ADB" shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file:///sdcard/Download/$2" >/dev/null; }
+push() { "$ADB" push "$1" "$FIX/$2" >/dev/null && "$ADB" shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://$FIX/$2" >/dev/null; }
 push "$ROOT/samples/SampleDocument.pdf" SampleDocument.pdf
 push "$OUT/scan.pdf" scan.pdf
 sleep 3
-media_id() { "$ADB" shell content query --uri content://media/external/file --projection _id --where "\"_data LIKE '%/Download/$1'\"" | sed -n 's/.*_id=\([0-9]*\).*/\1/p' | head -1 | tr -d '\r'; }
+media_id() { "$ADB" shell content query --uri content://media/external/file --projection _id --where "\"_data LIKE '%/pdfviewer-e2e/$1'\"" | sed -n 's/.*_id=\([0-9]*\).*/\1/p' | head -1 | tr -d '\r'; }
 ID_sample=$(media_id SampleDocument.pdf); ID_scan=$(media_id scan.pdf)
 [ -n "$ID_sample" ] && [ -n "$ID_scan" ] || { echo "fixtures not in the media store"; exit 1; }
 
