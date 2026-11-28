@@ -10,6 +10,7 @@ using PdfEngine.Vector.Diagnostics;
 using PdfEngine.Vector.Document;
 using PdfEngine.Vector.Parsing;
 using PdfEngine.Vector.Services;
+using PdfViewer.Web.Engine;
 using SkiaSharp;
 using Uri = Android.Net.Uri;
 
@@ -24,7 +25,9 @@ namespace PdfViewer.Android;
 /// A JPEG is carried into the PDF as it is (no quality lost), less its metadata (EXIF with place
 /// and camera, XMP, comments), and turned upright by its EXIF orientation through the page's
 /// image matrix. PNG, GIF and BMP pictures are decoded and stored losslessly; other photos (WebP,
-/// HEIC where the device decodes it) are stored as JPEG at quality 90.
+/// HEIC where the device decodes it) are stored as JPEG at quality 90. A TIFF file, which neither
+/// Skia nor Android decodes, is read by the engine's <see cref="ViewerTiffReader"/>: each of its
+/// pages becomes a page (at its own resolution), as Windows' From images does.
 /// </para>
 /// </summary>
 public sealed partial class MainActivity
@@ -123,6 +126,7 @@ public sealed partial class MainActivity
         intent.AddCategory(Intent.CategoryOpenable);
         intent.SetType("application/pdf");
         intent.PutExtra(Intent.ExtraTitle, SafeFileName(name + ".pdf"));
+        var tally = new TiffTally();
         // As SaveNewFileWithProgress, and afterwards (saved, failed, cancelled) the photos taken are deleted.
         StartForResult(intent, async (result, data) =>
         {
@@ -131,13 +135,13 @@ public sealed partial class MainActivity
                 if (result != Result.Ok || data?.Data is not { } target) return;
                 bool ok = await RunProgressAsync("Making the PDF…", (ct, report) =>
                 {
-                    byte[] bytes = MakePicturesPdf(files, page, name, ct, report);
+                    byte[] bytes = MakePicturesPdf(files, page, name, tally, ct, report);
                     ct.ThrowIfCancellationRequested();
                     report("Writing the file…");
                     WriteUri(target, bytes);
                     return true;
                 }, onFailure: () => DeleteTarget(target));
-                if (ok) OfferOpen(target, files.Count == 1 ? "The PDF was made." : $"The PDF was made, with {files.Count} pages.");
+                if (ok) OfferOpen(target, (tally.AllPages == 1 ? "The PDF was made." : $"The PDF was made, with {tally.AllPages} pages.") + tally.Note());
             }
             finally
             {
@@ -147,15 +151,16 @@ public sealed partial class MainActivity
     }
 
     /// <summary>The PDF of the pictures, a page each (on a worker thread).</summary>
-    private byte[] MakePicturesPdf(IReadOnlyList<PickedFile> files, PdfImagePageOptions page, string name, CancellationToken ct, Action<string> report)
+    private byte[] MakePicturesPdf(IReadOnlyList<PickedFile> files, PdfImagePageOptions page, string name, TiffTally tally, CancellationToken ct, Action<string> report)
     {
         using var output = new MemoryStream();
         using var writer = new PdfDocumentWriter(output);
         for (int i = 0; i < files.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            report($"Adding picture {i + 1} of {files.Count}…");
-            writer.AddImagePage(ReadPicture(files[i]), page);
+            string adding = $"Adding picture {i + 1} of {files.Count}…";
+            report(adding);
+            tally.AllPages += AddPicturePages(writer, files[i], null, page, tally, ct, p => report($"{adding} (page {p})"));
         }
         writer.Finish(CreateInfo(name));
         return output.ToArray();
@@ -195,7 +200,7 @@ public sealed partial class MainActivity
 
     /// <summary>
     /// Combine files: PDFs and pictures, in the order the reader sets, into one PDF. Each picture is
-    /// a page (on A4 or Letter as the device's region suggests); each PDF brings all its pages, its
+    /// a page (a TIFF a page for each of its pages; on A4 or Letter as the device's region suggests); each PDF brings all its pages, its
     /// bookmarks and form fields. The result has a bookmark for each file, named after it, holding
     /// that file's own bookmarks. A protected PDF asks for its password; one whose permissions do
     /// not allow taking its pages out is refused (the result would not be encrypted).
@@ -258,6 +263,7 @@ public sealed partial class MainActivity
     {
         var page = Paper(LetterPaper ? PdfImagePageOptions.Letter : PdfImagePageOptions.A4);
         int pageCount = 0;
+        var tally = new TiffTally();
         SaveNewFileWithProgress("application/pdf", "Combined.pdf", "Combining…", (ct, report) =>
         {
             var docs = new List<PdfVectorDocument>();
@@ -273,7 +279,7 @@ public sealed partial class MainActivity
                         using var output = new MemoryStream();
                         using (var writer = new PdfDocumentWriter(output))
                         {
-                            writer.AddImagePage(ReadPicture(files[i], pdf), page);
+                            AddPicturePages(writer, files[i], pdf, page, tally, ct, p => report($"Reading file {i + 1} of {files.Count} (page {p})…"));
                             writer.Finish(CreateInfo(null));
                         }
                         pdf = output.ToArray();
@@ -305,7 +311,7 @@ public sealed partial class MainActivity
             {
                 foreach (var d in docs) d.Dispose();
             }
-        }, target => OfferOpen(target, $"{files.Count} files were combined into one PDF of {pageCount} page(s), with a bookmark for each file."));
+        }, target => OfferOpen(target, $"{files.Count} files were combined into one PDF of {pageCount} page(s), with a bookmark for each file." + tally.Note()));
     }
 
     // ------------------------------------------------------------------ choosing and ordering files
@@ -417,6 +423,80 @@ public sealed partial class MainActivity
     }
 
     // ------------------------------------------------------------------ pictures
+
+    /// <summary>What TIFF files gave while a PDF was made: their pages read and the pages left out, for the done message.</summary>
+    private sealed class TiffTally
+    {
+        /// <summary>Every page added, from any picture.</summary>
+        public int AllPages;
+
+        /// <summary>Pages read from TIFF files.</summary>
+        public int TiffPages;
+
+        /// <summary>Each page left out: the file's name, the page and why (never its content).</summary>
+        public readonly List<string> Refused = [];
+
+        /// <summary>A sentence or two for the done message; empty when no TIFF file was picked.</summary>
+        public string Note()
+        {
+            if (TiffPages == 0 && Refused.Count == 0) return "";
+            string note = TiffPages == 1 ? " 1 page came from a TIFF file." : $" {TiffPages} pages came from TIFF files.";
+            if (Refused.Count > 0)
+            {
+                note += Refused.Count == 1 ? " 1 TIFF page was left out: " : $" {Refused.Count} TIFF pages were left out: ";
+                note += string.Join(" ", Refused.Take(3)) + (Refused.Count > 3 ? $" (and {Refused.Count - 3} more)" : "");
+            }
+            return note;
+        }
+    }
+
+    /// <summary>
+    /// Adds a picture file to <paramref name="writer"/> as one page, or, for a TIFF, a page for each of
+    /// its pages that can be read (the others are noted in <paramref name="tally"/>); returns the pages
+    /// added. On a worker thread.
+    /// </summary>
+    private int AddPicturePages(PdfDocumentWriter writer, PickedFile file, byte[]? bytes, PdfImagePageOptions page, TiffTally tally,
+        CancellationToken ct, Action<int> reportPage)
+    {
+        bytes ??= ReadUri(file.Uri, MaxPictureFileBytes);
+        if (!ViewerTiffReader.IsTiff(bytes) && ContentResolver?.GetType(file.Uri) != "image/tiff")
+        {
+            writer.AddImagePage(ReadPicture(file, bytes), page);
+            return 1;
+        }
+        try
+        {
+            var tiff = ViewerTiffReader.Open(bytes);
+            int added = 0;
+            string? firstReason = null;
+            var refused = new List<string>();
+            for (int i = 0; i < tiff.PageCount; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (tiff.PageCount > 1) reportPage(i + 1);
+                try
+                {
+                    // The page keeps its resolution: "Same size as each picture" is its own size.
+                    writer.AddImagePage(tiff.ReadPage(i, ct).Image, page);
+                    added++;
+                }
+                catch (ViewerTiffException ex) when (!ex.WholeFile)
+                {
+                    firstReason ??= ex.Message;
+                    refused.Add($"\"{file.Name}\" page {i + 1}: {ex.Message}");
+                }
+            }
+            if (added == 0)
+                throw new UserMessageException(tiff.PageCount == 1 ? $"\"{file.Name}\": {firstReason}" : $"\"{file.Name}\": none of its {tiff.PageCount} pages can be read. {firstReason}");
+            tally.TiffPages += added;
+            tally.Refused.AddRange(refused);
+            return added;
+        }
+        catch (ViewerTiffException ex)
+        {
+            throw new UserMessageException($"\"{file.Name}\": {ex.Message}");
+        }
+    }
 
     /// <summary>Reads a picked picture file and makes it ready for a page (on a worker thread).</summary>
     private PdfCreateImage ReadPicture(PickedFile file, byte[]? bytes = null)
