@@ -137,6 +137,10 @@ public sealed partial class MainActivity
         StartEdits(null);
         _thumbnails.Release();
         if (_fullScreen) SetFullScreen(false);
+        // The window shows no document now (MainActivity.Windows.cs): Recents and Documents forget it.
+        Shown().Remove(TaskId);
+        SaveShown();
+        SetTaskLabel(null);
         ShowDocumentState();
         _ = doc.DisposeAsync().AsTask();
     });
