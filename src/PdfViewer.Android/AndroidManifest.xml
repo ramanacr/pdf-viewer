@@ -2,10 +2,18 @@
 <!--
   No permissions at all: no INTERNET (nothing is sent anywhere) and no storage permission (a file
   comes through the system document picker, which grants access to the one file the user picks).
-  Backups are off, so nothing about opened documents leaves the device. The launcher icon is the
+  Backups are off, so nothing about opened documents leaves the device. "Take photos" (PDF from
+  pictures) asks the device's camera app, which holds the camera permission, for each photo: the
+  query below only lets this app see whether there is a camera app, and the photo comes back through
+  the app's own unexported provider (CameraPhotoProvider), not through a permission. The launcher icon is the
   project's app icon (assets/app_icon.png), scaled per density by scripts/android_store_images.ps1.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <queries>
+    <intent>
+      <action android:name="android.media.action.IMAGE_CAPTURE" />
+    </intent>
+  </queries>
   <application
       android:label="PDF Viewer (preview)"
       android:icon="@mipmap/ic_launcher"
