@@ -93,6 +93,8 @@ public sealed partial class MainActivity
             grey[i] = (byte)((bgra[o] * 29 + bgra[o + 1] * 150 + bgra[o + 2] * 77) >> 8);
         tess.SetImage(grey, w, h, 1, w);
         var words = new List<PdfRecognizedWord>();
+        // Recognition runs when the text is first asked for; until then the result iterator is empty.
+        if (string.IsNullOrWhiteSpace(tess.UTF8Text)) return words;
         using var it = tess.ResultIterator;
         if (it == null) return words;
         const int level = TessBaseAPI.PageIteratorLevel.RilWord;
