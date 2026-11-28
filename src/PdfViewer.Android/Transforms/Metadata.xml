@@ -1,0 +1,11 @@
+<metadata>
+  <!--
+    The OCR binding (Tesseract4Android): only Tesseract's own API is used. Leptonica's Java
+    wrappers are left out of the C# binding (their native library still ships, as Tesseract needs
+    it); members that take or return Leptonica types are left out with them.
+  -->
+  <remove-node path="/api/package[@name='com.googlecode.leptonica.android']" />
+  <remove-node path="/api/package[@name='com.googlecode.tesseract.android']/class[@name='TessPdfRenderer']" />
+  <!-- The @IntDef annotation types (engine mode, iterator level, segmentation mode): their int constants are kept on their classes. -->
+  <remove-node path="/api/package[@name='com.googlecode.tesseract.android']//interface" />
+</metadata>

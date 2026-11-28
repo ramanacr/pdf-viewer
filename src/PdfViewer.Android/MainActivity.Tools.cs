@@ -511,6 +511,7 @@ public sealed partial class MainActivity
         ]),
         new("Convert and export",
         [
+            new("Make scanned pages searchable", "Recognize the text of scanned pages on this device (OCR), in a copy", MakeSearchable),
             new("Export to Word", "A .docx file with flowing text, tables and pictures", ExportWord),
             new("Export to Excel", "A .xlsx file with each table on a sheet", ExportExcel),
             new("Export to PowerPoint", "A .pptx file with a slide for each page", ExportPowerPoint),

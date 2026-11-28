@@ -67,6 +67,40 @@
     <ProjectReference Include="..\PdfViewer.Web.Engine\PdfViewer.Web.Engine.csproj" />
   </ItemGroup>
 
+  <!--
+    On-device OCR (Tools → Make scanned pages searchable): Tesseract, through Tesseract4Android
+    (Apache 2.0; it builds Tesseract (Apache 2.0), Leptonica (BSD-2-Clause), libjpeg and libpng),
+    bound from its AAR by .NET for Android. The single-thread flavour; offline, no permission.
+    androidx.annotation is only annotations, which the binding does not need.
+  -->
+  <ItemGroup>
+    <AndroidMavenLibrary Include="com.github.adaptech-cz.Tesseract4Android:tesseract4android" Version="4.8.0" Repository="https://jitpack.io" />
+    <AndroidIgnoredJavaDependency Include="androidx.annotation:annotation:1.3.0" />
+    <TransformFile Include="Transforms\Metadata.xml" />
+  </ItemGroup>
+
+  <!--
+    The English model (tessdata_fast 4.1.0, Apache 2.0), downloaded at build time and checked
+    against a SHA-256 kept here; a file that does not match fails the build. It ships as an asset.
+  -->
+  <PropertyGroup>
+    <TessdataUrl>https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata</TessdataUrl>
+    <TessdataSha256>7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2</TessdataSha256>
+    <TessdataDir>$(BaseIntermediateOutputPath)tessdata\</TessdataDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <AndroidAsset Include="$(TessdataDir)eng.traineddata" Link="Assets/tessdata/eng.traineddata" LogicalName="tessdata/eng.traineddata" />
+  </ItemGroup>
+  <Target Name="DownloadTessdata" BeforeTargets="PrepareForBuild;_ComputeAndroidAssetsPaths" Condition="!Exists('$(TessdataDir)eng.traineddata')">
+    <DownloadFile SourceUrl="$(TessdataUrl)" DestinationFolder="$(TessdataDir)" DestinationFileName="eng.traineddata.download" Retries="3" />
+    <GetFileHash Files="$(TessdataDir)eng.traineddata.download" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_TessdataHash" />
+    </GetFileHash>
+    <Delete Files="$(TessdataDir)eng.traineddata.download" Condition="'$(_TessdataHash.ToLowerInvariant())' != '$(TessdataSha256)'" />
+    <Error Condition="'$(_TessdataHash.ToLowerInvariant())' != '$(TessdataSha256)'" Text="eng.traineddata does not match its pinned SHA-256 ($(_TessdataHash))." />
+    <Move SourceFiles="$(TessdataDir)eng.traineddata.download" DestinationFiles="$(TessdataDir)eng.traineddata" />
+  </Target>
+
   <!-- Native debug symbols in the Release app bundle, for Google Play (docs/android-release.md). -->
   <Import Project="NativeDebugSymbols.targets" />
 
