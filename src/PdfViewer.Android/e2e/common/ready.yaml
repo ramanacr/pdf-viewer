@@ -1,0 +1,7 @@
+# Waits for the document to open (${PAGES}, e.g. "1 / 7"); a "kept edits" prompt left by an
+# earlier run (04-annotate) is discarded first.
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "(${PAGES})|(Unsaved changes found)", timeout: 120000 }
+- tapOn: { text: "DISCARD", optional: true }
+- extendedWaitUntil: { visible: "${PAGES}", timeout: 120000 }

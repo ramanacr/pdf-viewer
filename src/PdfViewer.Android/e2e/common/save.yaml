@@ -1,6 +1,11 @@
 # Android's save dialog: SAVE, then the app's result ("Saved", "Text exported", "… was written").
+# The dialog opens in the folder last browsed (a flow that picked a fixture leaves it in
+# Documents/pdfviewer-e2e), so it is sent to Downloads first, where the host looks for the file.
 appId: io.github.ramanacr.pdfviewer
 ---
 - extendedWaitUntil: { visible: "(?i)save", timeout: 60000 }
+- tapOn: "Show roots"
+- tapOn: "Downloads"
+- extendedWaitUntil: { visible: "(?i)^save$", timeout: 60000 }
 - tapOn: "(?i)^save$"
 - extendedWaitUntil: { visible: "(?i).*(saved|exported|written).*", timeout: 240000 }

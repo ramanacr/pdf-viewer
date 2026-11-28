@@ -1,0 +1,11 @@
+# doc: sample
+# expect-file: * with header and footer.pdf
+# expect-grep: %PDF
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Headers, footers and watermarks" } }
+- tapOn: { text: "Header and footer", index: 0 }
+- extendedWaitUntil: { visible: "(?i)save as….*", timeout: 60000 }
+- tapOn: "(?i)save as….*"
+- runFlow: ../common/save.yaml

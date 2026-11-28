@@ -1,0 +1,11 @@
+# doc: sample
+# expect-file: Merged*.pdf
+# expect-grep: %PDF
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Merge PDFs" } }
+- runFlow: { file: ../common/pick.yaml, env: { FILE: "scan.pdf" } }
+- extendedWaitUntil: { visible: "The PDFs are joined.*", timeout: 120000 }
+- tapOn: "(?i)^merge$"
+- runFlow: ../common/save.yaml
