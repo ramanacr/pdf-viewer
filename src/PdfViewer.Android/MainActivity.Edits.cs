@@ -353,7 +353,12 @@ public sealed partial class MainActivity
         {
             case ViewerFormKind.Text:
                 AskText(label, current.FirstOrDefault() ?? "", w.MaxLength > 0 ? w.MaxLength : ViewerEditSession.MaxFieldValueLength, w.Multiline, w.Password,
-                    text => SetField(w, [text]));
+                    text => SetField(w, [text]),
+                    next: NextField(w) is { } following ? text =>
+                    {
+                        SetField(w, [text]);
+                        GoToField(following);
+                    } : null);
                 break;
             case ViewerFormKind.CheckBox or ViewerFormKind.Radio:
                 SetField(w, [w.ToggleValue]);
@@ -403,6 +408,36 @@ public sealed partial class MainActivity
         }
     }
 
+    /// <summary>
+    /// The field after <paramref name="w"/> in the form's order (page by page, in each page's widget
+    /// order, as Tab moves on Windows) that the reader can fill; null at the last one.
+    /// </summary>
+    private ViewerFormWidget? NextField(ViewerFormWidget w)
+    {
+        if (_session is not { } session) return null;
+        var widgets = session.Widgets.Select((x, i) => (Widget: x, Index: i)).OrderBy(x => x.Widget.Page).ThenBy(x => x.Index).Select(x => x.Widget).ToList();
+        int at = widgets.IndexOf(w);
+        if (at < 0) return null;
+        // A field with several widgets (radio buttons, a field shown twice) is one stop: the next field by name.
+        return widgets.Skip(at + 1).FirstOrDefault(x => !x.ReadOnly && x.Name != w.Name);
+    }
+
+    /// <summary>Next field: its page comes into view and it opens (a check box or radio button is pointed to, as tapping it switches it).</summary>
+    private void GoToField(ViewerFormWidget w)
+    {
+        if (w.Page != _pages.CurrentPage) _pages.GoToPage(w.Page);
+        if (w.Kind is ViewerFormKind.CheckBox or ViewerFormKind.Radio)
+        {
+            // Short messages never quote the document (its field names included).
+            Toast.MakeText(this, $"The next field is a {(w.Kind == ViewerFormKind.CheckBox ? "check box" : "set of options")} on page {w.Page}. Tap it to switch it.", ToastLength.Long)?.Show();
+            return;
+        }
+        // After the page has moved, so the field is in view behind the dialog.
+        _pages.Post(() => OnFieldTapped(w));
+    }
+
+    private AlertDialog? _askTextDialog;
+
     private void SetField(ViewerFormWidget w, IReadOnlyList<string> values)
     {
         if (_session is not { } session) return;
@@ -416,7 +451,7 @@ public sealed partial class MainActivity
     /// A text dialog with the soft keyboard up: at most <paramref name="maxLength"/> characters
     /// (a field's /MaxLen), one line or several, hidden for a password field.
     /// </summary>
-    private void AskText(string title, string text, int maxLength, bool multiline, bool password, Action<string> done, Action? delete = null)
+    private void AskText(string title, string text, int maxLength, bool multiline, bool password, Action<string> done, Action? delete = null, Action<string>? next = null)
     {
         var input = new EditText(this) { Text = text };
         input.InputType = password ? InputTypes.ClassText | InputTypes.TextVariationPassword
@@ -429,7 +464,21 @@ public sealed partial class MainActivity
             .SetPositiveButton("OK", (_, _) => done(input.Text ?? ""))!
             .SetNegativeButton("Cancel", (_, _) => { })!;
         if (delete != null) builder.SetNeutralButton("Delete", (_, _) => delete());
+        // A form's text field: Next keeps the value and goes on to the next field, as Tab does on Windows.
+        else if (next != null) builder.SetNeutralButton("Next", (_, _) => next(input.Text ?? ""));
+        if (next != null && !multiline)
+        {
+            input.ImeOptions = global::Android.Views.InputMethods.ImeAction.Next;
+            input.EditorAction += (_, e) =>
+            {
+                if (e.ActionId != global::Android.Views.InputMethods.ImeAction.Next) return;
+                e.Handled = true;
+                _askTextDialog?.Dismiss();
+                next(input.Text ?? "");
+            };
+        }
         var dialog = builder.Create()!;
+        _askTextDialog = dialog;
         dialog.Window?.SetSoftInputMode(SoftInput.StateVisible);
         dialog.Show();
         input.RequestFocus();
