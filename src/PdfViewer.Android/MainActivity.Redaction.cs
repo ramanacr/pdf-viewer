@@ -161,8 +161,8 @@ public sealed partial class MainActivity
     /// <summary>"Redact" in the selection bar: the selected lines are marked, one step.</summary>
     private void MarkSelectionForRedaction()
     {
-        if (!_redacting || _pages.Selection is not { } selection) return;
-        AddMarks(selection.Bands.Select(b => (selection.Page, b)).ToList());
+        if (!_redacting || _pages.Selections is not { Count: > 0 } parts) return;
+        AddMarks(parts.SelectMany(part => part.Bands.Select(b => (part.Page, b))).ToList());
         _pages.ClearSelection();
     }
 

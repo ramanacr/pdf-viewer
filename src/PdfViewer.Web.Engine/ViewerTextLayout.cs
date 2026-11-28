@@ -580,6 +580,13 @@ public sealed class ViewerTextSelection
     /// <summary>Selects nothing.</summary>
     public void Clear() => Start = End = 0;
 
+    /// <summary>Selects the characters [<paramref name="start"/>, <paramref name="end"/>), kept within the page (an end before the start selects nothing).</summary>
+    public void Select(int start, int end)
+    {
+        Start = Math.Clamp(start, 0, Layout.Length);
+        End = Math.Clamp(end, Start, Layout.Length);
+    }
+
     /// <summary>Selects the whole page.</summary>
     public void SelectAll()
     {

@@ -91,6 +91,22 @@ public sealed partial class MainActivity
         };
         _pages.VertexDragged += (id, index, to) => Change(s => s.MoveVertex(id, index, to));
         _pages.AnnotationResized += (id, box) => Change(s => Resize(s, id, box));
+        // The rotation handle of a stamp: turned about its centre, one undo step (MainActivity.Stamps.cs).
+        _pages.StampTurned += (id, degrees) => Change(s => s.TurnStamp(id, degrees));
+        ConnectMeasureSnap();
+    }
+
+    /// <summary>
+    /// Highlight, underline or strike-out of the selected text: on every page the selection spans,
+    /// one annotation per page, added together as one undo step
+    /// (<see cref="ViewerEditSession.MarkText(ViewerAnnotationKind, IReadOnlyList{ViewerTextSelection}, string?)"/>).
+    /// </summary>
+    private void MarkSelectedText(ViewerAnnotationKind kind)
+    {
+        var parts = _pages.Selections;
+        if (parts.Count == 0) return;
+        Change(s => s.MarkText(kind, parts, KeptColour(kind)).Count > 0);
+        _pages.ClearSelection();
     }
 
     // ------------------------------------------------------------------ points

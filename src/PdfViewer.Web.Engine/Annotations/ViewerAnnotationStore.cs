@@ -49,6 +49,9 @@ public sealed class ViewerAnnotationStore
     /// <summary>Most ink, quadrilateral and vertex points of all the document's annotations together.</summary>
     public const int MaxPoints = PdfAnnotationLimits.MaxPointsPerDocument;
     public const double MaxStrokeWidth = 100;
+
+    /// <summary>The longest side (points) of a stamp's own size: the largest page ISO 32000-2 allows (Annex C).</summary>
+    public const double MaxStampSide = 14400;
     public const double MinFontSize = 4, MaxFontSize = 144;
 
     /// <summary>How far outside the media box (points) a shape may reach, for a line drawn along its edge.</summary>
@@ -436,6 +439,10 @@ public sealed class ViewerAnnotationStore
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": a custom stamp is made from a picture or a PDF page (addCustomStamp), not by its name.");
         if (a.StampTurn is not (0 or 90 or 180 or 270) || !stamp && a.StampTurn != 0)
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp has a turn, and it is 0, 90, 180 or 270 degrees.");
+        if (a.StampRotation is double turned && (!stamp || !double.IsFinite(turned) || turned < 0 || turned >= 360)
+            || (a.StampWidth != 0 || a.StampHeight != 0) && (!stamp || !(a.StampWidth > 0 && a.StampWidth <= MaxStampSide) || !(a.StampHeight > 0 && a.StampHeight <= MaxStampSide))
+            || a.StampRotation != null && a.StampWidth == 0)
+            throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp is turned, from 0 up to 360 degrees, with its own size above 0 and at most {MaxStampSide} points.");
         if (a.StampSubtitle != null && (!stamp || a.StampSubtitle.Length > MaxStampSubtitleLength || a.StampSubtitle.Any(char.IsControl)))
             throw new ViewerAnnotationException($"Annotation \"{a.Id}\": only a stamp has a second line, one line of at most {MaxStampSubtitleLength} characters.");
         if (a.Kind == ViewerAnnotationKind.Reply ? a.InReplyTo.Length is 0 or > MaxIdLength || a.InReplyTo == a.Id : a.InReplyTo.Length > 0)

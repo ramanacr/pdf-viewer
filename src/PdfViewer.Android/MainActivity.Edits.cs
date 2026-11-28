@@ -295,12 +295,7 @@ public sealed partial class MainActivity
         UpdateEditButtons();
     }
 
-    private void MarkSelection(ViewerAnnotationKind kind)
-    {
-        if (_pages.Selection is not { } selection) return;
-        Change(s => s.MarkText(kind, selection, KeptColour(kind)) != null);
-        _pages.ClearSelection();
-    }
+    private void MarkSelection(ViewerAnnotationKind kind) => MarkSelectedText(kind);
 
     /// <summary>Deletes the chosen annotation; with replies under it, asks first and names how many (and how many by other people).</summary>
     private void DeletePicked()
