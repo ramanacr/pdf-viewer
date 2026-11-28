@@ -486,6 +486,7 @@ public sealed partial class MainActivity
     [
         new("Pages",
         [
+            new("Edit text and images", "Change a page's text, move or replace its pictures, add text and pictures", EditTextAndImages),
             new("Organize pages", "Reorder, rotate, duplicate, delete or add blank pages", OrganizePages),
             new("Insert pages from a PDF", "Add the pages of another PDF after a page", InsertPagesFromPdf),
             new("Extract pages", "Save some pages as a new PDF", ExtractPages),
