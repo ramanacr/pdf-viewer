@@ -1,0 +1,12 @@
+# doc: sample
+# expect-file: *organized.pdf
+# expect-grep: /Rotate 90
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Organize pages" } }
+- extendedWaitUntil: { visible: "Organize pages.*", timeout: 60000 }
+- tapOn: { text: "3", index: 0 }
+- tapOn: ".*Right"
+- tapOn: "Save as…"
+- runFlow: ../common/save.yaml

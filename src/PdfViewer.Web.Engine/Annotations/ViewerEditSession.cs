@@ -506,6 +506,55 @@ public sealed class ViewerEditSession
     }
 
     /// <summary>
+    /// A measurement through <paramref name="points"/> (shown-page points, kept on the page), as the
+    /// desktop viewer and Acrobat write one: a Line (two points, open arrows at both ends, the result
+    /// as its caption), a PolyLine (perimeter) or a Polygon (area) with <paramref name="measure"/> as
+    /// its /Measure, its /IT, and the result as its comment; drawn in <paramref name="color"/>
+    /// (measurement blue by default), 1 point wide. Moving one of its points measures it again.
+    /// Null with too few points (two, or three for an area).
+    /// </summary>
+    public ViewerAnnotation? AddMeasurement(PdfMeasurementKind kind, int page, IReadOnlyList<ViewerPoint> points, PdfMeasure measure, string? color = null)
+    {
+        ArgumentNullException.ThrowIfNull(points);
+        ArgumentNullException.ThrowIfNull(measure);
+        var g = Geometry(page);
+        var user = new List<PdfEngine.Geometry.PdfPoint>();
+        foreach (var p in points)
+        {
+            if (!Finite(p)) continue;
+            if (user.Count >= ViewerAnnotationStore.MaxVertices) break;
+            var (ux, uy) = g.ToUser(OnPage(p, g).X, OnPage(p, g).Y);
+            if (user.Count > 0 && Math.Abs(ux - user[^1].X) + Math.Abs(uy - user[^1].Y) < 0.5) continue;
+            user.Add(new PdfEngine.Geometry.PdfPoint(ux, uy));
+        }
+        if (kind == PdfMeasurementKind.Distance && user.Count >= 2) user = [user[0], user[^1]];
+        if (user.Count < (kind == PdfMeasurementKind.Area ? 3 : 2)) return null;
+        string label = PdfMeasurements.Label(kind, user, measure);
+        var r = PdfMeasurements.Bounds(kind, user, label, 1);
+        var shapeKind = kind switch
+        {
+            PdfMeasurementKind.Distance => ViewerAnnotationKind.Line,
+            PdfMeasurementKind.Perimeter => ViewerAnnotationKind.PolyLine,
+            _ => ViewerAnnotationKind.Polygon,
+        };
+        bool distance = kind == PdfMeasurementKind.Distance;
+        var shape = New(shapeKind, page, default, color ?? MeasurementColor) with
+        {
+            Vertices = user.SelectMany(p => new[] { p.X, p.Y }).ToArray(),
+            StrokeWidth = 1,
+            StartEnding = distance ? "OpenArrow" : "None",
+            EndEnding = distance ? "OpenArrow" : "None",
+            Contents = label,
+            IsMeasurement = true,
+            Measure = measure,
+        };
+        return Add(shape with { Box = ClampBox(new ViewerBox(r.X, r.Y, r.Right, r.Bottom), g) });
+    }
+
+    /// <summary>The colour of a new measurement: the blue Acrobat and the desktop viewer use.</summary>
+    public const string MeasurementColor = "#0033CC";
+
+    /// <summary>
     /// A text box with its top-left corner at a point of the shown page: black <see cref="FreeTextSize"/>
     /// point text, at most <see cref="FreeTextWidth"/> wide and as tall as its text, kept on the page.
     /// Null when the text is empty or only spaces.
@@ -802,6 +851,105 @@ public sealed class ViewerEditSession
         return new ViewerBox(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
     }
 
+    /// <summary>A stamp's turn snaps to a multiple of this many degrees (as Shift does in the desktop app)…</summary>
+    public const double StampTurnStep = 15;
+
+    /// <summary>…when it comes within this many degrees of one.</summary>
+    public const double StampTurnSnap = 4;
+
+    /// <summary>
+    /// <paramref name="degrees"/> brought into [0, 360) and snapped to the nearest multiple of
+    /// <see cref="StampTurnStep"/> when within <see cref="StampTurnSnap"/> of it, so that a turn by
+    /// finger finds upright, a quarter turn or 45 degrees easily. 0 for a number that is not finite.
+    /// </summary>
+    public static double SnapStampTurn(double degrees)
+    {
+        double d = PdfStamps.NormalizeDegrees(degrees);
+        double near = Math.Round(d / StampTurnStep) * StampTurnStep;
+        return Math.Abs(d - near) <= StampTurnSnap ? PdfStamps.NormalizeDegrees(near) : d;
+    }
+
+    /// <summary>
+    /// A stamp's own size before its turn and its turn as drawn (degrees counter-clockwise in default
+    /// user space): as turned or read from the file, else, for one made here, its box (sideways for a
+    /// quarter turn) and <see cref="ViewerAnnotation.StampTurn"/>. Null for another kind, and for a
+    /// file's stamp without an appearance (there is nothing to turn).
+    /// </summary>
+    public static (double Width, double Height, double Degrees)? StampFrame(ViewerAnnotation a)
+    {
+        if (a.Kind != ViewerAnnotationKind.Stamp) return null;
+        if (a.StampRotation is double r && a.StampWidth > 0 && a.StampHeight > 0) return (a.StampWidth, a.StampHeight, r);
+        if (a.FromFile) return null;
+        var (degrees, w, h) = ViewerAnnotationPdf.StampLayout(a);
+        return w > 0 && h > 0 ? (w, h, degrees) : null;
+    }
+
+    /// <summary>
+    /// The four corners of a stamp's own rectangle as it is drawn (user space, turned about the box's
+    /// centre): to outline it while it is turned. Empty when it cannot be turned.
+    /// </summary>
+    public static IReadOnlyList<ViewerPoint> StampCorners(ViewerAnnotation a, double? degrees = null)
+    {
+        if (StampFrame(a) is not var (w, h, d)) return [];
+        double t = (degrees ?? d) * Math.PI / 180, c = Math.Cos(t), s = Math.Sin(t);
+        double cx = (a.Box.X1 + a.Box.X2) / 2, cy = (a.Box.Y1 + a.Box.Y2) / 2;
+        return new[] { (-w / 2, h / 2), (w / 2, h / 2), (w / 2, -h / 2), (-w / 2, -h / 2) }
+            .Select(p => new ViewerPoint(cx + p.Item1 * c - p.Item2 * s, cy + p.Item1 * s + p.Item2 * c)).ToArray();
+    }
+
+    /// <summary>
+    /// Turns a stamp about its centre to <paramref name="degrees"/> counter-clockwise as drawn in
+    /// default user space (0 upright on an unturned page), as one undo step: its own size is kept,
+    /// its box becomes the turned stamp's (moved back onto the page when it would reach past an
+    /// edge) and its appearance is turned by its form's /Matrix when written, as the desktop app
+    /// turns it. A file's stamp keeps its appearance. False when the turn is the same or not a
+    /// finite number; refused for a stamp that cannot be turned (<see cref="StampFrame"/>) or that,
+    /// turned, would not fit on its page.
+    /// </summary>
+    public bool TurnStamp(string id, double degrees)
+    {
+        CheckCanAnnotate();
+        var a = Store.Find(id) ?? throw new ViewerAnnotationException("That annotation is no longer there.");
+        if (a.Kind != ViewerAnnotationKind.Stamp) throw new ViewerAnnotationException("Only a stamp can be turned.");
+        if (!double.IsFinite(degrees)) return false;
+        if (StampFrame(a) is not var (w, h, now)) throw new ViewerAnnotationException("This stamp has no appearance to turn.");
+        double to = PdfStamps.NormalizeDegrees(Math.Round(degrees, 3));
+        double change = Math.Abs(to - now);
+        if (Math.Min(change, 360 - change) < 1e-3) return false;
+        var m = Geometry(a.Page).MediaBox;
+        var r = PdfStamps.RotatedBounds(new PdfEngine.Geometry.PdfPoint((a.Box.X1 + a.Box.X2) / 2, (a.Box.Y1 + a.Box.Y2) / 2), w, h, to);
+        if (r.Width > m.Width + 0.01 || r.Height > m.Height + 0.01) throw new ViewerAnnotationException("Turned like that, the stamp would not fit on its page.");
+        double dx = Math.Max(0, m.Left - r.Left) - Math.Max(0, r.Right - m.Right), dy = Math.Max(0, m.Top - r.Top) - Math.Max(0, r.Bottom - m.Bottom);
+        var box = new ViewerBox(r.Left + dx, r.Top + dy, r.Right + dx, r.Bottom + dy);
+        Store.Update(a with { StampRotation = to, StampWidth = w, StampHeight = h, Box = ClampBox(box, Geometry(a.Page)), Modified = DateTimeOffset.UtcNow });
+        _edits.Edit();
+        return true;
+    }
+
+    /// <summary>
+    /// A turned stamp given a new box (resized): its own size follows, scaled as a whole (by the
+    /// width; side by side for a quarter turn), and the box is made the turned stamp's again around
+    /// the new box's centre, so it keeps its shape.
+    /// </summary>
+    private static ViewerAnnotation Resized(ViewerAnnotation old, ViewerAnnotation a)
+    {
+        if (old.Box.Width <= 0 || old.Box.Height <= 0) return a;
+        double sx = a.Box.Width / old.Box.Width, sy = a.Box.Height / old.Box.Height;
+        double turn = PdfStamps.NormalizeDegrees(a.StampRotation ?? 0);
+        bool quarter = Math.Abs(turn % 90) < 1e-3 || Math.Abs(turn % 90 - 90) < 1e-3;
+        bool sideways = quarter && Math.Abs(turn - 90) < 1e-3 || Math.Abs(turn - 270) < 1e-3;
+        double w, h;
+        if (!quarter) (w, h) = (a.StampWidth * sx, a.StampHeight * sx);
+        else if (sideways) (w, h) = (a.StampWidth * sy, a.StampHeight * sx);
+        else (w, h) = (a.StampWidth * sx, a.StampHeight * sy);
+        if (!(w > 0 && h > 0)) return a;
+        w = Math.Min(w, ViewerAnnotationStore.MaxStampSide);
+        h = Math.Min(h, ViewerAnnotationStore.MaxStampSide);
+        if (quarter) return a with { StampWidth = w, StampHeight = h };
+        var r = PdfStamps.RotatedBounds(new PdfEngine.Geometry.PdfPoint((a.Box.X1 + a.Box.X2) / 2, (a.Box.Y1 + a.Box.Y2) / 2), w, h, turn);
+        return a with { StampWidth = w, StampHeight = h, Box = new ViewerBox(r.Left, r.Top, r.Right, r.Bottom) };
+    }
+
     /// <summary>The text a stamp shows ("APPROVED"), from its /Name; "STAMP" for a name the viewer does not offer.</summary>
     public static string StampLabel(string name) => Stamps.FirstOrDefault(s => s.Name == name)?.Label ?? "STAMP";
 
@@ -819,6 +967,33 @@ public sealed class ViewerEditSession
         var quads = selection.Bands.SelectMany(g.ToQuad).ToArray();
         if (quads.Length == 0) return null;
         return Add(New(kind, selection.Page, ClampBox(ViewerBox.Around(quads), g), color) with { QuadPoints = quads });
+    }
+
+    /// <summary>
+    /// Highlights, underlines or strikes out a selection that runs across pages (each page's part,
+    /// <see cref="ViewerTextSpan.Parts"/>): one annotation per page, added together as one undo step.
+    /// Empty when nothing is selected.
+    /// </summary>
+    public IReadOnlyList<ViewerAnnotation> MarkText(ViewerAnnotationKind kind, IReadOnlyList<ViewerTextSelection> selections, string? color = null)
+    {
+        ArgumentNullException.ThrowIfNull(selections);
+        if (kind is not (ViewerAnnotationKind.Highlight or ViewerAnnotationKind.Underline or ViewerAnnotationKind.StrikeOut))
+            throw new ArgumentOutOfRangeException(nameof(kind));
+        var marks = new List<ViewerAnnotation>();
+        foreach (var selection in selections)
+        {
+            if (selection.IsEmpty) continue;
+            var g = Geometry(selection.Page);
+            var quads = selection.Bands.SelectMany(g.ToQuad).ToArray();
+            if (quads.Length == 0) continue;
+            marks.Add(New(kind, selection.Page, ClampBox(ViewerBox.Around(quads), g), color) with { QuadPoints = quads });
+        }
+        if (marks.Count == 0) return [];
+        CheckCanAnnotate();
+        var added = Store.Add(marks);
+        foreach (var a in added) MadeHere.Add(a.Id);
+        _edits.Edit();
+        return added;
     }
 
     /// <summary>Changes an annotation's text (a note's comment); false when it is the same.</summary>
@@ -944,8 +1119,21 @@ public sealed class ViewerEditSession
         ArgumentNullException.ThrowIfNull(annotation);
         CheckCanAnnotate();
         var old = Store.Find(annotation.Id) ?? throw new ViewerAnnotationException($"No annotation has the id \"{annotation.Id}\".");
+        // A stamp keeps the turn given with its handle (a host page does not give it), and its own size follows a new box.
+        if (old.Kind == ViewerAnnotationKind.Stamp && annotation.Kind == ViewerAnnotationKind.Stamp && old.StampRotation != null)
+        {
+            if (annotation.StampRotation == null) annotation = annotation with { StampRotation = old.StampRotation, StampWidth = old.StampWidth, StampHeight = old.StampHeight };
+            if (annotation.Page == old.Page && annotation.StampRotation == old.StampRotation && annotation.StampWidth == old.StampWidth
+                && annotation.StampHeight == old.StampHeight && (annotation.Box.Width != old.Box.Width || annotation.Box.Height != old.Box.Height))
+                annotation = Resized(old, annotation);
+        }
         // A custom stamp keeps what it draws and its turn (the host page has neither), and its shape: a new box is fitted to it.
-        if (old.CustomStamp is { } custom && annotation.Kind == ViewerAnnotationKind.Stamp)
+        if (old.CustomStamp is { } turnedCustom && annotation.Kind == ViewerAnnotationKind.Stamp && annotation.StampRotation != null)
+        {
+            // Turned with its handle: its box was made the turned stamp's above.
+            annotation = annotation with { CustomStamp = turnedCustom, StampName = old.StampName, StampSubtitle = null };
+        }
+        else if (old.CustomStamp is { } custom && annotation.Kind == ViewerAnnotationKind.Stamp)
         {
             // On another page it reads upright as that page is shown.
             int rotation = Geometry(annotation.Page).Rotation;

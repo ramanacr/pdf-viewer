@@ -25,12 +25,16 @@ namespace PdfViewer.Android;
 /// that file when Android grants write access to it, or as a copy the reader picks with the system's
 /// save dialog. The activity is kept across rotation and
 /// dark-mode switches; when Android ends the process in the background, the saved state reopens
-/// the document at the same place, with its unsaved edits (MainActivity.KeptEdits.cs).
+/// the document at the same place, with its unsaved edits (MainActivity.KeptEdits.cs). Each
+/// document can have a window (a task) of its own (MainActivity.Windows.cs); every window is a
+/// full viewer, resizable for split screen and free-form windows.
 /// </summary>
-[Activity(Label = "PDF Viewer (preview)", MainLauncher = true, Exported = true, LaunchMode = LaunchMode.SingleTop,
+[Activity(Label = "PDF Viewer (preview)", MainLauncher = true, Exported = true, LaunchMode = LaunchMode.SingleTop, ResizeableActivity = true,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.ScreenLayout
                            | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode | ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden)]
 [IntentFilter([Intent.ActionView], Categories = [Intent.CategoryDefault], DataScheme = "content", DataMimeType = "application/pdf")]
+// Another app's share sheet: a PDF shared to this app opens like "Open with".
+[IntentFilter([Intent.ActionSend], Categories = [Intent.CategoryDefault], DataMimeType = "application/pdf")]
 public sealed partial class MainActivity : Activity
 {
     private const int OpenDocumentRequest = 1;
@@ -44,7 +48,7 @@ public sealed partial class MainActivity : Activity
     };
 
     // Saved-state keys: the document's location and the view, never its text or a password.
-    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night";
+    private const string StateUri = "doc.uri", StatePage = "view.page", StateU = "view.u", StateV = "view.v", StateZoom = "view.zoom", StateNight = "view.night", StateRotation = "view.rotation", StateLayout = "view.layout";
 
     private PageView _pages = null!;
     private ThumbnailView _thumbnails = null!;
@@ -64,10 +68,15 @@ public sealed partial class MainActivity : Activity
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
-        _recent = new RecentDocuments(System.IO.Path.Combine(FilesDir!.AbsolutePath, "recent.json"));
+        // The recent list shared by every window; the window joins the app's list (MainActivity.Windows.cs).
+        JoinWindows();
         SetContentView(BuildLayout());
+        RegisterBackCallback();
         ApplyTheme();
         ShowDocumentState();
+        // The page layout kept in the preferences (MainActivity.PageLayout.cs); a saved state's own wins.
+        ApplyStoredPageLayout();
+        ApplyPageLayout(savedInstanceState?.GetString(StateLayout));
 
         // After Android ended the process: the document saved in the state, at the saved place.
         if (savedInstanceState?.GetString(StateUri) is { } saved && Uri.Parse(saved) is { } savedUri)
@@ -76,20 +85,32 @@ public sealed partial class MainActivity : Activity
             var view = (new PageAnchor(savedInstanceState.GetInt(StatePage, 1), savedInstanceState.GetDouble(StateU), savedInstanceState.GetDouble(StateV)),
                 savedInstanceState.GetDouble(StateZoom, 1));
             // With the unsaved edits kept for it (MainActivity.KeptEdits.cs), read on a worker thread.
+            _pendingRotation = savedInstanceState.GetInt(StateRotation);
             _ = ReopenAfterProcessDeathAsync(savedUri, saved, view);
         }
-        else if (Intent is { Action: Intent.ActionView, Data: { } uri })
+        else if (Incoming(Intent) is { } uri)
         {
             // A new start keeps edits an earlier process kept: they are offered when their document opens.
-            _ = OpenUriAsync(uri, null);
+            // A document another window shows brings that window forward instead.
+            OpenIncoming(uri, Intent);
         }
     }
 
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);
-        if (intent is { Action: Intent.ActionView, Data: { } uri }) AfterDiscard(() => _ = OpenUriAsync(uri, null));
+        if (Incoming(intent) is { } uri && !SwitchToWindowShowing(uri)) AfterDiscard(() => _ = OpenUriAsync(uri, null));
     }
+
+    /// <summary>The document another app hands over: "Open with" (ACTION_VIEW) or its share sheet (ACTION_SEND).</summary>
+    private static Uri? Incoming(Intent? intent) => intent?.Action switch
+    {
+        Intent.ActionView => intent.Data,
+#pragma warning disable CA1422 // the typed overload needs Android 13; this one works on every version
+        Intent.ActionSend => intent.GetParcelableExtra(Intent.ExtraStream) as Uri ?? intent.ClipData?.GetItemAt(0)?.Uri,
+#pragma warning restore CA1422
+        _ => null,
+    };
 
     public override void OnConfigurationChanged(Configuration newConfig)
     {
@@ -100,11 +121,13 @@ public sealed partial class MainActivity : Activity
     protected override void OnSaveInstanceState(Bundle outState)
     {
         base.OnSaveInstanceState(outState);
+        outState.PutString(StateLayout, PageLayoutValue);
         // During a save into the file, a new instance must not read it half-written: no document is kept.
         if (_uri == null || _doc == null || _savingBack) return;
         KeepEdits();
         outState.PutString(StateUri, _uri.ToString());
         outState.PutBoolean(StateNight, _pages.NightPages);
+        outState.PutInt(StateRotation, _pages.ViewRotation);
         if (_pages.SavedView is { } view)
         {
             outState.PutInt(StatePage, view.TopLeft.Page);
@@ -154,7 +177,7 @@ public sealed partial class MainActivity : Activity
         _pageIndicator = ToolButton("", "Go to page", (_, _) => AskPage());
         _searchButton = ToolButton("Search", "Search the document", (_, _) => ShowSearch(true));
         _annotateButton = ToolButton("✎", "Annotate: draw, shapes, notes, text boxes, undo and redo", (_, _) => ShowAnnotateBar(_annotateBar.Visibility != ViewStates.Visible));
-        _menuButton = ToolButton("⋮", "More: outline, pages, annotations, save, save a copy, share, night pages, recent files", (_, _) => ShowMenu());
+        _menuButton = ToolButton("⋮", "More: save, share, print, view, comments, tools and recent files", (_, _) => ShowMenu());
         _toolbar.AddView(_openButton);
         _toolbar.AddView(_title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         _toolbar.AddView(_pageIndicator);
@@ -163,8 +186,10 @@ public sealed partial class MainActivity : Activity
         _toolbar.AddView(_menuButton);
         root.AddView(_toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
-        _searchBar = Bar();
+        // Two rows: the query with previous, next and close; then the count, match case, whole word and the results list.
+        _searchBar = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         _searchBar.Visibility = ViewStates.Gone;
+        var searchRow = Bar();
         _searchText = new EditText(this) { Hint = "Find in document", ImeOptions = ImeAction.Search };
         _searchText.SetSingleLine(true);
         _searchText.InputType = InputTypes.ClassText | InputTypes.TextFlagNoSuggestions;
@@ -178,11 +203,12 @@ public sealed partial class MainActivity : Activity
         _prevButton = ToolButton("‹", "Previous match", (_, _) => StepHit(-1));
         _nextButton = ToolButton("›", "Next match", (_, _) => StepHit(1));
         _closeSearchButton = ToolButton("✕", "Close search", (_, _) => ShowSearch(false));
-        _searchBar.AddView(_searchText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
-        _searchBar.AddView(_searchCount);
-        _searchBar.AddView(_prevButton);
-        _searchBar.AddView(_nextButton);
-        _searchBar.AddView(_closeSearchButton);
+        searchRow.AddView(_searchText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        searchRow.AddView(_prevButton);
+        searchRow.AddView(_nextButton);
+        searchRow.AddView(_closeSearchButton);
+        _searchBar.AddView(searchRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
+        _searchBar.AddView(BuildSearchOptions(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         root.AddView(_searchBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         root.AddView(BuildAnnotateBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
 
@@ -199,7 +225,7 @@ public sealed partial class MainActivity : Activity
         AddMarkupButtons(_selectionBar);
         _selectionBar.AddView(_closeSelectionButton);
 
-        var frame = new FrameLayout(this);
+        var frame = _frame = new FrameLayout(this);
         _pages = new PageView(this);
         _pages.PageChanged += (page, count) => _pageIndicator.Text = count > 0 ? $"{page} / {count}" : "";
         _pages.Problem += message => Toast.MakeText(this, message, ToastLength.Short)?.Show();
@@ -211,7 +237,7 @@ public sealed partial class MainActivity : Activity
         _thumbnails.PageChosen += page =>
         {
             ShowThumbnails(false);
-            _pages.GoToPage(page);
+            JumpToPage(page);
         };
         frame.AddView(_thumbnails, Fill());
 
@@ -226,6 +252,7 @@ public sealed partial class MainActivity : Activity
         };
         _emptyText.Click += (_, _) => PickDocument();
         _empty.AddView(_emptyText);
+        _empty.AddView(BuildStartActions(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         _recentList = new LinearLayout(this) { Orientation = global::Android.Widget.Orientation.Vertical };
         _recentList.SetPadding(0, (int)Dp(24), 0, 0);
         var scroll = new ScrollView(this);
@@ -348,35 +375,59 @@ public sealed partial class MainActivity : Activity
 
     // ------------------------------------------------------------------ menu
 
+    /// <summary>
+    /// The ⋮ menu: what is done to the file first (save, share, print), then View, Comments and
+    /// Tools, which open their own lists, so the menu stays short on a phone.
+    /// </summary>
     private void ShowMenu()
     {
         var menu = new PopupMenu(this, _menuButton);
         bool open = _doc != null;
         var items = menu.Menu!;
-        items.Add(0, 1, 1, "Outline")!.SetEnabled(open);
-        items.Add(0, 2, 2, "Pages")!.SetEnabled(open);
+        // Save writes the opened file (it offers a copy when the file is read-only); enabled with unsaved edits.
+        var save = items.Add(0, 8, 1, "Save")!;
+        save.SetEnabled(open && _session?.IsDirty == true);
+        var copy = items.Add(0, 7, 2, "Save a copy")!;
+        copy.SetEnabled(open);
         items.Add(0, 3, 3, "Share")!.SetEnabled(open && _uri != null);
-        var night = items.Add(0, 4, 4, "Night pages")!;
+        items.Add(0, 11, 4, "Print")!.SetEnabled(open);
+
+        var view = items.AddSubMenu(0, 20, 5, "View")!;
+        view.Add(0, 1, 1, "Outline")!.SetEnabled(open);
+        view.Add(0, 2, 2, "Pages")!.SetEnabled(open);
+        // Kept for the next documents too, so it can be chosen with no document open.
+        var layout = view.Add(0, 42, 2, "Page layout…")!;
+        view.Add(0, 12, 3, "Read mode")!.SetEnabled(open);
+        var night = view.Add(0, 4, 4, "Night pages")!;
         night.SetCheckable(true);
         night.SetChecked(_pages.NightPages);
         night.SetEnabled(open);
-        items.Add(0, 5, 5, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
-        items.Add(0, 6, 3, "Annotations")!.SetEnabled(open && _session != null);
-        // Save writes the opened file (it offers a copy when the file is read-only); enabled with unsaved edits.
-        var save = items.Add(0, 8, 3, "Save")!;
-        save.SetEnabled(open && _session?.IsDirty == true);
-        var copy = items.Add(0, 7, 3, "Save a copy")!;
-        copy.SetEnabled(open);
-        var export = items.Add(0, 9, 3, "Export comments (XFDF)")!;
+        view.Add(0, 13, 5, "Full screen")!.SetEnabled(open);
+        view.Add(0, 17, 7, "Rotate view right")!.SetEnabled(open);
+        view.Add(0, 18, 8, "Rotate view left")!.SetEnabled(open);
+        view.Add(0, 14, 6, IsReadingAloud ? "Stop reading aloud" : "Read aloud")!.SetEnabled(open);
+
+        var comments = items.AddSubMenu(0, 21, 6, "Comments")!;
+        comments.Add(0, 6, 1, "Annotation list")!.SetEnabled(open && _session != null);
+        var export = comments.Add(0, 9, 2, "Export comments (XFDF)")!;
         export.SetEnabled(open && _session != null);
-        var import = items.Add(0, 10, 3, "Import comments (XFDF)")!;
+        var import = comments.Add(0, 10, 3, "Import comments (XFDF)")!;
         import.SetEnabled(open && CanAnnotate);
+
+        items.Add(0, 15, 7, "Tools…");
+        items.Add(0, 16, 8, "Document properties")!.SetEnabled(open);
+        items.Add(0, 5, 9, "Recent files")!.SetEnabled(_recent.Items.Count > 0);
+        // Each document in a window of its own (MainActivity.Windows.cs).
+        items.Add(0, 40, 10, "Open in new window…");
+        items.Add(0, 41, 11, "Documents");
+        items.Add(0, 19, 12, "Close document")!.SetEnabled(open);
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
         {
             save.SetContentDescription("Save the changes into the opened file");
             copy.SetContentDescription("Save the document with the changes as a new file");
             export.SetContentDescription("Export the annotations and replies as an XFDF file");
             import.SetContentDescription("Add the annotations of an XFDF file to this document");
+            layout.SetContentDescription("Page layout: continuous, single page, or two pages side by side");
         }
         menu.MenuItemClick += (_, e) =>
         {
@@ -392,6 +443,18 @@ public sealed partial class MainActivity : Activity
                 case 8: Save(); break;
                 case 9: PickXfdfExport(); break;
                 case 10: PickXfdfImport(); break;
+                case 11: Print(); break;
+                case 12: ShowReadMode(); break;
+                case 13: SetFullScreen(true); break;
+                case 14: ToggleReadAloud(); break;
+                case 15: ShowTools(); break;
+                case 16: ShowProperties(); break;
+                case 17: RotateView(90); break;
+                case 19: CloseDocument(); break;
+                case 18: RotateView(-90); break;
+                case 40: OpenInNewWindow(); break;
+                case 41: ShowDocuments(); break;
+                case 42: AskPageLayout(); break;
             }
         };
         menu.Show();
@@ -427,7 +490,7 @@ public sealed partial class MainActivity : Activity
             .SetTitle("Outline")!
             .SetItems(items, (_, e) =>
             {
-                if (lines[e.Which].Page is { } page) _pages.GoToPage(page);
+                if (lines[e.Which].Page is { } page) JumpToPage(page);
                 else Toast.MakeText(this, "This entry does not go to a page of this document.", ToastLength.Short)?.Show();
             })!
             .SetNegativeButton("Close", (_, _) => { })!
@@ -517,7 +580,8 @@ public sealed partial class MainActivity : Activity
 
     // ------------------------------------------------------------------ opening
 
-    private void PickDocument() => AfterDiscard(PickDocumentNow);
+    /// <summary>The picker first; the question about unsaved edits comes once a file is chosen (and not when another window shows it).</summary>
+    private void PickDocument() => PickDocumentNow();
 
     private void PickDocumentNow()
     {
@@ -533,6 +597,8 @@ public sealed partial class MainActivity : Activity
     protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
     {
         base.OnActivityResult(requestCode, resultCode, data);
+        // The tools' pickers and save dialogs (MainActivity.Tools.cs).
+        if (AnswerRequest(requestCode, resultCode, data)) return;
         if (requestCode == SaveCopyRequest)
         {
             SaveDialogAnswered(resultCode == Result.Ok ? data?.Data : null);
@@ -555,27 +621,17 @@ public sealed partial class MainActivity : Activity
         }
         if (requestCode == OpenDocumentRequest && resultCode == Result.Ok && data?.Data is { } uri)
         {
-            RememberPosition();
             // Keep access across restarts (the picker offers a persistable grant), so the recent
             // list and a restore after Android ended the process can open the file again. Write access
             // too, when the picker granted it, so Save works on a file reopened from the recent list.
-            var granted = data.Flags & (ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantWriteUriPermission);
-            try
+            KeepGrant(uri, data);
+            // Shown in another window: that window comes forward, this one keeps its document.
+            if (SwitchToWindowShowing(uri)) return;
+            AfterDiscard(() =>
             {
-                ContentResolver?.TakePersistableUriPermission(uri, granted | ActivityFlags.GrantReadUriPermission);
-            }
-            catch (Java.Lang.SecurityException)
-            {
-                try
-                {
-                    ContentResolver?.TakePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
-                }
-                catch (Java.Lang.SecurityException)
-                {
-                    // Not persistable: the file opens now, but is not kept in the recent list.
-                }
-            }
-            _ = OpenUriAsync(uri, null);
+                RememberPosition();
+                _ = OpenUriAsync(uri, null);
+            });
         }
     }
 
@@ -584,6 +640,8 @@ public sealed partial class MainActivity : Activity
 
     private void ReleasePermission(string location)
     {
+        // Another window still reads and saves this file.
+        if (IsOpenInAnotherWindow(location)) return;
         try
         {
             if (Uri.Parse(location) is not { } uri) return;
@@ -605,6 +663,11 @@ public sealed partial class MainActivity : Activity
     /// </summary>
     private async Task OpenUriAsync(Uri uri, (PageAnchor TopLeft, double Zoom)? view, bool fromRecent = false, ViewerEditSnapshot? restore = null)
     {
+        // One window per document (MainActivity.Windows.cs): the window that shows it comes forward.
+        if (restore == null && SwitchToWindowShowing(uri)) return;
+        string location = uri.ToString()!;
+        // Kept edits of documents other windows show are theirs.
+        var shownElsewhere = ShownElsewhereKeys();
         byte[] bytes;
         ViewerFileStamp stamp;
         byte[]? original = null;
@@ -617,14 +680,14 @@ public sealed partial class MainActivity : Activity
             (bytes, stamp, kept, original) = await Task.Run(() =>
             {
                 var file = ReadAll(uri);
-                var found = restore ?? ReadKeptEditsNow();
+                var found = restore ?? FindKeptEditsNow(location, file, shownElsewhere);
                 return (file, Stamp(uri), found, found?.OriginalOf(file));
             });
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // The kept edits were for this file, which cannot be read any more (a revoked grant, a deleted file).
-            if (afterDeath) ForgetKeptEdits();
+            if (afterDeath) ForgetKeptEdits(location);
             bool gone = ex is Java.Lang.SecurityException or Java.IO.FileNotFoundException or FileNotFoundException;
             if (gone && _recent.Find(uri.ToString()!) != null)
             {
@@ -638,7 +701,7 @@ public sealed partial class MainActivity : Activity
         string? name = fromRecent && _recent.Find(uri.ToString()!) is { } r ? r.Name : DisplayName(uri);
         if (afterDeath && original == null)
         {
-            ForgetKeptEdits();
+            ForgetKeptEdits(location);
             Toast.MakeText(this, "The file changed while the app was closed, so your unsaved changes could not be restored.", ToastLength.Long)?.Show();
             await OpenBytesAsync(bytes, uri, name, password: null, view, stamp);
             return;
@@ -708,7 +771,7 @@ public sealed partial class MainActivity : Activity
         catch (ViewerOpenException ex)
         {
             // The message is written for users and never quotes the document. Kept edits for it cannot be given back.
-            if (restore != null) ForgetKeptEdits();
+            if (restore != null) ForgetKeptEdits(restore.Location);
             Toast.MakeText(this, ex.Message, ToastLength.Long)?.Show();
             return;
         }
@@ -732,6 +795,10 @@ public sealed partial class MainActivity : Activity
         if (session?.Problem is { } problem) Toast.MakeText(this, problem, ToastLength.Short)?.Show();
 
         var previous = _doc;
+        // Tool screens of the document that was open go with it (a restore or an incoming document can come without AfterDiscard).
+        CloseAllToolScreens();
+        // Read aloud reads the document that was open (MainActivity.ReadingAloud.cs).
+        StopReadingAloud(null);
         _search?.Cancel();
         _hits = new List<ViewerSearchHit>();
         _hitIndex = -1;
@@ -739,6 +806,7 @@ public sealed partial class MainActivity : Activity
         ShowSearch(false);
         _thumbnails.Release();
         _doc = opened;
+        _password = password;
         _fileName = name;
         _uri = uri;
         // To tell, at a save, whether another app changed the file since; and what to write back if a save fails part-way.
@@ -749,17 +817,32 @@ public sealed partial class MainActivity : Activity
         _pages.CopyAllowed = opened.CanCopy;
         _pages.SetDocument(opened);
         _linkBack.Clear();
+        _jumpForward.Clear();
         // Kept edits on storage are this document's only once restored; another document's stay until replaced.
         _keptOurs = false;
         _keptVersion = -1;
         StartEdits(session);
         if (restore != null && session != null && !opened.IsEncrypted) RestoreKeptEdits(session, restore);
+        // A view saved turned (after Android ended the app) is turned again before its place is restored.
+        if (_pendingRotation != 0)
+        {
+            int turn = _pendingRotation;
+            _pendingRotation = 0;
+            _pages.Post(() =>
+            {
+                if (!ReferenceEquals(opened, _doc)) return;
+                _pages.ViewRotation = turn;
+                if (view is { } turned) _pages.RestoreView(turned.TopLeft, turned.Zoom);
+            });
+        }
         if (view is { } v) _pages.RestoreView(v.TopLeft, v.Zoom);
         // Files the app may open again (a persisted grant) go to the top of the recent list.
         if (HasPersistedPermission(uri))
             _recent.Opened(uri.ToString()!, name ?? "Document", DateTimeOffset.Now);
         ReleaseUnlistedPermissions();
         ShowDocumentState();
+        // Recents and the Documents list show this window's document (MainActivity.Windows.cs).
+        DocumentShown();
         if (previous != null) await previous.DisposeAsync();
     }
 
@@ -771,7 +854,7 @@ public sealed partial class MainActivity : Activity
         foreach (var p in permissions.ToList())
         {
             string? location = p.Uri?.ToString();
-            if (location != null && _recent.Find(location) == null && p.Uri?.Equals(_uri) != true)
+            if (location != null && _recent.Find(location) == null && p.Uri?.Equals(_uri) != true && !IsOpenInAnotherWindow(location))
                 ReleasePermission(location);
         }
     }
@@ -799,10 +882,35 @@ public sealed partial class MainActivity : Activity
             .SetView(input)!
             .SetPositiveButton("Go", (_, _) =>
             {
-                if (int.TryParse(input.Text, out int page)) _pages.GoToPage(Math.Clamp(page, 1, _doc.PageCount));
+                if (int.TryParse(input.Text, out int page)) JumpToPage(Math.Clamp(page, 1, _doc.PageCount));
             })!
             .SetNegativeButton("Cancel", (_, _) => { })!
             .Show();
+    }
+
+    /// <summary>A turn of the view without changing the document (Windows' Rotate View); the page in view stays.</summary>
+    private int _pendingRotation;
+
+    private void RotateView(int by)
+    {
+        if (_doc == null) return;
+        _pages.ViewRotation = ((_pages.ViewRotation + by) % 360 + 360) % 360;
+        string said = _pages.ViewRotation == 0 ? "View upright" : $"View turned {_pages.ViewRotation}°";
+        Toast.MakeText(this, said, ToastLength.Short)?.Show();
+    }
+
+    /// <summary>
+    /// A jump the reader asked for (outline, page grid, go to page): the view it leaves is kept, so
+    /// Back returns there, as links do. Ordinary scrolling is not kept, so Back never undoes reading.
+    /// </summary>
+    private void JumpToPage(int page, bool record = true)
+    {
+        if (record && _pages.SavedView is { } view && page != _pages.CurrentPage)
+        {
+            _linkBack.Push(view);
+            _jumpForward.Clear();
+        }
+        _pages.GoToPage(page);
     }
 
     /// <summary>The soft keyboard (input_method) service; a Java object, so JavaCast gives its managed wrapper.</summary>
@@ -816,6 +924,7 @@ public sealed partial class MainActivity : Activity
         if (show)
         {
             ShowThumbnails(false);
+            ShowSearchOptions();
             _searchText.RequestFocus();
             _searchText.SelectAll(); // typing replaces the last query
             keyboard?.ShowSoftInput(_searchText, ShowFlags.Implicit);
@@ -828,6 +937,7 @@ public sealed partial class MainActivity : Activity
             _hitIndex = -1;
             _searchCount.Text = "";
             _pages.SetSearchHits(_hits, -1);
+            ShowSearchOptions();
         }
     }
 
@@ -839,7 +949,13 @@ public sealed partial class MainActivity : Activity
         var cts = _search = new CancellationTokenSource();
         var keyboard = Keyboard();
         keyboard?.HideSoftInputFromWindow(_searchText.WindowToken, HideSoftInputFlags.None);
-        _searchCount.Text = "…";
+        _searchCount.Text = "Searching…";
+        bool matchCase = _matchCase, wholeWord = _wholeWord;
+        // Progress on the UI thread (created here): the page reached, while a long document is searched.
+        var progress = new Progress<int>(page =>
+        {
+            if (!cts.IsCancellationRequested) _searchCount.Text = $"Searching… page {page} of {doc.PageCount}";
+        });
         List<ViewerSearchHit> hits;
         try
         {
@@ -847,7 +963,7 @@ public sealed partial class MainActivity : Activity
             hits = await Task.Run(async () =>
             {
                 var found = new List<ViewerSearchHit>();
-                await foreach (var hit in doc.SearchAsync(query, cancellationToken: cts.Token)) found.Add(hit);
+                await foreach (var hit in doc.SearchAsync(query, matchCase, wholeWord, progress, cts.Token)) found.Add(hit);
                 return found;
             }, cts.Token);
         }
@@ -875,13 +991,18 @@ public sealed partial class MainActivity : Activity
 
     private void ShowHit()
     {
-        _searchCount.Text = _hits.Count == 0 ? "No matches" : $"{_hitIndex + 1} / {_hits.Count}";
+        _searchCount.Text = _hits.Count == 0 ? "No matches"
+            : $"Match {_hitIndex + 1} of {_hits.Count} (page {_hits[_hitIndex].Page})";
+        _searchCount.ContentDescription = _searchCount.Text;
         _pages.SetSearchHits(_hits, _hitIndex);
+        ShowSearchOptions();
     }
 
     /// <summary>A hardware keyboard (or a Chromebook): + and − zoom by steps, 0 goes back to fit width.</summary>
     public override bool OnKeyDown([GeneratedEnum] Keycode keyCode, KeyEvent? e)
     {
+        // The Windows app's shortcuts (MainActivity.Keys.cs).
+        if (HandleShortcut(keyCode, e)) return true;
         if (_doc != null && _thumbnails.Visibility != ViewStates.Visible && !_searchText.HasFocus)
         {
             switch (keyCode)
@@ -895,49 +1016,93 @@ public sealed partial class MainActivity : Activity
                 case Keycode.Num0 or Keycode.Numpad0:
                     _pages.ZoomTo(1);
                     return true;
+                // Ctrl+R turns the view clockwise, Ctrl+Shift+R back, as on Windows.
+                case Keycode.R when e?.IsCtrlPressed == true:
+                    RotateView(e.IsShiftPressed ? -90 : 90);
+                    return true;
             }
         }
         return base.OnKeyDown(keyCode, e);
     }
 
+    /// <summary>Back on Android 13 to 15 (and on Android 16 for apps that opt out of predictive back).</summary>
     public override void OnBackPressed()
     {
-        if (_thumbnails.Visibility == ViewStates.Visible)
-        {
-            ShowThumbnails(false);
-            return;
-        }
-        if (_pages.HasSelection)
-        {
-            _pages.ClearSelection();
-            return;
-        }
-        if (_searchBar.Visibility == ViewStates.Visible)
-        {
-            ShowSearch(false);
-            return;
-        }
-        if (_annotateBar.Visibility == ViewStates.Visible)
-        {
-            ShowAnnotateBar(false);
-            return;
-        }
-        // Back to where a link was followed from, before leaving the document.
-        if (GoBackByLink()) return;
-        if (_session?.IsDirty == true)
-        {
-            AfterDiscard(Finish);
-            return;
-        }
+        if (HandleBack()) return;
 #pragma warning disable CA1422 // the platform's own back handling, still the behaviour on every supported version
         base.OnBackPressed();
 #pragma warning restore CA1422
     }
 
+    /// <summary>
+    /// Back on Android 16: an app that targets API 36 gets no OnBackPressed and no KEYCODE_BACK, only
+    /// the callbacks registered here. Android 13 to 15 ignore the callback (the manifest does not opt in)
+    /// and call OnBackPressed; both run <see cref="HandleBack"/>.
+    /// </summary>
+    private void RegisterBackCallback()
+    {
+        if (!OperatingSystem.IsAndroidVersionAtLeast(33)) return;
+        OnBackInvokedDispatcher.RegisterOnBackInvokedCallback(0 /* PRIORITY_DEFAULT */, new BackCallback(() =>
+        {
+            if (HandleBack()) return;
+            // What the platform does for a launcher's root activity since Android 12: the task goes to the background.
+            if (IsTaskRoot) MoveTaskToBack(true);
+            else Finish();
+        }));
+    }
+
+    private sealed class BackCallback(Action back) : Java.Lang.Object, global::Android.Window.IOnBackInvokedCallback
+    {
+        public void OnBackInvoked() => back();
+    }
+
+    /// <summary>What Back does in the app; false when it leaves the app.</summary>
+    private bool HandleBack(bool inAppOnly = false)
+    {
+        // The overlays of the tools (read mode, page organizer, redaction) close first.
+        if (CloseToolOverlay()) return true;
+        if (_fullScreen)
+        {
+            SetFullScreen(false);
+            return true;
+        }
+        if (_thumbnails.Visibility == ViewStates.Visible)
+        {
+            ShowThumbnails(false);
+            return true;
+        }
+        if (_pages.HasSelection)
+        {
+            _pages.ClearSelection();
+            return true;
+        }
+        if (_searchBar.Visibility == ViewStates.Visible)
+        {
+            ShowSearch(false);
+            return true;
+        }
+        if (_annotateBar.Visibility == ViewStates.Visible)
+        {
+            ShowAnnotateBar(false);
+            return true;
+        }
+        // Back to where a link was followed from, before leaving the document.
+        if (GoBackByLink()) return true;
+        if (inAppOnly) return false;
+        if (_session?.IsDirty == true)
+        {
+            AfterDiscard(Finish);
+            return true;
+        }
+        return false;
+    }
+
     protected override void OnDestroy()
     {
         _search?.Cancel();
+        ShutDownVoice();
         if (IsFinishing) ForgetOurKeptEdits();
+        LeaveWindows();
         var doc = _doc;
         _doc = null;
         _pages.SetDocument(null);

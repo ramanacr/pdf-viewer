@@ -13,7 +13,11 @@ namespace PdfViewer.Android;
 /// Approved, Draft, Confidential and the others, and the dynamic ones that add a name and the date
 /// and time), then taps the page where it goes. The shared session places it at the engine's
 /// size, upright as the page is shown, and the engine draws its appearance; Delete, Undo and Redo
-/// work as for the other annotations. A dynamic stamp's name is asked once and kept in this app's
+/// work as for the other annotations. A chosen stamp shows a round rotation handle above it
+/// (PageView): dragging it turns the stamp about its centre, snapping to 15° steps within 4° (a
+/// phone has no Shift), and the turn is one undo step (<see cref="ViewerEditSession.TurnStamp"/>,
+/// wired in MainActivity.Markup.cs); the appearance is turned by its form's /Matrix, a file's stamp
+/// keeping its own. A dynamic stamp's name is asked once and kept in this app's
 /// private preferences (backups are off): it goes into the document only, never anywhere else.
 /// The list also offers custom stamps (a picture or a PDF page, MainActivity.CustomStamps.cs):
 /// the ones kept in this app's stamp library, and "Custom stamp" to make one.

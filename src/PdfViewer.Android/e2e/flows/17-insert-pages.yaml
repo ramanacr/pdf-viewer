@@ -1,0 +1,11 @@
+# doc: sample
+# expect-file: * with scan*.pdf
+# expect-grep: %PDF
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Insert pages from a PDF" } }
+- runFlow: { file: ../common/pick.yaml, env: { FILE: "scan.pdf" } }
+- extendedWaitUntil: { visible: "Insert pages", timeout: 120000 }
+- tapOn: "(?i)^insert$"
+- runFlow: ../common/save.yaml

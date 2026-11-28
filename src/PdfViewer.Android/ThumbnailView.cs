@@ -140,14 +140,16 @@ internal sealed class ThumbnailView : SkiaView
                 }
                 catch (ObjectDisposedException)
                 {
-                    break;
+                    // Another document meanwhile: the loop's condition takes the current one.
+                    if (ReferenceEquals(doc, _doc)) break;
+                    continue;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     _failed.Add(page);
                     continue;
                 }
-                if (!ReferenceEquals(doc, _doc)) break;
+                if (!ReferenceEquals(doc, _doc)) continue;
                 var info = new SKImageInfo(bitmap.Width, bitmap.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
                 var image = SKImage.FromPixelCopy(info, bitmap.Pixels.AsSpan(), bitmap.Width * 4);
                 if (image == null)

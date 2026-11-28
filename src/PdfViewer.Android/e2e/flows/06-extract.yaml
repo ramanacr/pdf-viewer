@@ -1,0 +1,9 @@
+# doc: sample
+# expect-file: * page*.pdf
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Extract pages" } }
+- extendedWaitUntil: { visible: "Extract pages", timeout: 30000 }
+- tapOn: "(?i)^extract$"
+- runFlow: ../common/save.yaml

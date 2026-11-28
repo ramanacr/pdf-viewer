@@ -102,6 +102,20 @@ public sealed record ViewerAnnotation
     public int StampTurn { get; init; }
 
     /// <summary>
+    /// A stamp's turn as it is drawn, in degrees counter-clockwise in default user space ([0, 360),
+    /// as its form's /Matrix turns it), once it is known: a stamp turned with its rotation handle
+    /// (<see cref="ViewerEditSession.TurnStamp"/>), or a file's stamp with an appearance. Then
+    /// <see cref="StampWidth"/> and <see cref="StampHeight"/> are its own size before the turn and
+    /// <see cref="Box"/> holds the turned stamp. Null for a stamp made here and not turned since
+    /// (drawn at <see cref="StampTurn"/>), and for every other kind.
+    /// </summary>
+    public double? StampRotation { get; init; }
+
+    /// <summary>A stamp's own width and height before its turn (points), with <see cref="StampRotation"/>; 0 when not known.</summary>
+    public double StampWidth { get; init; }
+    public double StampHeight { get; init; }
+
+    /// <summary>
     /// A custom stamp made here: the picture or PDF page it draws (its appearance is written from
     /// it, kept to its shape). Null for every other annotation, and for a file's stamp (which keeps
     /// the appearance it has).
@@ -380,6 +394,10 @@ public static class ViewerAnnotationPdf
             StartEnding = endings ? Ending(0) : calloutEnding,
             EndEnding = endings ? Ending(1) : "None",
             StampName = kind == ViewerAnnotationKind.Stamp ? StampNameOf(p.Icon) : "",
+            // A file's stamp with an appearance: its turn and own size, so that it can be turned further.
+            StampRotation = kind == ViewerAnnotationKind.Stamp && StampSizeOf(p) != null ? PdfStamps.NormalizeDegrees(p.AppearanceRotation) : null,
+            StampWidth = kind == ViewerAnnotationKind.Stamp ? StampSizeOf(p)?.Width ?? 0 : 0,
+            StampHeight = kind == ViewerAnnotationKind.Stamp ? StampSizeOf(p)?.Height ?? 0 : 0,
             InReplyTo = kind == ViewerAnnotationKind.Reply ? parentId! : "",
             State = status ? p.State! : "",
             StateModel = status ? p.StateModel! : "",
@@ -432,6 +450,11 @@ public static class ViewerAnnotationPdf
     public static bool IsStampName(string? name) => name is { Length: > 0 and <= 64 } && name.All(char.IsAsciiLetterOrDigit);
 
     private static string StampNameOf(string? icon) => IsStampName(icon) ? icon! : "Draft";
+
+    /// <summary>A file's stamp's own size before its turn, when it has an appearance of a usable size.</summary>
+    private static (double Width, double Height)? StampSizeOf(PdfAnnotation p) =>
+        p.AppearanceSize is var (w, h) && double.IsFinite(w) && double.IsFinite(h) && w > 0 && h > 0 && w <= ViewerAnnotationStore.MaxStampSide && h <= ViewerAnnotationStore.MaxStampSide
+            && double.IsFinite(p.AppearanceRotation) ? (w, h) : null;
 
     /// <summary>Longest /State or /StateModel the viewer keeps.</summary>
     public const int MaxStateLength = PdfAnnotationXfdf.MaxStateLength;
@@ -516,39 +539,49 @@ public static class ViewerAnnotationPdf
                     : Enumerable.Range(0, v.Count / 2).Select(i => new PdfPoint(v[2 * i], v[2 * i + 1])).ToList();
                 bool keepEndings = basis?.Measure != null || was != null && a.StartEnding == was.StartEnding && a.EndEnding == was.EndEnding;
                 if (!keepEndings) p.LineEndings = a.HasEndings && (a.StartEnding != "None" || a.EndEnding != "None") ? [a.StartEnding, a.EndEnding] : null;
+                if (basis == null && a.Measure is { } measure && PdfMeasurements.KindOf(p.Subtype) is { } measured)
+                {
+                    // A new measurement, written as PdfMeasurements.Create writes one (the desktop's and Acrobat's):
+                    // /Measure, /IT (which draws its label), /Subj and, for a distance, the caption.
+                    p.Measure = measure;
+                    p.Intent = measured switch
+                    {
+                        PdfMeasurementKind.Distance => PdfMeasurements.DistanceIntent,
+                        PdfMeasurementKind.Perimeter => PdfMeasurements.PerimeterIntent,
+                        _ => PdfMeasurements.AreaIntent,
+                    };
+                    p.Subject = measured switch
+                    {
+                        PdfMeasurementKind.Distance => "Distance Measurement",
+                        PdfMeasurementKind.Perimeter => "Perimeter Measurement",
+                        _ => "Area Measurement",
+                    };
+                    p.Caption = measured == PdfMeasurementKind.Distance;
+                }
                 break;
             case ViewerAnnotationKind.Stamp:
                 // A stamp is drawn in the colour of its kind (green for Approved, red for Confidential);
                 // a file's stamp keeps its own appearance and a /Name this viewer does not write.
                 if (basis == null || IsStampName(basis.Icon)) p.Icon = a.StampName;
                 p.Color = basis?.Color;
-                if (basis == null && a.CustomStamp is { } custom)
+                if (basis != null)
+                {
+                    // A file's stamp keeps its appearance; a new turn goes into its form's /Matrix (as the desktop app writes it).
+                    double turned = a.StampRotation is double r ? PdfStamps.NormalizeDegrees(r - basis.AppearanceRotation) : 0;
+                    p.AppearanceTurn = turned < 1e-3 || turned > 360 - 1e-3 ? 0 : turned;
+                    break;
+                }
+                var (degrees, width, height) = StampLayout(a);
+                if (a.CustomStamp is { } custom)
                 {
                     // The picture or page as a form XObject (the engine's custom-stamp path, as the desktop
-                    // app writes one), stretched to the box, which keeps its shape, and turned upright.
-                    int turn = (a.StampTurn % 360 + 360) % 360;
-                    bool quarter = turn is 90 or 270;
-                    p.Stamp = new PdfStampAppearance
-                    {
-                        Rotation = turn,
-                        Width = quarter ? a.Box.Height : a.Box.Width,
-                        Height = quarter ? a.Box.Width : a.Box.Height,
-                        SourcePdf = custom.Pdf,
-                        SourcePage = 1,
-                    };
+                    // app writes one), stretched to the box, which keeps its shape, and turned.
+                    p.Stamp = new PdfStampAppearance { Rotation = degrees, Width = width, Height = height, SourcePdf = custom.Pdf, SourcePage = 1 };
                 }
-                else if (basis == null && (a.StampSubtitle != null || a.StampTurn != 0))
+                else if (a.StampSubtitle != null || degrees != 0)
                 {
                     // Drawn upright at its own size and turned by the form's /Matrix (the engine's turned-stamp path).
-                    int turn = (a.StampTurn % 360 + 360) % 360;
-                    bool quarter = turn is 90 or 270;
-                    p.Stamp = new PdfStampAppearance
-                    {
-                        Subtitle = a.StampSubtitle,
-                        Rotation = turn,
-                        Width = quarter ? a.Box.Height : a.Box.Width,
-                        Height = quarter ? a.Box.Width : a.Box.Height,
-                    };
+                    p.Stamp = new PdfStampAppearance { Subtitle = a.StampSubtitle, Rotation = degrees, Width = width, Height = height };
                 }
                 break;
             case ViewerAnnotationKind.Reply:
@@ -567,6 +600,18 @@ public static class ViewerAnnotationPdf
                 break;
         }
         return p;
+    }
+
+    /// <summary>
+    /// A new stamp's turn (degrees counter-clockwise) and own size before it: as turned with its
+    /// handle, else its <see cref="ViewerAnnotation.StampTurn"/> with its box (sideways for a quarter turn).
+    /// </summary>
+    internal static (double Degrees, double Width, double Height) StampLayout(ViewerAnnotation a)
+    {
+        if (a.StampRotation is double r && a.StampWidth > 0 && a.StampHeight > 0) return (PdfStamps.NormalizeDegrees(r), a.StampWidth, a.StampHeight);
+        int turn = (a.StampTurn % 360 + 360) % 360;
+        bool quarter = turn is 90 or 270;
+        return (turn, quarter ? a.Box.Height : a.Box.Width, quarter ? a.Box.Width : a.Box.Height);
     }
 
     /// <summary>

@@ -190,6 +190,40 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The Windows application does not include SkiaSharp or Skia.
 
+## Tesseract OCR (Android app only)
+The Android app's **Make scanned pages searchable** uses these, unmodified. The Windows application and the web demo do not include them.
+
+- **Tesseract4Android** · Version: 4.8.0 (`com.github.adaptech-cz.Tesseract4Android:tesseract4android`, from https://jitpack.io) · Source: https://github.com/adaptech-cz/Tesseract4Android · License: Apache License 2.0 (Copyright 2011 Google Inc., Copyright 2016 Robert Theis, Copyright 2019 Adaptech s.r.o.). Bound to .NET by the build; its native libraries are shipped for arm64-v8a and x86_64.
+- **Tesseract OCR** (`libtesseract.so`, built into Tesseract4Android) · Source: https://github.com/tesseract-ocr/tesseract · License: Apache License 2.0 (Copyright the Tesseract contributors, originally Hewlett-Packard and Google).
+- **tessdata_fast English model** (`eng.traineddata`) · Version: 4.1.0 · Source: https://github.com/tesseract-ocr/tessdata_fast (SHA-256 `7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2`, checked when the app is built) · License: Apache License 2.0.
+- **Leptonica** (`libleptonica.so`) · Source: http://www.leptonica.org · License: BSD 2-Clause:
+
+```
+Copyright (C) 2001-2024 Leptonica. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+1. Redistributions of source code must retain the above copyright notice, this list of
+   conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of
+   conditions and the following disclaimer in the documentation and/or other materials provided
+   with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ANY CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+- **libjpeg-turbo** (`libjpeg.so`) · Source: https://libjpeg-turbo.org · License: the IJG License, the Modified (3-clause) BSD License and the zlib License. This software is based in part on the work of the Independent JPEG Group.
+- **libpng** (`libpngx.so`) · Source: http://www.libpng.org/pub/png/libpng.html · License: the PNG Reference Library License version 2 (Copyright (c) 1995-2024 The PNG Reference Library Authors).
+
+The Apache License 2.0 text is at https://www.apache.org/licenses/LICENSE-2.0.
+
 ## Liberation Fonts (web demo only)
 Version: 2.1.5 · Source: https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5 (`liberation-fonts-ttf-2.1.5.tar.gz`, SHA-256 `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`) · License: SIL Open Font License 1.1. Shipped unmodified as static files of the web demo in `src/PdfViewer.Web/wwwroot/fonts`, with the licence text from the archive as `OFL.txt` next to them. The Windows application and the Android app do not include them.
 

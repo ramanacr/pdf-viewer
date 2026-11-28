@@ -1,0 +1,13 @@
+# doc: sample
+# expect-file: *(redacted).pdf
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Redact" } }
+# The bar opens with Area on: drag straight away (tapping Area would turn it off).
+- extendedWaitUntil: { visible: "Redact: no marks", timeout: 30000 }
+- swipe: { start: "30%, 40%", end: "70%, 45%", duration: 800 }
+- extendedWaitUntil: { visible: "1 mark", timeout: 30000 }
+- tapOn: "Apply"
+- tapOn: "(?i)save redacted copy"
+- runFlow: ../common/save.yaml

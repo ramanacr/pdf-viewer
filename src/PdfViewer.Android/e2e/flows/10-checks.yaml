@@ -1,0 +1,16 @@
+# doc: sample
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Accessibility check" } }
+- extendedWaitUntil: { visible: "Accessibility check", timeout: 120000 }
+- tapOn: "(?i)close"
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Document safety" } }
+- extendedWaitUntil: { visible: "(?i).*safety.*", timeout: 60000 }
+- tapOn: "(?i)close"
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Preflight" } }
+- tapOn: "(?i)digital printing.*"
+- tapOn: "(?i)^check$"
+# Preflight draws every page to check ink coverage: minutes on a software-rendered emulator.
+- extendedWaitUntil: { visible: "Save as JSON", timeout: 900000 }
+- tapOn: "(?i)close"

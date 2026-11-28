@@ -1,6 +1,7 @@
 using Android.Content;
 using Android.Views;
 using Android.Widget;
+using PdfEngine.Vector.Annotations;
 using PdfViewer.Web.Engine;
 using PdfViewer.Web.Engine.Annotations;
 using SkiaSharp;
@@ -8,15 +9,23 @@ using SkiaSharp;
 namespace PdfViewer.Android;
 
 /// <summary>
-/// The pages of one document in a vertical column: scrolling and flinging, pinch and double-tap
-/// zoom, search highlights and text selection. Pages are rendered by the engine's Skia backend on
+/// The pages of one document in a vertical column, two side by side (facing) or one at a time
+/// (<see cref="SetLayout"/>): scrolling and flinging, pinch and double-tap zoom, search highlights
+/// and text selection. One page at a time turns with a swipe: the page follows the finger past its
+/// edge with its neighbour coming in, and settles on the next or previous page (<see cref="SlidePages"/>). Pages are rendered by the engine's Skia backend on
 /// a worker thread, one job at a time, nearest the current page first. Each page has one bitmap of
 /// at most <see cref="BaseMaxPixels"/> pixels; at a deeper zoom the view's part of the page is
 /// drawn over it in tiles at the zoom's own scale (<see cref="PageTiles"/>), so 8× stays sharp.
 /// With an edit session, a tap fills a form field or picks an annotation, the ink tool draws with
 /// one finger (two still zoom), the rectangle, ellipse, line and arrow tools draw with a drag, and
 /// the note and text tools place a note or a text box with a tap; the engine draws the edits into
-/// the pages, which are drawn again after each change (<see cref="Refresh"/>).
+/// the pages, which are drawn again after each change (<see cref="Refresh"/>). The chosen
+/// annotation shows handles: a drag on it moves it, a corner resizes a box, a point moves one point
+/// of a line or polygon, and a stamp's round handle turns it. Polygons, connected lines and
+/// measurements take points one tap at a time (measuring points snap to the page's drawing,
+/// <see cref="MeasureSnap"/>), and redaction marks are drawn over the pages as red boxes. A text
+/// selection runs across pages (<see cref="ViewerTextSpan"/>): its handles go onto other pages,
+/// and the pages scroll while a handle is held near the top or bottom edge.
 /// </summary>
 internal sealed class PageView : SkiaView
 {
@@ -24,12 +33,22 @@ internal sealed class PageView : SkiaView
     /// What one finger does on a page: browse (scroll, tap, long press), draw (ink, rectangle,
     /// ellipse, line, arrow: a drag), or place a note, a text box, a stamp or a callout (a tap; a
     /// callout takes two: the spot it points to, then its text box), or a tap that says where the
-    /// chosen annotation goes (Place: moving it).
+    /// chosen annotation goes (Place: moving it). Polygon, connected lines and measuring place
+    /// points one at a time (a tap, or a drag that aims with a rubber band and places the point where
+    /// the finger lifts; a double tap finishes); Redact marks an area with a drag (a tap on a mark
+    /// takes it away).
     /// </summary>
-    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text, Stamp, Callout, Place }
+    public enum PageTool { Browse, Ink, Note, Rectangle, Ellipse, Line, Arrow, Text, Stamp, Callout, Place, Polygon, PolyLine, Measure, Redact }
 
     /// <summary>A tool that draws with a drag of one finger (the page does not scroll under it).</summary>
-    public static bool Drags(PageTool tool) => tool is PageTool.Ink or PageTool.Rectangle or PageTool.Ellipse or PageTool.Line or PageTool.Arrow;
+    public static bool Drags(PageTool tool) => tool is PageTool.Ink or PageTool.Rectangle or PageTool.Ellipse or PageTool.Line or PageTool.Arrow
+        || TakesPoints(tool) || tool == PageTool.Redact;
+
+    /// <summary>A tool that places points one at a time: polygon, connected lines, measuring.</summary>
+    public static bool TakesPoints(PageTool tool) => tool is PageTool.Polygon or PageTool.PolyLine or PageTool.Measure;
+
+    /// <summary>A tool that works without an edit session: measuring and marking for redaction (a copy is written).</summary>
+    private static bool NeedsNoSession(PageTool tool) => tool is PageTool.Measure or PageTool.Redact;
 
     /// <summary>Whole-page bitmaps kept for scrolling back (native Skia memory, not the Java heap).</summary>
     private const long ImageBudgetBytes = 96L * 1024 * 1024;
@@ -47,6 +66,12 @@ internal sealed class PageView : SkiaView
     private readonly GestureDetector _gestures;
     private readonly ScaleGestureDetector _pinch;
     private readonly OverScroller _scroller;
+    // Single page mode: settles a page slid aside, back or onto its neighbour; how fast a fling turns a page.
+    private readonly OverScroller _slider;
+    private readonly int _minTurnVelocity;
+    private PageLayoutMode _mode;
+    private bool _coverAlone;
+    private readonly int _touchSlop;
     private readonly SKPaint _paper = new() { Color = SKColors.White };
     private readonly SKPaint _edge = new() { Color = new SKColor(0, 0, 0, 40), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
     private readonly SKPaint _hit = new() { Color = new SKColor(255, 200, 0, 90) };
@@ -57,6 +82,9 @@ internal sealed class PageView : SkiaView
     private readonly SKPaint _field = new() { Color = new SKColor(0x1F, 0x5F, 0xA8, 28) };
     private readonly SKPaint _picked = new() { Color = new SKColor(0x1F, 0x5F, 0xA8), Style = SKPaintStyle.Stroke, IsAntialias = true };
     private readonly SKPaint _ink = new() { Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round, IsAntialias = true };
+    private readonly SKPaint _markEdge = new() { Color = new SKColor(0xD0, 0x1F, 0x1F), Style = SKPaintStyle.Stroke, IsAntialias = true };
+    private readonly SKPaint _markFill = new() { Color = new SKColor(0xD0, 0x1F, 0x1F, 46) };
+    private readonly SKPaint _handleRing = new() { Color = SKColors.White, Style = SKPaintStyle.Stroke, IsAntialias = true };
 
     // Edits: each change starts a new generation; a page image of an older one is shown only until
     // the page is drawn again. Strokes stay drawn over the page until it is drawn with them.
@@ -89,17 +117,23 @@ internal sealed class PageView : SkiaView
     private int _lastReportedPage;
     private (PageAnchor TopLeft, double Zoom)? _pendingView;
 
-    // Text selection: one page at a time; the handle being dragged (0 none, 1 start, 2 end).
-    private ViewerTextSelection? _selection;
+    // Text selection, across pages; the handle being dragged (0 none, 1 start, 2 end) and the finger.
+    private ViewerTextSpan? _selection;
     private int _dragHandle;
+    private float _dragX, _dragY;
+    private bool _autoScrolling, _spanLoading;
     private readonly Dictionary<int, ViewerTextLayout> _textLayouts = new();
 
     public PageView(Context context) : base(context)
     {
         _scroller = new OverScroller(context);
+        _slider = new OverScroller(context);
+        // A deliberate flick, not the end of a slow drag: a few times the system's least fling.
+        _minTurnVelocity = 4 * (ViewConfiguration.Get(context)?.ScaledMinimumFlingVelocity ?? 50);
         _gestures = new GestureDetector(context, new Gestures(this));
         _gestures.IsLongpressEnabled = true;
         _pinch = new ScaleGestureDetector(context, new Pinch(this));
+        _touchSlop = ViewConfiguration.Get(context)?.ScaledTouchSlop ?? 0;
         Focusable = true;
         ContentDescription = "Pages";
     }
@@ -185,10 +219,12 @@ internal sealed class PageView : SkiaView
         }
         else
         {
-            var info = _doc.Pages[page - 1];
-            double u = info.Width > 0 && location.X is { } x ? Math.Clamp(x / info.Width, 0, 1) : _layout.AnchorAt(0, 0).U;
-            double v = info.Height > 0 ? Math.Clamp((location.Y ?? 0) / info.Height, 0, 1) : 0;
-            _layout.Restore(new PageAnchor(page, location.X == null ? 0 : u, v), _layout.Zoom);
+            // The anchor is a fraction of the page as laid out (turned by the view's rotation): the point is turned first.
+            var (vx, vy) = _layout.ToViewPoint(page, new ViewerPoint(location.X ?? 0, location.Y ?? 0));
+            var r = _layout.PageRectInView(page);
+            double u = r.Width > 0 ? Math.Clamp((vx - r.X) / r.Width, 0, 1) : 0;
+            double v = r.Height > 0 ? Math.Clamp((vy - r.Y) / r.Height, 0, 1) : 0;
+            _layout.Restore(new PageAnchor(page, u, v), _layout.Zoom);
         }
         ReportPage();
         Invalidate();
@@ -242,6 +278,9 @@ internal sealed class PageView : SkiaView
         {
             _tool = value;
             _stroke = null;
+            _aim = null;
+            _lastPathUp = null;
+            _grab = Grab.None;
             if (value != PageTool.Callout) _calloutMark = null;
             if (value != PageTool.Browse) ClearSelection();
             Invalidate();
@@ -261,8 +300,8 @@ internal sealed class PageView : SkiaView
         }
     }
 
-    /// <summary>The text selection, for marking it up.</summary>
-    public ViewerTextSelection? Selection => _selection is { IsEmpty: false } s ? s : null;
+    /// <summary>The text selection, each page's part first page first, for marking it up; empty for none.</summary>
+    public IReadOnlyList<ViewerTextSelection> Selections => _selection?.Parts ?? (IReadOnlyList<ViewerTextSelection>)Array.Empty<ViewerTextSelection>();
 
     /// <summary>
     /// The document has the latest edits: every page is drawn again. Until a page is, its last
@@ -308,6 +347,7 @@ internal sealed class PageView : SkiaView
     public void SetDocument(ViewerDocument? document)
     {
         _scroller.ForceFinished(true);
+        _slider.ForceFinished(true);
         _images.Clear();
         _tiles.Clear();
         _tileScale = 0;
@@ -324,15 +364,60 @@ internal sealed class PageView : SkiaView
         _stroke = null;
         _pickedAnnotation = null;
         _calloutMark = null;
+        _path = null;
+        _aim = null;
+        _marks = Array.Empty<(int, ViewerRect)>();
+        _grab = Grab.None;
         _tool = PageTool.Browse;
         ClearSelection();
         _doc = document;
         _layout = document == null ? null : new ContinuousPageLayout(document.Pages, gap: 12 * Density, margin: 8 * Density);
+        _layout?.SetMode(_mode, _coverAlone);
         if (Width > 0) _layout?.Resize(Width, Height);
         _lastReportedPage = 0;
         ReportPage();
         Invalidate();
         RequestRender();
+    }
+
+    /// <summary>How the pages are arranged (continuous, single page or facing); the next documents keep it.</summary>
+    public PageLayoutMode LayoutMode => _mode;
+
+    /// <summary>Facing mode: page 1 alone (a book's cover), then spreads.</summary>
+    public bool CoverAlone => _coverAlone;
+
+    /// <summary>
+    /// Arranges the pages as <paramref name="mode"/> (<paramref name="coverAlone"/> in facing mode),
+    /// for this document and the next ones; the page in view stays in view, at zoom 1.
+    /// </summary>
+    public void SetLayout(PageLayoutMode mode, bool coverAlone)
+    {
+        coverAlone &= mode == PageLayoutMode.Facing;
+        if (mode == _mode && coverAlone == _coverAlone) return;
+        _mode = mode;
+        _coverAlone = coverAlone;
+        if (_layout == null) return;
+        StopMotion();
+        if (Width <= 0)
+        {
+            // Before the view has its size, a saved place still applies: its page, at zoom 1.
+            if (_pendingView is { } view) _pendingView = (view.TopLeft, 1);
+            _layout.SetMode(mode, coverAlone);
+            return;
+        }
+        _layout.SetMode(mode, coverAlone);
+        ReportPage();
+        Invalidate();
+        RequestRender();
+    }
+
+    /// <summary>Ends a fling or a page settling (the layout ends a slide when it moves the view).</summary>
+    private void StopMotion()
+    {
+        _scroller.ForceFinished(true);
+        _slider.ForceFinished(true);
+        _flinging = false;
+        _settling = false;
     }
 
     /// <summary>The view to save: the page point at the top-left corner and the zoom.</summary>
@@ -348,11 +433,30 @@ internal sealed class PageView : SkiaView
             _pendingView = (topLeft, zoom); // applied once the view has its size
             return;
         }
-        _scroller.ForceFinished(true);
+        StopMotion();
         _layout.Restore(topLeft, zoom);
         ReportPage();
         Invalidate();
         RequestRender();
+    }
+
+    /// <summary>
+    /// How far the view turns every page clockwise (0, 90, 180 or 270), as the desktop's Rotate View:
+    /// only the view turns, the document does not change. A new document starts upright.
+    /// </summary>
+    public int ViewRotation
+    {
+        get => _layout?.Rotation ?? 0;
+        set
+        {
+            if (_layout == null || Width <= 0 || value == _layout.Rotation) return;
+            StopMotion();
+            _layout.SetRotation(value);
+            // Tiles are cut from the upright page and stay valid; the view moved, so the ones it needs are asked for.
+            ReportPage();
+            Invalidate();
+            RequestRender();
+        }
     }
 
     /// <summary>The engine's night mode: pages inverted after drawing.</summary>
@@ -397,7 +501,7 @@ internal sealed class PageView : SkiaView
     public void GoToPage(int page)
     {
         if (_layout == null) return;
-        _scroller.ForceFinished(true);
+        StopMotion();
         _layout.GoTo(page);
         ReportPage();
         Invalidate();
@@ -446,14 +550,19 @@ internal sealed class PageView : SkiaView
         {
             var r = _layout.PageRectInView(page);
             var dest = new SKRect((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom);
+            // The page and its tiles are drawn upright in the page's frame, which the view's rotation turns.
+            var frame = Frame(page);
+            canvas.Save();
+            canvas.Concat(PageMatrix(page));
             if (_images.TryGet(page, _night, out var image, out _))
-                canvas.DrawImage(image, dest, _sampling);
+                canvas.DrawImage(image, Sk(frame), _sampling);
             else
-                canvas.DrawRect(dest, _paper);
+                canvas.DrawRect(Sk(frame), _paper);
             // Tiles over the whole-page bitmap: those of the current scale, or (while a pinch runs)
             // the last scale's, stretched until the new ones are drawn.
             if (_tileScale > 0 && PageTiles.NeedsTiles(BaseScale(page, scale), scale))
-                DrawTiles(canvas, page, r, sharp: PageImageCache<SKImage>.SameScale(_tileScale, scale));
+                DrawTiles(canvas, page, sharp: PageImageCache<SKImage>.SameScale(_tileScale, scale));
+            canvas.Restore();
             canvas.DrawRect(dest, _edge);
         }
         for (int i = 0; i < _hits.Count; i++)
@@ -467,6 +576,8 @@ internal sealed class PageView : SkiaView
             }
         }
         DrawEdits(canvas);
+        DrawMarks(canvas);
+        DrawPath(canvas);
         DrawSelection(canvas);
     }
 
@@ -492,6 +603,7 @@ internal sealed class PageView : SkiaView
                 var (ax, ay) = session.Document.Geometry[a.Page - 1].ToShown(a.Callout[0], a.Callout[1]);
                 DrawMark(canvas, a.Page, new ViewerPoint(ax, ay));
             }
+            if (CanEdit(a)) DrawHandles(canvas, session, a);
         }
         if (_calloutMark is var (markPage, markPoint) && visible.Contains(markPage)) DrawMark(canvas, markPage, markPoint);
         _ink.StrokeWidth = (float)(ViewerEditSession.InkWidth * _layout.PixelsPerPoint);
@@ -501,7 +613,8 @@ internal sealed class PageView : SkiaView
             if (visible.Contains(page)) DrawStroke(canvas, page, points);
         }
         _ink.Color = _strokeColor;
-        if (_stroke != null) DrawStroke(canvas, _strokePage, _tool == PageTool.Ink || _stroke.Count < 2 ? _stroke : Outline(_tool, _stroke[0], _stroke[^1]));
+        if (_stroke != null && _tool != PageTool.Redact)
+            DrawStroke(canvas, _strokePage, _tool == PageTool.Ink || _stroke.Count < 2 ? _stroke : Outline(_tool, _stroke[0], _stroke[^1]));
     }
 
     /// <summary>
@@ -538,9 +651,7 @@ internal sealed class PageView : SkiaView
     /// <summary>A ring at a point of a page: a callout's anchor.</summary>
     private void DrawMark(SKCanvas canvas, int page, ViewerPoint point)
     {
-        var r = _layout!.PageRectInView(page);
-        double s = _layout.PixelsPerPoint;
-        float x = (float)(r.X + point.X * s), y = (float)(r.Y + point.Y * s);
+        var (x, y) = V(page, point);
         _picked.StrokeWidth = 2 * Density;
         canvas.DrawCircle(x, y, 7 * Density, _picked);
         canvas.DrawCircle(x, y, 2.5f * Density, _handle);
@@ -549,24 +660,75 @@ internal sealed class PageView : SkiaView
     private void DrawStroke(SKCanvas canvas, int page, IReadOnlyList<ViewerPoint> points)
     {
         if (points.Count == 0) return;
-        var r = _layout!.PageRectInView(page);
-        double s = _layout.PixelsPerPoint;
         using var path = new SKPath();
-        path.MoveTo((float)(r.X + points[0].X * s), (float)(r.Y + points[0].Y * s));
-        for (int i = 1; i < points.Count; i++) path.LineTo((float)(r.X + points[i].X * s), (float)(r.Y + points[i].Y * s));
-        if (points.Count == 1) path.LineTo((float)(r.X + points[0].X * s) + 0.1f, (float)(r.Y + points[0].Y * s));
+        var (x0, y0) = V(page, points[0]);
+        path.MoveTo(x0, y0);
+        for (int i = 1; i < points.Count; i++)
+        {
+            var (x, y) = V(page, points[i]);
+            path.LineTo(x, y);
+        }
+        if (points.Count == 1) path.LineTo(x0 + 0.1f, y0);
         canvas.DrawPath(path, _ink);
+    }
+
+    /// <summary>A point of a page (shown-page points) in view pixels, turned by the view's rotation.</summary>
+    private (float X, float Y) V(int page, ViewerPoint point)
+    {
+        var (x, y) = _layout!.ToViewPoint(page, point);
+        return ((float)x, (float)y);
     }
 
     private static SKRect Sk(LayoutRect r) => new((float)r.X, (float)r.Y, (float)r.Right, (float)r.Bottom);
 
-    private void DrawTiles(SKCanvas canvas, int page, LayoutRect pageInView, bool sharp)
+    /// <summary>
+    /// A page's frame: its shown page, upright, in view pixels at the layout's scale, from its
+    /// top-left corner. <see cref="PageMatrix"/> places it in the view.
+    /// </summary>
+    private LayoutRect Frame(int page)
     {
         var info = _doc!.Pages[page - 1];
-        foreach (var tile in PageTiles.Visible(info, _tileScale, pageInView, Width, Height))
+        double s = _layout!.PixelsPerPoint;
+        return new LayoutRect(0, 0, info.Width * s, info.Height * s);
+    }
+
+    /// <summary>The matrix from a page's <see cref="Frame"/> to the view: a move, turned by the view's rotation.</summary>
+    private SKMatrix PageMatrix(int page)
+    {
+        var (ox, oy) = _layout!.ToViewPoint(page, new ViewerPoint(0, 0));
+        float x = (float)ox, y = (float)oy;
+        return _layout.Rotation switch
+        {
+            90 => new SKMatrix(0, -1, x, 1, 0, y, 0, 0, 1),
+            180 => new SKMatrix(-1, 0, x, 0, -1, y, 0, 0, 1),
+            270 => new SKMatrix(0, 1, x, -1, 0, y, 0, 0, 1),
+            _ => SKMatrix.CreateTranslation(x, y),
+        };
+    }
+
+    /// <summary>
+    /// The tiles at <paramref name="scale"/> that the view shows of a page, each with its rectangle
+    /// in the page's frame: the view is turned back into the frame, so a turned page tiles as an upright one.
+    /// </summary>
+    private IEnumerable<(PageTile Tile, LayoutRect InFrame)> VisibleTiles(int page, double scale)
+    {
+        var info = _doc!.Pages[page - 1];
+        var frame = Frame(page);
+        if (!PageMatrix(page).TryInvert(out var inverse)) yield break;
+        var a = inverse.MapPoint(0, 0);
+        var b = inverse.MapPoint(Width, Height);
+        float x0 = Math.Min(a.X, b.X), y0 = Math.Min(a.Y, b.Y), x1 = Math.Max(a.X, b.X), y1 = Math.Max(a.Y, b.Y);
+        // The view, in the frame, is the visible window; the page sits at -window corner.
+        var pageInWindow = new LayoutRect(-x0, -y0, frame.Width, frame.Height);
+        foreach (var tile in PageTiles.Visible(info, scale, pageInWindow, x1 - x0, y1 - y0))
+            yield return (tile, PageTiles.InView(tile, info, scale, frame));
+    }
+
+    private void DrawTiles(SKCanvas canvas, int page, bool sharp)
+    {
+        foreach (var (tile, v) in VisibleTiles(page, _tileScale))
         {
             if (!_tiles.TryGet(page, _night, _tileScale, tile.Column, tile.Row, out var image)) continue;
-            var v = PageTiles.InView(tile, info, _tileScale, pageInView);
             // At the tiles' own scale each tile pixel is one view pixel: whole pixels keep it sharp.
             var dest = sharp
                 ? SKRect.Create((float)Math.Round(v.X), (float)Math.Round(v.Y), image.Width, image.Height)
@@ -577,11 +739,17 @@ internal sealed class PageView : SkiaView
 
     private void DrawSelection(SKCanvas canvas)
     {
-        if (_selection is not { IsEmpty: false } s || _layout == null) return;
-        foreach (var band in s.Bands)
+        if (_selection is not { } s || _layout == null) return;
+        var visible = _layout.VisiblePages().ToHashSet();
+        // Each page's part on its page: a selection across pages draws on all of them.
+        foreach (var part in s.Parts)
         {
-            var v = _layout.ToView(s.Page, band);
-            canvas.DrawRect(new SKRect((float)v.X, (float)v.Y, (float)v.Right, (float)v.Bottom), _selected);
+            if (!visible.Contains(part.Page)) continue;
+            foreach (var band in part.Bands)
+            {
+                var v = _layout.ToView(part.Page, band);
+                canvas.DrawRect(new SKRect((float)v.X, (float)v.Y, (float)v.Right, (float)v.Bottom), _selected);
+            }
         }
         if (HandlesInView() is not { } h) return;
         // Android's teardrops: a disc below the line, its corner at the selection's corner.
@@ -600,13 +768,11 @@ internal sealed class PageView : SkiaView
     private (float X, float Y) HandleCentre((double X, double Y) corner, bool start) =>
         ((float)corner.X + (start ? -HandleRadius : HandleRadius), (float)corner.Y + HandleRadius);
 
-    /// <summary>The selection handles' points (the bottom corners of the selection) in view pixels.</summary>
+    /// <summary>The selection handles' points (the bottom corners of the selection, on its first and last page) in view pixels.</summary>
     private ((double X, double Y) Start, (double X, double Y) End)? HandlesInView()
     {
         if (_selection?.HandlePositions() is not { } p || _layout == null) return null;
-        var page = _layout.PageRectInView(_selection.Page);
-        double s = _layout.PixelsPerPoint;
-        return ((page.X + p.Start.X * s, page.Y + p.Start.Y * s), (page.X + p.End.X * s, page.Y + p.End.Y * s));
+        return (_layout.ToViewPoint(p.Start.Page, p.Start.Point), _layout.ToViewPoint(p.End.Page, p.End.Point));
     }
 
     // ------------------------------------------------------------------ rendering
@@ -637,7 +803,9 @@ internal sealed class PageView : SkiaView
                 }
                 catch (ObjectDisposedException)
                 {
-                    break; // another document was opened meanwhile
+                    // Another document was opened meanwhile: go on with its pages (NextJob reads the current one).
+                    if (ReferenceEquals(job.Doc, _doc)) break;
+                    continue;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -645,7 +813,9 @@ internal sealed class PageView : SkiaView
                     Problem?.Invoke(ViewerRenderFailure.Describe(job.Page, ex));
                     continue;
                 }
-                if (!ReferenceEquals(job.Doc, _doc)) break;
+                // Drawn for a document that was replaced: dropped, and the loop goes on with the new one
+                // (its RequestRender returned early while this loop ran).
+                if (!ReferenceEquals(job.Doc, _doc)) continue;
                 if (job.Generation != _generation) continue; // drawn before the latest edit
                 if (bitmap.TextRegionsWithoutFont > 0 && !_toldMissingFonts)
                 {
@@ -715,10 +885,14 @@ internal sealed class PageView : SkiaView
         foreach (int page in visible)
         {
             if (!PageTiles.NeedsTiles(BaseScale(page, scale), scale)) continue;
-            var info = doc.Pages[page - 1];
-            var rect = _layout.PageRectInView(page);
-            var tiles = PageTiles.Visible(info, scale, rect, Width, Height)
-                .OrderBy(t => DistanceSquared(PageTiles.InView(t, info, scale, rect), cx, cy));
+            var matrix = PageMatrix(page);
+            var tiles = VisibleTiles(page, scale)
+                .OrderBy(t =>
+                {
+                    var centre = matrix.MapPoint((float)(t.InFrame.X + t.InFrame.Width / 2), (float)(t.InFrame.Y + t.InFrame.Height / 2));
+                    return (centre.X - cx) * (centre.X - cx) + (centre.Y - cy) * (centre.Y - cy);
+                })
+                .Select(t => t.Tile);
             foreach (var tile in tiles)
             {
                 if (_tiles.Has(page, _night, scale, tile.Column, tile.Row)) continue;
@@ -740,12 +914,6 @@ internal sealed class PageView : SkiaView
         }
     }
 
-    private static double DistanceSquared(LayoutRect r, double x, double y)
-    {
-        double dx = r.X + r.Width / 2 - x, dy = r.Y + r.Height / 2 - y;
-        return dx * dx + dy * dy;
-    }
-
     // ------------------------------------------------------------------ text selection
 
     public bool HasSelection => _selection is { IsEmpty: false };
@@ -765,11 +933,11 @@ internal sealed class PageView : SkiaView
         }
     }
 
-    /// <summary>Selects all text of the selection's page.</summary>
+    /// <summary>Selects all text of the pages the selection is on.</summary>
     public void SelectPage()
     {
         if (_selection == null) return;
-        _selection.SelectAll();
+        _selection.SelectPages();
         Invalidate();
     }
 
@@ -780,6 +948,11 @@ internal sealed class PageView : SkiaView
     private void Tap(float x, float y)
     {
         if (_layout?.PageAt(x, y) is not var (page, point)) return;
+        if (MarkAt(page, point) is int mark)
+        {
+            RedactionMarkTapped?.Invoke(mark);
+            return;
+        }
         if (_tool is PageTool.Note or PageTool.Text or PageTool.Stamp or PageTool.Callout or PageTool.Place)
         {
             (_tool switch
@@ -813,6 +986,7 @@ internal sealed class PageView : SkiaView
     /// </summary>
     private bool DrawInk(MotionEvent e)
     {
+        if (TakesPoints(_tool)) return PlacePoint(e);
         switch (e.ActionMasked)
         {
             case MotionEventActions.Down:
@@ -841,6 +1015,22 @@ internal sealed class PageView : SkiaView
             case MotionEventActions.Up when _stroke != null:
                 var stroke = _stroke;
                 _stroke = null;
+                if (_tool == PageTool.Redact)
+                {
+                    Invalidate();
+                    var to = ToPage(_strokePage, e.GetX(), e.GetY());
+                    // Hardly a drag: a tap, which takes away the mark under it.
+                    double moved = Math.Max(Math.Abs(to.X - stroke[0].X), Math.Abs(to.Y - stroke[0].Y)) * _layout!.PixelsPerPoint;
+                    if (moved < TouchSlop)
+                    {
+                        if (MarkAt(_strokePage, to) is int mark) RedactionMarkTapped?.Invoke(mark);
+                    }
+                    else
+                    {
+                        RedactionAreaDrawn?.Invoke(_strokePage, stroke[0], to);
+                    }
+                    return true;
+                }
                 if (_tool != PageTool.Ink)
                 {
                     var end = ToPage(_strokePage, e.GetX(), e.GetY());
@@ -872,28 +1062,10 @@ internal sealed class PageView : SkiaView
             return;
         }
         int page = _layout.AnchorAt(x, y).Page;
-        if (!_textLayouts.TryGetValue(page, out var layout))
-        {
-            try
-            {
-                layout = await Task.Run(() => doc.GetTextLayoutAsync(page));
-            }
-            catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                Problem?.Invoke($"The text of page {page} could not be read ({ex.GetType().Name}).");
-                return;
-            }
-            if (!ReferenceEquals(doc, _doc) || _layout == null) return;
-            if (_textLayouts.Count >= 8) _textLayouts.Clear();
-            _textLayouts[page] = layout;
-        }
-        var selection = new ViewerTextSelection(page, layout);
+        if (await TextLayoutAsync(doc, page) is not { } layout || !ReferenceEquals(doc, _doc) || _layout == null) return;
+        var selection = new ViewerTextSpan(page, layout);
         // Within about a finger's width of the text (in points at this zoom).
-        if (!selection.SelectWordAt(ToPage(page, x, y), slack: 16 * Density / _layout.PixelsPerPoint))
+        if (!selection.SelectWordAt(page, ToPage(page, x, y), slack: 16 * Density / _layout.PixelsPerPoint))
         {
             if (layout.IsEmpty) Problem?.Invoke("There is no text to select on this page.");
             return;
@@ -903,6 +1075,115 @@ internal sealed class PageView : SkiaView
         _selection = selection;
         Invalidate();
         if (started) SelectionChanged?.Invoke(true);
+    }
+
+    /// <summary>A page's text layout, read once on a worker thread (a few are kept); null when it cannot be read (told) or the document went.</summary>
+    private async Task<ViewerTextLayout?> TextLayoutAsync(ViewerDocument doc, int page)
+    {
+        if (_textLayouts.TryGetValue(page, out var layout)) return layout;
+        try
+        {
+            layout = await Task.Run(() => doc.GetTextLayoutAsync(page));
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Problem?.Invoke($"The text of page {page} could not be read ({ex.GetType().Name}).");
+            return null;
+        }
+        if (!ReferenceEquals(doc, _doc)) return null;
+        if (_textLayouts.Count >= 8) _textLayouts.Clear();
+        _textLayouts[page] = layout;
+        return layout;
+    }
+
+    /// <summary>The page under a view point and the point on it; between pages, the nearest page.</summary>
+    private (int Page, ViewerPoint Point) PageNear(float x, float y)
+    {
+        if (_layout!.PageAt(x, y) is var (page, point)) return (page, point);
+        int near = _layout.AnchorAt(x, y).Page;
+        return (near, ToPage(near, x, y));
+    }
+
+    /// <summary>
+    /// The dragged handle follows the finger, onto other pages too: the pages it passes are read
+    /// first (on a worker thread), then it moves. The handle hangs below the line it marks, so it
+    /// aims at the line above the finger.
+    /// </summary>
+    private void MoveSelectionHandle()
+    {
+        if (_selection is not { } span || _dragHandle == 0 || _layout == null) return;
+        var (page, point) = PageNear(_dragX, _dragY - HandleRadius * 2f);
+        if (!span.CanReach(page)) return;
+        var missing = span.MissingLayouts(page);
+        if (missing.Count > 0)
+        {
+            if (!_spanLoading && _doc is { } doc) _ = LoadSpanLayoutsAsync(doc, span, missing);
+            return;
+        }
+        if (span.MoveHandle(_dragHandle == 1, page, point)) _dragHandle = 3 - _dragHandle;
+        Invalidate();
+    }
+
+    private async Task LoadSpanLayoutsAsync(ViewerDocument doc, ViewerTextSpan span, IReadOnlyList<int> pages)
+    {
+        _spanLoading = true;
+        try
+        {
+            foreach (int page in pages)
+            {
+                if (await TextLayoutAsync(doc, page) is not { } layout || !ReferenceEquals(span, _selection)) return;
+                span.AddLayout(page, layout);
+            }
+        }
+        finally
+        {
+            _spanLoading = false;
+        }
+        // The finger may have gone on meanwhile: the handle goes where it is now.
+        MoveSelectionHandle();
+    }
+
+    /// <summary>How near (dp) the top or bottom edge the finger dragging a handle scrolls the pages.</summary>
+    private const float AutoScrollEdgeDp = 56;
+
+    /// <summary>The fastest auto-scroll (dp a frame), with the finger at the very edge.</summary>
+    private const float AutoScrollSpeedDp = 18;
+
+    /// <summary>Pixels a frame to scroll while a handle is dragged near the top (negative) or bottom edge; 0 elsewhere.</summary>
+    private float AutoScrollSpeed()
+    {
+        float edge = AutoScrollEdgeDp * Density, speed = AutoScrollSpeedDp * Density;
+        if (_dragY < edge) return -speed * Math.Clamp((edge - _dragY) / edge, 0, 1);
+        if (_dragY > Height - edge) return speed * Math.Clamp((_dragY - (Height - edge)) / edge, 0, 1);
+        return 0;
+    }
+
+    private void StartAutoScroll()
+    {
+        if (_autoScrolling || AutoScrollSpeed() == 0) return;
+        _autoScrolling = true;
+        PostDelayed(AutoScrollStep, 16);
+    }
+
+    /// <summary>One frame of auto-scroll: the pages move and the handle follows the finger onto the text now under it.</summary>
+    private void AutoScrollStep()
+    {
+        float speed = _dragHandle != 0 && _selection != null && _layout != null ? AutoScrollSpeed() : 0;
+        if (speed == 0)
+        {
+            _autoScrolling = false;
+            RequestRender();
+            return;
+        }
+        _layout!.ScrollBy(0, speed);
+        ReportPage();
+        MoveSelectionHandle();
+        Invalidate();
+        PostDelayed(AutoScrollStep, 16);
     }
 
     /// <summary>Which handle, if any, a touch at (x, y) grabs: 1 start, 2 end, 0 none.</summary>
@@ -929,22 +1210,28 @@ internal sealed class PageView : SkiaView
         {
             if (e.ActionMasked == MotionEventActions.Move && _selection != null)
             {
-                // The handle hangs below the line it marks: aim at the line above the finger.
-                var p = ToPage(_selection.Page, e.GetX(), e.GetY() - HandleRadius * 2f);
-                if (_selection.MoveHandle(_dragHandle == 1, p)) _dragHandle = 3 - _dragHandle;
-                Invalidate();
+                _dragX = e.GetX();
+                _dragY = e.GetY();
+                MoveSelectionHandle();
+                // Near the top or bottom edge the pages scroll, so the selection can go on past the view.
+                StartAutoScroll();
             }
             else if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel)
             {
                 _dragHandle = 0;
+                RequestRender();
             }
             return true;
         }
+        if (EditDrag(e)) return true;
         _pinch.OnTouchEvent(e);
         bool drags = Drags(_tool);
-        if (drags && Session != null && !_pinch.IsInProgress && e.PointerCount == 1 && DrawInk(e)) return true;
+        if (drags && (Session != null || NeedsNoSession(_tool)) && !_pinch.IsInProgress && e.PointerCount == 1 && DrawInk(e)) return true;
         if (drags && e.ActionMasked is MotionEventActions.PointerDown) DrawInk(e);
         if (!_pinch.IsInProgress && !drags) _gestures.OnTouchEvent(e);
+        // A page slid aside and let go without a fling (which settles it itself) settles by how far it went.
+        if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel && IsSlid && !_settling)
+            SettleSlide(0, 0);
         if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel && !_flinging)
             RequestRender();
         return true;
@@ -954,6 +1241,21 @@ internal sealed class PageView : SkiaView
     {
         base.ComputeScroll();
         if (_layout == null) return;
+        if (_settling)
+        {
+            if (_slider.ComputeScrollOffset() && !_slider.IsFinished)
+            {
+                _layout.SetSlide(_slider.CurrX, _slider.CurrY);
+                PostInvalidateOnAnimation();
+            }
+            else
+            {
+                _settling = false;
+                _layout.SetSlide(0, 0);
+                RequestRender();
+            }
+            Invalidate();
+        }
         if (_scroller.ComputeScrollOffset())
         {
             _layout.ScrollTo(_scroller.CurrX, _scroller.CurrY);
@@ -970,14 +1272,97 @@ internal sealed class PageView : SkiaView
 
     private void ScrollPages(float dx, float dy)
     {
-        _layout!.ScrollBy(dx, dy);
+        if (_layout!.Mode == PageLayoutMode.SinglePage) SlidePages(dx, dy);
+        else _layout.ScrollBy(dx, dy);
         ReportPage();
         Invalidate();
     }
 
+    private bool IsSlid => _layout is { } l && (l.SlideX != 0 || l.SlideY != 0);
+
+    // A page is settling (sliding back, or onto its neighbour) under _slider.
+    private bool _settling;
+
+    /// <summary>
+    /// Single page mode: a drag scrolls the page (zoomed in) and, where the page can scroll no further,
+    /// slides it aside so that its neighbour comes in, along the drag's longer axis. A swipe sideways
+    /// turns pages as in a book or a photo gallery, which is what people expect of one page at a time
+    /// on a phone; a swipe up or down past the page's end turns them too, for people used to scrolling.
+    /// A page slid aside follows the finger back before it scrolls again.
+    /// </summary>
+    private void SlidePages(double dx, double dy)
+    {
+        var l = _layout!;
+        double sx = l.SlideX, sy = l.SlideY;
+        (dx, sx) = Unslide(dx, sx);
+        (dy, sy) = Unslide(dy, sy);
+        double x0 = l.ScrollX, y0 = l.ScrollY;
+        l.ScrollBy(dx, dy);
+        double restX = dx - (l.ScrollX - x0), restY = dy - (l.ScrollY - y0);
+        if (sx != 0 || (sy == 0 && Math.Abs(restX) >= Math.Abs(restY))) sx -= restX;
+        else sy -= restY;
+        l.SetSlide(sx, sy);
+
+        // A finger move of d (as GestureDetector gives it: the content moves by -d) first takes the slide back towards 0.
+        static (double Left, double Slide) Unslide(double d, double slide)
+        {
+            if (slide == 0 || d == 0) return (d, slide);
+            double moved = slide - d;
+            return Math.Sign(moved) == Math.Sign(slide) ? (0, moved) : (-moved, 0);
+        }
+    }
+
+    /// <summary>
+    /// Single page mode: a page slid aside goes on to its neighbour after a fling that way, or when let
+    /// go more than a quarter of the view out; otherwise (or after a fling back) it goes back.
+    /// </summary>
+    private void SettleSlide(float vx, float vy)
+    {
+        var l = _layout!;
+        bool vertical = l.SlideY != 0;
+        double slide = vertical ? l.SlideY : l.SlideX, v = vertical ? vy : vx, size = vertical ? Height : Width;
+        bool turn = Math.Abs(v) >= _minTurnVelocity ? Math.Sign(v) == Math.Sign(slide) : Math.Abs(slide) > size / 4;
+        if (turn)
+        {
+            // Moved right or down: the previous page comes in.
+            int step = slide > 0 ? -1 : 1, target = l.CurrentPage + step;
+            var before = l.PageRectInView(target);
+            if (l.Turn(step, vertical))
+            {
+                // A selection is on the page that went.
+                ClearSelection();
+                // The new page starts where it was, beside the old one, and slides into place.
+                var after = l.PageRectInView(target);
+                l.SetSlide(vertical ? 0 : before.X - after.X, vertical ? before.Y - after.Y : 0);
+                ReportPage();
+            }
+        }
+        int fromX = (int)Math.Round(l.SlideX), fromY = (int)Math.Round(l.SlideY);
+        _slider.ForceFinished(true);
+        l.SetSlide(fromX, fromY);
+        Invalidate();
+        if (fromX == 0 && fromY == 0)
+        {
+            _settling = false;
+            RequestRender();
+            return;
+        }
+        _settling = true;
+        _slider.StartScroll(fromX, fromY, -fromX, -fromY, SettleMillis);
+        PostInvalidateOnAnimation();
+    }
+
+    /// <summary>How long (ms) a page takes to settle after a swipe.</summary>
+    private const int SettleMillis = 250;
+
     private void Fling(float vx, float vy)
     {
         var l = _layout!;
+        if (IsSlid)
+        {
+            SettleSlide(vx, vy);
+            return;
+        }
         _scroller.ForceFinished(true);
         _scroller.Fling((int)l.ScrollX, (int)l.ScrollY, (int)-vx, (int)-vy, 0, (int)l.MaxScrollX, 0, (int)l.MaxScrollY);
         _flinging = true;
@@ -1009,6 +1394,584 @@ internal sealed class PageView : SkiaView
         PageChanged?.Invoke(page, _layout?.PageCount ?? 0);
     }
 
+    // ------------------------------------------------------------------ redaction marks
+
+    private IReadOnlyList<(int Page, ViewerRect Rect)> _marks = Array.Empty<(int, ViewerRect)>();
+
+    /// <summary>
+    /// Areas marked for redaction (shown-page points), drawn as red boxes over the pages; a tap on
+    /// one raises <see cref="RedactionMarkTapped"/>. Empty draws nothing.
+    /// </summary>
+    public IReadOnlyList<(int Page, ViewerRect Rect)> RedactionMarks
+    {
+        set
+        {
+            _marks = value;
+            Invalidate();
+        }
+    }
+
+    /// <summary>The redact tool was dragged across an area: its page and two corners (shown-page points).</summary>
+    public event Action<int, ViewerPoint, ViewerPoint>? RedactionAreaDrawn;
+
+    /// <summary>A redaction mark was tapped: its index in <see cref="RedactionMarks"/>.</summary>
+    public event Action<int>? RedactionMarkTapped;
+
+    /// <summary>The last mark (drawn on top) under a point of a page, with a finger's slack; null when none.</summary>
+    private int? MarkAt(int page, ViewerPoint point)
+    {
+        if (_marks.Count == 0 || _layout == null) return null;
+        double slack = TapSlackDp * Density / _layout.PixelsPerPoint;
+        for (int i = _marks.Count - 1; i >= 0; i--)
+        {
+            var (p, r) = _marks[i];
+            if (p == page && point.X >= r.X - slack && point.X <= r.X + r.Width + slack && point.Y >= r.Y - slack && point.Y <= r.Y + r.Height + slack)
+                return i;
+        }
+        return null;
+    }
+
+    /// <summary>The marks (a red outline over a light red tint) and the area being dragged.</summary>
+    private void DrawMarks(SKCanvas canvas)
+    {
+        if (_layout == null) return;
+        _markEdge.StrokeWidth = 2 * Density;
+        if (_marks.Count > 0)
+        {
+            var visible = _layout.VisiblePages().ToHashSet();
+            foreach (var (page, rect) in _marks)
+            {
+                if (!visible.Contains(page)) continue;
+                var r = Sk(_layout.ToView(page, rect));
+                canvas.DrawRect(r, _markFill);
+                canvas.DrawRect(r, _markEdge);
+            }
+        }
+        if (_tool == PageTool.Redact && _stroke is { Count: >= 2 } s)
+        {
+            var a = s[0];
+            var b = s[^1];
+            var r = Sk(_layout.ToView(_strokePage, new ViewerRect(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y))));
+            canvas.DrawRect(r, _markFill);
+            canvas.DrawRect(r, _markEdge);
+        }
+    }
+
+    // ------------------------------------------------------------------ points: polygon, connected lines, measuring
+
+    private (int Page, IReadOnlyList<ViewerPoint> Points, bool Closed)? _path;
+
+    /// <summary>
+    /// The points placed so far (shown-page points), drawn joined in the tool's colour (closed for a
+    /// polygon or an area), with a rubber band to the finger while it is down; null for none.
+    /// </summary>
+    public (int Page, IReadOnlyList<ViewerPoint> Points, bool Closed)? PathPreview
+    {
+        get => _path;
+        set
+        {
+            _path = value;
+            Invalidate();
+        }
+    }
+
+    private ViewerPoint? _aim;
+    private int _aimPage;
+    private float _aimDownX, _aimDownY;
+    private (long Time, float X, float Y)? _lastPathUp;
+
+    /// <summary>A point was placed with a points tool (a tap, or where a drag lifted): its page and the point.</summary>
+    public event Action<int, ViewerPoint>? PathPointPlaced;
+
+    /// <summary>The finger aims a points tool at a point of a page (while it is down), or lifted (null): for a live result.</summary>
+    public event Action<int, ViewerPoint?>? PathAimed;
+
+    /// <summary>A double tap with a points tool: the shape or measurement is finished.</summary>
+    public event Action? PathFinished;
+
+    private float TouchSlop => _touchSlop > 0 ? _touchSlop : 8 * Density;
+
+    /// <summary>
+    /// Snaps a measuring point to the page's drawing (page, shown-page point, tolerance in points:
+    /// where it lands and what it snapped to), or null when snapping is off. Measuring points, and
+    /// the points of a measurement annotation being dragged, snap within
+    /// <see cref="ViewerMeasureSnap.ToleranceDp"/> on screen, with a marker where they snap.
+    /// </summary>
+    public Func<int, ViewerPoint, double, (ViewerPoint Point, PdfSnapKind Kind)>? MeasureSnap { get; set; }
+
+    private PdfSnapKind _aimSnap;
+
+    /// <summary>A point snapped when measuring (or dragging a measurement's point), with what it snapped to; as it is otherwise.</summary>
+    private (ViewerPoint Point, PdfSnapKind Kind) Snapped(int page, ViewerPoint point, bool measuring)
+    {
+        if (!measuring || MeasureSnap is not { } snap || _layout == null) return (point, PdfSnapKind.None);
+        return snap(page, point, ViewerMeasureSnap.Tolerance(_layout.PixelsPerPoint, Density));
+    }
+
+    /// <summary>
+    /// Where a point snapped, as Acrobat marks it: a square on an end, a triangle on a middle, a
+    /// diamond on a line; nothing when it did not snap.
+    /// </summary>
+    private void DrawSnapMarker(SKCanvas canvas, int page, ViewerPoint point, PdfSnapKind kind)
+    {
+        if (kind == PdfSnapKind.None) return;
+        var (x, y) = V(page, point);
+        float r = 7 * Density;
+        using var path = new SKPath();
+        switch (kind)
+        {
+            case PdfSnapKind.Endpoint:
+                path.AddRect(new SKRect(x - r, y - r, x + r, y + r));
+                break;
+            case PdfSnapKind.Midpoint:
+                path.MoveTo(x, y - r);
+                path.LineTo(x + r, y + r * 0.8f);
+                path.LineTo(x - r, y + r * 0.8f);
+                path.Close();
+                break;
+            default:
+                path.MoveTo(x, y - r);
+                path.LineTo(x + r, y);
+                path.LineTo(x, y + r);
+                path.LineTo(x - r, y);
+                path.Close();
+                break;
+        }
+        _handleRing.StrokeWidth = 4 * Density;
+        canvas.DrawPath(path, _handleRing);
+        _picked.StrokeWidth = 2 * Density;
+        canvas.DrawPath(path, _picked);
+    }
+
+    /// <summary>
+    /// A points tool: the finger aims (a rubber band from the last point) and the point goes where it
+    /// lifts; a second tap close to the first within the double-tap time finishes instead.
+    /// </summary>
+    private bool PlacePoint(MotionEvent e)
+    {
+        switch (e.ActionMasked)
+        {
+            case MotionEventActions.Down:
+                if (_layout!.PageAt(e.GetX(), e.GetY()) is not var (page, point)) return false;
+                _scroller.ForceFinished(true);
+                Parent?.RequestDisallowInterceptTouchEvent(true);
+                // While points are placed, the finger aims on their page.
+                _aimPage = _path is { } path && path.Points.Count > 0 ? path.Page : page;
+                // Measuring: the aim snaps to the page's drawing nearby.
+                (_aim, _aimSnap) = Snapped(_aimPage, _aimPage == page ? point : ToPage(_aimPage, e.GetX(), e.GetY()), _tool == PageTool.Measure);
+                _aimDownX = e.GetX();
+                _aimDownY = e.GetY();
+                PathAimed?.Invoke(_aimPage, _aim);
+                Invalidate();
+                return true;
+            case MotionEventActions.Move when _aim != null:
+                (_aim, _aimSnap) = Snapped(_aimPage, ToPage(_aimPage, e.GetX(), e.GetY()), _tool == PageTool.Measure);
+                PathAimed?.Invoke(_aimPage, _aim);
+                Invalidate();
+                return true;
+            case MotionEventActions.Up when _aim != null:
+            {
+                _aim = null;
+                _aimSnap = PdfSnapKind.None;
+                PathAimed?.Invoke(_aimPage, null);
+                Invalidate();
+                float x = e.GetX(), y = e.GetY();
+                bool tap = Math.Abs(x - _aimDownX) < TouchSlop && Math.Abs(y - _aimDownY) < TouchSlop;
+                double near = 32 * Density;
+                if (tap && _lastPathUp is { } last && e.EventTime - last.Time <= ViewConfiguration.DoubleTapTimeout
+                    && Math.Abs(x - last.X) <= near && Math.Abs(y - last.Y) <= near)
+                {
+                    _lastPathUp = null;
+                    PathFinished?.Invoke();
+                    return true;
+                }
+                _lastPathUp = tap ? (e.EventTime, x, y) : null;
+                PathPointPlaced?.Invoke(_aimPage, Snapped(_aimPage, ToPage(_aimPage, x, y), _tool == PageTool.Measure).Point);
+                return true;
+            }
+            case MotionEventActions.PointerDown or MotionEventActions.Cancel:
+                if (_aim != null) PathAimed?.Invoke(_aimPage, null);
+                _aim = null;
+                _aimSnap = PdfSnapKind.None;
+                Invalidate();
+                return false;
+        }
+        return _aim != null;
+    }
+
+    /// <summary>The points placed so far and the rubber band to the finger.</summary>
+    private void DrawPath(SKCanvas canvas)
+    {
+        if (_layout == null || !TakesPoints(_tool)) return;
+        var points = _path is { } p ? p.Points : Array.Empty<ViewerPoint>();
+        bool closed = _path?.Closed == true;
+        int page = _path?.Page ?? _aimPage;
+        if (points.Count == 0 && _aim == null) return;
+        _ink.Color = _strokeColor;
+        _ink.StrokeWidth = (float)Math.Max(ViewerEditSession.ShapeWidth * _layout.PixelsPerPoint, 2 * Density);
+        if (points.Count >= 2) DrawStroke(canvas, page, closed && points.Count >= 3 && _aim == null ? [.. points, points[0]] : points);
+        foreach (var point in points)
+        {
+            var (px, py) = V(page, point);
+            canvas.DrawCircle(px, py, 4 * Density, _handle);
+        }
+        if (_aim is not { } aim) return;
+        // The rubber band: dashed, from the last point to the finger (and back to the first for a closed shape).
+        using var dash = SKPathEffect.CreateDash([6 * Density, 4 * Density], 0);
+        _ink.PathEffect = dash;
+        if (points.Count > 0)
+        {
+            List<ViewerPoint> band = [points[^1], aim];
+            if (closed && points.Count >= 2) band.Add(points[0]);
+            DrawStroke(canvas, page, band);
+        }
+        _ink.PathEffect = null;
+        _picked.StrokeWidth = 2 * Density;
+        var (ax, ay) = V(page, aim);
+        canvas.DrawCircle(ax, ay, 9 * Density, _picked);
+        DrawSnapMarker(canvas, page, aim, _aimSnap);
+    }
+
+    // ------------------------------------------------------------------ dragging the chosen annotation
+
+    private enum Grab { None, Pending, Body, Corner, Vertex, Turn }
+
+    private Grab _grab;
+    private int _grabIndex;
+    private string? _grabId;
+    private float _grabX, _grabY;
+    private ViewerPoint _grabStart, _grabNow;
+    private PdfSnapKind _grabSnap;
+
+    // Turning a stamp: its turn when grabbed, the finger's angle then, the turn now (snapped), and the finger.
+    private double _turnFrom, _turnAngle0, _turnDegrees;
+    private float _turnX, _turnY;
+
+    /// <summary>The chosen stamp was turned with its rotation handle: its new turn, degrees counter-clockwise in user space.</summary>
+    public event Action<string, double>? StampTurned;
+
+    /// <summary>How far (dp) the rotation handle sits above (or, near the top of the view, below) the chosen stamp.</summary>
+    private const float TurnHandleDp = 32;
+
+    /// <summary>The rotation handle of a stamp that can be turned, and where its stem meets the outline (view pixels); null for none.</summary>
+    private (float X, float Y, float StemX, float StemY)? TurnHandle(ViewerEditSession session, ViewerAnnotation a)
+    {
+        if (_layout == null || ViewerEditSession.StampFrame(a) == null) return null;
+        var r = Sk(_layout.ToView(a.Page, session.Document.Geometry[a.Page - 1].ToShown(a.Box)));
+        float grow = 3 * Density, reach = TurnHandleDp * Density;
+        // Above the stamp, or below it when above would be off the view.
+        return r.Top - grow - reach >= HandleGrabDp * Density
+            ? (r.MidX, r.Top - grow - reach, r.MidX, r.Top - grow)
+            : (r.MidX, r.Bottom + grow + reach, r.MidX, r.Bottom + grow);
+    }
+
+    /// <summary>The angle (degrees counter-clockwise in user space) of a view point seen from the stamp's centre.</summary>
+    private double TurnAngle(ViewerEditSession session, ViewerAnnotation a, float x, float y)
+    {
+        var p = ToPage(a.Page, x, y);
+        var (ux, uy) = session.Document.Geometry[a.Page - 1].ToUser(p.X, p.Y);
+        double cx = (a.Box.X1 + a.Box.X2) / 2, cy = (a.Box.Y1 + a.Box.Y2) / 2;
+        return Math.Atan2(uy - cy, ux - cx) * 180 / Math.PI;
+    }
+
+    /// <summary>The chosen annotation was dragged by (dx, dy) shown-page points.</summary>
+    public event Action<string, double, double>? AnnotationDragged;
+
+    /// <summary>A corner handle of the chosen rectangle, ellipse, text box or stamp was dragged: its new box (shown-page points).</summary>
+    public event Action<string, ViewerRect>? AnnotationResized;
+
+    /// <summary>A point handle of the chosen line, polygon or connected lines was dragged: the point's index and where it goes.</summary>
+    public event Action<string, int, ViewerPoint>? VertexDragged;
+
+    /// <summary>Half the touch target of a handle (dp): 48 dp square.</summary>
+    private const float HandleGrabDp = 24;
+
+    /// <summary>A rectangle, ellipse, text box (a callout's too) or stamp: it has corner handles.</summary>
+    internal static bool Resizable(ViewerAnnotation a) =>
+        a.Kind is ViewerAnnotationKind.Square or ViewerAnnotationKind.Circle or ViewerAnnotationKind.FreeText or ViewerAnnotationKind.Stamp;
+
+    /// <summary>The chosen annotation can be dragged here: the browse tool, an edit session that may annotate, not a reply.</summary>
+    private bool CanEdit(ViewerAnnotation a) =>
+        _tool == PageTool.Browse && Session is { CanAnnotate: true } && a.Kind != ViewerAnnotationKind.Reply && _selection == null;
+
+    /// <summary>The handles of an annotation (shown-page points): its points, or its box's corners (top-left, top-right, bottom-right, bottom-left).</summary>
+    private static List<ViewerPoint> HandlesOf(ViewerEditSession session, ViewerAnnotation a)
+    {
+        var g = session.Document.Geometry[a.Page - 1];
+        if (ViewerEditSession.HasVertexHandles(a))
+        {
+            var list = new List<ViewerPoint>(a.Vertices.Count / 2);
+            for (int i = 0; i + 1 < a.Vertices.Count; i += 2)
+            {
+                var (x, y) = g.ToShown(a.Vertices[i], a.Vertices[i + 1]);
+                list.Add(new ViewerPoint(x, y));
+            }
+            return list;
+        }
+        if (!Resizable(a)) return [];
+        var r = g.ToShown(a.Box);
+        return [new(r.X, r.Y), new(r.X + r.Width, r.Y), new(r.X + r.Width, r.Y + r.Height), new(r.X, r.Y + r.Height)];
+    }
+
+    /// <summary>
+    /// Drags of the chosen annotation with the browse tool: a handle (within 24 dp) resizes it or
+    /// moves one of its points at once; a drag that starts on it moves it once it passes the touch
+    /// slop (a tap still taps, and a drag elsewhere scrolls). True when the event was the drag's.
+    /// </summary>
+    private bool EditDrag(MotionEvent e)
+    {
+        switch (e.ActionMasked)
+        {
+            case MotionEventActions.Down:
+            {
+                _grab = Grab.None;
+                if (Session is not { } session || _pickedAnnotation == null || session.Store.Find(_pickedAnnotation) is not { } a || !CanEdit(a)) return false;
+                if (_layout == null || a.Page < 1 || a.Page > session.Document.Geometry.Count) return false;
+                float x = e.GetX(), y = e.GetY();
+                _grabSnap = PdfSnapKind.None;
+                // The rotation handle of a stamp: a drag turns it about its centre.
+                if (TurnHandle(session, a) is var (tx, ty, _, _) && Math.Sqrt(Math.Pow(tx - x, 2) + Math.Pow(ty - y, 2)) <= HandleGrabDp * Density
+                    && ViewerEditSession.StampFrame(a) is var (_, _, degrees))
+                {
+                    _grab = Grab.Turn;
+                    _grabId = a.Id;
+                    _grabX = _turnX = x;
+                    _grabY = _turnY = y;
+                    _grabStart = _grabNow = ToPage(a.Page, x, y);
+                    _turnFrom = _turnDegrees = degrees;
+                    _turnAngle0 = TurnAngle(session, a, x, y);
+                    _scroller.ForceFinished(true);
+                    Parent?.RequestDisallowInterceptTouchEvent(true);
+                    Invalidate();
+                    return true;
+                }
+                double best = HandleGrabDp * Density;
+                var handles = HandlesOf(session, a);
+                int found = -1;
+                for (int i = 0; i < handles.Count; i++)
+                {
+                    var (hx, hy) = V(a.Page, handles[i]);
+                    double d = Math.Sqrt(Math.Pow(hx - x, 2) + Math.Pow(hy - y, 2));
+                    if (d <= best)
+                    {
+                        best = d;
+                        found = i;
+                    }
+                }
+                _grabId = a.Id;
+                _grabX = x;
+                _grabY = y;
+                _grabStart = _grabNow = ToPage(a.Page, x, y);
+                if (found >= 0)
+                {
+                    _grab = ViewerEditSession.HasVertexHandles(a) ? Grab.Vertex : Grab.Corner;
+                    _grabIndex = found;
+                    _scroller.ForceFinished(true);
+                    Parent?.RequestDisallowInterceptTouchEvent(true);
+                    Invalidate();
+                    return true;
+                }
+                var box = session.Document.Geometry[a.Page - 1].ToShown(a.Box);
+                double slack = TapSlackDp * Density / _layout.PixelsPerPoint;
+                if (_grabStart.X >= box.X - slack && _grabStart.X <= box.X + box.Width + slack && _grabStart.Y >= box.Y - slack && _grabStart.Y <= box.Y + box.Height + slack)
+                    _grab = Grab.Pending;
+                return false;
+            }
+            case MotionEventActions.PointerDown:
+                if (_grab != Grab.None) Invalidate();
+                _grab = Grab.None;
+                return false;
+            case MotionEventActions.Move when _grab != Grab.None && e.PointerCount == 1:
+            {
+                if (_grab == Grab.Pending)
+                {
+                    if (Math.Abs(e.GetX() - _grabX) <= TouchSlop && Math.Abs(e.GetY() - _grabY) <= TouchSlop) return false;
+                    // Past the slop on the chosen annotation: a move, not a scroll (the gestures see a cancel).
+                    _grab = Grab.Body;
+                    using (var cancel = MotionEvent.Obtain(e)!)
+                    {
+                        cancel.Action = MotionEventActions.Cancel;
+                        _gestures.OnTouchEvent(cancel);
+                    }
+                    Parent?.RequestDisallowInterceptTouchEvent(true);
+                }
+                if (Session?.Store.Find(_grabId ?? "") is not { } a)
+                {
+                    _grab = Grab.None;
+                    return false;
+                }
+                _grabNow = ToPage(a.Page, e.GetX(), e.GetY());
+                if (_grab == Grab.Turn && Session is { } turning)
+                {
+                    // Snaps to 15 degrees within 4 (Shift's job on the desktop); a tick as it snaps to a new step.
+                    double was = _turnDegrees;
+                    _turnX = e.GetX();
+                    _turnY = e.GetY();
+                    _turnDegrees = ViewerEditSession.SnapStampTurn(_turnFrom + TurnAngle(turning, a, _turnX, _turnY) - _turnAngle0);
+                    bool onStep = Math.Abs(_turnDegrees % ViewerEditSession.StampTurnStep) < 1e-9;
+                    if (onStep && Math.Abs(_turnDegrees - was) > 1e-9) PerformHapticFeedback(FeedbackConstants.ClockTick);
+                }
+                // A measurement's point snaps to the page's drawing, as measuring does.
+                else if (_grab == Grab.Vertex && a.IsMeasurement)
+                {
+                    (_grabNow, _grabSnap) = Snapped(a.Page, _grabNow, measuring: true);
+                }
+                Invalidate();
+                return true;
+            }
+            case MotionEventActions.Up:
+            {
+                var grab = _grab;
+                _grab = Grab.None;
+                if (grab is Grab.None or Grab.Pending || _grabId is not { } id || Session is not { } session || session.Store.Find(id) is not { } a) return false;
+                Invalidate();
+                if (grab == Grab.Turn)
+                {
+                    double change = Math.Abs(_turnDegrees - _turnFrom);
+                    if (Math.Min(change, 360 - change) >= 0.05) StampTurned?.Invoke(id, _turnDegrees);
+                    return true;
+                }
+                var now = ToPage(a.Page, e.GetX(), e.GetY());
+                if (grab == Grab.Vertex && a.IsMeasurement) now = Snapped(a.Page, now, measuring: true).Point;
+                _grabSnap = PdfSnapKind.None;
+                double dx = now.X - _grabStart.X, dy = now.Y - _grabStart.Y;
+                double ppp = _layout!.PixelsPerPoint;
+                if (Math.Abs(dx) * ppp < 1 && Math.Abs(dy) * ppp < 1) return true;
+                switch (grab)
+                {
+                    case Grab.Body:
+                        AnnotationDragged?.Invoke(id, dx, dy);
+                        break;
+                    case Grab.Vertex:
+                        VertexDragged?.Invoke(id, _grabIndex, now);
+                        break;
+                    default:
+                        AnnotationResized?.Invoke(id, ResizedBox(session, a, _grabIndex, now));
+                        break;
+                }
+                return true;
+            }
+            case MotionEventActions.Cancel:
+                if (_grab != Grab.None) Invalidate();
+                _grab = Grab.None;
+                return false;
+        }
+        return _grab is Grab.Body or Grab.Corner or Grab.Vertex or Grab.Turn;
+    }
+
+    /// <summary>The box with corner <paramref name="corner"/> at <paramref name="to"/> and the opposite corner where it was.</summary>
+    private static ViewerRect ResizedBox(ViewerEditSession session, ViewerAnnotation a, int corner, ViewerPoint to)
+    {
+        var r = session.Document.Geometry[a.Page - 1].ToShown(a.Box);
+        var opposite = corner switch
+        {
+            0 => new ViewerPoint(r.X + r.Width, r.Y + r.Height),
+            1 => new ViewerPoint(r.X, r.Y + r.Height),
+            2 => new ViewerPoint(r.X, r.Y),
+            _ => new ViewerPoint(r.X + r.Width, r.Y),
+        };
+        return new ViewerRect(Math.Min(opposite.X, to.X), Math.Min(opposite.Y, to.Y), Math.Abs(to.X - opposite.X), Math.Abs(to.Y - opposite.Y));
+    }
+
+    /// <summary>The handles of the chosen annotation (filled dots with a white ring), and the drag's outline while one runs.</summary>
+    private void DrawHandles(SKCanvas canvas, ViewerEditSession session, ViewerAnnotation a)
+    {
+        var handles = HandlesOf(session, a);
+        _handleRing.StrokeWidth = 2 * Density;
+        if (_grab == Grab.Turn && _grabId == a.Id)
+        {
+            // The stamp's own outline at the turn it will get, and the handle under the finger.
+            var g = session.Document.Geometry[a.Page - 1];
+            var corners = ViewerEditSession.StampCorners(a, _turnDegrees);
+            if (corners.Count == 4)
+            {
+                using var turned = new SKPath();
+                for (int i = 0; i < 4; i++)
+                {
+                    var (sx, sy) = g.ToShown(corners[i].X, corners[i].Y);
+                    var (vx, vy) = V(a.Page, new ViewerPoint(sx, sy));
+                    if (i == 0) turned.MoveTo(vx, vy);
+                    else turned.LineTo(vx, vy);
+                }
+                turned.Close();
+                using var dashed = SKPathEffect.CreateDash([6 * Density, 4 * Density], 0);
+                _picked.PathEffect = dashed;
+                _picked.StrokeWidth = 2 * Density;
+                canvas.DrawPath(turned, _picked);
+                _picked.PathEffect = null;
+            }
+            var box = g.ToShown(a.Box);
+            var (cx, cy) = V(a.Page, new ViewerPoint(box.X + box.Width / 2, box.Y + box.Height / 2));
+            _picked.StrokeWidth = 1.5f * Density;
+            canvas.DrawLine(cx, cy, _turnX, _turnY, _picked);
+            DrawTurnHandle(canvas, _turnX, _turnY);
+            return;
+        }
+        if (TurnHandle(session, a) is var (hx, hy, stemX, stemY))
+        {
+            _picked.StrokeWidth = 1.5f * Density;
+            canvas.DrawLine(stemX, stemY, hx, hy, _picked);
+            DrawTurnHandle(canvas, hx, hy);
+        }
+        if (_grab is Grab.Body or Grab.Corner or Grab.Vertex && _grabId == a.Id)
+        {
+            double dx = _grabNow.X - _grabStart.X, dy = _grabNow.Y - _grabStart.Y;
+            List<ViewerPoint> outline;
+            if (_grab == Grab.Vertex)
+            {
+                handles = handles.Select((h, i) => i == _grabIndex ? _grabNow : h).ToList();
+                outline = a.Kind == ViewerAnnotationKind.Polygon ? [.. handles, handles[0]] : handles;
+            }
+            else
+            {
+                var r = _grab == Grab.Corner ? ResizedBox(session, a, _grabIndex, _grabNow) : session.Document.Geometry[a.Page - 1].ToShown(a.Box);
+                if (_grab == Grab.Body) r = r with { X = r.X + dx, Y = r.Y + dy };
+                outline = [new(r.X, r.Y), new(r.X + r.Width, r.Y), new(r.X + r.Width, r.Y + r.Height), new(r.X, r.Y + r.Height), new(r.X, r.Y)];
+                handles = _grab == Grab.Body ? handles.Select(h => new ViewerPoint(h.X + dx, h.Y + dy)).ToList() : outline.Take(4).ToList();
+            }
+            using var path = new SKPath();
+            var (ox, oy) = V(a.Page, outline[0]);
+            path.MoveTo(ox, oy);
+            foreach (var p in outline.Skip(1))
+            {
+                var (px, py) = V(a.Page, p);
+                path.LineTo(px, py);
+            }
+            using var dash = SKPathEffect.CreateDash([6 * Density, 4 * Density], 0);
+            _picked.PathEffect = dash;
+            _picked.StrokeWidth = 2 * Density;
+            canvas.DrawPath(path, _picked);
+            _picked.PathEffect = null;
+        }
+        _handleRing.StrokeWidth = 2 * Density;
+        foreach (var h in handles)
+        {
+            var (x, y) = V(a.Page, h);
+            canvas.DrawCircle(x, y, 6 * Density, _handle);
+            canvas.DrawCircle(x, y, 6 * Density, _handleRing);
+        }
+        if (_grab == Grab.Vertex && _grabId == a.Id) DrawSnapMarker(canvas, a.Page, _grabNow, _grabSnap);
+    }
+
+    /// <summary>The round rotation handle: a disc with a white ring and a turning arrow in it.</summary>
+    private void DrawTurnHandle(SKCanvas canvas, float x, float y)
+    {
+        float r = 10 * Density;
+        canvas.DrawCircle(x, y, r, _handle);
+        _handleRing.StrokeWidth = 2 * Density;
+        canvas.DrawCircle(x, y, r, _handleRing);
+        // Three quarters of a circle with an arrowhead: "turn".
+        float a = 5 * Density;
+        using var arc = new SKPath();
+        arc.AddArc(new SKRect(x - a, y - a, x + a, y + a), -60, 270);
+        _handleRing.StrokeWidth = 1.6f * Density;
+        canvas.DrawPath(arc, _handleRing);
+        double end = 210 * Math.PI / 180;
+        float ex = x + a * (float)Math.Cos(end), ey = y + a * (float)Math.Sin(end);
+        canvas.DrawLine(ex, ey, ex - 3 * Density, ey - 1 * Density, _handleRing);
+        canvas.DrawLine(ex, ey, ex + 0.5f * Density, ey - 3.5f * Density, _handleRing);
+    }
+
     private sealed class Gestures(PageView view) : GestureDetector.SimpleOnGestureListener
     {
         public override bool OnDown(MotionEvent e)
@@ -1017,6 +1980,12 @@ internal sealed class PageView : SkiaView
             {
                 view._scroller.ForceFinished(true);
                 view._flinging = false;
+            }
+            // A finger on a page that is settling holds it where it is; the drag goes on from there.
+            if (view._settling)
+            {
+                view._slider.ForceFinished(true);
+                view._settling = false;
             }
             return true;
         }
@@ -1044,7 +2013,7 @@ internal sealed class PageView : SkiaView
         /// <summary>Long press: select the word under the finger.</summary>
         public override void OnLongPress(MotionEvent e) => _ = view.SelectAtAsync(e.GetX(), e.GetY());
 
-        /// <summary>Double tap: zoom in to 2.5× at the finger, or back to fit width.</summary>
+        /// <summary>Double tap: zoom in to 2.5× at the finger, or back to zoom 1 (fit width; fit page one page at a time).</summary>
         public override bool OnDoubleTap(MotionEvent e)
         {
             var l = view._layout!;
@@ -1058,6 +2027,10 @@ internal sealed class PageView : SkiaView
     {
         public override bool OnScaleBegin(ScaleGestureDetector detector)
         {
+            // A pinch zooms the page in place: a page slid aside goes back at once.
+            view._slider.ForceFinished(true);
+            view._settling = false;
+            view._layout?.SetSlide(0, 0);
             view._pinching = true;
             return true;
         }
@@ -1090,6 +2063,9 @@ internal sealed class PageView : SkiaView
             _field.Dispose();
             _picked.Dispose();
             _ink.Dispose();
+            _markEdge.Dispose();
+            _markFill.Dispose();
+            _handleRing.Dispose();
         }
         base.Dispose(disposing);
     }

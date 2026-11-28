@@ -1,0 +1,10 @@
+# doc: sample
+# expect-file: * (flattened).pdf
+# expect-grep: %PDF
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Flatten" } }
+- extendedWaitUntil: { visible: "Flatten into a copy", timeout: 60000 }
+- tapOn: "Form fields.*"
+- runFlow: ../common/save.yaml

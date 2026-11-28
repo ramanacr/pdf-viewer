@@ -1,0 +1,13 @@
+# doc: sample
+# expect-file: *(protected).pdf
+# expect-grep: /Encrypt
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Protect with password" } }
+- tapOn: "Open password"
+- inputText: "s3cret-pw"
+- tapOn: "Open password again"
+- inputText: "s3cret-pw"
+- tapOn: "(?i)save protected copy"
+- runFlow: ../common/save.yaml

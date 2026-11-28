@@ -1,0 +1,8 @@
+# Opens ⋮ → Tools… and the tool named by ${TOOL} (scrolling the sheet to it).
+appId: io.github.ramanacr.pdfviewer
+---
+- tapOn: "⋮"
+- tapOn: "Tools…"
+- extendedWaitUntil: { visible: "Pages", timeout: 30000 }
+- scrollUntilVisible: { element: { text: "${TOOL}" }, direction: DOWN, timeout: 60000, visibilityPercentage: 100 }
+- tapOn: "${TOOL}"

@@ -211,6 +211,12 @@ public sealed record ViewerEditSnapshot
         w.WriteString("stampName", a.StampName);
         if (a.StampSubtitle != null) w.WriteString("stampSubtitle", a.StampSubtitle);
         w.WriteNumber("stampTurn", a.StampTurn);
+        if (a.StampRotation is double turned)
+        {
+            w.WriteNumber("stampRotation", turned);
+            w.WriteNumber("stampWidth", a.StampWidth);
+            w.WriteNumber("stampHeight", a.StampHeight);
+        }
         if (a.CustomStamp is { } custom) w.WriteString("customStamp", custom.Hash);
         w.WriteString("inReplyTo", a.InReplyTo);
         w.WriteString("state", a.State);
@@ -326,6 +332,10 @@ public sealed record ViewerEditSnapshot
             StampName = Str(e, "stampName"),
             StampSubtitle = e.TryGetProperty("stampSubtitle", out var sub) ? Text(sub) : null,
             StampTurn = Int(e, "stampTurn"),
+            // Kept edits written before stamps could be turned have no "stampRotation".
+            StampRotation = e.TryGetProperty("stampRotation", out var sr) ? sr.GetDouble() : null,
+            StampWidth = e.TryGetProperty("stampRotation", out _) ? e.GetProperty("stampWidth").GetDouble() : 0,
+            StampHeight = e.TryGetProperty("stampRotation", out _) ? e.GetProperty("stampHeight").GetDouble() : 0,
             CustomStamp = e.TryGetProperty("customStamp", out var cs)
                 ? stamps.GetValueOrDefault(Text(cs)) ?? throw new FormatException("An annotation names a custom stamp the kept edits do not have.")
                 : null,

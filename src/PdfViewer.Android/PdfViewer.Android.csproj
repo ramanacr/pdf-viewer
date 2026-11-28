@@ -67,6 +67,58 @@
     <ProjectReference Include="..\PdfViewer.Web.Engine\PdfViewer.Web.Engine.csproj" />
   </ItemGroup>
 
+  <!--
+    On-device OCR (Tools → Make scanned pages searchable): Tesseract, through Tesseract4Android
+    (Apache 2.0; it builds Tesseract (Apache 2.0), Leptonica (BSD-2-Clause), libjpeg and libpng),
+    bound from its AAR by .NET for Android. The single-thread flavour; offline, no permission.
+    androidx.annotation is only annotations, which the binding does not need.
+  -->
+  <ItemGroup>
+    <AndroidMavenLibrary Include="com.github.adaptech-cz.Tesseract4Android:tesseract4android" Version="4.8.0" Repository="https://jitpack.io" />
+    <AndroidIgnoredJavaDependency Include="androidx.annotation:annotation:1.3.0" />
+    <TransformFile Include="Transforms\Metadata.xml" />
+  </ItemGroup>
+
+  <!--
+    jitpack.io builds Tesseract4Android from its tag, so the AAR it serves is checked against a SHA-256
+    kept here, as the model is: one that does not match fails the build.
+  -->
+  <PropertyGroup>
+    <Tesseract4AndroidSha256>5bcff63c12baf46bfad9776292c93df62421cec3fe52eb62f03202f49bda8c34</Tesseract4AndroidSha256>
+  </PropertyGroup>
+  <Target Name="VerifyTesseract4Android" AfterTargets="_MavenRestore">
+    <ItemGroup>
+      <_TesseractAar Include="@(_ResolvedAndroidMavenLibraries)" Condition="'%(Extension)' == '.aar' And $([System.String]::Copy('%(Filename)').StartsWith('tesseract4android'))" />
+    </ItemGroup>
+    <Error Condition="'@(_TesseractAar)' == ''" Text="The Tesseract4Android AAR was not resolved, so its SHA-256 could not be checked." />
+    <GetFileHash Files="@(_TesseractAar)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_TesseractAarHash" />
+    </GetFileHash>
+    <Error Condition="'$(_TesseractAarHash.ToLowerInvariant())' != '$(Tesseract4AndroidSha256)'" Text="tesseract4android-4.8.0.aar does not match its pinned SHA-256 ($(_TesseractAarHash))." />
+  </Target>
+
+  <!--
+    The English model (tessdata_fast 4.1.0, Apache 2.0), downloaded at build time and checked
+    against a SHA-256 kept here; a file that does not match fails the build. It ships as an asset.
+  -->
+  <PropertyGroup>
+    <TessdataUrl>https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata</TessdataUrl>
+    <TessdataSha256>7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2</TessdataSha256>
+    <TessdataDir>$(BaseIntermediateOutputPath)tessdata\</TessdataDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <AndroidAsset Include="$(TessdataDir)eng.traineddata" Link="Assets/tessdata/eng.traineddata" LogicalName="tessdata/eng.traineddata" />
+  </ItemGroup>
+  <Target Name="DownloadTessdata" BeforeTargets="PrepareForBuild;_ComputeAndroidAssetsPaths" Condition="!Exists('$(TessdataDir)eng.traineddata')">
+    <DownloadFile SourceUrl="$(TessdataUrl)" DestinationFolder="$(TessdataDir)" DestinationFileName="eng.traineddata.download" Retries="3" />
+    <GetFileHash Files="$(TessdataDir)eng.traineddata.download" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_TessdataHash" />
+    </GetFileHash>
+    <Delete Files="$(TessdataDir)eng.traineddata.download" Condition="'$(_TessdataHash.ToLowerInvariant())' != '$(TessdataSha256)'" />
+    <Error Condition="'$(_TessdataHash.ToLowerInvariant())' != '$(TessdataSha256)'" Text="eng.traineddata does not match its pinned SHA-256 ($(_TessdataHash))." />
+    <Move SourceFiles="$(TessdataDir)eng.traineddata.download" DestinationFiles="$(TessdataDir)eng.traineddata" />
+  </Target>
+
   <!-- Native debug symbols in the Release app bundle, for Google Play (docs/android-release.md). -->
   <Import Project="NativeDebugSymbols.targets" />
 

@@ -1,0 +1,8 @@
+# doc: sample
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Reset form" } }
+- extendedWaitUntil: { visible: "Reset the form\\?", timeout: 60000 }
+- tapOn: "(?i)^reset$"
+- extendedWaitUntil: { visible: "(?i).*(field.* reset|already has its default).*", timeout: 120000 }

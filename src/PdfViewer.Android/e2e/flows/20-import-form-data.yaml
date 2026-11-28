@@ -1,0 +1,8 @@
+# doc: sample
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Import form data" } }
+- runFlow: { file: ../common/pick.yaml, env: { FILE: "form.xfdf" } }
+- extendedWaitUntil: { visible: "(?i).*field.* filled.*", timeout: 120000 }
+- tapOn: "(?i)^ok$"

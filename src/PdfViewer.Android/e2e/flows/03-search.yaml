@@ -1,0 +1,11 @@
+# doc: sample
+appId: io.github.ramanacr.pdfviewer
+---
+- extendedWaitUntil: { visible: "1 / 7", timeout: 90000 }
+- tapOn: "Search"
+- inputText: "Keyboard"
+- pressKey: enter
+- extendedWaitUntil: { visible: "Match 1 of .*", timeout: 60000 }
+- tapOn: "List"
+- extendedWaitUntil: { visible: ".*Keyboard.*", timeout: 30000 }
+- pressKey: back

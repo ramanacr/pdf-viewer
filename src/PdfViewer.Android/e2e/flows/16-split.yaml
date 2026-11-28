@@ -1,0 +1,12 @@
+# doc: sample
+# expect-file: * part 1.pdf
+# expect-grep: %PDF
+appId: io.github.ramanacr.pdfviewer
+---
+- runFlow: { file: ../common/ready.yaml, env: { PAGES: "1 / 7" } }
+- runFlow: { file: ../common/tool.yaml, env: { TOOL: "Split" } }
+- extendedWaitUntil: { visible: "Choose folder", timeout: 60000 }
+- tapOn: "Choose folder"
+- extendedWaitUntil: { visible: "SELECT", timeout: 120000 }
+- tapOn: "SELECT"
+- extendedWaitUntil: { visible: "(?i).*Saved 7 PDFs.*", timeout: 240000 }
